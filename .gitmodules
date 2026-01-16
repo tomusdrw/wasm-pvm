@@ -1,0 +1,6 @@
+[submodule "vendor/anan-as"]
+	path = vendor/anan-as
+	url = https://github.com/tomusdrw/anan-as
+[submodule "vendor/zink"]
+	path = vendor/zink
+	url = https://github.com/zink-lang/zink

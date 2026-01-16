@@ -1,0 +1,22 @@
+[package]
+name = "wasm-pvm-cli"
+description = "CLI for WASM to PVM recompiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "wasm-pvm"
+path = "src/main.rs"
+
+[dependencies]
+wasm-pvm.workspace = true
+wat.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
