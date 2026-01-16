@@ -1,0 +1,5 @@
+- [PolkaVM](https://github.com/paritytech/polkavm)
+- [Ananas PVM implementation](https://github.com/tomusdrw/anan-as)
+- [Gray Paper v0.7.2](./gp-0.7.2.md)
+- [Zink wasm->evm compiler (inspiration)](https://github.com/zink-lang/zink/blob/main/codegen/src/visitor/mod.rs)
+- [Minimal WASM examples](./examples-wat)
