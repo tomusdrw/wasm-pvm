@@ -80,6 +80,39 @@ const testCases: TestCase[] = [
     ],
   },
   {
+    name: 'div',
+    sourceWatOrWasm: 'examples-wat/div.jam.wat',
+    tests: [
+      { args: '1400000005000000', expected: 4, description: '20 / 5 = 4' },
+      { args: '6400000008000000', expected: 12, description: '100 / 8 = 12' },
+      { args: '0a00000003000000', expected: 3, description: '10 / 3 = 3' },
+    ],
+  },
+  {
+    name: 'call',
+    sourceWatOrWasm: 'examples-wat/call.jam.wat',
+    tests: [
+      { args: '05000000', expected: 10, description: 'double(5) = 10' },
+      { args: '0a000000', expected: 20, description: 'double(10) = 20' },
+      { args: '00000000', expected: 0, description: 'double(0) = 0' },
+    ],
+  },
+  {
+    name: 'i64-ops',
+    sourceWatOrWasm: 'examples-wat/i64-ops.jam.wat',
+    tests: [
+      { args: '00000000', expected: 14, description: 'i64.div_u(100, 7) = 14' },
+      { args: '01000000', expected: 2, description: 'i64.rem_u(100, 7) = 2' },
+      { args: '02000000', expected: 4080, description: 'i64.shl(0xFF, 4) = 4080' },
+      { args: '03000000', expected: 4080, description: 'i64.shr_u(0xFF00, 4) = 4080' },
+      { args: '04000000', expected: 240, description: 'i64.and(0xF0F0, 0x0FF0) = 240' },
+      { args: '05000000', expected: 65520, description: 'i64.or(0xF0F0, 0x0FF0) = 65520' },
+      { args: '06000000', expected: 65280, description: 'i64.xor(0xF0F0, 0x0FF0) = 65280' },
+      { args: '07000000', expected: 1, description: 'i64.ge_u(100, 50) = 1' },
+      { args: '08000000', expected: 1, description: 'i64.le_u(50, 100) = 1' },
+    ],
+  },
+  {
     name: 'as-add',
     sourceWatOrWasm: 'examples-as/build/add.wasm',
     tests: [

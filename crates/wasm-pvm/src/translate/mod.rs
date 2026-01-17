@@ -1,6 +1,7 @@
 mod codegen;
 mod stack;
 
+use crate::pvm::Instruction;
 use crate::{Error, Result, SpiProgram};
 use wasmparser::{FunctionBody, GlobalType, Parser, Payload};
 
@@ -12,6 +13,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut function_type_indices = Vec::new();
     let mut globals: Vec<GlobalType> = Vec::new();
     let mut global_names: Vec<Option<String>> = Vec::new();
+    let mut main_func_idx: Option<u32> = None;
 
     for payload in Parser::new(0).parse_all(wasm) {
         match payload? {
@@ -38,6 +40,16 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                     global_names.push(None);
                 }
             }
+            Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export?;
+                    if export.name == "main"
+                        && let wasmparser::ExternalKind::Func = export.kind
+                    {
+                        main_func_idx = Some(export.index);
+                    }
+                }
+            }
             Payload::CodeSectionEntry(body) => {
                 functions.push(body);
             }
@@ -49,11 +61,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         return Err(Error::NoExportedFunction);
     }
 
-    let func = &functions[0];
-    let type_idx = function_type_indices.first().copied().unwrap_or(0);
-    let func_type = func_types.get(type_idx as usize);
-
-    let num_params = func_type.map_or(0, |f| f.params().len());
+    let main_func_idx = main_func_idx.unwrap_or(0) as usize;
 
     let mut result_ptr_global = None;
     let mut result_len_global = None;
@@ -78,18 +86,116 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         result_len_global = Some(1);
     }
 
-    let ctx = CompileContext {
-        num_params,
-        num_locals: 0,
-        num_globals: globals.len(),
-        result_ptr_global,
-        result_len_global,
-    };
+    let function_signatures: Vec<(usize, bool)> = function_type_indices
+        .iter()
+        .map(|&type_idx| {
+            let func_type = func_types.get(type_idx as usize);
+            let num_params = func_type.map_or(0, |f| f.params().len());
+            let has_return = func_type.is_some_and(|f| !f.results().is_empty());
+            (num_params, has_return)
+        })
+        .collect();
 
-    let instructions = codegen::translate_function(func, &ctx)?;
-    let blob = crate::pvm::ProgramBlob::new(instructions);
+    let mut all_instructions: Vec<Instruction> = Vec::new();
+    let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
+    let mut function_offsets: Vec<usize> = Vec::new();
+
+    let needs_entry_jump = main_func_idx != 0;
+    if needs_entry_jump {
+        all_instructions.push(Instruction::Jump { offset: 0 });
+    }
+
+    for (func_idx, func) in functions.iter().enumerate() {
+        let (num_params, has_return) = function_signatures
+            .get(func_idx)
+            .copied()
+            .unwrap_or((0, false));
+
+        let is_main = func_idx == main_func_idx;
+
+        let ctx = CompileContext {
+            num_params,
+            num_locals: 0,
+            num_globals: globals.len(),
+            result_ptr_global: if is_main { result_ptr_global } else { None },
+            result_len_global: if is_main { result_len_global } else { None },
+            is_main,
+            has_return,
+            function_offsets: vec![],
+            function_signatures: function_signatures.clone(),
+            func_idx,
+        };
+
+        let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
+        function_offsets.push(func_start_offset);
+
+        let translation = codegen::translate_function(func, &ctx)?;
+
+        let instr_base = all_instructions.len();
+        for fixup in translation.call_fixups {
+            all_call_fixups.push((instr_base, fixup));
+        }
+
+        all_instructions.extend(translation.instructions);
+    }
+
+    let jump_table =
+        resolve_call_fixups(&mut all_instructions, &all_call_fixups, &function_offsets)?;
+
+    if needs_entry_jump {
+        let main_offset = function_offsets[main_func_idx] as i32;
+        if let Instruction::Jump { offset } = &mut all_instructions[0] {
+            *offset = main_offset;
+        }
+    }
+
+    let blob = crate::pvm::ProgramBlob::new(all_instructions).with_jump_table(jump_table);
 
     Ok(SpiProgram::new(blob))
+}
+
+fn resolve_call_fixups(
+    instructions: &mut [Instruction],
+    call_fixups: &[(usize, codegen::CallFixup)],
+    function_offsets: &[usize],
+) -> Result<Vec<u32>> {
+    let mut jump_table: Vec<u32> = Vec::new();
+
+    for (instr_base, fixup) in call_fixups {
+        let target_offset = function_offsets
+            .get(fixup.target_func as usize)
+            .ok_or_else(|| {
+                Error::Unsupported(format!("call to unknown function {}", fixup.target_func))
+            })?;
+
+        let return_addr_idx = instr_base + fixup.return_addr_instr;
+        let jump_idx = instr_base + fixup.jump_instr;
+
+        let return_addr_offset: usize = instructions[..=jump_idx]
+            .iter()
+            .map(|i| i.encode().len())
+            .sum();
+
+        let jump_table_index = jump_table.len();
+        jump_table.push(return_addr_offset as u32);
+
+        let jump_table_address = (jump_table_index as u64 + 1) * 2;
+
+        if let Instruction::LoadImm64 { value, .. } = &mut instructions[return_addr_idx] {
+            *value = jump_table_address;
+        }
+
+        let jump_start_offset: usize = instructions[..jump_idx]
+            .iter()
+            .map(|i| i.encode().len())
+            .sum();
+        let relative_offset = (*target_offset as i32) - (jump_start_offset as i32);
+
+        if let Instruction::Jump { offset } = &mut instructions[jump_idx] {
+            *offset = relative_offset;
+        }
+    }
+    Ok(jump_table)
 }
 
 #[allow(dead_code)]

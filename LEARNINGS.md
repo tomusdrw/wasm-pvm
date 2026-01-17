@@ -327,20 +327,25 @@ Example STORE_IND_U32: memory[regs[base] + offset] = regs[src]
 **Decision:** Target SPI format for JAM compatibility.
 **Reason:** User requirement - JAM programs are the priority.
 
-### 3. Register Allocation (Proposed)
+### 3. Register Allocation (Implemented)
 | Registers | Usage |
 |-----------|-------|
-| r0 | Reserved (SPI convention) |
-| r1 | Stack pointer (SPI convention) |
-| r2-r6 | Operand stack / temporaries |
-| r7-r8 | Reserved (args in SPI) |
-| r9-r12 | Local variables / callee-saved |
+| r0 | Return address (jump table index for calls) |
+| r1 | Return value from function calls |
+| r2-r6 | Operand stack (5 slots) |
+| r7-r8 | SPI args (args_ptr, args_len) for main function |
+| r9-r12 | Local variables (first 4 locals) |
 
-### 4. Calling Convention (Proposed)
-- Arguments: r2-r6 (first 5 args), then stack
-- Return value: r2
-- Callee-saved: r9-r12
-- Caller-saved: r2-r6
+### 4. Calling Convention (Implemented)
+**For internal function calls (`call` instruction):**
+- Caller copies arguments directly to callee's local registers (r9+)
+- Caller saves return address as **jump table index** in r0
+- Caller jumps to callee's entry point
+- Callee executes and puts return value in r1
+- Callee returns via `JUMP_IND r0, 0` (indirect jump through jump table)
+- Caller copies return value from r1 to operand stack
+
+**Important:** Return addresses use jump table indices, not direct PC values. See Jump Table section below.
 
 ---
 
@@ -379,13 +384,94 @@ Branch targets must be at basic block boundaries. A basic block starts:
 
 ---
 
+## Jump Table Mechanism (CRITICAL for function calls)
+
+PVM's `JUMP_IND` instruction does **NOT** jump directly to the address in the register. Instead, it uses a **jump table** lookup.
+
+### How JUMP_IND Works
+```
+JUMP_IND rA, offset
+  target_address = jumpTable[(rA + offset) / 2 - 1]
+  jump to target_address
+```
+
+This means:
+- Register value is NOT a PC, it's a **jump table reference**
+- Value `2` refers to `jumpTable[0]`
+- Value `4` refers to `jumpTable[1]`
+- Value `2*(N+1)` refers to `jumpTable[N]`
+- **Exception**: Value `0xFFFF0000` (EXIT address) is special-cased for program termination
+
+### Jump Table Encoding in Program Blob
+The program blob includes:
+1. `jumpTableLength` (varU32) - number of entries
+2. `jumpTableItemBytes` (u8) - bytes per entry (typically 4)
+3. Jump table entries - each entry is an actual PC offset
+
+### Implementation for Function Calls
+When compiling function calls:
+1. After each `call` instruction, record the return PC
+2. Build jump table with all return PCs
+3. Caller loads `(return_index + 1) * 2` into r0 before calling
+4. Callee returns with `JUMP_IND r0, 0`
+
+**Example:**
+```
+; Jump table: [return_pc_0, return_pc_1, ...]
+; Call function, expecting to return to index 0
+LOAD_IMM r0, 2        ; (0 + 1) * 2 = 2, refers to jumpTable[0]
+JUMP callee_offset
+; return_pc_0:        ; jumpTable[0] = this PC
+...
+```
+
+---
+
+## Local Variable Spilling
+
+When a function has more than 4 local variables, we spill extras to memory.
+
+### Memory Layout
+```
+Base address: 0x30000 (SPILLED_LOCALS_BASE)
+Per function: 512 bytes (SPILLED_LOCALS_PER_FUNC)
+
+Spilled local address = 0x30000 + (func_idx * 512) + ((local_idx - 4) * 8)
+```
+
+### Register vs Memory
+| Local Index | Storage |
+|-------------|---------|
+| 0-3 | Registers r9-r12 |
+| 4+ | Memory at spilled address |
+
+### Implementation
+```rust
+// For local.get with index >= 4:
+LOAD_IMM tmp, spilled_address
+LOAD_U64 dst, tmp, 0
+
+// For local.set with index >= 4:
+LOAD_IMM tmp, spilled_address
+STORE_U64 tmp, src, 0
+```
+
+### Limitation
+This is a **non-recursive** design. Each function has fixed memory for its spilled locals. Recursive calls will overwrite the same memory locations.
+
+**Future fix:** Implement proper call stack with frame pointer for recursion support.
+
+---
+
 ## Open Questions
 
-1. ~~What are PVM's calling conventions?~~ → See SPI format above
-2. How to handle WASM globals? → Store in RW data section
-3. What's the best strategy for br_table? → Jump table
+1. ~~What are PVM's calling conventions?~~ → See Calling Convention section above
+2. ~~How to handle WASM globals?~~ → Store at 0x20000 + idx*4
+3. What's the best strategy for br_table? → Jump table (not yet implemented)
 4. ~~Should we support floating point?~~ → No, reject
-5. How to handle memory.grow? → SBRK instruction or host call
+5. ~~How to handle memory.grow?~~ → Returns -1 (growth not supported)
+6. How to support recursion? → Need proper call stack with frame pointer (not yet implemented)
+7. How to implement call_indirect? → Build function table from WASM tables (not yet implemented)
 
 ---
 

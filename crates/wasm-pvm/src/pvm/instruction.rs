@@ -9,14 +9,27 @@ pub enum Instruction {
     Add32 { dst: u8, src1: u8, src2: u8 },
     Sub32 { dst: u8, src1: u8, src2: u8 },
     Mul32 { dst: u8, src1: u8, src2: u8 },
+    DivU32 { dst: u8, src1: u8, src2: u8 },
+    DivS32 { dst: u8, src1: u8, src2: u8 },
     RemU32 { dst: u8, src1: u8, src2: u8 },
     RemS32 { dst: u8, src1: u8, src2: u8 },
     Add64 { dst: u8, src1: u8, src2: u8 },
+    Sub64 { dst: u8, src1: u8, src2: u8 },
+    Mul64 { dst: u8, src1: u8, src2: u8 },
+    DivU64 { dst: u8, src1: u8, src2: u8 },
+    DivS64 { dst: u8, src1: u8, src2: u8 },
+    RemU64 { dst: u8, src1: u8, src2: u8 },
+    RemS64 { dst: u8, src1: u8, src2: u8 },
+    ShloL64 { dst: u8, src1: u8, src2: u8 },
+    ShloR64 { dst: u8, src1: u8, src2: u8 },
+    SharR64 { dst: u8, src1: u8, src2: u8 },
     AddImm32 { dst: u8, src: u8, value: i32 },
     Jump { offset: i32 },
     JumpInd { reg: u8, offset: i32 },
     LoadIndU32 { dst: u8, base: u8, offset: i32 },
     StoreIndU32 { base: u8, src: u8, offset: i32 },
+    LoadIndU64 { dst: u8, base: u8, offset: i32 },
+    StoreIndU64 { base: u8, src: u8, offset: i32 },
     BranchNeImm { reg: u8, value: i32, offset: i32 },
     BranchEqImm { reg: u8, value: i32, offset: i32 },
     SetLtU { dst: u8, src1: u8, src2: u8 },
@@ -50,6 +63,12 @@ impl Instruction {
             Self::Add32 { dst, src1, src2 } => encode_three_reg(Opcode::Add32, *dst, *src1, *src2),
             Self::Sub32 { dst, src1, src2 } => encode_three_reg(Opcode::Sub32, *dst, *src1, *src2),
             Self::Mul32 { dst, src1, src2 } => encode_three_reg(Opcode::Mul32, *dst, *src1, *src2),
+            Self::DivU32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::DivU32, *dst, *src1, *src2)
+            }
+            Self::DivS32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::DivS32, *dst, *src1, *src2)
+            }
             Self::RemU32 { dst, src1, src2 } => {
                 encode_three_reg(Opcode::RemU32, *dst, *src1, *src2)
             }
@@ -57,6 +76,29 @@ impl Instruction {
                 encode_three_reg(Opcode::RemS32, *dst, *src1, *src2)
             }
             Self::Add64 { dst, src1, src2 } => encode_three_reg(Opcode::Add64, *dst, *src1, *src2),
+            Self::Sub64 { dst, src1, src2 } => encode_three_reg(Opcode::Sub64, *dst, *src1, *src2),
+            Self::Mul64 { dst, src1, src2 } => encode_three_reg(Opcode::Mul64, *dst, *src1, *src2),
+            Self::DivU64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::DivU64, *dst, *src1, *src2)
+            }
+            Self::DivS64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::DivS64, *dst, *src1, *src2)
+            }
+            Self::RemU64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::RemU64, *dst, *src1, *src2)
+            }
+            Self::RemS64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::RemS64, *dst, *src1, *src2)
+            }
+            Self::ShloL64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::ShloL64, *dst, *src1, *src2)
+            }
+            Self::ShloR64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::ShloR64, *dst, *src1, *src2)
+            }
+            Self::SharR64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::SharR64, *dst, *src1, *src2)
+            }
             Self::SetLtU { dst, src1, src2 } => {
                 encode_three_reg(Opcode::SetLtU, *dst, *src1, *src2)
             }
@@ -92,6 +134,22 @@ impl Instruction {
             Self::StoreIndU32 { base, src, offset } => {
                 let mut bytes = vec![
                     Opcode::StoreIndU32 as u8,
+                    (*base & 0x0F) << 4 | (*src & 0x0F),
+                ];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::LoadIndU64 { dst, base, offset } => {
+                let mut bytes = vec![
+                    Opcode::LoadIndU64 as u8,
+                    (*base & 0x0F) << 4 | (*dst & 0x0F),
+                ];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::StoreIndU64 { base, src, offset } => {
+                let mut bytes = vec![
+                    Opcode::StoreIndU64 as u8,
                     (*base & 0x0F) << 4 | (*src & 0x0F),
                 ];
                 bytes.extend_from_slice(&encode_imm(*offset));

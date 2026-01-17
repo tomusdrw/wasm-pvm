@@ -8,18 +8,21 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 
 **Working features:**
 - Basic WASM parsing and translation
-- Integer arithmetic (`add`, `sub`, `mul`, `rem_u`)
-- Control flow (`block`, `loop`, `if/else`, `br`, `br_if`)
-- Comparison operations (`gt_u`, `gt_s`, `lt_u`, `lt_s`, `ge_u`, `le_u`, `le_s`, `eq`, `eqz`)
-- Memory operations (`i32.load`, `i32.store`)
+- Integer arithmetic (`add`, `sub`, `mul`, `div_u`, `div_s`, `rem_u`, `rem_s`)
+- Control flow (`block`, `loop`, `if/else`, `br`, `br_if`, `return`)
+- Function calls (`call`) with proper return value handling
+- All comparison operations for i32 and i64
+- Bitwise operations (`and`, `or`, `xor`)
+- Shift operations (`shl`, `shr_u`, `shr_s`)
+- Memory operations (`i32.load`, `i32.store`, `memory.size`, `memory.grow`)
+- Local variables with spilling for functions with many locals
 - Global variables (`global.get`, `global.set`)
 - JAM output format (`.jam` files)
-
-**Current priority**: AssemblyScript examples and test suite.
+- AssemblyScript example programs (all tests passing)
 
 **Not yet implemented:**
-- Division, bitwise AND/OR operations
-- Function calls (`call`, `call_indirect`)
+- `call_indirect` (indirect function calls)
+- i64 bitwise/shift operations
 - Floating point (will be rejected - PVM has no FP support)
 
 ## Quick Start
@@ -102,6 +105,17 @@ Working examples in `examples-wat/`:
 | `fibonacci.jam.wat` | Fibonacci sequence | fib(10)=55 |
 | `gcd.jam.wat` | GCD (Euclidean algorithm) | gcd(48,18)=6 |
 | `is-prime.jam.wat` | Primality test | is_prime(97)=1 |
+| `div.jam.wat` | Integer division | 20/5=4 |
+| `call.jam.wat` | Function calls | double(5)=10 |
+
+AssemblyScript examples in `examples-as/`:
+
+| File | Description | Verified |
+|------|-------------|----------|
+| `add.ts` | Add two u32 arguments | 5+7=12 |
+| `factorial.ts` | Compute n! using loop | 5!=120 |
+| `fibonacci.ts` | Fibonacci sequence | fib(10)=55 |
+| `gcd.ts` | GCD (Euclidean algorithm) | gcd(48,18)=6 |
 
 ## Project Structure
 

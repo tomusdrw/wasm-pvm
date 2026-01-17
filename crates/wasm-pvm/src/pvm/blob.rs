@@ -2,12 +2,22 @@ use super::Instruction;
 
 pub struct ProgramBlob {
     instructions: Vec<Instruction>,
+    jump_table: Vec<u32>,
 }
 
 impl ProgramBlob {
     #[must_use]
     pub fn new(instructions: Vec<Instruction>) -> Self {
-        Self { instructions }
+        Self {
+            instructions,
+            jump_table: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_jump_table(mut self, jump_table: Vec<u32>) -> Self {
+        self.jump_table = jump_table;
+        self
     }
 
     #[must_use]
@@ -16,9 +26,18 @@ impl ProgramBlob {
         let code_len = code.len();
 
         let mut blob = Vec::new();
-        blob.push(0);
-        blob.push(0);
+
+        blob.extend(encode_var_u32(self.jump_table.len() as u32));
+
+        let item_len: u8 = if self.jump_table.is_empty() { 0 } else { 4 };
+        blob.push(item_len);
+
         blob.extend(encode_var_u32(code_len as u32));
+
+        for &addr in &self.jump_table {
+            blob.extend(addr.to_le_bytes());
+        }
+
         blob.extend(code);
         blob.extend(mask);
 

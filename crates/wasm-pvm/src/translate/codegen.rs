@@ -10,6 +10,14 @@ const FIRST_LOCAL_REG: u8 = 9;
 const MAX_LOCAL_REGS: usize = 4;
 const GLOBAL_MEMORY_BASE: i32 = 0x20000;
 const EXIT_ADDRESS: i32 = -65536;
+/// Register used to store return address for function calls
+const RETURN_ADDR_REG: u8 = 0;
+/// Register used for function return value
+const RETURN_VALUE_REG: u8 = 1;
+/// Base address for spilled locals in memory
+const SPILLED_LOCALS_BASE: i32 = 0x30000;
+/// Bytes allocated per function for spilled locals (64 locals * 8 bytes)
+const SPILLED_LOCALS_PER_FUNC: i32 = 512;
 
 pub struct CompileContext {
     pub num_params: usize,
@@ -17,6 +25,18 @@ pub struct CompileContext {
     pub num_globals: usize,
     pub result_ptr_global: Option<u32>,
     pub result_len_global: Option<u32>,
+    pub is_main: bool,
+    pub has_return: bool,
+    pub function_offsets: Vec<usize>,
+    pub function_signatures: Vec<(usize, bool)>,
+    pub func_idx: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct CallFixup {
+    pub return_addr_instr: usize,
+    pub jump_instr: usize,
+    pub target_func: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +52,7 @@ struct CodeEmitter {
     fixups: Vec<(usize, usize)>,
     control_stack: Vec<ControlFrame>,
     stack: StackMachine,
+    call_fixups: Vec<CallFixup>,
 }
 
 impl CodeEmitter {
@@ -42,6 +63,7 @@ impl CodeEmitter {
             fixups: Vec::new(),
             control_stack: Vec::new(),
             stack: StackMachine::new(),
+            call_fixups: Vec::new(),
         }
     }
 
@@ -79,7 +101,6 @@ impl CodeEmitter {
         });
     }
 
-    #[allow(dead_code)]
     fn emit_branch_eq_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
         let fixup_idx = self.instructions.len();
         self.fixups.push((fixup_idx, label));
@@ -164,9 +185,51 @@ impl CodeEmitter {
             end_label,
         });
     }
+
+    fn emit_call(&mut self, target_func_idx: u32, num_args: usize, has_return: bool) {
+        for i in 0..num_args {
+            let src = self.stack.pop();
+            let dst = FIRST_LOCAL_REG + (num_args - 1 - i) as u8;
+            self.emit(Instruction::AddImm32 { dst, src, value: 0 });
+        }
+
+        let return_addr_instr_idx = self.instructions.len();
+        self.emit(Instruction::LoadImm64 {
+            reg: RETURN_ADDR_REG,
+            value: 0,
+        });
+
+        let jump_instr_idx = self.instructions.len();
+        self.emit(Instruction::Jump { offset: 0 });
+
+        self.emit(Instruction::Fallthrough);
+
+        if has_return {
+            let dst = self.stack.push();
+            self.emit(Instruction::AddImm32 {
+                dst,
+                src: RETURN_VALUE_REG,
+                value: 0,
+            });
+        }
+
+        self.call_fixups.push(CallFixup {
+            return_addr_instr: return_addr_instr_idx,
+            jump_instr: jump_instr_idx,
+            target_func: target_func_idx,
+        });
+    }
 }
 
-pub fn translate_function(body: &FunctionBody, ctx: &CompileContext) -> Result<Vec<Instruction>> {
+pub struct FunctionTranslation {
+    pub instructions: Vec<Instruction>,
+    pub call_fixups: Vec<CallFixup>,
+}
+
+pub fn translate_function(
+    body: &FunctionBody,
+    ctx: &CompileContext,
+) -> Result<FunctionTranslation> {
     let mut emitter = CodeEmitter::new();
 
     let mut total_locals = ctx.num_params;
@@ -187,61 +250,81 @@ pub fn translate_function(body: &FunctionBody, ctx: &CompileContext) -> Result<V
         translate_op(op, &mut emitter, ctx, total_locals)?;
     }
 
-    emit_epilogue(&mut emitter, ctx);
+    emit_epilogue(&mut emitter, ctx, ctx.has_return);
 
     emitter.resolve_fixups()?;
 
-    Ok(emitter.instructions)
+    Ok(FunctionTranslation {
+        instructions: emitter.instructions,
+        call_fixups: emitter.call_fixups,
+    })
 }
 
 fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext) {
-    if ctx.num_params >= 1 {
-        emitter.emit(Instruction::AddImm32 {
-            dst: FIRST_LOCAL_REG,
-            src: ARGS_PTR_REG,
-            value: 0,
-        });
-    }
-    if ctx.num_params >= 2 {
-        emitter.emit(Instruction::AddImm32 {
-            dst: FIRST_LOCAL_REG + 1,
-            src: ARGS_LEN_REG,
-            value: 0,
-        });
+    if ctx.is_main {
+        if ctx.num_params >= 1 {
+            emitter.emit(Instruction::AddImm32 {
+                dst: FIRST_LOCAL_REG,
+                src: ARGS_PTR_REG,
+                value: 0,
+            });
+        }
+        if ctx.num_params >= 2 {
+            emitter.emit(Instruction::AddImm32 {
+                dst: FIRST_LOCAL_REG + 1,
+                src: ARGS_LEN_REG,
+                value: 0,
+            });
+        }
     }
 }
 
-fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext) {
-    if let Some(ptr_idx) = ctx.result_ptr_global {
-        let offset = (ptr_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
-        emitter.emit(Instruction::LoadImm {
-            reg: 2,
-            value: offset,
-        });
-        emitter.emit(Instruction::LoadIndU32 {
-            dst: ARGS_PTR_REG,
-            base: 2,
-            offset: 0,
-        });
-    }
-    if let Some(len_idx) = ctx.result_len_global {
-        let offset = (len_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
-        emitter.emit(Instruction::LoadImm {
-            reg: 2,
-            value: offset,
-        });
-        emitter.emit(Instruction::LoadIndU32 {
-            dst: ARGS_LEN_REG,
-            base: 2,
-            offset: 0,
-        });
-    }
+fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bool) {
+    if ctx.is_main {
+        if let Some(ptr_idx) = ctx.result_ptr_global {
+            let offset = (ptr_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
+            emitter.emit(Instruction::LoadImm {
+                reg: 2,
+                value: offset,
+            });
+            emitter.emit(Instruction::LoadIndU32 {
+                dst: ARGS_PTR_REG,
+                base: 2,
+                offset: 0,
+            });
+        }
+        if let Some(len_idx) = ctx.result_len_global {
+            let offset = (len_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
+            emitter.emit(Instruction::LoadImm {
+                reg: 2,
+                value: offset,
+            });
+            emitter.emit(Instruction::LoadIndU32 {
+                dst: ARGS_LEN_REG,
+                base: 2,
+                offset: 0,
+            });
+        }
 
-    emitter.emit(Instruction::LoadImm {
-        reg: 2,
-        value: EXIT_ADDRESS,
-    });
-    emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
+        emitter.emit(Instruction::LoadImm {
+            reg: 2,
+            value: EXIT_ADDRESS,
+        });
+        emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
+    } else {
+        if has_return {
+            let ret_val = emitter.stack.pop();
+            emitter.emit(Instruction::AddImm32 {
+                dst: RETURN_VALUE_REG,
+                src: ret_val,
+                value: 0,
+            });
+        }
+        emitter.emit(Instruction::JumpInd {
+            reg: RETURN_ADDR_REG,
+            offset: 0,
+        });
+    }
 }
 
 fn local_reg(idx: usize) -> Option<u8> {
@@ -252,6 +335,12 @@ fn local_reg(idx: usize) -> Option<u8> {
     }
 }
 
+fn spilled_local_offset(func_idx: usize, local_idx: usize) -> i32 {
+    SPILLED_LOCALS_BASE
+        + (func_idx as i32) * SPILLED_LOCALS_PER_FUNC
+        + ((local_idx - MAX_LOCAL_REGS) as i32) * 8
+}
+
 fn global_offset(idx: u32) -> i32 {
     GLOBAL_MEMORY_BASE + (idx as i32) * 4
 }
@@ -259,7 +348,7 @@ fn global_offset(idx: u32) -> i32 {
 fn translate_op(
     op: &Operator,
     emitter: &mut CodeEmitter,
-    _ctx: &CompileContext,
+    ctx: &CompileContext,
     _total_locals: usize,
 ) -> Result<()> {
     match op {
@@ -273,9 +362,17 @@ fn translate_op(
                     value: 0,
                 });
             } else {
-                return Err(Error::Unsupported(format!(
-                    "local.get {idx} exceeds register limit"
-                )));
+                let offset = spilled_local_offset(ctx.func_idx, idx);
+                let dst = emitter.stack.push();
+                emitter.emit(Instruction::LoadImm {
+                    reg: dst,
+                    value: offset,
+                });
+                emitter.emit(Instruction::LoadIndU32 {
+                    dst,
+                    base: dst,
+                    offset: 0,
+                });
             }
         }
         Operator::LocalSet { local_index } => {
@@ -288,9 +385,18 @@ fn translate_op(
                     value: 0,
                 });
             } else {
-                return Err(Error::Unsupported(format!(
-                    "local.set {idx} exceeds register limit"
-                )));
+                let offset = spilled_local_offset(ctx.func_idx, idx);
+                let src = emitter.stack.pop();
+                let temp = if src == 2 { 3 } else { 2 };
+                emitter.emit(Instruction::LoadImm {
+                    reg: temp,
+                    value: offset,
+                });
+                emitter.emit(Instruction::StoreIndU32 {
+                    base: temp,
+                    src,
+                    offset: 0,
+                });
             }
         }
         Operator::LocalTee { local_index } => {
@@ -303,9 +409,18 @@ fn translate_op(
                     value: 0,
                 });
             } else {
-                return Err(Error::Unsupported(format!(
-                    "local.tee {idx} exceeds register limit"
-                )));
+                let offset = spilled_local_offset(ctx.func_idx, idx);
+                let src = emitter.stack.peek(0);
+                let temp = if src == 2 { 3 } else { 2 };
+                emitter.emit(Instruction::LoadImm {
+                    reg: temp,
+                    value: offset,
+                });
+                emitter.emit(Instruction::StoreIndU32 {
+                    base: temp,
+                    src,
+                    offset: 0,
+                });
             }
         }
         Operator::GlobalGet { global_index } => {
@@ -353,6 +468,24 @@ fn translate_op(
                 offset: memarg.offset as i32,
             });
         }
+        Operator::I64Load { memarg } => {
+            let addr = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LoadIndU64 {
+                dst,
+                base: addr,
+                offset: memarg.offset as i32,
+            });
+        }
+        Operator::I64Store { memarg } => {
+            let value = emitter.stack.pop();
+            let addr = emitter.stack.pop();
+            emitter.emit(Instruction::StoreIndU64 {
+                base: addr,
+                src: value,
+                offset: memarg.offset as i32,
+            });
+        }
         Operator::I32Const { value } => {
             let reg = emitter.stack.push();
             emitter.emit(Instruction::LoadImm { reg, value: *value });
@@ -386,6 +519,26 @@ fn translate_op(
             let dst = emitter.stack.push();
             emitter.emit(Instruction::Mul32 { dst, src1, src2 });
         }
+        Operator::I32DivU => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::DivU32 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
+        Operator::I32DivS => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::DivS32 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
         Operator::I32RemU => {
             let src2 = emitter.stack.pop();
             let src1 = emitter.stack.pop();
@@ -406,7 +559,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I32Eq => {
+        Operator::I32Eq | Operator::I64Eq => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -421,7 +574,7 @@ fn translate_op(
                 value: 1,
             });
         }
-        Operator::I32Ne => {
+        Operator::I32Ne | Operator::I64Ne => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -439,7 +592,7 @@ fn translate_op(
                 src2: dst,
             });
         }
-        Operator::I32And => {
+        Operator::I32And | Operator::I64And => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -449,7 +602,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32Or => {
+        Operator::I32Or | Operator::I64Or => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -459,7 +612,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32Xor => {
+        Operator::I32Xor | Operator::I64Xor => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -499,14 +652,106 @@ fn translate_op(
                 src2: value,
             });
         }
+        Operator::I64Shl => {
+            let shift = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::ShloL64 {
+                dst,
+                src1: shift,
+                src2: value,
+            });
+        }
+        Operator::I64ShrU => {
+            let shift = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::ShloR64 {
+                dst,
+                src1: shift,
+                src2: value,
+            });
+        }
+        Operator::I64ShrS => {
+            let shift = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::SharR64 {
+                dst,
+                src1: shift,
+                src2: value,
+            });
+        }
         Operator::Nop => {}
+        Operator::Unreachable => {
+            emitter.emit(Instruction::Trap);
+        }
+        Operator::Drop => {
+            let _ = emitter.stack.pop();
+        }
         Operator::I64Add => {
             let src2 = emitter.stack.pop();
             let src1 = emitter.stack.pop();
             let dst = emitter.stack.push();
             emitter.emit(Instruction::Add64 { dst, src1, src2 });
         }
-        Operator::I32GtU => {
+        Operator::I64Sub => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::Sub64 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
+        Operator::I64Mul => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::Mul64 { dst, src1, src2 });
+        }
+        Operator::I64DivU => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::DivU64 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
+        Operator::I64DivS => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::DivS64 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
+        Operator::I64RemU => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::RemU64 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
+        Operator::I64RemS => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::RemS64 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
+        Operator::I32GtU | Operator::I64GtU => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -516,7 +761,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32GtS => {
+        Operator::I32GtS | Operator::I64GtS => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -526,7 +771,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32LtU => {
+        Operator::I32LtU | Operator::I64LtU => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -536,7 +781,7 @@ fn translate_op(
                 src2: a,
             });
         }
-        Operator::I32LtS => {
+        Operator::I32LtS | Operator::I64LtS => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
@@ -546,13 +791,10 @@ fn translate_op(
                 src2: a,
             });
         }
-        Operator::I32GeU => {
+        Operator::I32GeU | Operator::I64GeU => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
-            // a >= b is !(a < b)
-            // PVM SET_LT_U computes: dst = (src2 < src1)
-            // For (a < b): need src2=a, src1=b
             emitter.emit(Instruction::SetLtU {
                 dst,
                 src1: b,
@@ -567,12 +809,28 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32LeU => {
+        Operator::I32GeS | Operator::I64GeS => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
-            // a <= b is !(b < a)
-            // PVM SET_LT_U computes: dst = (src2 < src1)
+            emitter.emit(Instruction::SetLtS {
+                dst,
+                src1: b,
+                src2: a,
+            });
+            let one = emitter.stack.push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.stack.pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        Operator::I32LeU | Operator::I64LeU => {
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
+            let dst = emitter.stack.push();
             emitter.emit(Instruction::SetLtU {
                 dst,
                 src1: a,
@@ -587,13 +845,10 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32LeS => {
+        Operator::I32LeS | Operator::I64LeS => {
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
-            // a <= b is !(b < a)
-            // PVM SET_LT_S computes: dst = (src2 < src1)
-            // So we need src2=b, src1=a to get (b < a)
             emitter.emit(Instruction::SetLtS {
                 dst,
                 src1: a,
@@ -608,7 +863,7 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32Eqz => {
+        Operator::I32Eqz | Operator::I64Eqz => {
             let src = emitter.stack.pop();
             let dst = emitter.stack.push();
             emitter.emit(Instruction::SetLtUImm { dst, src, value: 1 });
@@ -667,6 +922,53 @@ fn translate_op(
                 value: EXIT_ADDRESS,
             });
             emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
+        }
+        Operator::Call { function_index } => {
+            let (num_args, has_return) = ctx
+                .function_signatures
+                .get(*function_index as usize)
+                .copied()
+                .unwrap_or((0, false));
+            emitter.emit_call(*function_index, num_args, has_return);
+        }
+        Operator::MemorySize { mem: 0, .. } => {
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LoadImm {
+                reg: dst,
+                value: 256,
+            });
+        }
+        Operator::MemoryGrow { mem: 0, .. } => {
+            let _ = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LoadImm {
+                reg: dst,
+                value: -1,
+            });
+        }
+        Operator::Select => {
+            let cond = emitter.stack.pop();
+            let val2 = emitter.stack.pop();
+            let val1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            let else_label = emitter.alloc_label();
+            let end_label = emitter.alloc_label();
+            emitter.emit_branch_eq_imm_to_label(cond, 0, else_label);
+            emitter.emit(Instruction::AddImm32 {
+                dst,
+                src: val1,
+                value: 0,
+            });
+            emitter.emit_jump_to_label(end_label);
+            emitter.emit(Instruction::Fallthrough);
+            emitter.define_label(else_label);
+            emitter.emit(Instruction::AddImm32 {
+                dst,
+                src: val2,
+                value: 0,
+            });
+            emitter.emit(Instruction::Fallthrough);
+            emitter.define_label(end_label);
         }
         _ => {
             return Err(Error::Unsupported(format!("{op:?}")));
