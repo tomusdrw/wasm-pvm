@@ -344,6 +344,41 @@ Example STORE_IND_U32: memory[regs[base] + offset] = regs[src]
 
 ---
 
+## Critical Implementation Notes
+
+### PVM ThreeReg Operand Order (IMPORTANT!)
+For ThreeReg instructions (ADD_32, SUB_32, MUL_32, REM_U_32, SET_LT_U, etc.):
+- Encoding: `[opcode, src1<<4 | src2, dst]`
+- PVM decodes: args.a = src1, args.b = src2, args.c = dst
+- **Execution: reg[c] = op(reg[b], reg[a])** ← Note the swap!
+
+This means for `SET_LT_U`, it computes `dst = (src2 < src1)`, NOT `dst = (src1 < src2)`.
+Similarly for `REM_U_32`: `dst = src2 % src1`.
+
+**Fix**: When translating WASM, swap operand order for comparison and division/remainder ops:
+```rust
+// WASM: a < b  →  PVM: SetLtU(dst, b, a) gives dst = (a < b)
+// WASM: a % b  →  PVM: RemU32(dst, b, a) gives dst = (a % b)
+```
+
+### VarU32 Encoding (anan-as format)
+The PVM blob uses a **non-LEB128** variable-length encoding:
+- First byte prefix determines total length (not continuation bits)
+- 0x00-0x7F: 1 byte, value = byte
+- 0x80-0xBF: 2 bytes, value = ((b0 - 0x80) << 8) | b1
+- 0xC0-0xDF: 3 bytes, etc.
+
+**Not** standard LEB128 which uses high bit as continuation flag!
+
+### Basic Block Requirements
+Branch targets must be at basic block boundaries. A basic block starts:
+1. At offset 0 (program start)
+2. After any terminating instruction (FALLTHROUGH, JUMP, TRAP, etc.)
+
+**Fix**: Emit `FALLTHROUGH` before block/if `End` labels to create valid branch targets.
+
+---
+
 ## Open Questions
 
 1. ~~What are PVM's calling conventions?~~ → See SPI format above

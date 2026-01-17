@@ -8,18 +8,17 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 
 **Working features:**
 - Basic WASM parsing and translation
-- Integer arithmetic (`add`, `sub`, `mul`)
-- Control flow (`block`, `loop`, `br`, `br_if`)
-- Comparison operations (`gt_u`, `gt_s`, `lt_u`, `lt_s`, `ge_u`, `le_u`, `eqz`)
+- Integer arithmetic (`add`, `sub`, `mul`, `rem_u`)
+- Control flow (`block`, `loop`, `if/else`, `br`, `br_if`)
+- Comparison operations (`gt_u`, `gt_s`, `lt_u`, `lt_s`, `ge_u`, `le_u`, `le_s`, `eq`, `eqz`)
 - Memory operations (`i32.load`, `i32.store`)
 - Global variables (`global.get`, `global.set`)
-- SPI (Standard Program Interface) output format for JAM
+- JAM output format (`.jam` files)
 
 **Current priority**: AssemblyScript examples and test suite.
 
 **Not yet implemented:**
-- `if/else/end` control flow
-- Division, remainder, bitwise operations
+- Division, bitwise AND/OR operations
 - Function calls (`call`, `call_indirect`)
 - Floating point (will be rejected - PVM has no FP support)
 
@@ -31,14 +30,14 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 cargo build --release
 ```
 
-### Compile WASM to PVM
+### Compile WASM to JAM
 
 ```bash
 # From WAT (WebAssembly Text) file
-cargo run -p wasm-pvm-cli -- compile examples-wat/add-spi.wat -o output.spi
+cargo run -p wasm-pvm-cli -- compile examples-wat/add.jam.wat -o output.jam
 
 # From WASM binary
-cargo run -p wasm-pvm-cli -- compile input.wasm -o output.spi
+cargo run -p wasm-pvm-cli -- compile input.wasm -o output.jam
 ```
 
 ### Run on PVM Interpreter
@@ -50,11 +49,11 @@ Requires Node.js and the anan-as PVM implementation (included as submodule):
 cd vendor/anan-as && npm ci && npm run build && cd ../..
 
 # Run with arguments (little-endian u32s)
-npx tsx scripts/run-spi.ts output.spi --args=05000000070000000
+npx tsx scripts/run-jam.ts output.jam --args=0500000007000000
 
-# Example: add-spi.wat with args 5 and 7 → returns 12
-npx tsx scripts/run-spi.ts output.spi --args=0500000007000000
-# Output: r7=0x20100 (result address), r8=4 (result length)
+# Example: add.jam.wat with args 5 and 7 → returns 12
+npx tsx scripts/run-jam.ts output.jam --args=0500000007000000
+# Output shows: As U32: 12
 ```
 
 ## WASM Program Convention
@@ -98,8 +97,11 @@ Working examples in `examples-wat/`:
 
 | File | Description | Verified |
 |------|-------------|----------|
-| `add-spi.wat` | Add two u32 arguments | 5+7=12 |
-| `factorial-spi.wat` | Compute n! using loop | 5!=120 |
+| `add.jam.wat` | Add two u32 arguments | 5+7=12 |
+| `factorial.jam.wat` | Compute n! using loop | 5!=120 |
+| `fibonacci.jam.wat` | Fibonacci sequence | fib(10)=55 |
+| `gcd.jam.wat` | GCD (Euclidean algorithm) | gcd(48,18)=6 |
+| `is-prime.jam.wat` | Primality test | is_prime(97)=1 |
 
 ## Project Structure
 
@@ -109,11 +111,12 @@ crates/
     src/
       pvm/            # PVM instruction definitions
       translate/      # WASM → PVM translation
-      spi.rs          # SPI format encoder
+      spi.rs          # JAM format encoder
   wasm-pvm-cli/       # Command-line tool
-examples-wat/         # Example WASM programs (WAT format)
+examples-wat/         # Example WASM programs (*.jam.wat)
 scripts/
-  run-spi.ts          # PVM test runner
+  run-jam.ts          # PVM test runner
+  test-all.ts         # Automated test suite
 vendor/
   anan-as/            # PVM reference interpreter (submodule)
 ```

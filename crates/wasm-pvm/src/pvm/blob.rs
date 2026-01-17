@@ -61,20 +61,39 @@ fn pack_mask(bits: &[bool]) -> Vec<u8> {
     packed
 }
 
-fn encode_var_u32(mut value: u32) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    loop {
-        let mut byte = (value & 0x7F) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-        }
-        bytes.push(byte);
-        if value == 0 {
-            break;
-        }
+fn encode_var_u32(value: u32) -> Vec<u8> {
+    if value == 0 {
+        return vec![0];
     }
-    bytes
+
+    let value = u64::from(value);
+    let max_encoded: u64 = 1 << (7 * 8);
+
+    if value >= max_encoded {
+        let mut dest = vec![0xff];
+        dest.extend(&value.to_le_bytes());
+        return dest;
+    }
+
+    let mut min_encoded = max_encoded >> 7;
+    for l in (0..=7).rev() {
+        if value >= min_encoded {
+            let mut dest = vec![0u8; l + 1];
+            let max_val = 1u64 << (8 * l);
+            let first_byte = (1u64 << 8) - (1u64 << (8 - l)) + value / max_val;
+            dest[0] = first_byte as u8;
+
+            let mut rest = value % max_val;
+            for item in dest.iter_mut().skip(1) {
+                *item = rest as u8;
+                rest >>= 8;
+            }
+            return dest;
+        }
+        min_encoded >>= 7;
+    }
+
+    vec![value as u8]
 }
 
 #[cfg(test)]
@@ -86,8 +105,11 @@ mod tests {
         assert_eq!(encode_var_u32(0), vec![0]);
         assert_eq!(encode_var_u32(1), vec![1]);
         assert_eq!(encode_var_u32(127), vec![127]);
-        assert_eq!(encode_var_u32(128), vec![0x80, 0x01]);
-        assert_eq!(encode_var_u32(300), vec![0xAC, 0x02]);
+        assert_eq!(encode_var_u32(128), vec![0x80, 0x80]);
+        assert_eq!(encode_var_u32(145), vec![0x80, 0x91]);
+        assert_eq!(encode_var_u32(300), vec![0x81, 0x2c]);
+        assert_eq!(encode_var_u32(16383), vec![0xbf, 0xff]);
+        assert_eq!(encode_var_u32(16384), vec![0xc0, 0x00, 0x40]);
     }
 
     #[test]

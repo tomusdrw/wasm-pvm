@@ -1,0 +1,16 @@
+{
+  "name": "wasm-pvm-as-examples",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AssemblyScript examples for WASM-PVM recompiler",
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:add && npm run build:factorial",
+    "build:add": "asc assembly/add.ts -o build/add.wasm -t build/add.wat --runtime stub --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=",
+    "build:factorial": "asc assembly/factorial.ts -o build/factorial.wasm -t build/factorial.wat --runtime stub --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=",
+    "clean": "rm -rf build"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.32"
+  }
+}

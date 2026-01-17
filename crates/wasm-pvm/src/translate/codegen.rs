@@ -23,6 +23,7 @@ pub struct CompileContext {
 enum ControlFrame {
     Block { end_label: usize },
     Loop { start_label: usize },
+    If { else_label: usize, end_label: usize },
 }
 
 struct CodeEmitter {
@@ -138,12 +139,30 @@ impl CodeEmitter {
         let idx = self.control_stack.len().checked_sub(1 + depth as usize);
         let frame = idx.and_then(|i| self.control_stack.get(i));
         match frame {
-            Some(ControlFrame::Block { end_label }) => Ok(*end_label),
+            Some(ControlFrame::Block { end_label } | ControlFrame::If { end_label, .. }) => {
+                Ok(*end_label)
+            }
             Some(ControlFrame::Loop { start_label }) => Ok(*start_label),
             None => Err(Error::Unsupported(format!(
                 "branch depth {depth} out of range"
             ))),
         }
+    }
+
+    fn push_if(&mut self, cond_reg: u8) {
+        let else_label = self.alloc_label();
+        let end_label = self.alloc_label();
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, else_label));
+        self.emit(Instruction::BranchEqImm {
+            reg: cond_reg,
+            value: 0,
+            offset: 0,
+        });
+        self.control_stack.push(ControlFrame::If {
+            else_label,
+            end_label,
+        });
     }
 }
 
@@ -348,6 +367,36 @@ fn translate_op(
             let dst = emitter.stack.push();
             emitter.emit(Instruction::Mul32 { dst, src1, src2 });
         }
+        Operator::I32RemU => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            // PVM ThreeReg: dst = reg[src2] % reg[src1] (swapped operand order)
+            // WASM wants: dst = src1 % src2
+            // So pass src2 as src1 and src1 as src2 to get: dst = src1 % src2
+            emitter.emit(Instruction::RemU32 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
+        Operator::I32Eq => {
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            // a == b iff (a XOR b) == 0
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: a,
+                src2: b,
+            });
+            emitter.emit(Instruction::SetLtUImm {
+                dst,
+                src: dst,
+                value: 1,
+            });
+        }
+        Operator::Nop => {}
         Operator::I64Add => {
             let src2 = emitter.stack.pop();
             let src1 = emitter.stack.pop();
@@ -395,10 +444,17 @@ fn translate_op(
             });
         }
         Operator::I32GeU => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
             let dst = emitter.stack.push();
-            emitter.emit(Instruction::SetLtU { dst, src1, src2 });
+            // a >= b is !(a < b)
+            // PVM SET_LT_U computes: dst = (src2 < src1)
+            // For (a < b): need src2=a, src1=b
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: b,
+                src2: a,
+            });
             let one = emitter.stack.push();
             emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
             let _ = emitter.stack.pop();
@@ -409,13 +465,36 @@ fn translate_op(
             });
         }
         Operator::I32LeU => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
             let dst = emitter.stack.push();
+            // a <= b is !(b < a)
+            // PVM SET_LT_U computes: dst = (src2 < src1)
             emitter.emit(Instruction::SetLtU {
                 dst,
-                src1: src2,
-                src2: src1,
+                src1: a,
+                src2: b,
+            });
+            let one = emitter.stack.push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.stack.pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        Operator::I32LeS => {
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            // a <= b is !(b < a)
+            // PVM SET_LT_S computes: dst = (src2 < src1)
+            // So we need src2=b, src1=a to get (b < a)
+            emitter.emit(Instruction::SetLtS {
+                dst,
+                src1: a,
+                src2: b,
             });
             let one = emitter.stack.push();
             emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
@@ -438,11 +517,38 @@ fn translate_op(
             emitter.emit(Instruction::Fallthrough);
             emitter.push_loop();
         }
-        Operator::End => {
-            if let Some(ControlFrame::Block { end_label }) = emitter.pop_control() {
-                emitter.define_label(end_label);
+        Operator::If { blockty: _ } => {
+            let cond = emitter.stack.pop();
+            emitter.push_if(cond);
+        }
+        Operator::Else => {
+            if let Some(ControlFrame::If {
+                else_label,
+                end_label,
+            }) = emitter.pop_control()
+            {
+                emitter.emit_jump_to_label(end_label);
+                emitter.define_label(else_label);
+                emitter
+                    .control_stack
+                    .push(ControlFrame::Block { end_label });
             }
         }
+        Operator::End => match emitter.pop_control() {
+            Some(ControlFrame::Block { end_label }) => {
+                emitter.emit(Instruction::Fallthrough);
+                emitter.define_label(end_label);
+            }
+            Some(ControlFrame::If {
+                else_label,
+                end_label,
+            }) => {
+                emitter.emit(Instruction::Fallthrough);
+                emitter.define_label(else_label);
+                emitter.define_label(end_label);
+            }
+            _ => {}
+        },
         Operator::Br { relative_depth } => {
             let target = emitter.get_branch_target(*relative_depth)?;
             emitter.emit_jump_to_label(target);

@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
- * Usage: npx tsx scripts/run-spi.ts <spi-file> [--pc=0] [--args=hex] [--gas=1000000] [--verbose]
- * Example: npx tsx scripts/run-spi.ts output.spi --args=0102030405 --gas=100000
+ * Usage: npx tsx scripts/run-jam.ts <jam-file> [--pc=0] [--args=hex] [--gas=1000000] [--verbose]
+ * Example: npx tsx scripts/run-jam.ts output.jam --args=0102030405 --gas=100000
  */
 
 import fs from 'node:fs';
@@ -90,15 +90,16 @@ async function main() {
     console.log('=== Return Value ===');
     console.log(`  Address: 0x${resultAddr.toString(16)}`);
     console.log(`  Length: ${resultLen} bytes`);
-    const resultBytes = ananAs.getMemory(resultAddr, resultLen);
+    
+    const resultBytes = readMemoryFromChunks(output.memory || [], resultAddr, resultLen);
     if (resultBytes && resultBytes.length > 0) {
       const hexStr = Array.from(resultBytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
       console.log(`  Bytes: ${hexStr}`);
       if (resultLen === 4) {
-        const value = new DataView(resultBytes.buffer).getUint32(0, true);
+        const value = new DataView(new Uint8Array(resultBytes).buffer).getUint32(0, true);
         console.log(`  As U32: ${value}`);
       } else if (resultLen === 8) {
-        const value = new DataView(resultBytes.buffer).getBigUint64(0, true);
+        const value = new DataView(new Uint8Array(resultBytes).buffer).getBigUint64(0, true);
         console.log(`  As U64: ${value}`);
       }
     }
@@ -126,6 +127,33 @@ function statusToString(status: number): string {
     4: 'OOG (out of gas)',
   };
   return names[status] ?? `UNKNOWN(${status})`;
+}
+
+interface MemoryChunk {
+  address: number;
+  data: number[];
+}
+
+function readMemoryFromChunks(chunks: MemoryChunk[], address: number, length: number): number[] | null {
+  const result: number[] = new Array(length).fill(0);
+  let bytesRead = 0;
+  
+  for (const chunk of chunks) {
+    const chunkStart = chunk.address;
+    const chunkEnd = chunkStart + chunk.data.length;
+    
+    const overlapStart = Math.max(address, chunkStart);
+    const overlapEnd = Math.min(address + length, chunkEnd);
+    
+    if (overlapStart < overlapEnd) {
+      for (let i = overlapStart; i < overlapEnd; i++) {
+        result[i - address] = chunk.data[i - chunkStart];
+        bytesRead++;
+      }
+    }
+  }
+  
+  return bytesRead > 0 ? result : null;
 }
 
 main().catch(err => {

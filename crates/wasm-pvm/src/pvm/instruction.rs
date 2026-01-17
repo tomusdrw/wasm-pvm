@@ -9,6 +9,7 @@ pub enum Instruction {
     Add32 { dst: u8, src1: u8, src2: u8 },
     Sub32 { dst: u8, src1: u8, src2: u8 },
     Mul32 { dst: u8, src1: u8, src2: u8 },
+    RemU32 { dst: u8, src1: u8, src2: u8 },
     Add64 { dst: u8, src1: u8, src2: u8 },
     AddImm32 { dst: u8, src: u8, value: i32 },
     Jump { offset: i32 },
@@ -45,6 +46,9 @@ impl Instruction {
             Self::Add32 { dst, src1, src2 } => encode_three_reg(Opcode::Add32, *dst, *src1, *src2),
             Self::Sub32 { dst, src1, src2 } => encode_three_reg(Opcode::Sub32, *dst, *src1, *src2),
             Self::Mul32 { dst, src1, src2 } => encode_three_reg(Opcode::Mul32, *dst, *src1, *src2),
+            Self::RemU32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::RemU32, *dst, *src1, *src2)
+            }
             Self::Add64 { dst, src1, src2 } => encode_three_reg(Opcode::Add64, *dst, *src1, *src2),
             Self::SetLtU { dst, src1, src2 } => {
                 encode_three_reg(Opcode::SetLtU, *dst, *src1, *src2)
