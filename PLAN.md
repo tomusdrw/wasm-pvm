@@ -23,6 +23,180 @@ Build a **WASM (WebAssembly) to PVM (Polka Virtual Machine)** recompiler in Rust
 
 ---
 
+## SPI Entrypoint Convention
+
+All WASM programs targeting PVM/JAM must follow this convention:
+
+### Function Signature
+```wat
+(func (export "main") (param $args_ptr i32) (param $args_len i32)
+  ;; args_ptr = r7 (PVM address of SPI args, e.g., 0xFEFF0000)
+  ;; args_len = r8 (length of args in bytes)
+  ...
+)
+
+;; Optional second entry point for JAM (PC=5)
+(func (export "main2") (param $args_ptr i32) (param $args_len i32)
+  ...
+)
+```
+
+### Return Value Convention
+```wat
+(global $result_ptr (mut i32) (i32.const 0))
+(global $result_len (mut i32) (i32.const 0))
+
+;; In function body:
+(global.set $result_ptr (i32.const 0x20100))  ;; PVM address of result
+(global.set $result_len (i32.const 4))         ;; Length in bytes
+```
+
+### Memory Layout
+```
+0x00010000: RO data segment
+0x00020000: Globals storage (0x20000 + idx*4)
+0x00020100: User heap starts here
+0xFEFE0000: Stack segment end
+0xFEFF0000: Args segment (read via args_ptr)
+0xFFFF0000: EXIT address (HALT)
+```
+
+---
+
+## Current Progress
+
+### ✅ Completed
+
+#### Phase 1: Foundation
+- [x] Initialize Rust project with Cargo workspace
+- [x] Set up directory structure (crates/wasm-pvm, crates/wasm-pvm-cli)
+- [x] Add dependencies: wasmparser, thiserror, anyhow, clap
+- [x] Define `Opcode` enum with essential opcodes
+- [x] Define `Instruction` enum with operands
+- [x] Implement instruction encoding to bytes
+- [x] Implement opcode bitmask generation
+- [x] Create basic CLI structure
+- [x] Set up test infrastructure (scripts/run-spi.ts with anan-as)
+
+#### Phase 2: Simple Functions
+- [x] Parse WASM module using wasmparser
+- [x] Extract function types and bodies
+- [x] Translate simple arithmetic (i32.add, i64.add)
+- [x] Translate i32.const, i64.const
+- [x] Handle local variables (local.get, local.set)
+- [x] Implement operand stack → register mapping (r2-r6)
+- [x] SPI entrypoint convention (args_ptr/args_len params)
+- [x] Return value via globals ($result_ptr, $result_len)
+- [x] Hardcoded EXIT address (0xFFFF0000)
+
+#### Memory Operations
+- [x] i32.load - direct PVM memory access
+- [x] i32.store - direct PVM memory access
+- [x] global.get / global.set - stored at 0x20000 + idx*4
+
+#### Control Flow (Phase 3 - DONE)
+- [x] Translate `block` (forward branch target)
+- [x] Translate `loop` (backward branch target)
+- [x] Translate `br` (unconditional branch)
+- [x] Translate `br_if` (conditional branch)
+- [x] Translate `return`
+- [ ] Translate `if/else/end` (not yet implemented)
+- [ ] Handle block result values (not yet implemented)
+
+#### Integer Operations (Partial)
+- [x] i32.add, i64.add
+- [x] i32.sub
+- [x] i32.mul
+- [x] i32.gt_u, i32.gt_s
+- [x] i32.lt_u, i32.lt_s
+- [x] i32.ge_u
+- [x] i32.le_u
+- [x] i32.eqz
+
+### ✅ Examples Working (SPI Convention)
+- [x] `add-spi.wat` - reads two i32 args, returns sum (verified: 5+7=12)
+- [x] `factorial-spi.wat` - computes n! using loop (verified: 5!=120)
+
+### 📁 Legacy Examples (To Be Migrated)
+These will be migrated to SPI convention and deduplicated:
+- `add.wat` - migrate to SPI (may duplicate add-spi.wat)
+- `add-args.wat` - migrate to SPI (may duplicate add-spi.wat)
+- `factorial.wat` - migrate to SPI (may duplicate factorial-spi.wat)
+- `fibonacci.wat` - migrate to SPI
+- `gcd.wat` - migrate to SPI
+- `is-prime.wat` - migrate to SPI
+- `nth-prime.wat` - migrate to SPI
+
+---
+
+## Next Steps
+
+### Phase 3: AssemblyScript Examples (HIGH PRIORITY)
+**Goal**: Enable writing JAM programs in TypeScript-like AssemblyScript.
+
+- [ ] Set up AssemblyScript project in `examples-as/`
+  - [ ] Initialize npm/package.json
+  - [ ] Configure AS compiler (no runtime, raw WASM export)
+  - [ ] Create build script
+- [ ] Create `add.ts` - simple addition (read args, return sum)
+- [ ] Create `factorial.ts` - iterative factorial
+- [ ] Verify AS output compiles through wasm-pvm
+- [ ] Document AssemblyScript → JAM workflow
+- [ ] Add any missing WASM ops needed by AS output
+
+### Phase 4: Example Migration & Test Suite
+**Goal**: All examples use SPI convention, automated testing on every change.
+
+#### 4.1: Migrate Legacy Examples
+- [ ] Migrate `add.wat` → SPI (delete if same as add-spi.wat)
+- [ ] Migrate `add-args.wat` → SPI (delete if same as add-spi.wat)
+- [ ] Migrate `factorial.wat` → SPI (delete if same as factorial-spi.wat)
+- [ ] Migrate `fibonacci.wat` → `fibonacci-spi.wat`
+- [ ] Migrate `gcd.wat` → `gcd-spi.wat`
+- [ ] Migrate `is-prime.wat` → `is-prime-spi.wat`
+- [ ] Migrate `nth-prime.wat` → `nth-prime-spi.wat`
+
+#### 4.2: Automated Test Suite
+- [ ] Create `scripts/test-all.ts` - compile and run all examples
+- [ ] Define expected outputs for each example
+- [ ] Exit with error if any test fails
+- [ ] Add `npm test` or `cargo test` integration
+
+#### 4.3: CI/CD
+- [ ] Add GitHub Actions workflow (`.github/workflows/ci.yml`)
+  - [ ] Run `cargo test`
+  - [ ] Run `cargo clippy`
+  - [ ] Run example test suite
+  - [ ] Run on PRs and pushes to main
+
+### Phase 5: Complete Control Flow
+- [ ] Translate `if/else/end`
+- [ ] Handle block result values (blocks that produce values)
+- [ ] Nested control flow testing
+
+### Phase 6: Remaining Integer Operations
+- [ ] i32.div_u, i32.div_s
+- [ ] i32.rem_u, i32.rem_s
+- [ ] i32.and, i32.or, i32.xor
+- [ ] i32.shl, i32.shr_u, i32.shr_s
+- [ ] i32.eq, i32.ne
+- [ ] i32.le_s, i32.ge_s (signed variants)
+- [ ] Corresponding i64 operations
+
+### Phase 8: Functions & Calls
+- [ ] Translate `call` instruction
+- [ ] Handle function prologues/epilogues
+- [ ] Translate `call_indirect`
+- [ ] Build function table
+
+### Phase 9: Complete WASM MVP
+- [ ] unreachable, nop, select, drop
+- [ ] memory.size, memory.grow (SBRK)
+- [ ] All remaining i32/i64 operations
+- [ ] Multiple entry points (main at PC=0, main2 at PC=5)
+
+---
+
 ## Architecture Overview
 
 ```
@@ -91,186 +265,6 @@ Build a **WASM (WebAssembly) to PVM (Polka Virtual Machine)** recompiler in Rust
 
 ---
 
-## Phase 1: Foundation (Week 1-2)
-
-### 1.1 Project Setup
-- [ ] Initialize Rust project with Cargo workspace
-- [ ] Set up directory structure:
-  ```
-  wasm-pvm/
-  ├── Cargo.toml (workspace)
-  ├── crates/
-  │   ├── wasm-pvm/          # Main library
-  │   ├── wasm-pvm-cli/      # CLI tool
-  │   └── pvm-asm/           # PVM assembler/disassembler
-  ├── tests/
-  │   ├── wat/               # WAT test files
-  │   └── integration/       # Integration tests
-  └── docs/
-  ```
-- [ ] Add dependencies: wasmparser, thiserror, etc.
-- [ ] Set up CI (GitHub Actions) with clippy, rustfmt, tests
-
-### 1.2 PVM Instruction Definitions
-- [ ] Define `PvmOpcode` enum with all opcodes from Gray Paper
-- [ ] Define `PvmInstruction` struct with operands
-- [ ] Implement instruction encoding to bytes
-- [ ] Implement opcode bitmask generation
-- [ ] Write PVM assembler (text → binary)
-- [ ] Write PVM disassembler (binary → text)
-
-### 1.3 Basic Infrastructure
-- [ ] Define error types
-- [ ] Set up logging/tracing
-- [ ] Create basic CLI structure
-
-**Deliverable:** Can assemble/disassemble PVM programs
-
----
-
-## Phase 2: Simple Functions (Week 3-4)
-
-### 2.1 WASM Parsing
-- [ ] Parse WASM module using wasmparser
-- [ ] Extract function types and bodies
-- [ ] Handle imports/exports metadata
-
-### 2.2 Basic Translation
-- [ ] Translate simple arithmetic (i32.add, i32.sub, i32.mul, etc.)
-- [ ] Handle local variables (local.get, local.set, local.tee)
-- [ ] Implement operand stack → register mapping
-- [ ] Handle function return values
-
-### 2.3 Register Allocation (Simple)
-- [ ] Define register usage convention (SPI-compatible):
-  - r0: Reserved (SPI convention)
-  - r1: Stack pointer (SPI convention)
-  - r2-r6: Operand stack / temporaries (5 regs)
-  - r7-r8: Reserved (args ptr/len in SPI)
-  - r9-r12: Local variables / callee-saved (4 regs)
-- [ ] Implement stack spilling when registers exhausted
-- [ ] Track register liveness
-
-**Deliverable:** Can compile `add.wat` example
-
----
-
-## Phase 3: Control Flow (Week 5-6)
-
-### 3.1 Basic Blocks
-- [ ] Identify basic blocks in WASM function
-- [ ] Build control flow graph
-- [ ] Assign addresses to basic blocks
-
-### 3.2 Structured Control Flow
-- [ ] Translate `block` (forward branch target)
-- [ ] Translate `loop` (backward branch target)
-- [ ] Translate `br` (unconditional branch)
-- [ ] Translate `br_if` (conditional branch)
-- [ ] Translate `if/else/end`
-- [ ] Handle block result values
-
-### 3.3 Advanced Branches
-- [ ] Translate `br_table` (switch statement)
-- [ ] Handle nested blocks
-- [ ] Multi-value returns from blocks
-
-**Deliverable:** Can compile `factorial.wat`, `fibonacci.wat`, `gcd.wat`
-
----
-
-## Phase 4: Functions & Calls (Week 7-8)
-
-### 4.1 Direct Calls
-- [ ] Define calling convention (SPI-compatible):
-  - Arguments in registers r2-r6 (first 5 args)
-  - Additional arguments on stack (via r1)
-  - Return value in r2
-  - Callee-saved: r9-r12
-- [ ] Translate `call` instruction
-- [ ] Handle function prologues/epilogues
-- [ ] Manage call stack
-
-### 4.2 Indirect Calls
-- [ ] Build function table
-- [ ] Translate `call_indirect`
-- [ ] Table bounds checking
-
-### 4.3 Return Handling
-- [ ] Translate `return` instruction
-- [ ] Handle early returns from nested blocks
-
-**Deliverable:** Can compile `nth-prime.wat` (uses function calls)
-
----
-
-## Phase 5: Memory Operations (Week 9-10)
-
-### 5.1 Memory Layout
-- [ ] Define memory base address (>= 0x10000 for PVM safety)
-- [ ] Handle data segments initialization
-- [ ] Translate memory addresses
-
-### 5.2 Load/Store
-- [ ] Translate i32.load, i32.store
-- [ ] Translate i64.load, i64.store
-- [ ] Handle alignment
-- [ ] Handle load/store with offset
-
-### 5.3 Memory Management
-- [ ] Translate memory.size
-- [ ] Translate memory.grow (via host call?)
-- [ ] Handle out-of-bounds access
-
-**Deliverable:** Can compile programs using linear memory
-
----
-
-## Phase 6: Complete WASM MVP (Week 11-12)
-
-### 6.1 Remaining Integer Operations
-- [ ] All i32 operations (clz, ctz, popcnt, rotl, rotr, etc.)
-- [ ] All i64 operations
-- [ ] Sign extension operations
-- [ ] Comparison operations
-
-### 6.2 Globals
-- [ ] Translate global.get, global.set
-- [ ] Handle mutable vs immutable globals
-- [ ] Initialize globals from data
-
-### 6.3 Remaining Features
-- [ ] unreachable instruction
-- [ ] nop instruction
-- [ ] select instruction
-- [ ] drop instruction
-
-**Deliverable:** Full WASM MVP support (except floats)
-
----
-
-## Phase 7: Testing & Polish (Week 13-14)
-
-### 7.1 Test Suite
-- [ ] Unit tests for each instruction
-- [ ] Integration tests with WAT files
-- [ ] Fuzzing with arbitrary WASM
-- [ ] Comparison testing with reference interpreter
-
-### 7.2 Tooling
-- [ ] CLI improvements (verbose output, debug info)
-- [ ] Error messages with source locations
-- [ ] Documentation
-
-### 7.3 Optimization (if time permits)
-- [ ] Peephole optimizations
-- [ ] Dead code elimination
-- [ ] Better register allocation
-
-**Deliverable:** Production-ready recompiler
-
----
-
 ## Testing Strategy
 
 ### Unit Tests
@@ -280,17 +274,13 @@ Build a **WASM (WebAssembly) to PVM (Polka Virtual Machine)** recompiler in Rust
 
 ### Integration Tests
 - Compile WAT files in `examples-wat/`
-- Execute on PVM interpreter
-- Compare output with WASM interpreter
+- Compile AssemblyScript files in `examples-as/`
+- Execute on PVM interpreter (anan-as)
+- Compare output with expected values
 
-### Conformance Tests
-- WebAssembly spec test suite (subset)
-- Custom edge case tests
-
-### Test Infrastructure Needed
-- PVM interpreter (for running generated code)
-- WASM interpreter (for reference outputs)
-- Test harness comparing both
+### Test Infrastructure
+- `scripts/run-spi.ts` - Run SPI binaries on anan-as interpreter
+- `vendor/anan-as` - PVM reference implementation (submodule)
 
 ---
 
@@ -299,17 +289,11 @@ Build a **WASM (WebAssembly) to PVM (Polka Virtual Machine)** recompiler in Rust
 ### Required Crates
 - `wasmparser` - Parse WASM binary format
 - `thiserror` - Error handling
-- `log` / `tracing` - Logging
+- `anyhow` - Error context for CLI
 - `clap` - CLI argument parsing
 
 ### Development Crates
 - `wat` - Parse WAT (text format) for tests
-- `pretty_assertions` - Better test diffs
-- `proptest` / `arbitrary` - Property-based testing
-
-### Optional Crates
-- `walrus` - WASM transformation library (alternative to wasmparser)
-- `cranelift` - Could use for IR (might be overkill)
 
 ---
 
@@ -327,7 +311,7 @@ Build a **WASM (WebAssembly) to PVM (Polka Virtual Machine)** recompiler in Rust
 
 ## Open Questions to Resolve
 
-1. ~~**PVM Calling Convention**~~: ✅ Resolved - See SPI format in LEARNINGS.md
+1. ~~**PVM Calling Convention**~~: ✅ Resolved - See SPI convention above
 2. **Host Calls**: How to handle WASM imports? Map to PVM ecalli?
 3. **Memory Growth**: SBRK instruction available (opcode 101)
 4. ~~**Floating Point**~~: ✅ Resolved - PVM has no FP, reject WASM with floats
@@ -339,7 +323,8 @@ Build a **WASM (WebAssembly) to PVM (Polka Virtual Machine)** recompiler in Rust
 
 ### Minimum Viable Product
 - All example WAT files compile and execute correctly
-- CLI tool works: `wasm-pvm compile input.wasm -o output.pvm`
+- AssemblyScript examples compile and execute correctly
+- CLI tool works: `wasm-pvm compile input.wasm -o output.spi`
 - Basic error handling and messages
 
 ### Full Release
@@ -358,3 +343,4 @@ Build a **WASM (WebAssembly) to PVM (Polka Virtual Machine)** recompiler in Rust
 - [Ananas PVM](./vendor/anan-as) - PVM reference implementation (submodule)
 - [Zink Compiler](./vendor/zink) - WASM→EVM compiler for architecture inspiration (submodule)
 - [WebAssembly Spec](https://webassembly.github.io/spec/)
+- [AssemblyScript](https://www.assemblyscript.org/) - TypeScript-like language to WASM

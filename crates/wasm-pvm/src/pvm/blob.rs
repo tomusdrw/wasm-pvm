@@ -39,8 +39,7 @@ impl ProgramBlob {
                 mask_bits.push(i == 0);
             }
 
-            if instr.is_terminating() && start_offset + encoded.len() < code.len() {
-            }
+            if instr.is_terminating() && start_offset + encoded.len() < code.len() {}
         }
 
         let mask = pack_mask(&mask_bits);

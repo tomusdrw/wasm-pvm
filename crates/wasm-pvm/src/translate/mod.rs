@@ -2,12 +2,16 @@ mod codegen;
 mod stack;
 
 use crate::{Error, Result, SpiProgram};
-use wasmparser::{FunctionBody, Parser, Payload};
+use wasmparser::{FunctionBody, GlobalType, Parser, Payload};
+
+pub use codegen::CompileContext;
 
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut functions = Vec::new();
     let mut func_types: Vec<wasmparser::FuncType> = Vec::new();
     let mut function_type_indices = Vec::new();
+    let mut globals: Vec<GlobalType> = Vec::new();
+    let mut global_names: Vec<Option<String>> = Vec::new();
 
     for payload in Parser::new(0).parse_all(wasm) {
         match payload? {
@@ -27,6 +31,13 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                     function_type_indices.push(type_idx?);
                 }
             }
+            Payload::GlobalSection(reader) => {
+                for global in reader {
+                    let g = global?;
+                    globals.push(g.ty);
+                    global_names.push(None);
+                }
+            }
             Payload::CodeSectionEntry(body) => {
                 functions.push(body);
             }
@@ -42,14 +53,46 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let type_idx = function_type_indices.first().copied().unwrap_or(0);
     let func_type = func_types.get(type_idx as usize);
 
-    let result_type = func_type.and_then(|f| f.results().first().copied());
+    let num_params = func_type.map_or(0, |f| f.params().len());
 
-    let instructions = codegen::translate_function(func, result_type)?;
+    let mut result_ptr_global = None;
+    let mut result_len_global = None;
+
+    for (i, name) in global_names.iter().enumerate() {
+        if let Some(n) = name {
+            if n == "result_ptr" || n == "$result_ptr" {
+                result_ptr_global = Some(i as u32);
+            } else if n == "result_len" || n == "$result_len" {
+                result_len_global = Some(i as u32);
+            }
+        }
+    }
+
+    if result_ptr_global.is_none()
+        && result_len_global.is_none()
+        && globals.len() >= 2
+        && globals[0].mutable
+        && globals[1].mutable
+    {
+        result_ptr_global = Some(0);
+        result_len_global = Some(1);
+    }
+
+    let ctx = CompileContext {
+        num_params,
+        num_locals: 0,
+        num_globals: globals.len(),
+        result_ptr_global,
+        result_len_global,
+    };
+
+    let instructions = codegen::translate_function(func, &ctx)?;
     let blob = crate::pvm::ProgramBlob::new(instructions);
 
     Ok(SpiProgram::new(blob))
 }
 
+#[allow(dead_code)]
 fn check_for_floats(body: &FunctionBody) -> Result<()> {
     let mut reader = body.get_operators_reader()?;
     while !reader.eof() {
@@ -61,8 +104,15 @@ fn check_for_floats(body: &FunctionBody) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn is_float_op(op: &wasmparser::Operator) -> bool {
-    use wasmparser::Operator::*;
+    use wasmparser::Operator::{
+        F32Abs, F32Add, F32Ceil, F32Const, F32Copysign, F32Div, F32Eq, F32Floor, F32Ge, F32Gt,
+        F32Le, F32Load, F32Lt, F32Max, F32Min, F32Mul, F32Ne, F32Nearest, F32Neg, F32Sqrt,
+        F32Store, F32Sub, F32Trunc, F64Abs, F64Add, F64Ceil, F64Const, F64Copysign, F64Div, F64Eq,
+        F64Floor, F64Ge, F64Gt, F64Le, F64Load, F64Lt, F64Max, F64Min, F64Mul, F64Ne, F64Nearest,
+        F64Neg, F64Sqrt, F64Store, F64Sub, F64Trunc,
+    };
     matches!(
         op,
         F32Load { .. }

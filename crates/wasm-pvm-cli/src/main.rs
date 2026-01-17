@@ -51,10 +51,10 @@ fn main() -> Result<()> {
 fn read_wasm(path: &PathBuf) -> Result<Vec<u8>> {
     let contents = fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
 
-    if path.extension().map_or(false, |e| e == "wat") {
+    if path.extension().is_some_and(|e| e == "wat") {
         wat::parse_bytes(&contents)
-            .map(|cow| cow.into_owned())
-            .map_err(|e| anyhow::anyhow!("WAT parse error: {}", e))
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|e| anyhow::anyhow!("WAT parse error: {e}"))
     } else {
         Ok(contents)
     }

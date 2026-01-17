@@ -82,6 +82,28 @@ async function main() {
     console.log(`  r${i}: ${val} (0x${val.toString(16)})`);
   }
   
+  // Show return value if present (r7=address, r8=length)
+  const resultAddr = Number(output.registers[7]);
+  const resultLen = Number(output.registers[8] & 0xffffffffn);
+  if (output.status === 0 && resultLen > 0 && resultLen <= 1024) {
+    console.log();
+    console.log('=== Return Value ===');
+    console.log(`  Address: 0x${resultAddr.toString(16)}`);
+    console.log(`  Length: ${resultLen} bytes`);
+    const resultBytes = ananAs.getMemory(resultAddr, resultLen);
+    if (resultBytes && resultBytes.length > 0) {
+      const hexStr = Array.from(resultBytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+      console.log(`  Bytes: ${hexStr}`);
+      if (resultLen === 4) {
+        const value = new DataView(resultBytes.buffer).getUint32(0, true);
+        console.log(`  As U32: ${value}`);
+      } else if (resultLen === 8) {
+        const value = new DataView(resultBytes.buffer).getBigUint64(0, true);
+        console.log(`  As U64: ${value}`);
+      }
+    }
+  }
+  
   process.exit(output.status === 0 ? 0 : 1);
 }
 

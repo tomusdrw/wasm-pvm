@@ -109,12 +109,46 @@ Source: `vendor/anan-as/assembly/spi.ts`
 **Initial Register State (SPI):**
 | Register | Value | Purpose |
 |----------|-------|---------|
-| r0 | 0xFFFF_0000 | Reserved |
+| r0 | 0xFFFF_0000 | EXIT address - jump here to HALT |
 | r1 | STACK_SEGMENT_END (0xFEFE_0000) | Stack pointer |
-| r2-r6 | 0 | Available |
-| r7 | ARGS_SEGMENT_START (0xFEFF_0000) | Arguments pointer |
-| r8 | args.length | Arguments length |
-| r9-r12 | 0 | Available |
+| r2-r6 | 0 | Available for computation |
+| r7 | ARGS_SEGMENT_START (0xFEFF_0000) | Arguments pointer (IN) / Result address (OUT) |
+| r8 | args.length | Arguments length (IN) / Result length (OUT) |
+| r9-r12 | 0 | Available for parameters/locals |
+
+**Program Termination:**
+- HALT: `LOAD_IMM r2, -65536; JUMP_IND r2, 0` → jumps to 0xFFFF0000 → status=HALT
+- Note: Don't rely on r0 containing EXIT - hardcode 0xFFFF0000 (= -65536 as i32)
+- PANIC: `TRAP` instruction → status=PANIC
+
+**WASM-to-PVM Entrypoint Convention:**
+```wat
+(module
+  (memory 1)
+  (global $result_ptr (mut i32) (i32.const 0))
+  (global $result_len (mut i32) (i32.const 0))
+  
+  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+    ;; args_ptr = r7 (PVM address 0xFEFF0000)
+    ;; args_len = r8
+    ;; Read args with i32.load (direct PVM memory access)
+    ;; Write results to heap (0x20100+)
+    ;; Set $result_ptr and $result_len globals
+  )
+)
+```
+
+**Memory Layout for WASM Programs:**
+```
+0x20000 - 0x200FF: Globals storage (compiler-managed)
+0x20100+:          User heap (for result data, allocations)
+```
+
+**Compiler Epilogue:**
+1. Read `$result_ptr` global → r7
+2. Read `$result_len` global → r8
+3. `LOAD_IMM r2, 0xFFFF0000` (hardcoded EXIT)
+4. `JUMP_IND r2, 0` → HALT
 
 ---
 
@@ -138,6 +172,22 @@ Source: `vendor/anan-as/assembly/instructions.ts`
 | TwoRegOneOff | 2 registers + 1 offset | `[regs_nibbles, off...]` |
 | TwoRegTwoImm | 2 registers + 2 immediates | `[regs_nibbles, split_nibble, imm1..., imm2...]` |
 | ThreeReg | 3 registers | `[reg1 << 4 | reg2, reg3_nibble]` |
+
+### TwoRegOneImm Encoding Details
+**Critical:** High nibble (args.a) is typically the SOURCE, low nibble (args.b) is the DESTINATION.
+
+```
+Byte layout: [opcode] [src << 4 | dst] [imm...]
+
+Example ADD_IMM_32: regs[dst] = regs[src] + imm
+  Encoding: [131] [src << 4 | dst] [imm_bytes...]
+
+Example LOAD_IND_U32: regs[dst] = memory[regs[base] + offset]  
+  Encoding: [128] [base << 4 | dst] [offset_bytes...]
+
+Example STORE_IND_U32: memory[regs[base] + offset] = regs[src]
+  Encoding: [122] [base << 4 | src] [offset_bytes...]
+```
 
 ### Complete Opcode Table
 ```

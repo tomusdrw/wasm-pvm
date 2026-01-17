@@ -24,12 +24,14 @@ impl StackMachine {
         self.top_reg()
     }
 
+    #[allow(dead_code)]
     pub fn peek(&self, offset: usize) -> u8 {
         assert!(offset < self.depth, "Stack peek out of bounds");
         let idx = self.depth - 1 - offset;
         Self::reg_for_depth(idx)
     }
 
+    #[allow(dead_code)]
     #[must_use]
     pub const fn depth(&self) -> usize {
         self.depth
@@ -44,8 +46,7 @@ impl StackMachine {
             FIRST_STACK_REG + depth as u8
         } else {
             panic!(
-                "Stack depth {} exceeds register count {}, spilling not yet implemented",
-                depth, STACK_REG_COUNT
+                "Stack depth {depth} exceeds register count {STACK_REG_COUNT}, spilling not yet implemented"
             );
         }
     }
