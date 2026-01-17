@@ -50,6 +50,10 @@ pub enum Opcode {
     And = 210,
     Xor = 211,
     Or = 212,
+    // Shift operations (ThreeReg)
+    ShloL32 = 197,
+    ShloR32 = 198,
+    SharR32 = 199,
     // Comparison (ThreeReg) - result is 0 or 1
     SetLtU = 216,
     SetLtS = 217,

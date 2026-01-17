@@ -13,7 +13,7 @@ const projectRoot = path.join(__dirname, '..');
 
 interface TestCase {
   name: string;
-  wat: string;
+  sourceWatOrWasm: string;
   tests: Array<{
     args: string;
     expected: number;
@@ -24,7 +24,7 @@ interface TestCase {
 const testCases: TestCase[] = [
   {
     name: 'add',
-    wat: 'examples-wat/add.jam.wat',
+    sourceWatOrWasm: 'examples-wat/add.jam.wat',
     tests: [
       { args: '0500000007000000', expected: 12, description: '5 + 7 = 12' },
       { args: '00000000ffffffff', expected: 0xffffffff, description: '0 + MAX = MAX' },
@@ -33,7 +33,7 @@ const testCases: TestCase[] = [
   },
   {
     name: 'factorial',
-    wat: 'examples-wat/factorial.jam.wat',
+    sourceWatOrWasm: 'examples-wat/factorial.jam.wat',
     tests: [
       { args: '00000000', expected: 1, description: '0! = 1' },
       { args: '01000000', expected: 1, description: '1! = 1' },
@@ -43,7 +43,7 @@ const testCases: TestCase[] = [
   },
   {
     name: 'fibonacci',
-    wat: 'examples-wat/fibonacci.jam.wat',
+    sourceWatOrWasm: 'examples-wat/fibonacci.jam.wat',
     tests: [
       { args: '00000000', expected: 0, description: 'fib(0) = 0' },
       { args: '01000000', expected: 1, description: 'fib(1) = 1' },
@@ -54,7 +54,7 @@ const testCases: TestCase[] = [
   },
   {
     name: 'gcd',
-    wat: 'examples-wat/gcd.jam.wat',
+    sourceWatOrWasm: 'examples-wat/gcd.jam.wat',
     tests: [
       { args: '3000000012000000', expected: 6, description: 'gcd(48, 18) = 6' },
       { args: '6400000038000000', expected: 4, description: 'gcd(100, 56) = 4' },
@@ -64,7 +64,7 @@ const testCases: TestCase[] = [
   },
   {
     name: 'is-prime',
-    wat: 'examples-wat/is-prime.jam.wat',
+    sourceWatOrWasm: 'examples-wat/is-prime.jam.wat',
     tests: [
       { args: '00000000', expected: 0, description: 'is_prime(0) = 0' },
       { args: '01000000', expected: 0, description: 'is_prime(1) = 0' },
@@ -79,10 +79,57 @@ const testCases: TestCase[] = [
       { args: '65000000', expected: 1, description: 'is_prime(101) = 1' },
     ],
   },
+  {
+    name: 'as-add',
+    sourceWatOrWasm: 'examples-as/build/add.wasm',
+    tests: [
+      { args: '0500000007000000', expected: 12, description: 'AS: 5 + 7 = 12' },
+      { args: '0a00000014000000', expected: 30, description: 'AS: 10 + 20 = 30' },
+    ],
+  },
+  {
+    name: 'as-factorial',
+    sourceWatOrWasm: 'examples-as/build/factorial.wasm',
+    tests: [
+      { args: '00000000', expected: 1, description: 'AS: 0! = 1' },
+      { args: '05000000', expected: 120, description: 'AS: 5! = 120' },
+      { args: '07000000', expected: 5040, description: 'AS: 7! = 5040' },
+    ],
+  },
+  {
+    name: 'as-fibonacci',
+    sourceWatOrWasm: 'examples-as/build/fibonacci.wasm',
+    tests: [
+      { args: '00000000', expected: 0, description: 'AS: fib(0) = 0' },
+      { args: '01000000', expected: 1, description: 'AS: fib(1) = 1' },
+      { args: '0a000000', expected: 55, description: 'AS: fib(10) = 55' },
+    ],
+  },
+  {
+    name: 'as-gcd',
+    sourceWatOrWasm: 'examples-as/build/gcd.wasm',
+    tests: [
+      { args: '3000000012000000', expected: 6, description: 'AS: gcd(48, 18) = 6' },
+      { args: '6400000038000000', expected: 4, description: 'AS: gcd(100, 56) = 4' },
+      { args: '1100000011000000', expected: 17, description: 'AS: gcd(17, 17) = 17' },
+    ],
+  },
 ];
 
 async function main() {
   console.log('=== WASM-PVM Test Suite ===\n');
+
+  console.log('Building AssemblyScript examples...');
+  try {
+    execSync('npm run build', {
+      cwd: path.join(projectRoot, 'examples-as'),
+      stdio: 'pipe',
+    });
+    console.log('AssemblyScript build complete.\n');
+  } catch (err) {
+    console.error('Failed to build AssemblyScript examples. Run: cd examples-as && npm install');
+    process.exit(1);
+  }
 
   let totalTests = 0;
   let passedTests = 0;
@@ -92,16 +139,16 @@ async function main() {
   for (const testCase of testCases) {
     console.log(`Testing ${testCase.name}...`);
     
-    const watPath = path.join(projectRoot, testCase.wat);
+    const sourcePath = path.join(projectRoot, testCase.sourceWatOrWasm);
     const jamPath = `/tmp/${testCase.name}.jam`;
 
     try {
-      execSync(`cargo run -p wasm-pvm-cli --quiet -- compile "${watPath}" -o "${jamPath}"`, {
+      execSync(`cargo run -p wasm-pvm-cli --quiet -- compile "${sourcePath}" -o "${jamPath}"`, {
         cwd: projectRoot,
         stdio: 'pipe',
       });
     } catch (err) {
-      console.log(`  ❌ COMPILE FAILED: ${testCase.wat}`);
+      console.log(`  ❌ COMPILE FAILED: ${testCase.sourceWatOrWasm}`);
       failures.push(`${testCase.name}: compilation failed`);
       failedTests += testCase.tests.length;
       totalTests += testCase.tests.length;
@@ -117,17 +164,8 @@ async function main() {
           { cwd: projectRoot, stdio: 'pipe', encoding: 'utf-8' }
         );
 
-        let actual: number | null = null;
-        
         const u32Match = result.match(/As U32:\s*(\d+)/);
-        if (u32Match) {
-          actual = parseInt(u32Match[1], 10);
-        } else {
-          const r11Match = result.match(/r11:\s*(\d+)/);
-          if (r11Match) {
-            actual = parseInt(r11Match[1], 10);
-          }
-        }
+        const actual = u32Match ? parseInt(u32Match[1], 10) : null;
 
         if (actual === null) {
           console.log(`  ❌ ${test.description} - Could not parse result`);

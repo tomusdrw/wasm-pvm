@@ -293,6 +293,21 @@ fn translate_op(
                 )));
             }
         }
+        Operator::LocalTee { local_index } => {
+            let idx = *local_index as usize;
+            if let Some(reg) = local_reg(idx) {
+                let src = emitter.stack.peek(0);
+                emitter.emit(Instruction::AddImm32 {
+                    dst: reg,
+                    src,
+                    value: 0,
+                });
+            } else {
+                return Err(Error::Unsupported(format!(
+                    "local.tee {idx} exceeds register limit"
+                )));
+            }
+        }
         Operator::GlobalGet { global_index } => {
             let offset = global_offset(*global_index);
             let dst = emitter.stack.push();
@@ -359,7 +374,11 @@ fn translate_op(
             let src2 = emitter.stack.pop();
             let src1 = emitter.stack.pop();
             let dst = emitter.stack.push();
-            emitter.emit(Instruction::Sub32 { dst, src1, src2 });
+            emitter.emit(Instruction::Sub32 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
         }
         Operator::I32Mul => {
             let src2 = emitter.stack.pop();
@@ -371,10 +390,17 @@ fn translate_op(
             let src2 = emitter.stack.pop();
             let src1 = emitter.stack.pop();
             let dst = emitter.stack.push();
-            // PVM ThreeReg: dst = reg[src2] % reg[src1] (swapped operand order)
-            // WASM wants: dst = src1 % src2
-            // So pass src2 as src1 and src1 as src2 to get: dst = src1 % src2
             emitter.emit(Instruction::RemU32 {
+                dst,
+                src1: src2,
+                src2: src1,
+            });
+        }
+        Operator::I32RemS => {
+            let src2 = emitter.stack.pop();
+            let src1 = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::RemS32 {
                 dst,
                 src1: src2,
                 src2: src1,
@@ -384,7 +410,6 @@ fn translate_op(
             let b = emitter.stack.pop();
             let a = emitter.stack.pop();
             let dst = emitter.stack.push();
-            // a == b iff (a XOR b) == 0
             emitter.emit(Instruction::Xor {
                 dst,
                 src1: a,
@@ -394,6 +419,84 @@ fn translate_op(
                 dst,
                 src: dst,
                 value: 1,
+            });
+        }
+        Operator::I32Ne => {
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: a,
+                src2: b,
+            });
+            let one = emitter.stack.push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 0 });
+            let _ = emitter.stack.pop();
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: one,
+                src2: dst,
+            });
+        }
+        Operator::I32And => {
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::And {
+                dst,
+                src1: a,
+                src2: b,
+            });
+        }
+        Operator::I32Or => {
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::Or {
+                dst,
+                src1: a,
+                src2: b,
+            });
+        }
+        Operator::I32Xor => {
+            let b = emitter.stack.pop();
+            let a = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: a,
+                src2: b,
+            });
+        }
+        Operator::I32Shl => {
+            let shift = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::ShloL32 {
+                dst,
+                src1: shift,
+                src2: value,
+            });
+        }
+        Operator::I32ShrU => {
+            let shift = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::ShloR32 {
+                dst,
+                src1: shift,
+                src2: value,
+            });
+        }
+        Operator::I32ShrS => {
+            let shift = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::SharR32 {
+                dst,
+                src1: shift,
+                src2: value,
             });
         }
         Operator::Nop => {}

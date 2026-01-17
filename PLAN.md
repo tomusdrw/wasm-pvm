@@ -100,90 +100,58 @@ All WASM programs targeting PVM/JAM must follow this convention:
 - [x] Translate `br` (unconditional branch)
 - [x] Translate `br_if` (conditional branch)
 - [x] Translate `return`
-- [ ] Translate `if/else/end` (not yet implemented)
+- [x] Translate `if/else/end`
 - [ ] Handle block result values (not yet implemented)
 
-#### Integer Operations (Partial)
+#### Integer Operations
 - [x] i32.add, i64.add
 - [x] i32.sub
 - [x] i32.mul
+- [x] i32.rem_u, i32.rem_s
 - [x] i32.gt_u, i32.gt_s
 - [x] i32.lt_u, i32.lt_s
 - [x] i32.ge_u
-- [x] i32.le_u
-- [x] i32.eqz
+- [x] i32.le_u, i32.le_s
+- [x] i32.eq, i32.ne, i32.eqz
+- [x] i32.and, i32.or, i32.xor
+- [x] i32.shl, i32.shr_u, i32.shr_s
+- [x] local.tee
 
-### ✅ Examples Working (SPI Convention)
-- [x] `add-spi.wat` - reads two i32 args, returns sum (verified: 5+7=12)
-- [x] `factorial-spi.wat` - computes n! using loop (verified: 5!=120)
+#### Phase 3: AssemblyScript Examples (DONE)
+- [x] Set up AssemblyScript project in `examples-as/`
+- [x] Create `add.ts`, `factorial.ts`, `fibonacci.ts`, `gcd.ts`
+- [x] Verify AS output compiles through wasm-pvm
+- [x] Document AssemblyScript → JAM workflow
 
-### 📁 Legacy Examples (To Be Migrated)
-These will be migrated to SPI convention and deduplicated:
-- `add.wat` - migrate to SPI (may duplicate add-spi.wat)
-- `add-args.wat` - migrate to SPI (may duplicate add-spi.wat)
-- `factorial.wat` - migrate to SPI (may duplicate factorial-spi.wat)
-- `fibonacci.wat` - migrate to SPI
-- `gcd.wat` - migrate to SPI
-- `is-prime.wat` - migrate to SPI
-- `nth-prime.wat` - migrate to SPI
+#### Phase 4: Test Suite & CI (DONE)
+- [x] Created `scripts/test-all.ts` - 38 tests across WAT and AS examples
+- [x] GitHub Actions CI workflow (`.github/workflows/ci.yml`)
+
+### ✅ Examples Working (JAM Convention)
+WAT examples (`examples-wat/*.jam.wat`):
+- [x] `add.jam.wat` - reads two i32 args, returns sum
+- [x] `factorial.jam.wat` - computes n! using loop
+- [x] `fibonacci.jam.wat` - fibonacci sequence
+- [x] `gcd.jam.wat` - GCD (Euclidean algorithm)
+- [x] `is-prime.jam.wat` - primality test
+
+AssemblyScript examples (`examples-as/assembly/*.ts`):
+- [x] `add.ts` - reads two i32 args, returns sum
+- [x] `factorial.ts` - computes n! using loop
+- [x] `fibonacci.ts` - fibonacci sequence
+- [x] `gcd.ts` - GCD (Euclidean algorithm)
 
 ---
 
 ## Next Steps
 
-### Phase 3: AssemblyScript Examples (HIGH PRIORITY)
-**Goal**: Enable writing JAM programs in TypeScript-like AssemblyScript.
-
-- [ ] Set up AssemblyScript project in `examples-as/`
-  - [ ] Initialize npm/package.json
-  - [ ] Configure AS compiler (no runtime, raw WASM export)
-  - [ ] Create build script
-- [ ] Create `add.ts` - simple addition (read args, return sum)
-- [ ] Create `factorial.ts` - iterative factorial
-- [ ] Verify AS output compiles through wasm-pvm
-- [ ] Document AssemblyScript → JAM workflow
-- [ ] Add any missing WASM ops needed by AS output
-
-### Phase 4: Example Migration & Test Suite
-**Goal**: All examples use SPI convention, automated testing on every change.
-
-#### 4.1: Migrate Legacy Examples
-- [ ] Migrate `add.wat` → SPI (delete if same as add-spi.wat)
-- [ ] Migrate `add-args.wat` → SPI (delete if same as add-spi.wat)
-- [ ] Migrate `factorial.wat` → SPI (delete if same as factorial-spi.wat)
-- [ ] Migrate `fibonacci.wat` → `fibonacci-spi.wat`
-- [ ] Migrate `gcd.wat` → `gcd-spi.wat`
-- [ ] Migrate `is-prime.wat` → `is-prime-spi.wat`
-- [ ] Migrate `nth-prime.wat` → `nth-prime-spi.wat`
-
-#### 4.2: Automated Test Suite
-- [ ] Create `scripts/test-all.ts` - compile and run all examples
-- [ ] Define expected outputs for each example
-- [ ] Exit with error if any test fails
-- [ ] Add `npm test` or `cargo test` integration
-
-#### 4.3: CI/CD
-- [ ] Add GitHub Actions workflow (`.github/workflows/ci.yml`)
-  - [ ] Run `cargo test`
-  - [ ] Run `cargo clippy`
-  - [ ] Run example test suite
-  - [ ] Run on PRs and pushes to main
-
-### Phase 5: Complete Control Flow
-- [ ] Translate `if/else/end`
+### Phase 5: Remaining Operations
 - [ ] Handle block result values (blocks that produce values)
-- [ ] Nested control flow testing
-
-### Phase 6: Remaining Integer Operations
 - [ ] i32.div_u, i32.div_s
-- [ ] i32.rem_u, i32.rem_s
-- [ ] i32.and, i32.or, i32.xor
-- [ ] i32.shl, i32.shr_u, i32.shr_s
-- [ ] i32.eq, i32.ne
-- [ ] i32.le_s, i32.ge_s (signed variants)
+- [ ] i32.ge_s (signed variant)
 - [ ] Corresponding i64 operations
 
-### Phase 8: Functions & Calls
+### Phase 6: Functions & Calls
 - [ ] Translate `call` instruction
 - [ ] Handle function prologues/epilogues
 - [ ] Translate `call_indirect`

@@ -10,6 +10,7 @@ pub enum Instruction {
     Sub32 { dst: u8, src1: u8, src2: u8 },
     Mul32 { dst: u8, src1: u8, src2: u8 },
     RemU32 { dst: u8, src1: u8, src2: u8 },
+    RemS32 { dst: u8, src1: u8, src2: u8 },
     Add64 { dst: u8, src1: u8, src2: u8 },
     AddImm32 { dst: u8, src: u8, value: i32 },
     Jump { offset: i32 },
@@ -25,6 +26,9 @@ pub enum Instruction {
     Or { dst: u8, src1: u8, src2: u8 },
     SetLtUImm { dst: u8, src: u8, value: i32 },
     SetLtSImm { dst: u8, src: u8, value: i32 },
+    ShloL32 { dst: u8, src1: u8, src2: u8 },
+    ShloR32 { dst: u8, src1: u8, src2: u8 },
+    SharR32 { dst: u8, src1: u8, src2: u8 },
 }
 
 impl Instruction {
@@ -48,6 +52,9 @@ impl Instruction {
             Self::Mul32 { dst, src1, src2 } => encode_three_reg(Opcode::Mul32, *dst, *src1, *src2),
             Self::RemU32 { dst, src1, src2 } => {
                 encode_three_reg(Opcode::RemU32, *dst, *src1, *src2)
+            }
+            Self::RemS32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::RemS32, *dst, *src1, *src2)
             }
             Self::Add64 { dst, src1, src2 } => encode_three_reg(Opcode::Add64, *dst, *src1, *src2),
             Self::SetLtU { dst, src1, src2 } => {
@@ -105,6 +112,15 @@ impl Instruction {
                 let mut bytes = vec![Opcode::SetLtSImm as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
+            }
+            Self::ShloL32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::ShloL32, *dst, *src1, *src2)
+            }
+            Self::ShloR32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::ShloR32, *dst, *src1, *src2)
+            }
+            Self::SharR32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::SharR32, *dst, *src1, *src2)
             }
         }
     }

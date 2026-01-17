@@ -92,16 +92,14 @@ async function main() {
     console.log(`  Length: ${resultLen} bytes`);
     
     const resultBytes = readMemoryFromChunks(output.memory || [], resultAddr, resultLen);
-    if (resultBytes && resultBytes.length > 0) {
-      const hexStr = Array.from(resultBytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
-      console.log(`  Bytes: ${hexStr}`);
-      if (resultLen === 4) {
-        const value = new DataView(new Uint8Array(resultBytes).buffer).getUint32(0, true);
-        console.log(`  As U32: ${value}`);
-      } else if (resultLen === 8) {
-        const value = new DataView(new Uint8Array(resultBytes).buffer).getBigUint64(0, true);
-        console.log(`  As U64: ${value}`);
-      }
+    const hexStr = Array.from(resultBytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    console.log(`  Bytes: ${hexStr}`);
+    if (resultLen === 4) {
+      const value = new DataView(new Uint8Array(resultBytes).buffer).getUint32(0, true);
+      console.log(`  As U32: ${value}`);
+    } else if (resultLen === 8) {
+      const value = new DataView(new Uint8Array(resultBytes).buffer).getBigUint64(0, true);
+      console.log(`  As U64: ${value}`);
     }
   }
   
@@ -134,9 +132,8 @@ interface MemoryChunk {
   data: number[];
 }
 
-function readMemoryFromChunks(chunks: MemoryChunk[], address: number, length: number): number[] | null {
+function readMemoryFromChunks(chunks: MemoryChunk[], address: number, length: number): number[] {
   const result: number[] = new Array(length).fill(0);
-  let bytesRead = 0;
   
   for (const chunk of chunks) {
     const chunkStart = chunk.address;
@@ -148,12 +145,11 @@ function readMemoryFromChunks(chunks: MemoryChunk[], address: number, length: nu
     if (overlapStart < overlapEnd) {
       for (let i = overlapStart; i < overlapEnd; i++) {
         result[i - address] = chunk.data[i - chunkStart];
-        bytesRead++;
       }
     }
   }
   
-  return bytesRead > 0 ? result : null;
+  return result;
 }
 
 main().catch(err => {
