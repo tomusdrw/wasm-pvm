@@ -114,8 +114,8 @@ WASM programs must follow the SPI entrypoint convention:
 |---------|--------|
 | `0x00010000` | Read-only data (dispatch table for call_indirect) |
 | `0x00030000` | Globals storage (compiler-managed) |
-| `0x00030100` | User results area (256 bytes) |
-| `0x00030200` | Spilled locals (512 bytes per function) |
+| `0x00030100` | User heap (~64KB available until 0x3FFFF) |
+| `0x00040000` | Spilled locals (512 bytes per function) |
 | `0xFEFE0000` | Stack segment end |
 | `0xFEFF0000` | Arguments (input data) |
 | `0xFFFF0000` | EXIT address (HALT) |

@@ -452,11 +452,15 @@ When a function has more than 4 local variables (including parameters), we spill
 
 ### Memory Layout
 ```
-Base address: 0x30200 (SPILLED_LOCALS_BASE, within heap)
+Base address: 0x40000 (SPILLED_LOCALS_BASE, above user heap)
 Per function: 512 bytes (SPILLED_LOCALS_PER_FUNC)
 
-Spilled local address = 0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)
+Spilled local address = 0x40000 + (func_idx * 512) + ((local_idx - 4) * 8)
+
+User heap: 0x30100 to 0x3FFFF (~64KB available)
 ```
+
+**Note**: The spilled locals base was moved from 0x30200 to 0x40000 to avoid collisions with user heap allocations. Programs using memory above 0x30100 for buffers were accidentally overwriting spilled local variables.
 
 The heap pages are automatically calculated based on the number of functions to ensure enough space for spilled locals.
 

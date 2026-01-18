@@ -1,6 +1,8 @@
 const FIRST_STACK_REG: u8 = 2;
 const LAST_STACK_REG: u8 = 6;
 const STACK_REG_COUNT: usize = (LAST_STACK_REG - FIRST_STACK_REG + 1) as usize;
+/// Register used as temporary for spilled stack values (not part of operand stack r2-r6)
+const SPILL_TEMP_REG: u8 = 7;
 
 #[derive(Debug)]
 pub struct StackMachine {
@@ -57,7 +59,7 @@ impl StackMachine {
         if depth < STACK_REG_COUNT {
             FIRST_STACK_REG + depth as u8
         } else {
-            FIRST_STACK_REG
+            SPILL_TEMP_REG // Use dedicated temp register for spilled values
         }
     }
 
@@ -74,7 +76,7 @@ impl StackMachine {
         if depth < STACK_REG_COUNT {
             FIRST_STACK_REG + depth as u8
         } else {
-            FIRST_STACK_REG
+            SPILL_TEMP_REG // Use dedicated temp register for spilled values
         }
     }
 }
@@ -122,18 +124,20 @@ mod tests {
     #[test]
     fn test_spill_depth() {
         let mut stack = StackMachine::new();
+        // First 5 pushes use registers r2-r6
         for i in 0..5 {
             let reg = stack.push();
             assert_eq!(reg, 2 + i as u8);
         }
         assert_eq!(stack.depth(), 5);
 
+        // 6th push spills to memory, uses dedicated temp register r7
         let reg = stack.push();
-        assert_eq!(reg, 2);
+        assert_eq!(reg, SPILL_TEMP_REG); // r7, not r2!
         assert_eq!(stack.depth(), 6);
 
         let popped = stack.pop();
-        assert_eq!(popped, 2);
+        assert_eq!(popped, SPILL_TEMP_REG); // r7
         assert_eq!(stack.depth(), 5);
     }
 

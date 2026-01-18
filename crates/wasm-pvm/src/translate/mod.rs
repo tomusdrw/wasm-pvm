@@ -271,12 +271,18 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 }
 
 fn calculate_heap_pages(num_functions: usize) -> u16 {
-    let globals_size = 256;
-    let user_results_size = 256;
-    let spilled_locals_size = num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
-    let min_user_heap = 4096;
+    // Memory layout:
+    // 0x30000-0x300FF: Globals (256 bytes)
+    // 0x30100-0x3FFFF: User heap (~64KB)
+    // 0x40000+: Spilled locals (512 bytes per function)
+    //
+    // The heap segment starts at 0x30000 (GLOBAL_MEMORY_BASE).
+    // We need to allocate enough pages to cover up to spilled locals.
+    let spilled_locals_end = codegen::SPILLED_LOCALS_BASE as usize
+        + num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
 
-    let total_bytes = globals_size + user_results_size + spilled_locals_size + min_user_heap;
+    // Total bytes from heap base (0x30000) to end of spilled locals
+    let total_bytes = spilled_locals_end - 0x30000;
     let pages = total_bytes.div_ceil(4096);
 
     pages.max(16) as u16

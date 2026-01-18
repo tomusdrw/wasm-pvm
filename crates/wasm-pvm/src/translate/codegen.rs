@@ -15,9 +15,10 @@ const STACK_PTR_REG: u8 = 1;
 const RETURN_VALUE_REG: u8 = 7;
 const SAVED_TABLE_IDX_REG: u8 = 8;
 const RO_DATA_BASE: i32 = 0x10000;
-/// Base address for spilled locals in memory (within heap area)
-/// Layout: 0x30000-0x300FF globals, 0x30100-0x301FF user results, 0x30200+ spilled locals
-pub const SPILLED_LOCALS_BASE: i32 = 0x30200;
+/// Base address for spilled locals in memory
+/// Layout: 0x30000-0x300FF globals, 0x30100+ user heap, 0x40000+ spilled locals
+/// User heap can use up to ~64KB (0x30100 to 0x3FFFF) before colliding with spilled locals
+pub const SPILLED_LOCALS_BASE: i32 = 0x40000;
 /// Bytes allocated per function for spilled locals (64 locals * 8 bytes)
 pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
 
@@ -69,6 +70,10 @@ enum ControlFrame {
 }
 
 const OPERAND_SPILL_BASE: i32 = -0x100;
+/// Alternate register for second spilled operand in binary operations
+/// Using r8 because r7 is the primary spill temp, and r8 is free during computation
+/// (only used at function call boundaries for args length)
+const SPILL_ALT_REG: u8 = 8;
 
 struct CodeEmitter {
     instructions: Vec<Instruction>,
@@ -79,6 +84,8 @@ struct CodeEmitter {
     call_fixups: Vec<CallFixup>,
     indirect_call_fixups: Vec<IndirectCallFixup>,
     pending_spill: Option<usize>,
+    /// Tracks the register used by the last `spill_pop` if it was a spilled value
+    last_spill_pop_reg: Option<u8>,
 }
 
 impl CodeEmitter {
@@ -92,6 +99,7 @@ impl CodeEmitter {
             call_fixups: Vec::new(),
             indirect_call_fixups: Vec::new(),
             pending_spill: None,
+            last_spill_pop_reg: None,
         }
     }
 
@@ -126,9 +134,12 @@ impl CodeEmitter {
 
     fn spill_push(&mut self) -> u8 {
         self.flush_pending_spill();
+        self.last_spill_pop_reg = None; // Clear spill tracking on push
         let depth = self.stack.depth();
         let reg = self.stack.push();
         if StackMachine::needs_spill(depth) {
+            // Mark this depth for spilling - the actual spill happens
+            // after the caller writes the value to the register
             self.pending_spill = Some(depth);
         }
         reg
@@ -144,12 +155,23 @@ impl CodeEmitter {
         let depth = self.stack.depth();
         if depth > 0 && StackMachine::needs_spill(depth - 1) {
             let offset = OPERAND_SPILL_BASE + StackMachine::spill_offset(depth - 1);
+            // Use alternate register if we just popped another spilled value into the default register
+            let default_reg = StackMachine::reg_at_depth(depth - 1);
+            let dst = if self.last_spill_pop_reg == Some(default_reg) {
+                SPILL_ALT_REG
+            } else {
+                default_reg
+            };
             self.emit(Instruction::LoadIndU64 {
-                dst: StackMachine::reg_at_depth(depth - 1),
+                dst,
                 base: STACK_PTR_REG,
                 offset,
             });
+            self.last_spill_pop_reg = Some(dst);
+            self.stack.pop();
+            return dst;
         }
+        self.last_spill_pop_reg = None;
         self.stack.pop()
     }
 
@@ -880,6 +902,9 @@ fn translate_op(
             });
         }
         Operator::I32Ne | Operator::I64Ne => {
+            // NE: a != b → (a XOR b) != 0 → 0 < (a XOR b)
+            // PVM SetLtU semantics: dst = src2 < src1
+            // So for 0 < xor_result, we need SetLtU { src1: xor_result, src2: 0 }
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -888,13 +913,16 @@ fn translate_op(
                 src1: a,
                 src2: b,
             });
-            let one = emitter.spill_push();
-            emitter.emit(Instruction::LoadImm { reg: one, value: 0 });
+            let zero = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm {
+                reg: zero,
+                value: 0,
+            });
             let _ = emitter.spill_pop();
             emitter.emit(Instruction::SetLtU {
                 dst,
-                src1: one,
-                src2: dst,
+                src1: dst,  // xor_result
+                src2: zero, // 0 < xor_result when xor_result > 0
             });
         }
         Operator::I32And | Operator::I64And => {
@@ -1076,6 +1104,10 @@ fn translate_op(
                 src2: b,
             });
         }
+        // For WASM i32.lt_X: push a, push b, lt → result = a < b
+        // Pop b (top), pop a (second)
+        // PVM SetLt semantics: dst = src2 < src1 (verified in anan-as: reg[b] < reg[a])
+        // For a < b, we need SetLt { src1: b, src2: a } so it computes a < b
         Operator::I32LtU | Operator::I64LtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
