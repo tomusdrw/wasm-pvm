@@ -1,7 +1,7 @@
-// SPI Convention: args_ptr=0xFEFF0000, result heap=0x20100
+// SPI Convention: args_ptr=0xFEFF0000, result heap=0x30100
 // Globals at indices 0,1 are result_ptr, result_len
 
-const RESULT_HEAP: u32 = 0x20100;
+const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;

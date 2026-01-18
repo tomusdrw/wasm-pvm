@@ -7,7 +7,7 @@
   
   ;; Compute GCD of two u32 arguments using Euclidean algorithm
   ;; Input: two u32 values (little-endian) at args_ptr
-  ;; Output: one u32 at 0x20100
+  ;; Output: one u32 at 0x30100
   ;;
   ;; Register budget: 2 params + 2 locals = 4 (r9-r12)
   ;; Reuse $args_ptr as $a, $args_len as $b after loading args
@@ -47,10 +47,10 @@
       )
     )
     
-    ;; Store result (a) at 0x20100
-    (i32.store (i32.const 0x20100) (local.get $a))
+    ;; Store result (a) at 0x30100
+    (i32.store (i32.const 0x30100) (local.get $a))
     
-    (global.set $result_ptr (i32.const 0x20100))
+    (global.set $result_ptr (i32.const 0x30100))
     (global.set $result_len (i32.const 4))
   )
 )

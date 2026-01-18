@@ -132,7 +132,7 @@ Source: `vendor/anan-as/assembly/spi.ts`
     ;; args_ptr = r7 (PVM address 0xFEFF0000)
     ;; args_len = r8
     ;; Read args with i32.load (direct PVM memory access)
-    ;; Write results to heap (0x20100+)
+    ;; Write results to heap (0x30100+)
     ;; Set $result_ptr and $result_len globals
   )
 )
@@ -140,8 +140,8 @@ Source: `vendor/anan-as/assembly/spi.ts`
 
 **Memory Layout for WASM Programs:**
 ```
-0x20000 - 0x200FF: Globals storage (compiler-managed)
-0x20100+:          User heap (for result data, allocations)
+0x30000 - 0x200FF: Globals storage (compiler-managed)
+0x30100+:          User heap (for result data, allocations)
 ```
 
 **Compiler Epilogue:**
@@ -313,7 +313,7 @@ Example STORE_IND_U32: memory[regs[base] + offset] = regs[src]
 **Address Translation:**
 - WASM addresses start at 0
 - PVM addresses < 0x10000 cause panic
-- Solution: Add base offset (0x20000 for RW data in SPI)
+- Solution: Add base offset (0x30000 for RW data in SPI)
 
 ---
 
@@ -331,19 +331,38 @@ Example STORE_IND_U32: memory[regs[base] + offset] = regs[src]
 | Registers | Usage |
 |-----------|-------|
 | r0 | Return address (jump table index for calls) |
-| r1 | Return value from function calls |
+| r1 | Stack pointer (for call stack, grows down from 0xFEFE0000) |
 | r2-r6 | Operand stack (5 slots) |
-| r7-r8 | SPI args (args_ptr, args_len) for main function |
+| r7 | Return value from function calls / SPI args_ptr (in main) |
+| r8 | SPI args_len (in main) |
 | r9-r12 | Local variables (first 4 locals) |
 
-### 4. Calling Convention (Implemented)
+### 4. Calling Convention (Implemented - with Recursion Support)
 **For internal function calls (`call` instruction):**
-- Caller copies arguments directly to callee's local registers (r9+)
-- Caller saves return address as **jump table index** in r0
-- Caller jumps to callee's entry point
-- Callee executes and puts return value in r1
+
+**Before call (caller-side):**
+1. Calculate frame size: 40 bytes (r0 + r9-r12) + 8 bytes per operand stack slot below arguments
+2. Decrement stack pointer by frame size
+3. Save return address (r0) to [sp+0]
+4. Save locals r9-r12 to [sp+8..40]
+5. Save caller's operand stack values (those below the arguments) to [sp+40+]
+6. Pop arguments from operand stack and copy to callee's local registers (r9+)
+7. Load return address (jump table index) into r0
+8. Jump to callee's entry point
+
+**During call (callee-side):**
+- Callee executes with its own operand stack (r2-r6) and locals (r9-r12)
+- Callee puts return value in r7 (RETURN_VALUE_REG)
 - Callee returns via `JUMP_IND r0, 0` (indirect jump through jump table)
-- Caller copies return value from r1 to operand stack
+
+**After return (caller-side):**
+1. Restore return address (r0) from [sp+0]
+2. Restore locals r9-r12 from [sp+8..40]
+3. Restore operand stack values from [sp+40+]
+4. Increment stack pointer by frame size
+5. Copy return value from r7 to operand stack
+
+**Key insight:** The operand stack registers (r2-r6) are shared across all functions. Without saving them, recursive or nested calls clobber the caller's intermediate values. The fix saves operand stack values that are "below" the arguments before the call.
 
 **Important:** Return addresses use jump table indices, not direct PC values. See Jump Table section below.
 
@@ -433,10 +452,10 @@ When a function has more than 4 local variables (including parameters), we spill
 
 ### Memory Layout
 ```
-Base address: 0x20200 (SPILLED_LOCALS_BASE, within heap)
+Base address: 0x30200 (SPILLED_LOCALS_BASE, within heap)
 Per function: 512 bytes (SPILLED_LOCALS_PER_FUNC)
 
-Spilled local address = 0x20200 + (func_idx * 512) + ((local_idx - 4) * 8)
+Spilled local address = 0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)
 ```
 
 The heap pages are automatically calculated based on the number of functions to ensure enough space for spilled locals.
@@ -458,22 +477,55 @@ LOAD_IMM tmp, spilled_address
 STORE_U64 tmp, src, 0
 ```
 
-### Limitation
-This is a **non-recursive** design. Each function has fixed memory for its spilled locals. Recursive calls will overwrite the same memory locations.
+### Note on Recursion
+The call stack properly saves/restores locals and operand stack, so recursion works correctly.
+The spilled locals (for functions with >4 locals) still use fixed memory per function, but this is
+fine because the in-register locals (r9-r12) are saved to the call stack before each call.
 
-**Future fix:** Implement proper call stack with frame pointer for recursion support.
+---
+
+## Indirect Calls (call_indirect)
+
+WASM `call_indirect` allows calling functions through a table using a runtime index. This requires:
+
+### Dispatch Table (RO Memory)
+At 0x10000, we store a dispatch table mapping table indices to jump table references:
+```
+dispatch[i] = 2 * (func_entry_base + func_idx + 1)
+```
+
+### Jump Table Extension
+The jump table contains both return addresses (for calls) and function entry offsets:
+```
+jumpTable = [ret_addr_0, ret_addr_1, ..., func_offset_0, func_offset_1, ...]
+              ^- for return from calls    ^- for indirect calls (func_entry_base)
+```
+
+### Implementation Steps
+1. Pop table index from operand stack
+2. Save to r8 (SAVED_TABLE_IDX_REG)
+3. Compute dispatch address: `r8 = r8 * 4 + 0x10000`
+4. Load jump table reference: `r8 = mem[r8]`
+5. Load return address into r0 (will be fixed up)
+6. `JUMP_IND r8, 0` - jumps to function via jump table
+7. Function returns via `JUMP_IND r0, 0`
+8. Restore locals and operand stack
+
+### Memory Layout Impact
+To ensure consistent heap placement, we always emit at least 1 byte of RO data.
+This ensures the heap always starts at 0x30000 (after 2 segments + 1 for RO).
 
 ---
 
 ## Open Questions
 
 1. ~~What are PVM's calling conventions?~~ → See Calling Convention section above
-2. ~~How to handle WASM globals?~~ → Store at 0x20000 + idx*4
+2. ~~How to handle WASM globals?~~ → Store at 0x30000 + idx*4
 3. ~~What's the best strategy for br_table?~~ → ✅ Implemented using linear compare-and-branch (2025-01-18)
 4. ~~Should we support floating point?~~ → No, reject
 5. ~~How to handle memory.grow?~~ → Returns -1 (growth not supported)
-6. How to support recursion? → Need proper call stack with frame pointer (Phase 8)
-7. How to implement call_indirect? → Build function table from WASM tables (Phase 9)
+6. ~~How to support recursion?~~ → ✅ Implemented by saving operand stack to call stack (2025-01-18)
+7. ~~How to implement call_indirect?~~ → ✅ Implemented using dispatch table in RO memory (2025-01-18)
 
 ---
 

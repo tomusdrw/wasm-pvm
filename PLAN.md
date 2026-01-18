@@ -56,17 +56,17 @@ All WASM programs targeting PVM/JAM must follow this convention:
 (global $result_len (mut i32) (i32.const 0))
 
 ;; In function body:
-(global.set $result_ptr (i32.const 0x20100))  ;; PVM address of result
+(global.set $result_ptr (i32.const 0x30100))  ;; PVM address of result
 (global.set $result_len (i32.const 4))         ;; Length in bytes
 ```
 
 ### Memory Layout
 ```
-0x00010000: RO data segment
-0x00020000: Globals storage (0x20000 + idx*4)
-0x00020100: User results area (256 bytes)
-0x00020200: Spilled locals (512 bytes per function)
-0x00020200 + num_funcs*512: User heap
+0x00010000: RO data segment (dispatch table for call_indirect)
+0x00030000: Globals storage (0x30000 + idx*4)
+0x00030100: User results area (256 bytes)
+0x00030200: Spilled locals (512 bytes per function)
+0x00030200 + num_funcs*512: User heap
 0xFEFE0000: Stack segment end
 0xFEFF0000: Args segment (read via args_ptr)
 0xFFFF0000: EXIT address (HALT)
@@ -103,7 +103,7 @@ All WASM programs targeting PVM/JAM must follow this convention:
 #### Memory Operations
 - [x] i32.load - direct PVM memory access
 - [x] i32.store - direct PVM memory access
-- [x] global.get / global.set - stored at 0x20000 + idx*4
+- [x] global.get / global.set - stored at 0x30000 + idx*4
 - [x] memory.size - returns constant 256 pages
 - [x] memory.grow - returns -1 (not supported)
 
@@ -173,6 +173,9 @@ WAT examples (`examples-wat/*.jam.wat`):
 - [x] `br-table.jam.wat` - switch/jump table (br_table)
 - [x] `bit-ops.jam.wat` - clz, ctz, popcnt
 - [x] `rotate.jam.wat` - rotl, rotr
+- [x] `entry-points.jam.wat` - multiple entry points (main/main2)
+- [x] `recursive.jam.wat` - recursive factorial (tests call stack)
+- [x] `nested-calls.jam.wat` - nested function calls
 
 AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [x] `add.ts` - reads two i32 args, returns sum
@@ -180,26 +183,31 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [x] `fibonacci.ts` - fibonacci sequence
 - [x] `gcd.ts` - GCD (Euclidean algorithm)
 
-**Test Suite**: 56 integration tests passing (as of 2025-01-18)
+**Test Suite**: 58 integration tests passing (as of 2025-01-18)
+- [x] `call-indirect.jam.wat` - indirect function calls via table
 
 ---
 
 ## Remaining Work
 
-### Phase 7: Advanced Control Flow (Partial)
+### Phase 7: Advanced Control Flow ✅ COMPLETE
 - [x] Translate `br_table` (switch/jump table)
-- [ ] Multiple entry points (main at PC=0, main2 at PC=5)
+- [x] Multiple entry points (main at PC=0, main2 at PC=5)
 
-### Phase 8: Recursion Support
-- [ ] Implement proper call stack with frame pointer
-- [ ] Push/pop spilled locals on call/return
-- [ ] Handle deep recursion (stack overflow detection)
+### Phase 8: Recursion Support ✅ COMPLETE
+- [x] Save/restore operand stack values across calls
+- [x] Save/restore locals (r9-r12) to call stack  
+- [x] Dynamic frame size based on operand stack depth
+- [ ] Handle deep recursion (stack overflow detection) - TODO
 
-### Phase 9: Indirect Calls
-- [ ] Parse WASM table section
-- [ ] Build function table from WASM tables
-- [ ] Translate `call_indirect`
-- [ ] Validate function signatures at runtime
+### Phase 9: Indirect Calls ✅ COMPLETE
+- [x] Parse WASM table section
+- [x] Parse WASM element section (function table initialization)
+- [x] Build function table from WASM tables
+- [x] Translate `call_indirect`
+- [x] RO data segment for dispatch table (at 0x10000)
+- [x] Jump table with function entry points
+- [ ] Runtime signature validation (TODO - currently trusts caller)
 
 ### Phase 10: Memory & Data (Partial)
 - [x] i8/i16 load/store variants (load8_u/s, load16_u/s, load32_u/s, store8, store16, store32)
@@ -323,7 +331,7 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 | Register pressure too high | Medium | ✅ Implemented spilling |
 | Control flow edge cases | Medium | Comprehensive test suite |
 | Memory model mismatch | Medium | Define clear address translation |
-| Recursion stack overflow | Medium | Need proper call stack (Phase 8) |
+| Recursion stack overflow | Medium | ✅ Call stack implemented, need overflow detection |
 | Performance issues | Low | Not a priority for v1 |
 
 ---
@@ -345,7 +353,7 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - AssemblyScript examples compile and execute correctly
 - CLI tool works: `wasm-pvm compile input.wasm -o output.jam`
 - Basic error handling and messages
-- 56 integration tests passing
+- 58 integration tests passing
 
 ### V1 Release (Target: anan-as in PVM)
 - WASM MVP compliance (except floats)

@@ -96,10 +96,10 @@ WASM programs must follow the SPI entrypoint convention:
   ;; Entry point - receives args pointer and length
   (func (export "main") (param $args_ptr i32) (param $args_len i32)
     ;; Read input from args_ptr (PVM address 0xFEFF0000)
-    ;; Write output to heap (0x20100+)
+    ;; Write output to heap (0x30100+)
     ;; Set result_ptr and result_len globals
     
-    (global.set $result_ptr (i32.const 0x20100))
+    (global.set $result_ptr (i32.const 0x30100))
     (global.set $result_len (i32.const 4))
   )
 )

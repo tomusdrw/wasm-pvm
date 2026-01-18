@@ -7,6 +7,8 @@ use wasmparser::{FunctionBody, GlobalType, Parser, Payload};
 
 pub use codegen::CompileContext;
 
+const ENTRY_HEADER_SIZE: usize = 10;
+
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut functions = Vec::new();
     let mut func_types: Vec<wasmparser::FuncType> = Vec::new();
@@ -14,6 +16,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut globals: Vec<GlobalType> = Vec::new();
     let mut global_names: Vec<Option<String>> = Vec::new();
     let mut main_func_idx: Option<u32> = None;
+    let mut secondary_entry_func_idx: Option<u32> = None;
+    let mut tables: Vec<wasmparser::TableType> = Vec::new();
+    let mut table_elements: Vec<(u32, u32, Vec<u32>)> = Vec::new();
 
     for payload in Parser::new(0).parse_all(wasm) {
         match payload? {
@@ -40,13 +45,49 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                     global_names.push(None);
                 }
             }
+            Payload::TableSection(reader) => {
+                for table in reader {
+                    tables.push(table?.ty);
+                }
+            }
+            Payload::ElementSection(reader) => {
+                for element in reader {
+                    let element = element?;
+                    if let wasmparser::ElementKind::Active {
+                        table_index,
+                        offset_expr,
+                    } = element.kind
+                    {
+                        let table_idx = table_index.unwrap_or(0);
+                        let offset = eval_const_i32(&offset_expr)?;
+                        let func_indices: Vec<u32> = match element.items {
+                            wasmparser::ElementItems::Functions(reader) => {
+                                reader.into_iter().collect::<std::result::Result<_, _>>()?
+                            }
+                            wasmparser::ElementItems::Expressions(_, reader) => {
+                                let mut indices = Vec::new();
+                                for expr in reader {
+                                    let expr = expr?;
+                                    if let Some(idx) = eval_const_ref(&expr) {
+                                        indices.push(idx);
+                                    }
+                                }
+                                indices
+                            }
+                        };
+                        table_elements.push((table_idx, offset as u32, func_indices));
+                    }
+                }
+            }
             Payload::ExportSection(reader) => {
                 for export in reader {
                     let export = export?;
-                    if export.name == "main"
-                        && let wasmparser::ExternalKind::Func = export.kind
-                    {
-                        main_func_idx = Some(export.index);
+                    if let wasmparser::ExternalKind::Func = export.kind {
+                        if export.name == "main" {
+                            main_func_idx = Some(export.index);
+                        } else if export.name == "main2" {
+                            secondary_entry_func_idx = Some(export.index);
+                        }
                     }
                 }
             }
@@ -96,14 +137,48 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         })
         .collect();
 
+    let type_signatures: Vec<(usize, usize)> = func_types
+        .iter()
+        .map(|f| (f.params().len(), f.results().len()))
+        .collect();
+
+    let table_size = tables.first().map_or(0, |t| t.initial as usize);
+    let mut function_table: Vec<u32> = vec![u32::MAX; table_size];
+    for (table_idx, offset, func_indices) in &table_elements {
+        if *table_idx == 0 {
+            for (i, &func_idx) in func_indices.iter().enumerate() {
+                let idx = *offset as usize + i;
+                if idx < function_table.len() {
+                    function_table[idx] = func_idx;
+                }
+            }
+        }
+    }
+
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
+    let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
     let mut function_offsets: Vec<usize> = Vec::new();
 
-    let needs_entry_jump = main_func_idx != 0;
-    if needs_entry_jump {
+    all_instructions.push(Instruction::Jump { offset: 0 });
+
+    if secondary_entry_func_idx.is_some() {
         all_instructions.push(Instruction::Jump { offset: 0 });
+    } else {
+        all_instructions.push(Instruction::Trap);
+        all_instructions.push(Instruction::Fallthrough);
+        all_instructions.push(Instruction::Fallthrough);
+        all_instructions.push(Instruction::Fallthrough);
+        all_instructions.push(Instruction::Fallthrough);
     }
+
+    let entry_header_bytes: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
+    debug_assert_eq!(
+        entry_header_bytes, ENTRY_HEADER_SIZE,
+        "Entry header must be exactly 10 bytes"
+    );
+
+    let secondary_entry_idx_resolved = secondary_entry_func_idx.map(|idx| idx as usize);
 
     for (func_idx, func) in functions.iter().enumerate() {
         let (num_params, has_return) = function_signatures
@@ -112,18 +187,30 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             .unwrap_or((0, false));
 
         let is_main = func_idx == main_func_idx;
+        let is_secondary_entry = secondary_entry_idx_resolved == Some(func_idx);
 
+        let is_entry_func = is_main || is_secondary_entry;
         let ctx = CompileContext {
             num_params,
             num_locals: 0,
             num_globals: globals.len(),
-            result_ptr_global: if is_main { result_ptr_global } else { None },
-            result_len_global: if is_main { result_len_global } else { None },
-            is_main,
+            result_ptr_global: if is_entry_func {
+                result_ptr_global
+            } else {
+                None
+            },
+            result_len_global: if is_entry_func {
+                result_len_global
+            } else {
+                None
+            },
+            is_main: is_entry_func,
             has_return,
             function_offsets: vec![],
             function_signatures: function_signatures.clone(),
             func_idx,
+            function_table: function_table.clone(),
+            type_signatures: type_signatures.clone(),
         };
 
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
@@ -135,17 +222,42 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         for fixup in translation.call_fixups {
             all_call_fixups.push((instr_base, fixup));
         }
+        for fixup in translation.indirect_call_fixups {
+            all_indirect_call_fixups.push((instr_base, fixup));
+        }
 
         all_instructions.extend(translation.instructions);
     }
 
-    let jump_table =
-        resolve_call_fixups(&mut all_instructions, &all_call_fixups, &function_offsets)?;
+    let (jump_table, func_entry_jump_table_base) = resolve_call_fixups(
+        &mut all_instructions,
+        &all_call_fixups,
+        &all_indirect_call_fixups,
+        &function_offsets,
+    )?;
 
-    if needs_entry_jump {
-        let main_offset = function_offsets[main_func_idx] as i32;
-        if let Instruction::Jump { offset } = &mut all_instructions[0] {
-            *offset = main_offset;
+    let main_offset = function_offsets[main_func_idx] as i32;
+    if let Instruction::Jump { offset } = &mut all_instructions[0] {
+        *offset = main_offset;
+    }
+
+    if let Some(secondary_idx) = secondary_entry_idx_resolved {
+        let secondary_offset = function_offsets[secondary_idx] as i32 - 5;
+        if let Instruction::Jump { offset } = &mut all_instructions[1] {
+            *offset = secondary_offset;
+        }
+    }
+
+    let mut ro_data = vec![0u8];
+    if !function_table.is_empty() {
+        ro_data.clear();
+        for &func_idx in &function_table {
+            if func_idx == u32::MAX {
+                ro_data.extend_from_slice(&u32::MAX.to_le_bytes());
+            } else {
+                let jump_ref = 2 * (func_entry_jump_table_base + func_idx as usize + 1) as u32;
+                ro_data.extend_from_slice(&jump_ref.to_le_bytes());
+            }
         }
     }
 
@@ -153,7 +265,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 
     let heap_pages = calculate_heap_pages(functions.len());
 
-    Ok(SpiProgram::new(blob).with_heap_pages(heap_pages))
+    Ok(SpiProgram::new(blob)
+        .with_heap_pages(heap_pages)
+        .with_ro_data(ro_data))
 }
 
 fn calculate_heap_pages(num_functions: usize) -> u16 {
@@ -171,8 +285,9 @@ fn calculate_heap_pages(num_functions: usize) -> u16 {
 fn resolve_call_fixups(
     instructions: &mut [Instruction],
     call_fixups: &[(usize, codegen::CallFixup)],
+    indirect_call_fixups: &[(usize, codegen::IndirectCallFixup)],
     function_offsets: &[usize],
-) -> Result<Vec<u32>> {
+) -> Result<(Vec<u32>, usize)> {
     let mut jump_table: Vec<u32> = Vec::new();
 
     for (instr_base, fixup) in call_fixups {
@@ -209,7 +324,32 @@ fn resolve_call_fixups(
             *offset = relative_offset;
         }
     }
-    Ok(jump_table)
+
+    for (instr_base, fixup) in indirect_call_fixups {
+        let return_addr_idx = instr_base + fixup.return_addr_instr;
+        let jump_ind_idx = instr_base + fixup.jump_ind_instr;
+
+        let return_addr_offset: usize = instructions[..=jump_ind_idx]
+            .iter()
+            .map(|i| i.encode().len())
+            .sum();
+
+        let jump_table_index = jump_table.len();
+        jump_table.push(return_addr_offset as u32);
+
+        let jump_table_address = (jump_table_index as u64 + 1) * 2;
+
+        if let Instruction::LoadImm64 { value, .. } = &mut instructions[return_addr_idx] {
+            *value = jump_table_address;
+        }
+    }
+
+    let func_entry_base = jump_table.len();
+    for &offset in function_offsets {
+        jump_table.push(offset as u32);
+    }
+
+    Ok((jump_table, func_entry_base))
 }
 
 #[allow(dead_code)]
@@ -282,4 +422,32 @@ fn is_float_op(op: &wasmparser::Operator) -> bool {
             | F64Max
             | F64Copysign
     )
+}
+
+fn eval_const_i32(expr: &wasmparser::ConstExpr) -> Result<i32> {
+    let mut reader = expr.get_binary_reader();
+    while !reader.eof() {
+        match reader.read_operator()? {
+            wasmparser::Operator::I32Const { value } => return Ok(value),
+            wasmparser::Operator::End => break,
+            _ => {}
+        }
+    }
+    Ok(0)
+}
+
+fn eval_const_ref(expr: &wasmparser::ConstExpr) -> Option<u32> {
+    let mut reader = expr.get_binary_reader();
+    while !reader.eof() {
+        if let Ok(op) = reader.read_operator() {
+            match op {
+                wasmparser::Operator::RefFunc { function_index } => return Some(function_index),
+                wasmparser::Operator::End => break,
+                _ => {}
+            }
+        } else {
+            break;
+        }
+    }
+    None
 }

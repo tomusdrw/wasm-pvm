@@ -10,7 +10,7 @@ This document tracks known issues, bugs, and improvements for future work. Items
 **Severity**: Medium  
 **Status**: Known limitation (Phase 8)
 
-Recursive function calls will not work correctly. Spilled locals use fixed memory addresses per function (at `0x20200 + func_idx * 512`), not a proper call stack. Each function gets 512 bytes for spilled locals.
+Recursive function calls will not work correctly. Spilled locals use fixed memory addresses per function (at `0x30200 + func_idx * 512`), not a proper call stack. Each function gets 512 bytes for spilled locals.
 
 **Impact**: Programs with recursive functions will corrupt their own local variables.
 
@@ -74,7 +74,7 @@ The `getMemory()` call from anan-as doesn't return the actual memory bytes in th
 **Current behavior**:
 ```
 === Return Value ===
-  Address: 0x20100
+  Address: 0x30100
   Length: 4 bytes
 ```
 
@@ -112,7 +112,7 @@ When you discover a new issue:
 ---
 
 ### ~~Limited local variable count (4 max)~~ (Resolved 2025-01-17)
-**Resolution**: Implemented local spilling to memory. Locals 0-3 use registers r9-r12, locals 4+ are spilled to memory at `0x20200 + func_idx * 512 + (local_idx - 4) * 8`.
+**Resolution**: Implemented local spilling to memory. Locals 0-3 use registers r9-r12, locals 4+ are spilled to memory at `0x30200 + func_idx * 512 + (local_idx - 4) * 8`.
 
 ---
 
@@ -127,7 +127,7 @@ When you discover a new issue:
 ---
 
 ### ~~Spilled locals memory fault~~ (Resolved 2025-01-17)
-**Resolution**: Moved spilled locals from 0x30000 to 0x20200 (within heap area). Heap pages are now automatically calculated based on the number of functions to ensure enough space for spilled locals.
+**Resolution**: Moved spilled locals from 0x30000 to 0x30200 (within heap area). Heap pages are now automatically calculated based on the number of functions to ensure enough space for spilled locals.
 
 ---
 

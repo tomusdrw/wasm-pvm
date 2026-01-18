@@ -24,6 +24,7 @@ pub enum Instruction {
     ShloR64 { dst: u8, src1: u8, src2: u8 },
     SharR64 { dst: u8, src1: u8, src2: u8 },
     AddImm32 { dst: u8, src: u8, value: i32 },
+    AddImm64 { dst: u8, src: u8, value: i32 },
     Jump { offset: i32 },
     JumpInd { reg: u8, offset: i32 },
     LoadIndU32 { dst: u8, base: u8, offset: i32 },
@@ -135,6 +136,11 @@ impl Instruction {
             }
             Self::AddImm32 { dst, src, value } => {
                 let mut bytes = vec![Opcode::AddImm32 as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
+                bytes.extend_from_slice(&encode_imm(*value));
+                bytes
+            }
+            Self::AddImm64 { dst, src, value } => {
+                let mut bytes = vec![Opcode::AddImm64 as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
             }

@@ -1,4 +1,4 @@
-const RESULT_HEAP: u32 = 0x20100;
+const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;

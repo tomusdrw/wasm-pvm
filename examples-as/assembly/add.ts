@@ -1,7 +1,7 @@
-// SPI Convention: args_ptr=0xFEFF0000, result heap=0x20100
+// SPI Convention: args_ptr=0xFEFF0000, result heap=0x30100
 // Globals at indices 0,1 are result_ptr, result_len
 
-const RESULT_HEAP: u32 = 0x20100;
+const RESULT_HEAP: u32 = 0x30100;
 
 // Export mutable globals for result pointer and length
 // These get stored at 0x20000 + idx*4 by wasm-pvm compiler

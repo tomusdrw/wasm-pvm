@@ -211,7 +211,7 @@ When in doubt, ask rather than guess. Document any answers in the appropriate fi
 | r8 | SPI args length / scratch for rotates |
 | r9-r12 | Local variables (first 4 locals) |
 
-**Memory for spilled locals**: `0x20200 + (func_idx * 512) + ((local_idx - 4) * 8)`
+**Memory for spilled locals**: `0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)`
 
 ---
 

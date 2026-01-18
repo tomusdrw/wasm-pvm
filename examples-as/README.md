@@ -23,7 +23,7 @@ npx tsx scripts/run-spi.ts /tmp/add.spi --args=0500000007000000
 All programs must follow the SPI (Standard Program Interface) entrypoint convention:
 
 ```typescript
-const RESULT_HEAP: u32 = 0x20100;
+const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
@@ -59,7 +59,7 @@ export function main(args_ptr: i32, args_len: i32): void {
 
 1. **Export mutable globals** `result_ptr` and `result_len` - the compiler reads these to return values
 2. **Use `load<T>()` and `store<T>()`** for direct memory access (no runtime needed)
-3. **Write results to `0x20100`** or higher (user heap region)
+3. **Write results to `0x30100`** or higher (user heap region)
 4. **Integer types only** - PVM has no floating point support
 
 ## Build Configuration

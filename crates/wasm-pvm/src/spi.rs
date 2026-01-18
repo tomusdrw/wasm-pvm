@@ -33,6 +33,12 @@ impl SpiProgram {
     }
 
     #[must_use]
+    pub fn with_ro_data(mut self, data: Vec<u8>) -> Self {
+        self.ro_data = data;
+        self
+    }
+
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let code_blob = self.code.encode();
 

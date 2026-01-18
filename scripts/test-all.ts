@@ -18,6 +18,7 @@ interface TestCase {
     args: string;
     expected: number;
     description: string;
+    pc?: number;
   }>;
 }
 
@@ -122,6 +123,14 @@ const testCases: TestCase[] = [
     ],
   },
   {
+    name: 'entry-points',
+    sourceWatOrWasm: 'examples-wat/entry-points.jam.wat',
+    tests: [
+      { args: '', expected: 42, description: 'main (PC=0) returns 42' },
+      { args: '', expected: 99, description: 'main2 (PC=5) returns 99', pc: 5 },
+    ],
+  },
+  {
     name: 'as-add',
     sourceWatOrWasm: 'examples-as/build/add.wasm',
     tests: [
@@ -201,8 +210,9 @@ async function main() {
       totalTests++;
       
       try {
+        const pcArg = test.pc !== undefined ? ` --pc=${test.pc}` : '';
         const result = execSync(
-          `npx tsx scripts/run-jam.ts "${jamPath}" --args=${test.args}`,
+          `npx tsx scripts/run-jam.ts "${jamPath}" --args=${test.args}${pcArg}`,
           { cwd: projectRoot, stdio: 'pipe', encoding: 'utf-8' }
         );
 

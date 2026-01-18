@@ -8,13 +8,16 @@ const ARGS_PTR_REG: u8 = 7;
 const ARGS_LEN_REG: u8 = 8;
 const FIRST_LOCAL_REG: u8 = 9;
 const MAX_LOCAL_REGS: usize = 4;
-const GLOBAL_MEMORY_BASE: i32 = 0x20000;
+const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 const EXIT_ADDRESS: i32 = -65536;
 const RETURN_ADDR_REG: u8 = 0;
-const RETURN_VALUE_REG: u8 = 1;
+const STACK_PTR_REG: u8 = 1;
+const RETURN_VALUE_REG: u8 = 7;
+const SAVED_TABLE_IDX_REG: u8 = 8;
+const RO_DATA_BASE: i32 = 0x10000;
 /// Base address for spilled locals in memory (within heap area)
-/// Layout: 0x20000-0x200FF globals, 0x20100-0x201FF user results, 0x20200+ spilled locals
-pub const SPILLED_LOCALS_BASE: i32 = 0x20200;
+/// Layout: 0x30000-0x300FF globals, 0x30100-0x301FF user results, 0x30200+ spilled locals
+pub const SPILLED_LOCALS_BASE: i32 = 0x30200;
 /// Bytes allocated per function for spilled locals (64 locals * 8 bytes)
 pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
 
@@ -29,6 +32,8 @@ pub struct CompileContext {
     pub function_offsets: Vec<usize>,
     pub function_signatures: Vec<(usize, bool)>,
     pub func_idx: usize,
+    pub function_table: Vec<u32>,
+    pub type_signatures: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +41,12 @@ pub struct CallFixup {
     pub return_addr_instr: usize,
     pub jump_instr: usize,
     pub target_func: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct IndirectCallFixup {
+    pub return_addr_instr: usize,
+    pub jump_ind_instr: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -64,6 +75,7 @@ struct CodeEmitter {
     control_stack: Vec<ControlFrame>,
     stack: StackMachine,
     call_fixups: Vec<CallFixup>,
+    indirect_call_fixups: Vec<IndirectCallFixup>,
 }
 
 impl CodeEmitter {
@@ -75,6 +87,7 @@ impl CodeEmitter {
             control_stack: Vec::new(),
             stack: StackMachine::new(),
             call_fixups: Vec::new(),
+            indirect_call_fixups: Vec::new(),
         }
     }
 
@@ -218,6 +231,50 @@ impl CodeEmitter {
     }
 
     fn emit_call(&mut self, target_func_idx: u32, num_args: usize, has_return: bool) {
+        // Calculate how many operand stack values will remain after popping args
+        // These are values that belong to the caller and must be preserved
+        let stack_depth_before_args = self.stack.depth().saturating_sub(num_args);
+
+        // Frame layout on stack (growing down):
+        // [sp+0]: return address (r0)
+        // [sp+8..40]: locals r9-r12 (4 * 8 = 32 bytes)
+        // [sp+40..]: caller's operand stack values (stack_depth_before_args * 8 bytes)
+        let frame_size = 40 + (stack_depth_before_args * 8) as i32;
+
+        self.emit(Instruction::AddImm64 {
+            dst: STACK_PTR_REG,
+            src: STACK_PTR_REG,
+            value: -frame_size,
+        });
+
+        // Save return address
+        self.emit(Instruction::StoreIndU64 {
+            base: STACK_PTR_REG,
+            src: RETURN_ADDR_REG,
+            offset: 0,
+        });
+
+        // Save locals r9-r12
+        for i in 0..MAX_LOCAL_REGS {
+            let reg = FIRST_LOCAL_REG + i as u8;
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: reg,
+                offset: (8 + i * 8) as i32,
+            });
+        }
+
+        // Save caller's operand stack values (those below the arguments)
+        for i in 0..stack_depth_before_args {
+            let reg = StackMachine::reg_at_depth(i);
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: reg,
+                offset: (40 + i * 8) as i32,
+            });
+        }
+
+        // Pop arguments and copy to local registers for the callee
         for i in 0..num_args {
             let src = self.stack.pop();
             let dst = FIRST_LOCAL_REG + (num_args - 1 - i) as u8;
@@ -233,9 +290,49 @@ impl CodeEmitter {
         let jump_instr_idx = self.instructions.len();
         self.emit(Instruction::Jump { offset: 0 });
 
+        // Return point
         self.emit(Instruction::Fallthrough);
 
-        if has_return {
+        // Copy return value to operand stack (before restoring caller's stack)
+        // We use a temporary approach: put it in r7, then we'll copy to the right place
+        // after restoring the caller's operand stack
+        let return_in_r7 = has_return;
+
+        // Restore return address
+        self.emit(Instruction::LoadIndU64 {
+            dst: RETURN_ADDR_REG,
+            base: STACK_PTR_REG,
+            offset: 0,
+        });
+
+        // Restore locals r9-r12
+        for i in 0..MAX_LOCAL_REGS {
+            let reg = FIRST_LOCAL_REG + i as u8;
+            self.emit(Instruction::LoadIndU64 {
+                dst: reg,
+                base: STACK_PTR_REG,
+                offset: (8 + i * 8) as i32,
+            });
+        }
+
+        // Restore caller's operand stack values
+        for i in 0..stack_depth_before_args {
+            let reg = StackMachine::reg_at_depth(i);
+            self.emit(Instruction::LoadIndU64 {
+                dst: reg,
+                base: STACK_PTR_REG,
+                offset: (40 + i * 8) as i32,
+            });
+        }
+
+        self.emit(Instruction::AddImm64 {
+            dst: STACK_PTR_REG,
+            src: STACK_PTR_REG,
+            value: frame_size,
+        });
+
+        // Now that caller's operand stack is restored, push the return value if any
+        if return_in_r7 {
             let dst = self.stack.push();
             self.emit(Instruction::AddImm32 {
                 dst,
@@ -250,11 +347,143 @@ impl CodeEmitter {
             target_func: target_func_idx,
         });
     }
+
+    fn emit_call_indirect(&mut self, num_args: usize, has_return: bool) {
+        let table_idx_reg = self.stack.pop();
+
+        self.emit(Instruction::AddImm32 {
+            dst: SAVED_TABLE_IDX_REG,
+            src: table_idx_reg,
+            value: 0,
+        });
+
+        let stack_depth_before_args = self.stack.depth().saturating_sub(num_args);
+        let frame_size = 40 + (stack_depth_before_args * 8) as i32;
+
+        self.emit(Instruction::AddImm64 {
+            dst: STACK_PTR_REG,
+            src: STACK_PTR_REG,
+            value: -frame_size,
+        });
+
+        self.emit(Instruction::StoreIndU64 {
+            base: STACK_PTR_REG,
+            src: RETURN_ADDR_REG,
+            offset: 0,
+        });
+
+        for i in 0..MAX_LOCAL_REGS {
+            let reg = FIRST_LOCAL_REG + i as u8;
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: reg,
+                offset: (8 + i * 8) as i32,
+            });
+        }
+
+        for i in 0..stack_depth_before_args {
+            let reg = StackMachine::reg_at_depth(i);
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: reg,
+                offset: (40 + i * 8) as i32,
+            });
+        }
+
+        for i in 0..num_args {
+            let src = self.stack.pop();
+            let dst = FIRST_LOCAL_REG + (num_args - 1 - i) as u8;
+            self.emit(Instruction::AddImm32 { dst, src, value: 0 });
+        }
+
+        self.emit(Instruction::Add32 {
+            dst: SAVED_TABLE_IDX_REG,
+            src1: SAVED_TABLE_IDX_REG,
+            src2: SAVED_TABLE_IDX_REG,
+        });
+        self.emit(Instruction::Add32 {
+            dst: SAVED_TABLE_IDX_REG,
+            src1: SAVED_TABLE_IDX_REG,
+            src2: SAVED_TABLE_IDX_REG,
+        });
+
+        self.emit(Instruction::AddImm32 {
+            dst: SAVED_TABLE_IDX_REG,
+            src: SAVED_TABLE_IDX_REG,
+            value: RO_DATA_BASE,
+        });
+        self.emit(Instruction::LoadIndU32 {
+            dst: SAVED_TABLE_IDX_REG,
+            base: SAVED_TABLE_IDX_REG,
+            offset: 0,
+        });
+
+        let return_addr_instr_idx = self.instructions.len();
+        self.emit(Instruction::LoadImm64 {
+            reg: RETURN_ADDR_REG,
+            value: 0,
+        });
+
+        let jump_ind_instr_idx = self.instructions.len();
+        self.emit(Instruction::JumpInd {
+            reg: SAVED_TABLE_IDX_REG,
+            offset: 0,
+        });
+
+        self.emit(Instruction::Fallthrough);
+
+        self.indirect_call_fixups.push(IndirectCallFixup {
+            return_addr_instr: return_addr_instr_idx,
+            jump_ind_instr: jump_ind_instr_idx,
+        });
+
+        let return_in_r7 = has_return;
+
+        self.emit(Instruction::LoadIndU64 {
+            dst: RETURN_ADDR_REG,
+            base: STACK_PTR_REG,
+            offset: 0,
+        });
+
+        for i in 0..MAX_LOCAL_REGS {
+            let reg = FIRST_LOCAL_REG + i as u8;
+            self.emit(Instruction::LoadIndU64 {
+                dst: reg,
+                base: STACK_PTR_REG,
+                offset: (8 + i * 8) as i32,
+            });
+        }
+
+        for i in 0..stack_depth_before_args {
+            let reg = StackMachine::reg_at_depth(i);
+            self.emit(Instruction::LoadIndU64 {
+                dst: reg,
+                base: STACK_PTR_REG,
+                offset: (40 + i * 8) as i32,
+            });
+        }
+
+        self.emit(Instruction::AddImm64 {
+            dst: STACK_PTR_REG,
+            src: STACK_PTR_REG,
+            value: frame_size,
+        });
+
+        if return_in_r7 {
+            let dst = self.stack.push();
+            self.emit(Instruction::AddImm32 {
+                dst,
+                src: RETURN_VALUE_REG,
+                value: 0,
+            });
+        }
+    }
 }
 
 pub struct FunctionTranslation {
     pub instructions: Vec<Instruction>,
     pub call_fixups: Vec<CallFixup>,
+    pub indirect_call_fixups: Vec<IndirectCallFixup>,
 }
 
 pub fn translate_function(
@@ -288,6 +517,7 @@ pub fn translate_function(
     Ok(FunctionTranslation {
         instructions: emitter.instructions,
         call_fixups: emitter.call_fixups,
+        indirect_call_fixups: emitter.indirect_call_fixups,
     })
 }
 
@@ -1046,6 +1276,23 @@ fn translate_op(
                 .copied()
                 .unwrap_or((0, false));
             emitter.emit_call(*function_index, num_args, has_return);
+        }
+        Operator::CallIndirect {
+            type_index,
+            table_index,
+        } => {
+            if *table_index != 0 {
+                return Err(Error::Unsupported(format!(
+                    "call_indirect with table index {table_index}"
+                )));
+            }
+            let (num_args, num_results) = ctx
+                .type_signatures
+                .get(*type_index as usize)
+                .copied()
+                .unwrap_or((0, 0));
+            let has_return = num_results > 0;
+            emitter.emit_call_indirect(num_args, has_return);
         }
         Operator::MemorySize { mem: 0, .. } => {
             let dst = emitter.stack.push();
