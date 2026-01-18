@@ -154,7 +154,7 @@ AssemblyScript examples in `examples-as/`:
 | `factorial.ts` | Compute n! using loop | 5!=120 |
 | `fibonacci.ts` | Fibonacci sequence | fib(10)=55 |
 | `gcd.ts` | GCD (Euclidean algorithm) | gcd(48,18)=6 |
-| `life.ts` | Conway's Game of Life | 16x16 grid, works with 0 steps |
+| `life.ts` | Conway's Game of Life | 16x16 grid, glider + oscillators |
 
 ## Project Structure
 

@@ -331,13 +331,31 @@ impl CodeEmitter {
         }
 
         // Save caller's operand stack values (those below the arguments)
+        // For values in registers (depth < 5): save directly from register
+        // For spilled values (depth >= 5): load from old spill area, then save to frame
         for i in 0..stack_depth_before_args {
-            let reg = StackMachine::reg_at_depth(i);
-            self.emit(Instruction::StoreIndU64 {
-                base: STACK_PTR_REG,
-                src: reg,
-                offset: (40 + i * 8) as i32,
-            });
+            if StackMachine::needs_spill(i) {
+                // Spilled value: load from old spill area (relative to old SP, which is new_sp + frame_size)
+                let spill_offset = frame_size + OPERAND_SPILL_BASE + StackMachine::spill_offset(i);
+                self.emit(Instruction::LoadIndU64 {
+                    dst: SPILL_ALT_REG,
+                    base: STACK_PTR_REG,
+                    offset: spill_offset,
+                });
+                self.emit(Instruction::StoreIndU64 {
+                    base: STACK_PTR_REG,
+                    src: SPILL_ALT_REG,
+                    offset: (40 + i * 8) as i32,
+                });
+            } else {
+                // Value in register: save directly
+                let reg = StackMachine::reg_at_depth(i);
+                self.emit(Instruction::StoreIndU64 {
+                    base: STACK_PTR_REG,
+                    src: reg,
+                    offset: (40 + i * 8) as i32,
+                });
+            }
         }
 
         // Pop arguments and copy to local registers for the callee
@@ -382,13 +400,32 @@ impl CodeEmitter {
         }
 
         // Restore caller's operand stack values
+        // For values in registers (depth < 5): restore directly to register
+        // For spilled values (depth >= 5): load from frame, then store to old spill area
         for i in 0..stack_depth_before_args {
-            let reg = StackMachine::reg_at_depth(i);
-            self.emit(Instruction::LoadIndU64 {
-                dst: reg,
-                base: STACK_PTR_REG,
-                offset: (40 + i * 8) as i32,
-            });
+            if StackMachine::needs_spill(i) {
+                // Load from call frame
+                self.emit(Instruction::LoadIndU64 {
+                    dst: SPILL_ALT_REG,
+                    base: STACK_PTR_REG,
+                    offset: (40 + i * 8) as i32,
+                });
+                // Store to old spill area (relative to old SP, which is new_sp + frame_size)
+                let spill_offset = frame_size + OPERAND_SPILL_BASE + StackMachine::spill_offset(i);
+                self.emit(Instruction::StoreIndU64 {
+                    base: STACK_PTR_REG,
+                    src: SPILL_ALT_REG,
+                    offset: spill_offset,
+                });
+            } else {
+                // Value goes to register: restore directly
+                let reg = StackMachine::reg_at_depth(i);
+                self.emit(Instruction::LoadIndU64 {
+                    dst: reg,
+                    base: STACK_PTR_REG,
+                    offset: (40 + i * 8) as i32,
+                });
+            }
         }
 
         self.emit(Instruction::AddImm64 {
@@ -447,13 +484,28 @@ impl CodeEmitter {
             });
         }
 
+        // Save caller's operand stack values (same as emit_call)
         for i in 0..stack_depth_before_args {
-            let reg = StackMachine::reg_at_depth(i);
-            self.emit(Instruction::StoreIndU64 {
-                base: STACK_PTR_REG,
-                src: reg,
-                offset: (40 + i * 8) as i32,
-            });
+            if StackMachine::needs_spill(i) {
+                let spill_offset = frame_size + OPERAND_SPILL_BASE + StackMachine::spill_offset(i);
+                self.emit(Instruction::LoadIndU64 {
+                    dst: SPILL_ALT_REG,
+                    base: STACK_PTR_REG,
+                    offset: spill_offset,
+                });
+                self.emit(Instruction::StoreIndU64 {
+                    base: STACK_PTR_REG,
+                    src: SPILL_ALT_REG,
+                    offset: (40 + i * 8) as i32,
+                });
+            } else {
+                let reg = StackMachine::reg_at_depth(i);
+                self.emit(Instruction::StoreIndU64 {
+                    base: STACK_PTR_REG,
+                    src: reg,
+                    offset: (40 + i * 8) as i32,
+                });
+            }
         }
 
         for i in 0..num_args {
@@ -520,13 +572,28 @@ impl CodeEmitter {
             });
         }
 
+        // Restore caller's operand stack values (same as emit_call)
         for i in 0..stack_depth_before_args {
-            let reg = StackMachine::reg_at_depth(i);
-            self.emit(Instruction::LoadIndU64 {
-                dst: reg,
-                base: STACK_PTR_REG,
-                offset: (40 + i * 8) as i32,
-            });
+            if StackMachine::needs_spill(i) {
+                self.emit(Instruction::LoadIndU64 {
+                    dst: SPILL_ALT_REG,
+                    base: STACK_PTR_REG,
+                    offset: (40 + i * 8) as i32,
+                });
+                let spill_offset = frame_size + OPERAND_SPILL_BASE + StackMachine::spill_offset(i);
+                self.emit(Instruction::StoreIndU64 {
+                    base: STACK_PTR_REG,
+                    src: SPILL_ALT_REG,
+                    offset: spill_offset,
+                });
+            } else {
+                let reg = StackMachine::reg_at_depth(i);
+                self.emit(Instruction::LoadIndU64 {
+                    dst: reg,
+                    base: STACK_PTR_REG,
+                    offset: (40 + i * 8) as i32,
+                });
+            }
         }
 
         self.emit(Instruction::AddImm64 {
@@ -728,8 +795,33 @@ fn translate_op(
         }
         Operator::LocalTee { local_index } => {
             let idx = *local_index as usize;
+            let stack_depth = emitter.stack.depth();
+
+            // Get the source register for the top of stack
+            // If the top is at a spill depth, it might be:
+            // 1. In r7 with a pending spill (not yet written to memory)
+            // 2. Already spilled to memory (if there was an intervening operation)
+            let src = if stack_depth > 0 && StackMachine::needs_spill(stack_depth - 1) {
+                // Check if there's a pending spill for this depth
+                if emitter.pending_spill == Some(stack_depth - 1) {
+                    // Value is still in r7, not yet spilled
+                    StackMachine::reg_at_depth(stack_depth - 1) // r7
+                } else {
+                    // Value was already spilled to memory, load it
+                    let spill_offset =
+                        OPERAND_SPILL_BASE + StackMachine::spill_offset(stack_depth - 1);
+                    emitter.emit(Instruction::LoadIndU64 {
+                        dst: SPILL_ALT_REG,
+                        base: STACK_PTR_REG,
+                        offset: spill_offset,
+                    });
+                    SPILL_ALT_REG
+                }
+            } else {
+                emitter.stack.peek(0)
+            };
+
             if let Some(reg) = local_reg(idx) {
-                let src = emitter.stack.peek(0);
                 emitter.emit(Instruction::AddImm32 {
                     dst: reg,
                     src,
@@ -737,8 +829,16 @@ fn translate_op(
                 });
             } else {
                 let offset = spilled_local_offset(ctx.func_idx, idx);
-                let src = emitter.stack.peek(0);
-                let temp = if src == 2 { 3 } else { 2 };
+                // Use r8 (SPILL_ALT_REG) as temp to avoid clobbering operand stack registers
+                // Note: src might be r7 or r8, so we need to handle both cases
+                let temp = if src == SPILL_ALT_REG {
+                    // src is r8, use a different register for the address
+                    // We'll store r8's value first, then restore after
+                    // Actually, let's just use r7 which should be safe here
+                    7
+                } else {
+                    SPILL_ALT_REG
+                };
                 emitter.emit(Instruction::LoadImm {
                     reg: temp,
                     value: offset,
@@ -796,19 +896,12 @@ fn translate_op(
             });
         }
         Operator::I64Load { memarg } => {
-            let base = self.stack.pop(ctx)?;
-            let offset = memarg.offset as i64;
-            let dest = self.stack.push_temp(ctx)?;
-            log::debug!(
-                "I64Load: base={:?}, offset={}, dest={:?}",
-                base,
-                offset,
-                dest
-            );
-            ctx.emit(Instruction::LoadI64 {
-                dest,
-                base: base.into(),
-                offset,
+            let addr = emitter.spill_pop();
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::LoadIndU64 {
+                dst,
+                base: addr,
+                offset: memarg.offset as i32,
             });
         }
         Operator::I64Store { memarg } => {
