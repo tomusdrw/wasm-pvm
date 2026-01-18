@@ -9,6 +9,14 @@ pub use codegen::CompileContext;
 
 const ENTRY_HEADER_SIZE: usize = 10;
 
+/// Represents an active data segment parsed from WASM
+struct DataSegment {
+    /// Offset in WASM linear memory (where the data goes)
+    offset: u32,
+    /// The actual data bytes
+    data: Vec<u8>,
+}
+
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut functions = Vec::new();
     let mut func_types: Vec<wasmparser::FuncType> = Vec::new();
@@ -19,6 +27,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut secondary_entry_func_idx: Option<u32> = None;
     let mut tables: Vec<wasmparser::TableType> = Vec::new();
     let mut table_elements: Vec<(u32, u32, Vec<u32>)> = Vec::new();
+    let mut data_segments: Vec<DataSegment> = Vec::new();
+    let mut num_imported_funcs: u32 = 0;
+    let mut imported_func_type_indices: Vec<u32> = Vec::new();
 
     for payload in Parser::new(0).parse_all(wasm) {
         match payload? {
@@ -30,6 +41,15 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                         {
                             func_types.push(f.clone());
                         }
+                    }
+                }
+            }
+            Payload::ImportSection(reader) => {
+                for import in reader {
+                    let import = import?;
+                    if let wasmparser::TypeRef::Func(type_idx) = import.ty {
+                        num_imported_funcs += 1;
+                        imported_func_type_indices.push(type_idx);
                     }
                 }
             }
@@ -94,6 +114,23 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             Payload::CodeSectionEntry(body) => {
                 functions.push(body);
             }
+            Payload::DataSection(reader) => {
+                for data in reader {
+                    let data = data?;
+                    if let wasmparser::DataKind::Active {
+                        memory_index: _,
+                        offset_expr,
+                    } = data.kind
+                    {
+                        let offset = eval_const_i32(&offset_expr)? as u32;
+                        data_segments.push(DataSegment {
+                            offset,
+                            data: data.data.to_vec(),
+                        });
+                    }
+                    // Passive data segments are ignored for now (used with memory.init)
+                }
+            }
             _ => {}
         }
     }
@@ -127,8 +164,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         result_len_global = Some(1);
     }
 
-    let function_signatures: Vec<(usize, bool)> = function_type_indices
+    // Function signatures indexed by global function index (imports first, then locals)
+    let function_signatures: Vec<(usize, bool)> = imported_func_type_indices
         .iter()
+        .chain(function_type_indices.iter())
         .map(|&type_idx| {
             let func_type = func_types.get(type_idx as usize);
             let num_params = func_type.map_or(0, |f| f.params().len());
@@ -180,14 +219,17 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 
     let secondary_entry_idx_resolved = secondary_entry_func_idx.map(|idx| idx as usize);
 
-    for (func_idx, func) in functions.iter().enumerate() {
+    for (local_func_idx, func) in functions.iter().enumerate() {
+        // Global function index = num_imported_funcs + local_func_idx
+        let global_func_idx = num_imported_funcs as usize + local_func_idx;
+
         let (num_params, has_return) = function_signatures
-            .get(func_idx)
+            .get(global_func_idx)
             .copied()
             .unwrap_or((0, false));
 
-        let is_main = func_idx == main_func_idx;
-        let is_secondary_entry = secondary_entry_idx_resolved == Some(func_idx);
+        let is_main = local_func_idx == main_func_idx;
+        let is_secondary_entry = secondary_entry_idx_resolved == Some(local_func_idx);
 
         let is_entry_func = is_main || is_secondary_entry;
         let ctx = CompileContext {
@@ -208,9 +250,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             has_return,
             function_offsets: vec![],
             function_signatures: function_signatures.clone(),
-            func_idx,
+            func_idx: global_func_idx,
             function_table: function_table.clone(),
             type_signatures: type_signatures.clone(),
+            num_imported_funcs: num_imported_funcs as usize,
         };
 
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
@@ -263,26 +306,91 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 
     let blob = crate::pvm::ProgramBlob::new(all_instructions).with_jump_table(jump_table);
 
-    let heap_pages = calculate_heap_pages(functions.len());
+    // Build rw_data from WASM data segments
+    // Data segments specify offsets in WASM linear memory (starting at 0)
+    // We need to place them at WASM_MEMORY_BASE (0x50000) in PVM
+    // But rw_data is placed at 0x30000 by the SPI loader, so we need to account for that
+    //
+    // Memory layout after SPI loading:
+    // - 0x30000: Start of RW data segment (globals at 0x30000, spilled locals at 0x40000)
+    // - 0x50000: WASM linear memory base (WASM_MEMORY_BASE)
+    //
+    // rw_data byte 0 goes to PVM address 0x30000
+    // rw_data byte N goes to PVM address 0x30000 + N
+    // WASM memory offset 0 should be at PVM address 0x50000 = 0x30000 + 0x20000
+    // So WASM data at offset X goes to rw_data byte (0x20000 + X)
+    let rw_data = build_rw_data(&data_segments);
+
+    let heap_pages = calculate_heap_pages(functions.len(), &data_segments);
 
     Ok(SpiProgram::new(blob)
         .with_heap_pages(heap_pages)
-        .with_ro_data(ro_data))
+        .with_ro_data(ro_data)
+        .with_rw_data(rw_data))
 }
 
-fn calculate_heap_pages(num_functions: usize) -> u16 {
+/// Build the rw_data section from WASM data segments.
+///
+/// The RW data segment in SPI is loaded at 0x30000. WASM linear memory starts at
+/// WASM_MEMORY_BASE (0x50000). So WASM offset X maps to rw_data offset (0x20000 + X).
+fn build_rw_data(data_segments: &[DataSegment]) -> Vec<u8> {
+    if data_segments.is_empty() {
+        return Vec::new();
+    }
+
+    // Calculate the size of rw_data needed
+    // We need to cover from 0x30000 to at least WASM_MEMORY_BASE + max(wasm_offset + data_len)
+    let wasm_to_rw_offset = codegen::WASM_MEMORY_BASE as u32 - 0x30000;
+
+    let max_end = data_segments
+        .iter()
+        .map(|seg| wasm_to_rw_offset + seg.offset + seg.data.len() as u32)
+        .max()
+        .unwrap_or(0);
+
+    let mut rw_data = vec![0u8; max_end as usize];
+
+    for seg in data_segments {
+        let rw_offset = (wasm_to_rw_offset + seg.offset) as usize;
+        if rw_offset + seg.data.len() <= rw_data.len() {
+            rw_data[rw_offset..rw_offset + seg.data.len()].copy_from_slice(&seg.data);
+        }
+    }
+
+    rw_data
+}
+
+fn calculate_heap_pages(num_functions: usize, data_segments: &[DataSegment]) -> u16 {
     // Memory layout:
     // 0x30000-0x300FF: Globals (256 bytes)
     // 0x30100-0x3FFFF: User heap (~64KB)
     // 0x40000+: Spilled locals (512 bytes per function)
+    // 0x50000+: WASM linear memory (data segments + dynamic allocation)
     //
     // The heap segment starts at 0x30000 (GLOBAL_MEMORY_BASE).
-    // We need to allocate enough pages to cover up to spilled locals.
+    // We need to allocate enough pages to cover:
+    // 1. Spilled locals
+    // 2. WASM linear memory (including data segments)
     let spilled_locals_end = codegen::SPILLED_LOCALS_BASE as usize
         + num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
 
-    // Total bytes from heap base (0x30000) to end of spilled locals
-    let total_bytes = spilled_locals_end - 0x30000;
+    // WASM memory end (include data segments + some extra for heap)
+    let wasm_memory_end = if data_segments.is_empty() {
+        codegen::WASM_MEMORY_BASE as usize + 64 * 1024 // 64KB default
+    } else {
+        let max_data_end = data_segments
+            .iter()
+            .map(|seg| codegen::WASM_MEMORY_BASE as usize + seg.offset as usize + seg.data.len())
+            .max()
+            .unwrap_or(codegen::WASM_MEMORY_BASE as usize);
+        // Add 64KB for dynamic allocation
+        max_data_end + 64 * 1024
+    };
+
+    let end = spilled_locals_end.max(wasm_memory_end);
+
+    // Total bytes from heap base (0x30000) to end
+    let total_bytes = end - 0x30000;
     let pages = total_bytes.div_ceil(4096);
 
     pages.max(16) as u16

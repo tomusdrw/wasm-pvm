@@ -21,6 +21,10 @@ const RO_DATA_BASE: i32 = 0x10000;
 pub const SPILLED_LOCALS_BASE: i32 = 0x40000;
 /// Bytes allocated per function for spilled locals (64 locals * 8 bytes)
 pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
+/// Base address for WASM linear memory in PVM address space.
+/// WASM memory address 0 maps to this PVM address.
+/// All i32.load/i32.store operations add this offset to the WASM address.
+pub const WASM_MEMORY_BASE: i32 = 0x50000;
 
 pub struct CompileContext {
     pub num_params: usize,
@@ -35,6 +39,7 @@ pub struct CompileContext {
     pub func_idx: usize,
     pub function_table: Vec<u32>,
     pub type_signatures: Vec<(usize, usize)>,
+    pub num_imported_funcs: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1446,12 +1451,21 @@ fn translate_op(
             emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
         }
         Operator::Call { function_index } => {
+            // Check if this is a call to an imported function
+            if (*function_index as usize) < ctx.num_imported_funcs {
+                return Err(Error::Unsupported(format!(
+                    "call to imported function {} (imports not supported)",
+                    function_index
+                )));
+            }
             let (num_args, has_return) = ctx
                 .function_signatures
                 .get(*function_index as usize)
                 .copied()
                 .unwrap_or((0, false));
-            emitter.emit_call(*function_index, num_args, has_return);
+            // Convert global function index to local function index for emit_call
+            let local_func_idx = *function_index - ctx.num_imported_funcs as u32;
+            emitter.emit_call(local_func_idx, num_args, has_return);
         }
         Operator::CallIndirect {
             type_index,
