@@ -89,6 +89,7 @@ Key flags:
 |------|-------------|------|
 | `add.ts` | Add two u32 values | `--args=0500000007000000` → 12 |
 | `factorial.ts` | Compute n! | `--args=05000000` → 120 |
+| `life.ts` | Game of Life (glider + oscillators), returns encoded grid | `--args=05000000` → 5 steps |
 
 ## Full Workflow
 

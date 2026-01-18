@@ -186,6 +186,9 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 **Test Suite**: 58 integration tests passing (as of 2025-01-18)
 - [x] `call-indirect.jam.wat` - indirect function calls via table
 
+AssemblyScript examples (`examples-as/assembly/*.ts`):
+- [x] `life.ts` - Game of Life (compiles, runs with 0 steps; multi-step needs debugging)
+
 ---
 
 ## Remaining Work for V1 MVP
@@ -260,12 +263,35 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 3. Emit TRAP on signature mismatch
 
 #### 🟢 LOW: Operand Stack Spilling
-**Status**: Hardcoded 5-register limit  
-**Impact**: Complex expressions may fail
+**Status**: ✅ Implemented (2025-01-18) - spills to memory when depth > 5  
+**Impact**: Complex expressions now compile and mostly work
 
-**Required work**:
-1. Implement stack spilling to memory when depth > 5
-2. Use call stack area for temporary operand storage
+---
+
+### Phase 11: Game of Life Debugging
+
+#### 🟡 HIGH: Debug Multi-Step Game of Life Simulation
+**Status**: Not started  
+**Impact**: Validates operand stack spilling and complex function calls work correctly
+
+**Symptom**: `life.jam` runs correctly with 0 steps but faults with exit code `0x60000` (memory access at invalid address) when running with 1+ steps. The `step_once` function has deep stack usage (8 neighbors loaded and summed).
+
+**Debugging approach**:
+1. **Verify AssemblyScript correctness first**:
+   - Run `life.wasm` directly in a standard WASM runtime (e.g., `wasmtime`, Node.js)
+   - Test with 1, 5, 10 steps to confirm the algorithm works
+   - If WASM fails, fix the AssemblyScript code
+   
+2. **If WASM works, debug the compiler**:
+   - Add verbose logging to track stack spill/restore operations
+   - Compare PVM execution trace with expected WASM semantics
+   - Check address calculations in `step_once` neighbor lookup
+   - Verify spill offset calculations are correct for deep stack (depth 6-8)
+
+3. **Specific areas to investigate**:
+   - The fault address `0x60000` = 2 × `0x30000` suggests possible address doubling
+   - Check if spilled values are being loaded/stored correctly during function calls
+   - Verify the spill area offset (`-0x100` from sp) doesn't conflict with call frames
 
 ### V1 Verification Checklist
 - [ ] Compile anan-as (AssemblyScript PVM interpreter) to WASM

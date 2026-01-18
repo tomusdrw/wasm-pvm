@@ -68,6 +68,8 @@ enum ControlFrame {
     },
 }
 
+const OPERAND_SPILL_BASE: i32 = -0x100;
+
 struct CodeEmitter {
     instructions: Vec<Instruction>,
     labels: Vec<Option<usize>>,
@@ -76,6 +78,7 @@ struct CodeEmitter {
     stack: StackMachine,
     call_fixups: Vec<CallFixup>,
     indirect_call_fixups: Vec<IndirectCallFixup>,
+    pending_spill: Option<usize>,
 }
 
 impl CodeEmitter {
@@ -88,6 +91,7 @@ impl CodeEmitter {
             stack: StackMachine::new(),
             call_fixups: Vec::new(),
             indirect_call_fixups: Vec::new(),
+            pending_spill: None,
         }
     }
 
@@ -107,6 +111,46 @@ impl CodeEmitter {
 
     fn emit(&mut self, instr: Instruction) {
         self.instructions.push(instr);
+    }
+
+    fn flush_pending_spill(&mut self) {
+        if let Some(spill_depth) = self.pending_spill.take() {
+            let offset = OPERAND_SPILL_BASE + StackMachine::spill_offset(spill_depth);
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: StackMachine::reg_at_depth(spill_depth),
+                offset,
+            });
+        }
+    }
+
+    fn spill_push(&mut self) -> u8 {
+        self.flush_pending_spill();
+        let depth = self.stack.depth();
+        let reg = self.stack.push();
+        if StackMachine::needs_spill(depth) {
+            self.pending_spill = Some(depth);
+        }
+        reg
+    }
+
+    #[allow(dead_code)]
+    fn spill_finalize(&mut self) {
+        self.flush_pending_spill();
+    }
+
+    fn spill_pop(&mut self) -> u8 {
+        self.flush_pending_spill();
+        let depth = self.stack.depth();
+        if depth > 0 && StackMachine::needs_spill(depth - 1) {
+            let offset = OPERAND_SPILL_BASE + StackMachine::spill_offset(depth - 1);
+            self.emit(Instruction::LoadIndU64 {
+                dst: StackMachine::reg_at_depth(depth - 1),
+                base: STACK_PTR_REG,
+                offset,
+            });
+        }
+        self.stack.pop()
     }
 
     fn emit_jump_to_label(&mut self, label: usize) {
@@ -276,7 +320,7 @@ impl CodeEmitter {
 
         // Pop arguments and copy to local registers for the callee
         for i in 0..num_args {
-            let src = self.stack.pop();
+            let src = self.spill_pop();
             let dst = FIRST_LOCAL_REG + (num_args - 1 - i) as u8;
             self.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
@@ -333,7 +377,7 @@ impl CodeEmitter {
 
         // Now that caller's operand stack is restored, push the return value if any
         if return_in_r7 {
-            let dst = self.stack.push();
+            let dst = self.spill_push();
             self.emit(Instruction::AddImm32 {
                 dst,
                 src: RETURN_VALUE_REG,
@@ -349,7 +393,7 @@ impl CodeEmitter {
     }
 
     fn emit_call_indirect(&mut self, num_args: usize, has_return: bool) {
-        let table_idx_reg = self.stack.pop();
+        let table_idx_reg = self.spill_pop();
 
         self.emit(Instruction::AddImm32 {
             dst: SAVED_TABLE_IDX_REG,
@@ -391,7 +435,7 @@ impl CodeEmitter {
         }
 
         for i in 0..num_args {
-            let src = self.stack.pop();
+            let src = self.spill_pop();
             let dst = FIRST_LOCAL_REG + (num_args - 1 - i) as u8;
             self.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
@@ -470,7 +514,7 @@ impl CodeEmitter {
         });
 
         if return_in_r7 {
-            let dst = self.stack.push();
+            let dst = self.spill_push();
             self.emit(Instruction::AddImm32 {
                 dst,
                 src: RETURN_VALUE_REG,
@@ -574,7 +618,7 @@ fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bo
         emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
     } else {
         if has_return {
-            let ret_val = emitter.stack.pop();
+            let ret_val = emitter.spill_pop();
             emitter.emit(Instruction::AddImm32 {
                 dst: RETURN_VALUE_REG,
                 src: ret_val,
@@ -616,7 +660,7 @@ fn translate_op(
         Operator::LocalGet { local_index } => {
             let idx = *local_index as usize;
             if let Some(reg) = local_reg(idx) {
-                let dst = emitter.stack.push();
+                let dst = emitter.spill_push();
                 emitter.emit(Instruction::AddImm32 {
                     dst,
                     src: reg,
@@ -624,7 +668,7 @@ fn translate_op(
                 });
             } else {
                 let offset = spilled_local_offset(ctx.func_idx, idx);
-                let dst = emitter.stack.push();
+                let dst = emitter.spill_push();
                 emitter.emit(Instruction::LoadImm {
                     reg: dst,
                     value: offset,
@@ -639,7 +683,7 @@ fn translate_op(
         Operator::LocalSet { local_index } => {
             let idx = *local_index as usize;
             if let Some(reg) = local_reg(idx) {
-                let src = emitter.stack.pop();
+                let src = emitter.spill_pop();
                 emitter.emit(Instruction::AddImm32 {
                     dst: reg,
                     src,
@@ -647,7 +691,7 @@ fn translate_op(
                 });
             } else {
                 let offset = spilled_local_offset(ctx.func_idx, idx);
-                let src = emitter.stack.pop();
+                let src = emitter.spill_pop();
                 let temp = if src == 2 { 3 } else { 2 };
                 emitter.emit(Instruction::LoadImm {
                     reg: temp,
@@ -686,7 +730,7 @@ fn translate_op(
         }
         Operator::GlobalGet { global_index } => {
             let offset = global_offset(*global_index);
-            let dst = emitter.stack.push();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadImm {
                 reg: dst,
                 value: offset,
@@ -699,7 +743,7 @@ fn translate_op(
         }
         Operator::GlobalSet { global_index } => {
             let offset = global_offset(*global_index);
-            let src = emitter.stack.pop();
+            let src = emitter.spill_pop();
             let temp = if src == 2 { 3 } else { 2 };
             emitter.emit(Instruction::LoadImm {
                 reg: temp,
@@ -712,8 +756,8 @@ fn translate_op(
             });
         }
         Operator::I32Load { memarg } | Operator::I64Load32U { memarg } => {
-            let addr = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let addr = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadIndU32 {
                 dst,
                 base: addr,
@@ -721,8 +765,8 @@ fn translate_op(
             });
         }
         Operator::I32Store { memarg } | Operator::I64Store32 { memarg } => {
-            let value = emitter.stack.pop();
-            let addr = emitter.stack.pop();
+            let value = emitter.spill_pop();
+            let addr = emitter.spill_pop();
             emitter.emit(Instruction::StoreIndU32 {
                 base: addr,
                 src: value,
@@ -730,8 +774,8 @@ fn translate_op(
             });
         }
         Operator::I64Load { memarg } => {
-            let addr = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let addr = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadIndU64 {
                 dst,
                 base: addr,
@@ -739,8 +783,8 @@ fn translate_op(
             });
         }
         Operator::I64Store { memarg } => {
-            let value = emitter.stack.pop();
-            let addr = emitter.stack.pop();
+            let value = emitter.spill_pop();
+            let addr = emitter.spill_pop();
             emitter.emit(Instruction::StoreIndU64 {
                 base: addr,
                 src: value,
@@ -748,26 +792,26 @@ fn translate_op(
             });
         }
         Operator::I32Const { value } => {
-            let reg = emitter.stack.push();
+            let reg = emitter.spill_push();
             emitter.emit(Instruction::LoadImm { reg, value: *value });
         }
         Operator::I64Const { value } => {
-            let reg = emitter.stack.push();
+            let reg = emitter.spill_push();
             emitter.emit(Instruction::LoadImm64 {
                 reg,
                 value: *value as u64,
             });
         }
         Operator::I32Add => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Add32 { dst, src1, src2 });
         }
         Operator::I32Sub => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Sub32 {
                 dst,
                 src1: src2,
@@ -775,15 +819,15 @@ fn translate_op(
             });
         }
         Operator::I32Mul => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Mul32 { dst, src1, src2 });
         }
         Operator::I32DivU => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::DivU32 {
                 dst,
                 src1: src2,
@@ -791,9 +835,9 @@ fn translate_op(
             });
         }
         Operator::I32DivS => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::DivS32 {
                 dst,
                 src1: src2,
@@ -801,9 +845,9 @@ fn translate_op(
             });
         }
         Operator::I32RemU => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::RemU32 {
                 dst,
                 src1: src2,
@@ -811,9 +855,9 @@ fn translate_op(
             });
         }
         Operator::I32RemS => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::RemS32 {
                 dst,
                 src1: src2,
@@ -821,9 +865,9 @@ fn translate_op(
             });
         }
         Operator::I32Eq | Operator::I64Eq => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Xor {
                 dst,
                 src1: a,
@@ -836,17 +880,17 @@ fn translate_op(
             });
         }
         Operator::I32Ne | Operator::I64Ne => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Xor {
                 dst,
                 src1: a,
                 src2: b,
             });
-            let one = emitter.stack.push();
+            let one = emitter.spill_push();
             emitter.emit(Instruction::LoadImm { reg: one, value: 0 });
-            let _ = emitter.stack.pop();
+            let _ = emitter.spill_pop();
             emitter.emit(Instruction::SetLtU {
                 dst,
                 src1: one,
@@ -854,9 +898,9 @@ fn translate_op(
             });
         }
         Operator::I32And | Operator::I64And => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::And {
                 dst,
                 src1: a,
@@ -864,9 +908,9 @@ fn translate_op(
             });
         }
         Operator::I32Or | Operator::I64Or => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Or {
                 dst,
                 src1: a,
@@ -874,9 +918,9 @@ fn translate_op(
             });
         }
         Operator::I32Xor | Operator::I64Xor => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Xor {
                 dst,
                 src1: a,
@@ -884,9 +928,9 @@ fn translate_op(
             });
         }
         Operator::I32Shl => {
-            let shift = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let shift = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::ShloL32 {
                 dst,
                 src1: shift,
@@ -894,9 +938,9 @@ fn translate_op(
             });
         }
         Operator::I32ShrU => {
-            let shift = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let shift = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::ShloR32 {
                 dst,
                 src1: shift,
@@ -904,9 +948,9 @@ fn translate_op(
             });
         }
         Operator::I32ShrS => {
-            let shift = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let shift = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SharR32 {
                 dst,
                 src1: shift,
@@ -914,9 +958,9 @@ fn translate_op(
             });
         }
         Operator::I64Shl => {
-            let shift = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let shift = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::ShloL64 {
                 dst,
                 src1: shift,
@@ -924,9 +968,9 @@ fn translate_op(
             });
         }
         Operator::I64ShrU => {
-            let shift = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let shift = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::ShloR64 {
                 dst,
                 src1: shift,
@@ -934,9 +978,9 @@ fn translate_op(
             });
         }
         Operator::I64ShrS => {
-            let shift = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let shift = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SharR64 {
                 dst,
                 src1: shift,
@@ -948,18 +992,18 @@ fn translate_op(
             emitter.emit(Instruction::Trap);
         }
         Operator::Drop => {
-            let _ = emitter.stack.pop();
+            let _ = emitter.spill_pop();
         }
         Operator::I64Add => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Add64 { dst, src1, src2 });
         }
         Operator::I64Sub => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Sub64 {
                 dst,
                 src1: src2,
@@ -967,15 +1011,15 @@ fn translate_op(
             });
         }
         Operator::I64Mul => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::Mul64 { dst, src1, src2 });
         }
         Operator::I64DivU => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::DivU64 {
                 dst,
                 src1: src2,
@@ -983,9 +1027,9 @@ fn translate_op(
             });
         }
         Operator::I64DivS => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::DivS64 {
                 dst,
                 src1: src2,
@@ -993,9 +1037,9 @@ fn translate_op(
             });
         }
         Operator::I64RemU => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::RemU64 {
                 dst,
                 src1: src2,
@@ -1003,9 +1047,9 @@ fn translate_op(
             });
         }
         Operator::I64RemS => {
-            let src2 = emitter.stack.pop();
-            let src1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src2 = emitter.spill_pop();
+            let src1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::RemS64 {
                 dst,
                 src1: src2,
@@ -1013,9 +1057,9 @@ fn translate_op(
             });
         }
         Operator::I32GtU | Operator::I64GtU => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
                 src1: a,
@@ -1023,9 +1067,9 @@ fn translate_op(
             });
         }
         Operator::I32GtS | Operator::I64GtS => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
                 src1: a,
@@ -1033,9 +1077,9 @@ fn translate_op(
             });
         }
         Operator::I32LtU | Operator::I64LtU => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
                 src1: b,
@@ -1043,9 +1087,9 @@ fn translate_op(
             });
         }
         Operator::I32LtS | Operator::I64LtS => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
                 src1: b,
@@ -1053,17 +1097,17 @@ fn translate_op(
             });
         }
         Operator::I32GeU | Operator::I64GeU => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
                 src1: b,
                 src2: a,
             });
-            let one = emitter.stack.push();
+            let one = emitter.spill_push();
             emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-            let _ = emitter.stack.pop();
+            let _ = emitter.spill_pop();
             emitter.emit(Instruction::Xor {
                 dst,
                 src1: dst,
@@ -1071,17 +1115,17 @@ fn translate_op(
             });
         }
         Operator::I32GeS | Operator::I64GeS => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
                 src1: b,
                 src2: a,
             });
-            let one = emitter.stack.push();
+            let one = emitter.spill_push();
             emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-            let _ = emitter.stack.pop();
+            let _ = emitter.spill_pop();
             emitter.emit(Instruction::Xor {
                 dst,
                 src1: dst,
@@ -1089,17 +1133,17 @@ fn translate_op(
             });
         }
         Operator::I32LeU | Operator::I64LeU => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
                 src1: a,
                 src2: b,
             });
-            let one = emitter.stack.push();
+            let one = emitter.spill_push();
             emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-            let _ = emitter.stack.pop();
+            let _ = emitter.spill_pop();
             emitter.emit(Instruction::Xor {
                 dst,
                 src1: dst,
@@ -1107,17 +1151,17 @@ fn translate_op(
             });
         }
         Operator::I32LeS | Operator::I64LeS => {
-            let b = emitter.stack.pop();
-            let a = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
                 src1: a,
                 src2: b,
             });
-            let one = emitter.stack.push();
+            let one = emitter.spill_push();
             emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-            let _ = emitter.stack.pop();
+            let _ = emitter.spill_pop();
             emitter.emit(Instruction::Xor {
                 dst,
                 src1: dst,
@@ -1125,8 +1169,8 @@ fn translate_op(
             });
         }
         Operator::I32Eqz | Operator::I64Eqz => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtUImm { dst, src, value: 1 });
         }
         Operator::Block { blockty } => {
@@ -1139,7 +1183,7 @@ fn translate_op(
         }
         Operator::If { blockty } => {
             let has_result = !matches!(blockty, wasmparser::BlockType::Empty);
-            let cond = emitter.stack.pop();
+            let cond = emitter.spill_pop();
             emitter.push_if(cond, has_result);
         }
         Operator::Else => {
@@ -1208,7 +1252,7 @@ fn translate_op(
             }
         }
         Operator::BrIf { relative_depth } => {
-            let cond = emitter.stack.pop();
+            let cond = emitter.spill_pop();
             if let Some((target, target_depth, has_result)) =
                 emitter.get_branch_info(*relative_depth)
             {
@@ -1229,7 +1273,7 @@ fn translate_op(
             }
         }
         Operator::BrTable { targets } => {
-            let index_reg = emitter.stack.pop();
+            let index_reg = emitter.spill_pop();
             let target_depths: Vec<u32> = targets.targets().map(|t| t.unwrap()).collect();
             let default_depth = targets.default();
 
@@ -1295,25 +1339,25 @@ fn translate_op(
             emitter.emit_call_indirect(num_args, has_return);
         }
         Operator::MemorySize { mem: 0, .. } => {
-            let dst = emitter.stack.push();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadImm {
                 reg: dst,
                 value: 256,
             });
         }
         Operator::MemoryGrow { mem: 0, .. } => {
-            let _ = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let _ = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadImm {
                 reg: dst,
                 value: -1,
             });
         }
         Operator::Select => {
-            let cond = emitter.stack.pop();
-            let val2 = emitter.stack.pop();
-            let val1 = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let cond = emitter.spill_pop();
+            let val2 = emitter.spill_pop();
+            let val1 = emitter.spill_pop();
+            let dst = emitter.spill_push();
             let else_label = emitter.alloc_label();
             let end_label = emitter.alloc_label();
             emitter.emit_branch_eq_imm_to_label(cond, 0, else_label);
@@ -1334,56 +1378,56 @@ fn translate_op(
             emitter.define_label(end_label);
         }
         Operator::I32Clz => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LeadingZeroBits32 { dst, src });
         }
         Operator::I64Clz => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LeadingZeroBits64 { dst, src });
         }
         Operator::I32Ctz => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::TrailingZeroBits32 { dst, src });
         }
         Operator::I64Ctz => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::TrailingZeroBits64 { dst, src });
         }
         Operator::I32Popcnt => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::CountSetBits32 { dst, src });
         }
         Operator::I64Popcnt => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::CountSetBits64 { dst, src });
         }
         Operator::I32WrapI64 => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
         Operator::I64ExtendI32S => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::SignExtend16 { dst, src });
             emitter.emit(Instruction::SignExtend16 { dst, src: dst });
         }
         Operator::I64ExtendI32U => {
-            let src = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
             if src != dst {
                 emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
             }
         }
         Operator::I32Load8U { memarg } | Operator::I64Load8U { memarg } => {
-            let addr = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let addr = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadIndU8 {
                 dst,
                 base: addr,
@@ -1391,8 +1435,8 @@ fn translate_op(
             });
         }
         Operator::I32Load8S { memarg } | Operator::I64Load8S { memarg } => {
-            let addr = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let addr = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadIndI8 {
                 dst,
                 base: addr,
@@ -1400,8 +1444,8 @@ fn translate_op(
             });
         }
         Operator::I32Load16U { memarg } | Operator::I64Load16U { memarg } => {
-            let addr = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let addr = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadIndU16 {
                 dst,
                 base: addr,
@@ -1409,8 +1453,8 @@ fn translate_op(
             });
         }
         Operator::I32Load16S { memarg } | Operator::I64Load16S { memarg } => {
-            let addr = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let addr = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadIndI16 {
                 dst,
                 base: addr,
@@ -1418,8 +1462,8 @@ fn translate_op(
             });
         }
         Operator::I64Load32S { memarg } => {
-            let addr = emitter.stack.pop();
-            let dst = emitter.stack.push();
+            let addr = emitter.spill_pop();
+            let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadIndU32 {
                 dst,
                 base: addr,
@@ -1429,8 +1473,8 @@ fn translate_op(
             emitter.emit(Instruction::SignExtend16 { dst, src: dst });
         }
         Operator::I32Store8 { memarg } | Operator::I64Store8 { memarg } => {
-            let val = emitter.stack.pop();
-            let addr = emitter.stack.pop();
+            let val = emitter.spill_pop();
+            let addr = emitter.spill_pop();
             emitter.emit(Instruction::StoreIndU8 {
                 base: addr,
                 src: val,
@@ -1438,8 +1482,8 @@ fn translate_op(
             });
         }
         Operator::I32Store16 { memarg } | Operator::I64Store16 { memarg } => {
-            let val = emitter.stack.pop();
-            let addr = emitter.stack.pop();
+            let val = emitter.spill_pop();
+            let addr = emitter.spill_pop();
             emitter.emit(Instruction::StoreIndU16 {
                 base: addr,
                 src: val,
@@ -1447,9 +1491,9 @@ fn translate_op(
             });
         }
         Operator::I32Rotl => {
-            let n = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let result = emitter.stack.push();
+            let n = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let result = emitter.spill_push();
             emitter.emit(Instruction::AddImm32 {
                 dst: 7,
                 src: value,
@@ -1483,9 +1527,9 @@ fn translate_op(
             });
         }
         Operator::I32Rotr => {
-            let n = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let result = emitter.stack.push();
+            let n = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let result = emitter.spill_push();
             emitter.emit(Instruction::AddImm32 {
                 dst: 7,
                 src: value,
@@ -1519,9 +1563,9 @@ fn translate_op(
             });
         }
         Operator::I64Rotl => {
-            let n = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let result = emitter.stack.push();
+            let n = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let result = emitter.spill_push();
             emitter.emit(Instruction::AddImm32 {
                 dst: 7,
                 src: value,
@@ -1555,9 +1599,9 @@ fn translate_op(
             });
         }
         Operator::I64Rotr => {
-            let n = emitter.stack.pop();
-            let value = emitter.stack.pop();
-            let result = emitter.stack.push();
+            let n = emitter.spill_pop();
+            let value = emitter.spill_pop();
+            let result = emitter.spill_push();
             emitter.emit(Instruction::AddImm32 {
                 dst: 7,
                 src: value,

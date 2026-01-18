@@ -5,23 +5,30 @@ const STACK_REG_COUNT: usize = (LAST_STACK_REG - FIRST_STACK_REG + 1) as usize;
 #[derive(Debug)]
 pub struct StackMachine {
     depth: usize,
+    max_depth: usize,
 }
 
 impl StackMachine {
     pub const fn new() -> Self {
-        Self { depth: 0 }
+        Self {
+            depth: 0,
+            max_depth: 0,
+        }
     }
 
     pub fn push(&mut self) -> u8 {
-        let reg = self.top_reg();
+        let reg = Self::reg_for_depth(self.depth);
         self.depth += 1;
+        if self.depth > self.max_depth {
+            self.max_depth = self.depth;
+        }
         reg
     }
 
     pub fn pop(&mut self) -> u8 {
         assert!(self.depth > 0, "Stack underflow");
         self.depth -= 1;
-        self.top_reg()
+        Self::reg_for_depth(self.depth)
     }
 
     #[allow(dead_code)]
@@ -36,25 +43,38 @@ impl StackMachine {
         self.depth
     }
 
+    #[must_use]
+    #[allow(dead_code)]
+    pub const fn max_depth(&self) -> usize {
+        self.max_depth
+    }
+
     pub fn set_depth(&mut self, depth: usize) {
         self.depth = depth;
     }
 
     pub fn reg_at_depth(depth: usize) -> u8 {
-        Self::reg_for_depth(depth)
+        if depth < STACK_REG_COUNT {
+            FIRST_STACK_REG + depth as u8
+        } else {
+            FIRST_STACK_REG
+        }
     }
 
-    fn top_reg(&self) -> u8 {
-        Self::reg_for_depth(self.depth)
+    pub const fn needs_spill(depth: usize) -> bool {
+        depth >= STACK_REG_COUNT
+    }
+
+    pub const fn spill_offset(depth: usize) -> i32 {
+        let spill_index = depth - STACK_REG_COUNT;
+        (spill_index as i32) * 8
     }
 
     fn reg_for_depth(depth: usize) -> u8 {
         if depth < STACK_REG_COUNT {
             FIRST_STACK_REG + depth as u8
         } else {
-            panic!(
-                "Stack depth {depth} exceeds register count {STACK_REG_COUNT}, spilling not yet implemented"
-            );
+            FIRST_STACK_REG
         }
     }
 }
@@ -97,5 +117,31 @@ mod tests {
         assert_eq!(stack.peek(0), 4);
         assert_eq!(stack.peek(1), 3);
         assert_eq!(stack.peek(2), 2);
+    }
+
+    #[test]
+    fn test_spill_depth() {
+        let mut stack = StackMachine::new();
+        for i in 0..5 {
+            let reg = stack.push();
+            assert_eq!(reg, 2 + i as u8);
+        }
+        assert_eq!(stack.depth(), 5);
+
+        let reg = stack.push();
+        assert_eq!(reg, 2);
+        assert_eq!(stack.depth(), 6);
+
+        let popped = stack.pop();
+        assert_eq!(popped, 2);
+        assert_eq!(stack.depth(), 5);
+    }
+
+    #[test]
+    fn test_needs_spill() {
+        assert!(!StackMachine::needs_spill(0));
+        assert!(!StackMachine::needs_spill(4));
+        assert!(StackMachine::needs_spill(5));
+        assert!(StackMachine::needs_spill(10));
     }
 }
