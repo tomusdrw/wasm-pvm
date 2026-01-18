@@ -24,12 +24,12 @@ WASM data sections are ignored during compilation. Programs that rely on initial
 ---
 
 ### No stack overflow detection
-**Severity**: Medium  
-**Status**: Open
+**Severity**: Medium
+**Status**: Open (may be related to Game of Life issues)
 
 Deep recursion can corrupt memory without any error. The call stack grows downward from 0xFEFE0000 but there's no guard to prevent it from overwriting other memory regions.
 
-**Impact**: Recursive programs with deep call stacks may corrupt globals or heap.
+**Impact**: Recursive programs with deep call stacks may corrupt globals or heap. Game of Life may be hitting this issue.
 
 **Workaround**: Avoid deep recursion; use iterative algorithms.
 
@@ -38,8 +38,8 @@ Deep recursion can corrupt memory without any error. The call stack grows downwa
 ---
 
 ### Operand stack limited to 5 slots
-**Severity**: Low  
-**Status**: Known limitation
+**Severity**: Medium (may be causing Game of Life bug)
+**Status**: Implemented but potentially buggy
 
 The operand stack uses registers r2-r6 (5 slots). Complex expressions requiring more than 5 intermediate values will fail.
 
@@ -49,7 +49,7 @@ The operand stack uses registers r2-r6 (5 slots). Complex expressions requiring 
 
 **Workaround**: Break complex expressions into smaller parts using locals.
 
-**Fix needed**: Implement operand stack spilling to memory when depth exceeds register count.
+**Fix needed**: Debug and fix operand stack spilling - Game of Life suggests there may be bugs in the spill/restore logic for deep expressions.
 
 ---
 
@@ -62,6 +62,26 @@ PVM has no floating point instructions. WASM modules containing any float operat
 **Error**: `Floating point operations not supported`
 
 **Workaround**: Use fixed-point arithmetic or integer-only algorithms.
+
+---
+
+### Game of Life multi-step execution fault
+**Severity**: High
+**Status**: Open (currently being debugged)
+
+Game of Life example compiles and runs correctly with 0 steps, but faults with exit code `0x60000` (invalid memory access) when running with 1+ steps.
+
+**Symptom**: Memory fault at address `0x60000` = 2 × `0x30000`, suggesting possible address doubling bug.
+
+**Impact**: Complex expressions with deep operand stack usage may not work correctly.
+
+**File**: `examples-as/assembly/life.ts` (step_once function with 8 neighbor calculations)
+
+**Debugging needed**:
+1. Verify AssemblyScript correctness in standard WASM runtime
+2. Check operand stack spilling logic for deep expressions
+3. Verify address calculations in function calls with spilled locals
+4. Check for conflicts between spill area and call frames
 
 ---
 

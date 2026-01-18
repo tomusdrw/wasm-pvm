@@ -796,12 +796,19 @@ fn translate_op(
             });
         }
         Operator::I64Load { memarg } => {
-            let addr = emitter.spill_pop();
-            let dst = emitter.spill_push();
-            emitter.emit(Instruction::LoadIndU64 {
-                dst,
-                base: addr,
-                offset: memarg.offset as i32,
+            let base = self.stack.pop(ctx)?;
+            let offset = memarg.offset as i64;
+            let dest = self.stack.push_temp(ctx)?;
+            log::debug!(
+                "I64Load: base={:?}, offset={}, dest={:?}",
+                base,
+                offset,
+                dest
+            );
+            ctx.emit(Instruction::LoadI64 {
+                dest,
+                base: base.into(),
+                offset,
             });
         }
         Operator::I64Store { memarg } => {
