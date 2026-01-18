@@ -132,6 +132,7 @@ All WASM programs targeting PVM/JAM must follow this convention:
 - [x] i32.clz, i64.clz, i32.ctz, i64.ctz, i32.popcnt, i64.popcnt
 - [x] i32.rotl, i32.rotr, i64.rotl, i64.rotr
 - [x] i32.wrap_i64, i64.extend_i32_s, i64.extend_i32_u
+- [x] i32.extend8_s, i32.extend16_s, i64.extend8_s, i64.extend16_s, i64.extend32_s
 - [x] local.tee
 - [x] drop
 - [x] select
@@ -142,6 +143,8 @@ All WASM programs targeting PVM/JAM must follow this convention:
 - [x] i64.store
 - [x] i32/i64 load8_u, load8_s, load16_u, load16_s, load32_u, load32_s
 - [x] i32/i64 store8, store16, store32
+- [x] memory.fill (bulk memory fill)
+- [x] memory.copy (bulk memory copy)
 
 #### Phase 4: AssemblyScript Examples
 - [x] Set up AssemblyScript project in `examples-as/`
@@ -183,7 +186,7 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [x] `fibonacci.ts` - fibonacci sequence
 - [x] `gcd.ts` - GCD (Euclidean algorithm)
 
-**Test Suite**: 58 integration tests passing (as of 2025-01-18)
+**Test Suite**: 58 integration tests passing (as of 2025-01-19)
 - [x] `call-indirect.jam.wat` - indirect function calls via table
 
 AssemblyScript examples (`examples-as/assembly/*.ts`):
@@ -223,15 +226,27 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - Imported function calls (anan-as uses `abort` and `console.log`)
 - Memory operations don't auto-offset (programs must use WASM_MEMORY_BASE addresses)
 
-### Phase 12b: Import Function Support (NEXT - V1 BLOCKER)
-**Status**: Not implemented
-**Impact**: anan-as calls `abort` (function 0) and `console.log` (function 1)
-**Timeline**: 1-2 weeks
+### ✅ Phase 12b: Import Function & Additional Operations - COMPLETED (2025-01-19)
+**Status**: COMPLETE
+**Impact**: anan-as now compiles successfully (423KB JAM file)
 
-**Options**:
-1. **Stub imports**: Replace calls to imported functions with TRAP or no-op
-2. **Host functions**: Map specific imports to PVM ecalli (if available)
-3. **Compile without imports**: Modify anan-as build to remove abort/console.log
+**Implemented**:
+1. ✅ Stub imported functions: pop args, emit TRAP for `abort`, no-op for others
+2. ✅ `memory.fill` operation (bulk memory fill via loop)
+3. ✅ `memory.copy` operation (bulk memory copy via loop)
+4. ✅ `i32.extend8_s`, `i32.extend16_s` (sign extension)
+5. ✅ `i64.extend8_s`, `i64.extend16_s`, `i64.extend32_s` (sign extension)
+6. ✅ Float truncation stubs (`i32.trunc_sat_f64_u` etc.) - return 0 (dead code path)
+7. ✅ Fixed anan-as to use integer min instead of `Math.min` (which uses f64)
+
+**anan-as Modifications**:
+- Replaced `Math.min(4, x)` with `mini32(4, x)` in `arguments.ts`, `program-build.ts`
+- Replaced `Math.min(PAGE_SIZE, x)` with `minu32(PAGE_SIZE, x)` in `memory.ts`
+- Added `mini32` and `minu32` helper functions in `math.ts`
+- Rebuilt anan-as WASM with zero float operations
+
+**Note**: The compiled anan-as JAM file (423KB) is a library, not a standalone program.
+Full PVM-in-PVM would require a wrapper that calls the API functions (resetGeneric, nSteps, etc.).
 
 ### Phase 13: Stack Overflow Detection (PHASE 3)
 **Status**: Not implemented
@@ -287,13 +302,15 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [x] Validate complex function call handling with spilled locals
 - [x] Test with various step counts (0, 1, 2, 3, 4, 5) - all pass correctly
 
-#### Phase 2: Core V1 Features (IN PROGRESS)
+#### Phase 2: Core V1 Features (MOSTLY COMPLETE)
 - [x] Implement data section initialization (Phase 12) ✅
 - [x] Parse and handle imported functions in function indices ✅
-- [ ] Handle imported function calls (Phase 12b) - BLOCKER
-- [ ] Compile anan-as (AssemblyScript PVM interpreter) to WASM
-- [ ] Translate WASM to PVM using wasm-pvm
+- [x] Handle imported function calls (Phase 12b) ✅ - Stub imports with TRAP/no-op
+- [x] Compile anan-as (AssemblyScript PVM interpreter) to WASM ✅
+- [x] Translate WASM to PVM using wasm-pvm ✅ (423KB JAM file)
 - [ ] Run the compiled PVM interpreter inside a PVM interpreter
+  - **Note**: anan-as is a library, not a standalone program
+  - Would require a wrapper with main() that calls resetGeneric/nSteps
 - [ ] Verify correctness with test vectors
 
 #### Phase 3: Robustness & Safety (COMPLETE BEFORE PHASE 4)

@@ -30,6 +30,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut data_segments: Vec<DataSegment> = Vec::new();
     let mut num_imported_funcs: u32 = 0;
     let mut imported_func_type_indices: Vec<u32> = Vec::new();
+    let mut imported_func_names: Vec<String> = Vec::new();
 
     for payload in Parser::new(0).parse_all(wasm) {
         match payload? {
@@ -50,6 +51,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                     if let wasmparser::TypeRef::Func(type_idx) = import.ty {
                         num_imported_funcs += 1;
                         imported_func_type_indices.push(type_idx);
+                        imported_func_names.push(import.name.to_string());
                     }
                 }
             }
@@ -254,6 +256,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             function_table: function_table.clone(),
             type_signatures: type_signatures.clone(),
             num_imported_funcs: num_imported_funcs as usize,
+            imported_func_names: imported_func_names.clone(),
         };
 
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
@@ -315,24 +318,24 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     // - 0x30000: Start of RW data segment (globals at 0x30000, spilled locals at 0x40000)
     // - 0x50000: WASM linear memory base (WASM_MEMORY_BASE)
     //
-    // rw_data byte 0 goes to PVM address 0x30000
-    // rw_data byte N goes to PVM address 0x30000 + N
+    // rw_data_section byte 0 goes to PVM address 0x30000
+    // rw_data_section byte N goes to PVM address 0x30000 + N
     // WASM memory offset 0 should be at PVM address 0x50000 = 0x30000 + 0x20000
-    // So WASM data at offset X goes to rw_data byte (0x20000 + X)
-    let rw_data = build_rw_data(&data_segments);
+    // So WASM data at offset X goes to rw_data_section byte (0x20000 + X)
+    let rw_data_section = build_rw_data(&data_segments);
 
     let heap_pages = calculate_heap_pages(functions.len(), &data_segments);
 
     Ok(SpiProgram::new(blob)
         .with_heap_pages(heap_pages)
         .with_ro_data(ro_data)
-        .with_rw_data(rw_data))
+        .with_rw_data(rw_data_section))
 }
 
-/// Build the rw_data section from WASM data segments.
+/// Build the `rw_data` section from WASM data segments.
 ///
 /// The RW data segment in SPI is loaded at 0x30000. WASM linear memory starts at
-/// WASM_MEMORY_BASE (0x50000). So WASM offset X maps to rw_data offset (0x20000 + X).
+/// `WASM_MEMORY_BASE` (0x50000). So WASM offset X maps to `rw_data` offset (0x20000 + X).
 fn build_rw_data(data_segments: &[DataSegment]) -> Vec<u8> {
     if data_segments.is_empty() {
         return Vec::new();
