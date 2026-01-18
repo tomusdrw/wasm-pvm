@@ -10,6 +10,15 @@ Build a **WASM (WebAssembly) to PVM (Polka Virtual Machine)** recompiler in Rust
 3. **Testability** - Comprehensive test suite with reference interpreter
 4. **Maintainability** - Clean architecture following Rust best practices
 
+### V1 Milestone: PVM-in-PVM
+**Ultimate Goal**: Compile [anan-as](https://github.com/polkavm/anan-as) (the PVM interpreter written in AssemblyScript) to WASM, then to PVM, and run a PVM interpreter inside a PVM interpreter.
+
+This demonstrates:
+- Complete WASM MVP support (except floats)
+- Correct handling of complex control flow
+- Proper memory and stack management
+- Self-hosting capability of the toolchain
+
 ### Non-Goals (Initial Version)
 - Performance optimization (focus on correctness first)
 - WASM proposals beyond MVP (SIMD, threads, etc.)
@@ -55,8 +64,9 @@ All WASM programs targeting PVM/JAM must follow this convention:
 ```
 0x00010000: RO data segment
 0x00020000: Globals storage (0x20000 + idx*4)
-0x00020100: User heap starts here
-0x00030000: Spilled locals (512 bytes per function)
+0x00020100: User results area (256 bytes)
+0x00020200: Spilled locals (512 bytes per function)
+0x00020200 + num_funcs*512: User heap
 0xFEFE0000: Stack segment end
 0xFEFF0000: Args segment (read via args_ptr)
 0xFFFF0000: EXIT address (HALT)
@@ -104,7 +114,7 @@ All WASM programs targeting PVM/JAM must follow this convention:
 - [x] Translate `br_if` (conditional branch)
 - [x] Translate `return`
 - [x] Translate `if/else/end`
-- [ ] Handle block result values (not yet implemented)
+- [x] Handle block result values
 
 #### Integer Operations
 - [x] i32.add, i64.add
@@ -119,6 +129,9 @@ All WASM programs targeting PVM/JAM must follow this convention:
 - [x] i32.eq, i32.ne, i32.eqz, i64.eq, i64.ne, i64.eqz
 - [x] i32.and, i32.or, i32.xor, i64.and, i64.or, i64.xor
 - [x] i32.shl, i32.shr_u, i32.shr_s, i64.shl, i64.shr_u, i64.shr_s
+- [x] i32.clz, i64.clz, i32.ctz, i64.ctz, i32.popcnt, i64.popcnt
+- [x] i32.rotl, i32.rotr, i64.rotl, i64.rotr
+- [x] i32.wrap_i64, i64.extend_i32_s, i64.extend_i32_u
 - [x] local.tee
 - [x] drop
 - [x] select
@@ -127,6 +140,8 @@ All WASM programs targeting PVM/JAM must follow this convention:
 #### Memory Operations (Phase 5)
 - [x] i64.load
 - [x] i64.store
+- [x] i32/i64 load8_u, load8_s, load16_u, load16_s, load32_u, load32_s
+- [x] i32/i64 store8, store16, store32
 
 #### Phase 4: AssemblyScript Examples
 - [x] Set up AssemblyScript project in `examples-as/`
@@ -135,7 +150,7 @@ All WASM programs targeting PVM/JAM must follow this convention:
 - [x] Document AssemblyScript → JAM workflow
 
 #### Phase 4b: Test Suite & CI
-- [x] Created `scripts/test-all.ts` - 44 tests across WAT and AS examples
+- [x] Created `scripts/test-all.ts` - 56 tests across WAT and AS examples
 - [x] GitHub Actions CI workflow (`.github/workflows/ci.yml`)
 
 #### Phase 6: Functions & Calls (Partial)
@@ -155,6 +170,9 @@ WAT examples (`examples-wat/*.jam.wat`):
 - [x] `is-prime.jam.wat` - primality test
 - [x] `div.jam.wat` - unsigned division
 - [x] `call.jam.wat` - function calls
+- [x] `br-table.jam.wat` - switch/jump table (br_table)
+- [x] `bit-ops.jam.wat` - clz, ctz, popcnt
+- [x] `rotate.jam.wat` - rotl, rotr
 
 AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [x] `add.ts` - reads two i32 args, returns sum
@@ -162,20 +180,14 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [x] `fibonacci.ts` - fibonacci sequence
 - [x] `gcd.ts` - GCD (Euclidean algorithm)
 
+**Test Suite**: 56 integration tests passing (as of 2025-01-18)
+
 ---
 
-## Next Steps
+## Remaining Work
 
-### Phase 5: Remaining Operations (Mostly Complete)
-- [x] i64.div_u, i64.div_s, i64.rem_u, i64.rem_s
-- [x] i64.ge_u, i64.ge_s, i64.le_u, i64.le_s
-- [x] i64.and, i64.or, i64.xor
-- [x] i64.shl, i64.shr_u, i64.shr_s
-- [x] i64.load, i64.store
-- [ ] Handle block result values
-
-### Phase 7: Advanced Control Flow
-- [ ] Translate `br_table` (switch/jump table)
+### Phase 7: Advanced Control Flow (Partial)
+- [x] Translate `br_table` (switch/jump table)
 - [ ] Multiple entry points (main at PC=0, main2 at PC=5)
 
 ### Phase 8: Recursion Support
@@ -189,11 +201,16 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [ ] Translate `call_indirect`
 - [ ] Validate function signatures at runtime
 
-### Phase 10: Complete WASM MVP
-- [ ] All remaining i32/i64 operations (rotl, rotr, clz, ctz, popcnt, etc.)
-- [ ] i64.load, i64.store, i8/i16 load/store variants
+### Phase 10: Memory & Data (Partial)
+- [x] i8/i16 load/store variants (load8_u/s, load16_u/s, load32_u/s, store8, store16, store32)
 - [ ] Proper WASM memory with base offset translation
 - [ ] Data section initialization
+
+### V1 Milestone: anan-as in PVM
+- [ ] Compile anan-as (AssemblyScript PVM interpreter) to WASM
+- [ ] Translate WASM to PVM using wasm-pvm
+- [ ] Run the compiled PVM interpreter inside a PVM interpreter
+- [ ] Verify correctness with test vectors
 
 ---
 
@@ -326,16 +343,17 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 ### Minimum Viable Product ✅
 - All example WAT files compile and execute correctly
 - AssemblyScript examples compile and execute correctly
-- CLI tool works: `wasm-pvm compile input.wasm -o output.spi`
+- CLI tool works: `wasm-pvm compile input.wasm -o output.jam`
 - Basic error handling and messages
+- 56 integration tests passing
 
-### Full Release
+### V1 Release (Target: anan-as in PVM)
 - WASM MVP compliance (except floats)
-- Comprehensive test suite
-- Documentation
-- Recursion support
-- Indirect calls
-- Reasonable compilation speed
+- Comprehensive test suite (ongoing)
+- Documentation (ongoing)
+- Recursion support (Phase 8)
+- Indirect calls (Phase 9)
+- Successfully compile and run anan-as PVM interpreter
 
 ---
 

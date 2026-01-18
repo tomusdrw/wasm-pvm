@@ -10,14 +10,13 @@ const FIRST_LOCAL_REG: u8 = 9;
 const MAX_LOCAL_REGS: usize = 4;
 const GLOBAL_MEMORY_BASE: i32 = 0x20000;
 const EXIT_ADDRESS: i32 = -65536;
-/// Register used to store return address for function calls
 const RETURN_ADDR_REG: u8 = 0;
-/// Register used for function return value
 const RETURN_VALUE_REG: u8 = 1;
-/// Base address for spilled locals in memory
-const SPILLED_LOCALS_BASE: i32 = 0x30000;
+/// Base address for spilled locals in memory (within heap area)
+/// Layout: 0x20000-0x200FF globals, 0x20100-0x201FF user results, 0x20200+ spilled locals
+pub const SPILLED_LOCALS_BASE: i32 = 0x20200;
 /// Bytes allocated per function for spilled locals (64 locals * 8 bytes)
-const SPILLED_LOCALS_PER_FUNC: i32 = 512;
+pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
 
 pub struct CompileContext {
     pub num_params: usize,
@@ -41,9 +40,21 @@ pub struct CallFixup {
 
 #[derive(Debug, Clone, Copy)]
 enum ControlFrame {
-    Block { end_label: usize },
-    Loop { start_label: usize },
-    If { else_label: usize, end_label: usize },
+    Block {
+        end_label: usize,
+        stack_depth: usize,
+        has_result: bool,
+    },
+    Loop {
+        start_label: usize,
+        stack_depth: usize,
+    },
+    If {
+        else_label: usize,
+        end_label: usize,
+        stack_depth: usize,
+        has_result: bool,
+    },
 }
 
 struct CodeEmitter {
@@ -139,16 +150,25 @@ impl CodeEmitter {
         Ok(())
     }
 
-    fn push_block(&mut self) -> usize {
+    fn push_block(&mut self, has_result: bool) -> usize {
         let end_label = self.alloc_label();
-        self.control_stack.push(ControlFrame::Block { end_label });
+        let stack_depth = self.stack.depth();
+        self.control_stack.push(ControlFrame::Block {
+            end_label,
+            stack_depth,
+            has_result,
+        });
         end_label
     }
 
     fn push_loop(&mut self) -> usize {
         let start_label = self.alloc_label();
+        let stack_depth = self.stack.depth();
         self.define_label(start_label);
-        self.control_stack.push(ControlFrame::Loop { start_label });
+        self.control_stack.push(ControlFrame::Loop {
+            start_label,
+            stack_depth,
+        });
         start_label
     }
 
@@ -156,23 +176,32 @@ impl CodeEmitter {
         self.control_stack.pop()
     }
 
-    fn get_branch_target(&self, depth: u32) -> Result<usize> {
-        let idx = self.control_stack.len().checked_sub(1 + depth as usize);
-        let frame = idx.and_then(|i| self.control_stack.get(i));
+    fn get_branch_info(&self, depth: u32) -> Option<(usize, usize, bool)> {
+        let idx = self.control_stack.len().checked_sub(1 + depth as usize)?;
+        let frame = self.control_stack.get(idx)?;
         match frame {
-            Some(ControlFrame::Block { end_label } | ControlFrame::If { end_label, .. }) => {
-                Ok(*end_label)
+            ControlFrame::Block {
+                end_label,
+                stack_depth,
+                has_result,
             }
-            Some(ControlFrame::Loop { start_label }) => Ok(*start_label),
-            None => Err(Error::Unsupported(format!(
-                "branch depth {depth} out of range"
-            ))),
+            | ControlFrame::If {
+                end_label,
+                stack_depth,
+                has_result,
+                ..
+            } => Some((*end_label, *stack_depth, *has_result)),
+            ControlFrame::Loop {
+                start_label,
+                stack_depth,
+            } => Some((*start_label, *stack_depth, false)),
         }
     }
 
-    fn push_if(&mut self, cond_reg: u8) {
+    fn push_if(&mut self, cond_reg: u8, has_result: bool) {
         let else_label = self.alloc_label();
         let end_label = self.alloc_label();
+        let stack_depth = self.stack.depth();
         let fixup_idx = self.instructions.len();
         self.fixups.push((fixup_idx, else_label));
         self.emit(Instruction::BranchEqImm {
@@ -183,6 +212,8 @@ impl CodeEmitter {
         self.control_stack.push(ControlFrame::If {
             else_label,
             end_label,
+            stack_depth,
+            has_result,
         });
     }
 
@@ -450,7 +481,7 @@ fn translate_op(
                 offset: 0,
             });
         }
-        Operator::I32Load { memarg } => {
+        Operator::I32Load { memarg } | Operator::I64Load32U { memarg } => {
             let addr = emitter.stack.pop();
             let dst = emitter.stack.push();
             emitter.emit(Instruction::LoadIndU32 {
@@ -459,7 +490,7 @@ fn translate_op(
                 offset: memarg.offset as i32,
             });
         }
-        Operator::I32Store { memarg } => {
+        Operator::I32Store { memarg } | Operator::I64Store32 { memarg } => {
             let value = emitter.stack.pop();
             let addr = emitter.stack.pop();
             emitter.emit(Instruction::StoreIndU32 {
@@ -868,53 +899,138 @@ fn translate_op(
             let dst = emitter.stack.push();
             emitter.emit(Instruction::SetLtUImm { dst, src, value: 1 });
         }
-        Operator::Block { blockty: _ } => {
-            emitter.push_block();
+        Operator::Block { blockty } => {
+            let has_result = !matches!(blockty, wasmparser::BlockType::Empty);
+            emitter.push_block(has_result);
         }
         Operator::Loop { blockty: _ } => {
             emitter.emit(Instruction::Fallthrough);
             emitter.push_loop();
         }
-        Operator::If { blockty: _ } => {
+        Operator::If { blockty } => {
+            let has_result = !matches!(blockty, wasmparser::BlockType::Empty);
             let cond = emitter.stack.pop();
-            emitter.push_if(cond);
+            emitter.push_if(cond, has_result);
         }
         Operator::Else => {
             if let Some(ControlFrame::If {
                 else_label,
                 end_label,
+                stack_depth,
+                has_result,
             }) = emitter.pop_control()
             {
                 emitter.emit_jump_to_label(end_label);
+                emitter.emit(Instruction::Fallthrough);
                 emitter.define_label(else_label);
-                emitter
-                    .control_stack
-                    .push(ControlFrame::Block { end_label });
+                if has_result {
+                    emitter.stack.set_depth(stack_depth);
+                }
+                emitter.control_stack.push(ControlFrame::Block {
+                    end_label,
+                    stack_depth,
+                    has_result,
+                });
             }
         }
         Operator::End => match emitter.pop_control() {
-            Some(ControlFrame::Block { end_label }) => {
+            Some(ControlFrame::Block {
+                end_label,
+                stack_depth,
+                has_result,
+            }) => {
                 emitter.emit(Instruction::Fallthrough);
                 emitter.define_label(end_label);
+                if has_result {
+                    emitter.stack.set_depth(stack_depth + 1);
+                }
             }
             Some(ControlFrame::If {
                 else_label,
                 end_label,
+                stack_depth,
+                has_result,
             }) => {
                 emitter.emit(Instruction::Fallthrough);
                 emitter.define_label(else_label);
                 emitter.define_label(end_label);
+                if has_result {
+                    emitter.stack.set_depth(stack_depth + 1);
+                }
             }
-            _ => {}
+            Some(ControlFrame::Loop { .. }) => {
+                emitter.emit(Instruction::Fallthrough);
+            }
+            None => {}
         },
         Operator::Br { relative_depth } => {
-            let target = emitter.get_branch_target(*relative_depth)?;
-            emitter.emit_jump_to_label(target);
+            if let Some((target, target_depth, has_result)) =
+                emitter.get_branch_info(*relative_depth)
+            {
+                if has_result && emitter.stack.depth() > target_depth {
+                    let src = StackMachine::reg_at_depth(emitter.stack.depth() - 1);
+                    let dst = StackMachine::reg_at_depth(target_depth);
+                    if src != dst {
+                        emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                    }
+                }
+                emitter.emit_jump_to_label(target);
+            }
         }
         Operator::BrIf { relative_depth } => {
             let cond = emitter.stack.pop();
-            let target = emitter.get_branch_target(*relative_depth)?;
-            emitter.emit_branch_ne_imm_to_label(cond, 0, target);
+            if let Some((target, target_depth, has_result)) =
+                emitter.get_branch_info(*relative_depth)
+            {
+                if has_result && emitter.stack.depth() > target_depth {
+                    let end_label = emitter.alloc_label();
+                    emitter.emit_branch_eq_imm_to_label(cond, 0, end_label);
+                    let src = StackMachine::reg_at_depth(emitter.stack.depth() - 1);
+                    let dst = StackMachine::reg_at_depth(target_depth);
+                    if src != dst {
+                        emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                    }
+                    emitter.emit_jump_to_label(target);
+                    emitter.emit(Instruction::Fallthrough);
+                    emitter.define_label(end_label);
+                } else {
+                    emitter.emit_branch_ne_imm_to_label(cond, 0, target);
+                }
+            }
+        }
+        Operator::BrTable { targets } => {
+            let index_reg = emitter.stack.pop();
+            let target_depths: Vec<u32> = targets.targets().map(|t| t.unwrap()).collect();
+            let default_depth = targets.default();
+
+            for (i, &depth) in target_depths.iter().enumerate() {
+                if let Some((target, target_depth, has_result)) = emitter.get_branch_info(depth) {
+                    let next_label = emitter.alloc_label();
+                    emitter.emit_branch_ne_imm_to_label(index_reg, i as i32, next_label);
+                    if has_result && emitter.stack.depth() > target_depth {
+                        let src = StackMachine::reg_at_depth(emitter.stack.depth() - 1);
+                        let dst = StackMachine::reg_at_depth(target_depth);
+                        if src != dst {
+                            emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                        }
+                    }
+                    emitter.emit_jump_to_label(target);
+                    emitter.emit(Instruction::Fallthrough);
+                    emitter.define_label(next_label);
+                }
+            }
+
+            if let Some((target, target_depth, has_result)) = emitter.get_branch_info(default_depth)
+            {
+                if has_result && emitter.stack.depth() > target_depth {
+                    let src = StackMachine::reg_at_depth(emitter.stack.depth() - 1);
+                    let dst = StackMachine::reg_at_depth(target_depth);
+                    if src != dst {
+                        emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                    }
+                }
+                emitter.emit_jump_to_label(target);
+            }
         }
         Operator::Return => {
             emitter.emit(Instruction::LoadImm {
@@ -969,6 +1085,263 @@ fn translate_op(
             });
             emitter.emit(Instruction::Fallthrough);
             emitter.define_label(end_label);
+        }
+        Operator::I32Clz => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LeadingZeroBits32 { dst, src });
+        }
+        Operator::I64Clz => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LeadingZeroBits64 { dst, src });
+        }
+        Operator::I32Ctz => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::TrailingZeroBits32 { dst, src });
+        }
+        Operator::I64Ctz => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::TrailingZeroBits64 { dst, src });
+        }
+        Operator::I32Popcnt => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::CountSetBits32 { dst, src });
+        }
+        Operator::I64Popcnt => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::CountSetBits64 { dst, src });
+        }
+        Operator::I32WrapI64 => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+        }
+        Operator::I64ExtendI32S => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::SignExtend16 { dst, src });
+            emitter.emit(Instruction::SignExtend16 { dst, src: dst });
+        }
+        Operator::I64ExtendI32U => {
+            let src = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            if src != dst {
+                emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+            }
+        }
+        Operator::I32Load8U { memarg } | Operator::I64Load8U { memarg } => {
+            let addr = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LoadIndU8 {
+                dst,
+                base: addr,
+                offset: memarg.offset as i32,
+            });
+        }
+        Operator::I32Load8S { memarg } | Operator::I64Load8S { memarg } => {
+            let addr = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LoadIndI8 {
+                dst,
+                base: addr,
+                offset: memarg.offset as i32,
+            });
+        }
+        Operator::I32Load16U { memarg } | Operator::I64Load16U { memarg } => {
+            let addr = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LoadIndU16 {
+                dst,
+                base: addr,
+                offset: memarg.offset as i32,
+            });
+        }
+        Operator::I32Load16S { memarg } | Operator::I64Load16S { memarg } => {
+            let addr = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LoadIndI16 {
+                dst,
+                base: addr,
+                offset: memarg.offset as i32,
+            });
+        }
+        Operator::I64Load32S { memarg } => {
+            let addr = emitter.stack.pop();
+            let dst = emitter.stack.push();
+            emitter.emit(Instruction::LoadIndU32 {
+                dst,
+                base: addr,
+                offset: memarg.offset as i32,
+            });
+            emitter.emit(Instruction::SignExtend16 { dst, src: dst });
+            emitter.emit(Instruction::SignExtend16 { dst, src: dst });
+        }
+        Operator::I32Store8 { memarg } | Operator::I64Store8 { memarg } => {
+            let val = emitter.stack.pop();
+            let addr = emitter.stack.pop();
+            emitter.emit(Instruction::StoreIndU8 {
+                base: addr,
+                src: val,
+                offset: memarg.offset as i32,
+            });
+        }
+        Operator::I32Store16 { memarg } | Operator::I64Store16 { memarg } => {
+            let val = emitter.stack.pop();
+            let addr = emitter.stack.pop();
+            emitter.emit(Instruction::StoreIndU16 {
+                base: addr,
+                src: val,
+                offset: memarg.offset as i32,
+            });
+        }
+        Operator::I32Rotl => {
+            let n = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let result = emitter.stack.push();
+            emitter.emit(Instruction::AddImm32 {
+                dst: 7,
+                src: value,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: 8,
+                src: n,
+                value: 0,
+            });
+            emitter.emit(Instruction::ShloL32 {
+                dst: result,
+                src1: 8,
+                src2: 7,
+            });
+            emitter.emit(Instruction::LoadImm { reg: n, value: 32 });
+            emitter.emit(Instruction::Sub32 {
+                dst: 8,
+                src1: 8,
+                src2: n,
+            });
+            emitter.emit(Instruction::ShloR32 {
+                dst: 7,
+                src1: 8,
+                src2: 7,
+            });
+            emitter.emit(Instruction::Or {
+                dst: result,
+                src1: result,
+                src2: 7,
+            });
+        }
+        Operator::I32Rotr => {
+            let n = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let result = emitter.stack.push();
+            emitter.emit(Instruction::AddImm32 {
+                dst: 7,
+                src: value,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: 8,
+                src: n,
+                value: 0,
+            });
+            emitter.emit(Instruction::ShloR32 {
+                dst: result,
+                src1: 8,
+                src2: 7,
+            });
+            emitter.emit(Instruction::LoadImm { reg: n, value: 32 });
+            emitter.emit(Instruction::Sub32 {
+                dst: 8,
+                src1: 8,
+                src2: n,
+            });
+            emitter.emit(Instruction::ShloL32 {
+                dst: 7,
+                src1: 8,
+                src2: 7,
+            });
+            emitter.emit(Instruction::Or {
+                dst: result,
+                src1: result,
+                src2: 7,
+            });
+        }
+        Operator::I64Rotl => {
+            let n = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let result = emitter.stack.push();
+            emitter.emit(Instruction::AddImm32 {
+                dst: 7,
+                src: value,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: 8,
+                src: n,
+                value: 0,
+            });
+            emitter.emit(Instruction::ShloL64 {
+                dst: result,
+                src1: 8,
+                src2: 7,
+            });
+            emitter.emit(Instruction::LoadImm { reg: n, value: 64 });
+            emitter.emit(Instruction::Sub64 {
+                dst: 8,
+                src1: 8,
+                src2: n,
+            });
+            emitter.emit(Instruction::ShloR64 {
+                dst: 7,
+                src1: 8,
+                src2: 7,
+            });
+            emitter.emit(Instruction::Or {
+                dst: result,
+                src1: result,
+                src2: 7,
+            });
+        }
+        Operator::I64Rotr => {
+            let n = emitter.stack.pop();
+            let value = emitter.stack.pop();
+            let result = emitter.stack.push();
+            emitter.emit(Instruction::AddImm32 {
+                dst: 7,
+                src: value,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: 8,
+                src: n,
+                value: 0,
+            });
+            emitter.emit(Instruction::ShloR64 {
+                dst: result,
+                src1: 8,
+                src2: 7,
+            });
+            emitter.emit(Instruction::LoadImm { reg: n, value: 64 });
+            emitter.emit(Instruction::Sub64 {
+                dst: 8,
+                src1: 8,
+                src2: n,
+            });
+            emitter.emit(Instruction::ShloL64 {
+                dst: 7,
+                src1: 8,
+                src2: 7,
+            });
+            emitter.emit(Instruction::Or {
+                dst: result,
+                src1: result,
+                src2: 7,
+            });
         }
         _ => {
             return Err(Error::Unsupported(format!("{op:?}")));

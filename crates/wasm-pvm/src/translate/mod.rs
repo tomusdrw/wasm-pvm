@@ -151,7 +151,21 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 
     let blob = crate::pvm::ProgramBlob::new(all_instructions).with_jump_table(jump_table);
 
-    Ok(SpiProgram::new(blob))
+    let heap_pages = calculate_heap_pages(functions.len());
+
+    Ok(SpiProgram::new(blob).with_heap_pages(heap_pages))
+}
+
+fn calculate_heap_pages(num_functions: usize) -> u16 {
+    let globals_size = 256;
+    let user_results_size = 256;
+    let spilled_locals_size = num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
+    let min_user_heap = 4096;
+
+    let total_bytes = globals_size + user_results_size + spilled_locals_size + min_user_heap;
+    let pages = total_bytes.div_ceil(4096);
+
+    pages.max(16) as u16
 }
 
 fn resolve_call_fixups(

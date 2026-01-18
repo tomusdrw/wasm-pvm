@@ -429,15 +429,17 @@ JUMP callee_offset
 
 ## Local Variable Spilling
 
-When a function has more than 4 local variables, we spill extras to memory.
+When a function has more than 4 local variables (including parameters), we spill extras to memory.
 
 ### Memory Layout
 ```
-Base address: 0x30000 (SPILLED_LOCALS_BASE)
+Base address: 0x20200 (SPILLED_LOCALS_BASE, within heap)
 Per function: 512 bytes (SPILLED_LOCALS_PER_FUNC)
 
-Spilled local address = 0x30000 + (func_idx * 512) + ((local_idx - 4) * 8)
+Spilled local address = 0x20200 + (func_idx * 512) + ((local_idx - 4) * 8)
 ```
+
+The heap pages are automatically calculated based on the number of functions to ensure enough space for spilled locals.
 
 ### Register vs Memory
 | Local Index | Storage |
@@ -467,11 +469,11 @@ This is a **non-recursive** design. Each function has fixed memory for its spill
 
 1. ~~What are PVM's calling conventions?~~ → See Calling Convention section above
 2. ~~How to handle WASM globals?~~ → Store at 0x20000 + idx*4
-3. What's the best strategy for br_table? → Jump table (not yet implemented)
+3. ~~What's the best strategy for br_table?~~ → ✅ Implemented using linear compare-and-branch (2025-01-18)
 4. ~~Should we support floating point?~~ → No, reject
 5. ~~How to handle memory.grow?~~ → Returns -1 (growth not supported)
-6. How to support recursion? → Need proper call stack with frame pointer (not yet implemented)
-7. How to implement call_indirect? → Build function table from WASM tables (not yet implemented)
+6. How to support recursion? → Need proper call stack with frame pointer (Phase 8)
+7. How to implement call_indirect? → Build function table from WASM tables (Phase 9)
 
 ---
 

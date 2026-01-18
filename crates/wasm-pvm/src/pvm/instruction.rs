@@ -42,6 +42,21 @@ pub enum Instruction {
     ShloL32 { dst: u8, src1: u8, src2: u8 },
     ShloR32 { dst: u8, src1: u8, src2: u8 },
     SharR32 { dst: u8, src1: u8, src2: u8 },
+    CountSetBits64 { dst: u8, src: u8 },
+    CountSetBits32 { dst: u8, src: u8 },
+    LeadingZeroBits64 { dst: u8, src: u8 },
+    LeadingZeroBits32 { dst: u8, src: u8 },
+    TrailingZeroBits64 { dst: u8, src: u8 },
+    TrailingZeroBits32 { dst: u8, src: u8 },
+    SignExtend8 { dst: u8, src: u8 },
+    SignExtend16 { dst: u8, src: u8 },
+    ZeroExtend16 { dst: u8, src: u8 },
+    LoadIndU8 { dst: u8, base: u8, offset: i32 },
+    LoadIndI8 { dst: u8, base: u8, offset: i32 },
+    StoreIndU8 { base: u8, src: u8, offset: i32 },
+    LoadIndU16 { dst: u8, base: u8, offset: i32 },
+    LoadIndI16 { dst: u8, base: u8, offset: i32 },
+    StoreIndU16 { base: u8, src: u8, offset: i32 },
 }
 
 impl Instruction {
@@ -180,6 +195,65 @@ impl Instruction {
             Self::SharR32 { dst, src1, src2 } => {
                 encode_three_reg(Opcode::SharR32, *dst, *src1, *src2)
             }
+            Self::CountSetBits64 { dst, src } => encode_two_reg(Opcode::CountSetBits64, *dst, *src),
+            Self::CountSetBits32 { dst, src } => encode_two_reg(Opcode::CountSetBits32, *dst, *src),
+            Self::LeadingZeroBits64 { dst, src } => {
+                encode_two_reg(Opcode::LeadingZeroBits64, *dst, *src)
+            }
+            Self::LeadingZeroBits32 { dst, src } => {
+                encode_two_reg(Opcode::LeadingZeroBits32, *dst, *src)
+            }
+            Self::TrailingZeroBits64 { dst, src } => {
+                encode_two_reg(Opcode::TrailingZeroBits64, *dst, *src)
+            }
+            Self::TrailingZeroBits32 { dst, src } => {
+                encode_two_reg(Opcode::TrailingZeroBits32, *dst, *src)
+            }
+            Self::SignExtend8 { dst, src } => encode_two_reg(Opcode::SignExtend8, *dst, *src),
+            Self::SignExtend16 { dst, src } => encode_two_reg(Opcode::SignExtend16, *dst, *src),
+            Self::ZeroExtend16 { dst, src } => encode_two_reg(Opcode::ZeroExtend16, *dst, *src),
+            Self::LoadIndU8 { dst, base, offset } => {
+                let mut bytes = vec![Opcode::LoadIndU8 as u8, (*base & 0x0F) << 4 | (*dst & 0x0F)];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::LoadIndI8 { dst, base, offset } => {
+                let mut bytes = vec![Opcode::LoadIndI8 as u8, (*base & 0x0F) << 4 | (*dst & 0x0F)];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::StoreIndU8 { base, src, offset } => {
+                let mut bytes = vec![
+                    Opcode::StoreIndU8 as u8,
+                    (*base & 0x0F) << 4 | (*src & 0x0F),
+                ];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::LoadIndU16 { dst, base, offset } => {
+                let mut bytes = vec![
+                    Opcode::LoadIndU16 as u8,
+                    (*base & 0x0F) << 4 | (*dst & 0x0F),
+                ];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::LoadIndI16 { dst, base, offset } => {
+                let mut bytes = vec![
+                    Opcode::LoadIndI16 as u8,
+                    (*base & 0x0F) << 4 | (*dst & 0x0F),
+                ];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::StoreIndU16 { base, src, offset } => {
+                let mut bytes = vec![
+                    Opcode::StoreIndU16 as u8,
+                    (*base & 0x0F) << 4 | (*src & 0x0F),
+                ];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
         }
     }
 
@@ -199,6 +273,10 @@ impl Instruction {
 
 fn encode_three_reg(opcode: Opcode, dst: u8, src1: u8, src2: u8) -> Vec<u8> {
     vec![opcode as u8, (src1 & 0x0F) << 4 | (src2 & 0x0F), dst & 0x0F]
+}
+
+fn encode_two_reg(opcode: Opcode, dst: u8, src: u8) -> Vec<u8> {
+    vec![opcode as u8, (src & 0x0F) << 4 | (dst & 0x0F)]
 }
 
 fn encode_one_reg_one_imm_one_off(opcode: Opcode, reg: u8, imm: i32, offset: i32) -> Vec<u8> {

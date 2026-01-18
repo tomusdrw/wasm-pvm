@@ -8,9 +8,9 @@ This document tracks known issues, bugs, and improvements for future work. Items
 
 ### No recursion support
 **Severity**: Medium  
-**Status**: Known limitation (Phase 6+)
+**Status**: Known limitation (Phase 8)
 
-Recursive function calls will not work correctly. Spilled locals use fixed memory addresses per function (at `0x30000 + func_idx * 512`), not a proper call stack. Each function gets 512 bytes for spilled locals.
+Recursive function calls will not work correctly. Spilled locals use fixed memory addresses per function (at `0x20200 + func_idx * 512`), not a proper call stack. Each function gets 512 bytes for spilled locals.
 
 **Impact**: Programs with recursive functions will corrupt their own local variables.
 
@@ -34,29 +34,6 @@ WASM `call_indirect` instruction (indirect function calls via table) is not impl
 
 ---
 
-### Block result values not supported
-**Severity**: Low  
-**Status**: Planned (Phase 5)
-
-WASM blocks that produce values (e.g., `(block (result i32) ...)`) are not handled correctly. The result value is not properly propagated.
-
-**Workaround**: Use explicit locals instead of block results:
-```wat
-;; Instead of:
-(block (result i32)
-  (i32.const 42)
-)
-
-;; Use:
-(local $tmp i32)
-(block
-  (local.set $tmp (i32.const 42))
-)
-(local.get $tmp)
-```
-
----
-
 ### Operand stack limited to 5 slots
 **Severity**: Low  
 **Status**: Known limitation
@@ -70,30 +47,6 @@ The operand stack uses registers r2-r6 (5 slots). Complex expressions requiring 
 **Workaround**: Break complex expressions into smaller parts using locals.
 
 **Fix needed**: Implement operand stack spilling to memory when depth exceeds register count.
-
----
-
-### Spilled locals memory not in heap
-**Severity**: Medium  
-**Status**: Known limitation
-
-Spilled locals are stored at 0x30000, which may be outside the allocated heap range in SPI format. Functions with more than 4 locals (including parameters) will cause FAULT when accessing spilled locals.
-
-**Workaround**: Keep functions to 4 or fewer locals (including parameters).
-
-**Fix needed**: Move spilled locals base address to within the heap area (e.g., 0x20200) or increase heap pages in SPI output.
-
----
-
-### No `br_table` support
-**Severity**: Low  
-**Status**: Planned
-
-WASM `br_table` instruction (switch/jump table) is not implemented.
-
-**Error**: `Unsupported instruction: BrTable`
-
-**Workaround**: Use nested `if/else` or `br_if` chains.
 
 ---
 
@@ -131,12 +84,7 @@ The `getMemory()` call from anan-as doesn't return the actual memory bytes in th
 
 ## Documentation
 
-### LICENSE file missing
-**Status**: Open
-
-No LICENSE file in repository. README mentions MIT but file doesn't exist.
-
-**Fix**: Add LICENSE file with appropriate license text.
+*No open documentation issues.*
 
 ---
 
@@ -164,7 +112,7 @@ When you discover a new issue:
 ---
 
 ### ~~Limited local variable count (4 max)~~ (Resolved 2025-01-17)
-**Resolution**: Implemented local spilling to memory. Locals 0-3 use registers r9-r12, locals 4+ are spilled to memory at `0x30000 + func_idx * 512 + (local_idx - 4) * 8`.
+**Resolution**: Implemented local spilling to memory. Locals 0-3 use registers r9-r12, locals 4+ are spilled to memory at `0x20200 + func_idx * 512 + (local_idx - 4) * 8`.
 
 ---
 
@@ -175,4 +123,34 @@ When you discover a new issue:
 - Arguments passed via callee's local registers (r9+)
 - Return value in r1
 - Proper function prologue/epilogue
+
+---
+
+### ~~Spilled locals memory fault~~ (Resolved 2025-01-17)
+**Resolution**: Moved spilled locals from 0x30000 to 0x20200 (within heap area). Heap pages are now automatically calculated based on the number of functions to ensure enough space for spilled locals.
+
+---
+
+### ~~Missing i64 operations~~ (Resolved 2025-01-17)
+**Resolution**: Implemented all i64 operations:
+- i64.div_u, i64.div_s, i64.rem_u, i64.rem_s
+- i64.ge_u, i64.ge_s, i64.le_u, i64.le_s
+- i64.and, i64.or, i64.xor
+- i64.shl, i64.shr_u, i64.shr_s
+- i64.load, i64.store
+
+---
+
+### ~~LICENSE file missing~~ (Resolved 2025-01-18)
+**Resolution**: Added MIT LICENSE file.
+
+---
+
+### ~~Block result values not supported~~ (Resolved 2025-01-18)
+**Resolution**: Implemented block result value handling. Blocks, loops, and if/else now properly track and propagate result values. The stack depth is restored at block end, and `br` instructions copy the result value to the correct stack position.
+
+---
+
+### ~~No `br_table` support~~ (Resolved 2025-01-18)
+**Resolution**: Implemented `br_table` instruction using a series of compare-and-branch instructions. Each table entry is compared with the index, and if matched, branches to the corresponding target. Out-of-bounds indices fall through to the default target.
 

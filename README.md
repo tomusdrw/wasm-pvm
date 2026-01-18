@@ -2,28 +2,50 @@
 
 A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) bytecode for execution on the JAM (Join-Accumulate Machine) protocol.
 
-## Status: Early Development
+## Status: Active Development (56 tests passing)
 
 **Project Goal**: Enable writing JAM programs in AssemblyScript (TypeScript-like) or hand-written WAT, compiled to PVM bytecode.
 
-**Working features:**
-- Basic WASM parsing and translation
-- Integer arithmetic (`add`, `sub`, `mul`, `div_u`, `div_s`, `rem_u`, `rem_s`)
-- Control flow (`block`, `loop`, `if/else`, `br`, `br_if`, `return`)
-- Function calls (`call`) with proper return value handling
-- All comparison operations for i32 and i64
-- Bitwise operations (`and`, `or`, `xor`)
-- Shift operations (`shl`, `shr_u`, `shr_s`)
-- Memory operations (`i32.load`, `i32.store`, `memory.size`, `memory.grow`)
-- Local variables with spilling for functions with many locals
-- Global variables (`global.get`, `global.set`)
-- JAM output format (`.jam` files)
-- AssemblyScript example programs (all tests passing)
+**V1 Milestone**: Compile [anan-as](https://github.com/nicobao/anan-as) (PVM interpreter in AssemblyScript) to WASM → PVM, and run a PVM interpreter inside a PVM interpreter.
 
-**Not yet implemented:**
-- `call_indirect` (indirect function calls)
-- i64 bitwise/shift operations
-- Floating point (will be rejected - PVM has no FP support)
+### Working Features
+
+**Arithmetic (i32 & i64)**:
+- `add`, `sub`, `mul`, `div_u`, `div_s`, `rem_u`, `rem_s`
+- All comparison operations (`eq`, `ne`, `lt_u/s`, `gt_u/s`, `le_u/s`, `ge_u/s`, `eqz`)
+
+**Bitwise & Shift (i32 & i64)**:
+- `and`, `or`, `xor`
+- `shl`, `shr_u`, `shr_s`
+- `rotl`, `rotr`
+- `clz`, `ctz`, `popcnt`
+
+**Control Flow**:
+- `block`, `loop`, `if/else/end`
+- `br`, `br_if`, `br_table`
+- `return`, `unreachable`
+- Block result values
+
+**Memory Operations**:
+- `i32.load/store`, `i64.load/store`
+- Sub-word variants: `load8_u/s`, `load16_u/s`, `load32_u/s`, `store8`, `store16`, `store32`
+- `memory.size`, `memory.grow` (returns -1)
+- `global.get`, `global.set`
+
+**Functions**:
+- `call` with proper return value handling
+- Local variables with spilling for functions with many locals
+- `local.get`, `local.set`, `local.tee`
+- `drop`, `select`
+
+**Type Conversions**:
+- `i32.wrap_i64`
+- `i64.extend_i32_s`, `i64.extend_i32_u`
+
+### Not Yet Implemented
+- `call_indirect` (indirect function calls) - Phase 9
+- Recursion (proper call stack) - Phase 8
+- Floating point (rejected by design - PVM has no FP)
 
 ## Quick Start
 
@@ -107,6 +129,9 @@ Working examples in `examples-wat/`:
 | `is-prime.jam.wat` | Primality test | is_prime(97)=1 |
 | `div.jam.wat` | Integer division | 20/5=4 |
 | `call.jam.wat` | Function calls | double(5)=10 |
+| `br-table.jam.wat` | Switch/jump table | br_table tests |
+| `bit-ops.jam.wat` | clz, ctz, popcnt | bit operation tests |
+| `rotate.jam.wat` | rotl, rotr | rotation tests |
 
 AssemblyScript examples in `examples-as/`:
 
@@ -152,9 +177,12 @@ cargo test
 # Run clippy
 cargo clippy -- -D warnings
 
-# Test compilation of an example
-cargo run -p wasm-pvm-cli -- compile examples-wat/factorial-spi.wat -o /tmp/test.spi
-npx tsx scripts/run-spi.ts /tmp/test.spi --args=05000000
+# Run full integration test suite (56 tests)
+npx tsx scripts/test-all.ts
+
+# Test a single example
+cargo run -p wasm-pvm-cli --quiet -- compile examples-wat/factorial.jam.wat -o /tmp/test.jam
+npx tsx scripts/run-jam.ts /tmp/test.jam --args=05000000
 ```
 
 ## License

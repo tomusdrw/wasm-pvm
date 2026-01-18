@@ -157,6 +157,12 @@ cargo clippy -- -D warnings
 
 # Run a specific example
 cargo run -p wasm-pvm-cli -- compile examples-wat/add.wat -o output.pvm
+
+# Run full integration test suite (56 tests)
+npx tsx scripts/test-all.ts
+
+# Run a compiled JAM file
+npx tsx scripts/run-jam.ts /tmp/out.jam --args=<hex>
 ```
 
 ---
@@ -194,16 +200,18 @@ When in doubt, ask rather than guess. Document any answers in the appropriate fi
 
 ---
 
-## Quick Reference: PVM Registers
+## Quick Reference: PVM Registers (Implemented)
 
-| Register | Convention (Proposed) |
-|----------|----------------------|
-| r0 | Return value, temp |
-| r1-r7 | Arguments, temps |
-| r8-r11 | Callee-saved, locals |
-| r12 | Reserved (stack ptr?) |
+| Register | Usage in wasm-pvm |
+|----------|-------------------|
+| r0 | Return address (jump table index for function calls) |
+| r1 | Stack pointer / Return value from function calls |
+| r2-r6 | Operand stack (5 slots) |
+| r7 | SPI args pointer (0xFEFF0000) / scratch for rotates |
+| r8 | SPI args length / scratch for rotates |
+| r9-r12 | Local variables (first 4 locals) |
 
-*Note: This is proposed. Check actual PVM calling convention.*
+**Memory for spilled locals**: `0x20200 + (func_idx * 512) + ((local_idx - 4) * 8)`
 
 ---
 

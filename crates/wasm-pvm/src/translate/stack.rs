@@ -31,10 +31,17 @@ impl StackMachine {
         Self::reg_for_depth(idx)
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub const fn depth(&self) -> usize {
         self.depth
+    }
+
+    pub fn set_depth(&mut self, depth: usize) {
+        self.depth = depth;
+    }
+
+    pub fn reg_at_depth(depth: usize) -> u8 {
+        Self::reg_for_depth(depth)
     }
 
     fn top_reg(&self) -> u8 {
