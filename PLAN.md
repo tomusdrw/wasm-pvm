@@ -206,32 +206,45 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 
 **Test Result**: 58/58 integration tests passing, Game of Life works correctly for 0, 1, 2, ... steps
 
-### Phase 12: Data Section Initialization (NEXT - V1 BLOCKER)
-**Status**: Not implemented (major new feature)
-**Impact**: Blocks anan-as compilation - anan-as has multiple `(data ...)` sections
-**Timeline**: 2-3 weeks (implementing new subsystem)
-**Prerequisites**: Phase 11 completed ✅
+### ✅ Phase 12: Data Section Initialization - COMPLETED (2025-01-19)
+**Status**: COMPLETE (except imported function calls)
+**Impact**: Data sections now initialized at WASM_MEMORY_BASE (0x50000)
 
-**Required work**:
-1. Parse WASM `DataSection` in `translate/mod.rs`
-2. Initialize data in SPI `rw_data` section at correct offsets
-3. Support both active and passive data segments
-4. Update memory layout to account for initialized data
-5. Handle offset expressions in active data segments
-6. Ensure data doesn't conflict with existing memory regions (globals, heap, etc.)
+**Implemented**:
+1. ✅ Parse WASM `DataSection` in `translate/mod.rs`
+2. ✅ Initialize data in SPI `rw_data` section at correct offsets
+3. ✅ Support active data segments (passive not needed yet)
+4. ✅ Update memory layout and heap_pages calculation
+5. ✅ Handle offset expressions in active data segments
+6. ✅ Parse `ImportSection` and count imported functions
+7. ✅ Adjust function index translation for calls
 
-### Phase 13: Stack Overflow Detection (PHASE 2)
+**Not yet supported**:
+- Imported function calls (anan-as uses `abort` and `console.log`)
+- Memory operations don't auto-offset (programs must use WASM_MEMORY_BASE addresses)
+
+### Phase 12b: Import Function Support (NEXT - V1 BLOCKER)
+**Status**: Not implemented
+**Impact**: anan-as calls `abort` (function 0) and `console.log` (function 1)
+**Timeline**: 1-2 weeks
+
+**Options**:
+1. **Stub imports**: Replace calls to imported functions with TRAP or no-op
+2. **Host functions**: Map specific imports to PVM ecalli (if available)
+3. **Compile without imports**: Modify anan-as build to remove abort/console.log
+
+### Phase 13: Stack Overflow Detection (PHASE 3)
 **Status**: Not implemented
 **Impact**: Deep recursion in anan-as interpreter may corrupt memory
 **Timeline**: 1 week
-**Prerequisites**: Phase 12 completed
+**Prerequisites**: Phase 12b completed
 
 **Required work**:
 1. Add stack depth checking in call emission
 2. Implement configurable stack size limits
 3. Emit TRAP on stack overflow
 
-### Phase 14: Enhanced Memory Model (PHASE 3)
+### Phase 14: Enhanced Memory Model (PHASE 4)
 **Status**: Partial (hardcoded memory.size=256, memory.grow=-1)
 **Impact**: anan-as may expect dynamic memory
 **Timeline**: 1-2 weeks
@@ -274,8 +287,10 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [x] Validate complex function call handling with spilled locals
 - [x] Test with various step counts (0, 1, 2, 3, 4, 5) - all pass correctly
 
-#### Phase 2: Core V1 Features (COMPLETE BEFORE PHASE 3)
-- [ ] Implement data section initialization (Phase 12)
+#### Phase 2: Core V1 Features (IN PROGRESS)
+- [x] Implement data section initialization (Phase 12) ✅
+- [x] Parse and handle imported functions in function indices ✅
+- [ ] Handle imported function calls (Phase 12b) - BLOCKER
 - [ ] Compile anan-as (AssemblyScript PVM interpreter) to WASM
 - [ ] Translate WASM to PVM using wasm-pvm
 - [ ] Run the compiled PVM interpreter inside a PVM interpreter
