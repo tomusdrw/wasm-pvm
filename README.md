@@ -2,11 +2,11 @@
 
 A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) bytecode for execution on the JAM (Join-Accumulate Machine) protocol.
 
-## Status: Active Development (56 tests passing)
+## Status: Active Development (58 tests passing)
 
 **Project Goal**: Enable writing JAM programs in AssemblyScript (TypeScript-like) or hand-written WAT, compiled to PVM bytecode.
 
-**V1 Milestone**: Compile [anan-as](https://github.com/nicobao/anan-as) (PVM interpreter in AssemblyScript) to WASM → PVM, and run a PVM interpreter inside a PVM interpreter.
+**V1 Milestone**: Compile [anan-as](https://github.com/polkavm/anan-as) (PVM interpreter in AssemblyScript) to WASM → PVM, and run a PVM interpreter inside a PVM interpreter.
 
 ### Working Features
 
@@ -34,6 +34,8 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 
 **Functions**:
 - `call` with proper return value handling
+- `call_indirect` (indirect function calls via table)
+- Recursion support with proper call stack
 - Local variables with spilling for functions with many locals
 - `local.get`, `local.set`, `local.tee`
 - `drop`, `select`
@@ -43,9 +45,10 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 - `i64.extend_i32_s`, `i64.extend_i32_u`
 
 ### Not Yet Implemented
-- `call_indirect` (indirect function calls) - Phase 9
-- Recursion (proper call stack) - Phase 8
+- Data section initialization (WASM data segments)
 - Floating point (rejected by design - PVM has no FP)
+- Stack overflow detection for deep recursion
+- Runtime signature validation for `call_indirect`
 
 ## Quick Start
 
@@ -109,10 +112,11 @@ WASM programs must follow the SPI entrypoint convention:
 
 | Address | Region |
 |---------|--------|
-| `0x00010000` | Read-only data |
-| `0x00020000` | Globals storage (compiler-managed) |
-| `0x00020100` | User heap (for results) |
-| `0xFEFE0000` | Stack end |
+| `0x00010000` | Read-only data (dispatch table for call_indirect) |
+| `0x00030000` | Globals storage (compiler-managed) |
+| `0x00030100` | User results area (256 bytes) |
+| `0x00030200` | Spilled locals (512 bytes per function) |
+| `0xFEFE0000` | Stack segment end |
 | `0xFEFF0000` | Arguments (input data) |
 | `0xFFFF0000` | EXIT address (HALT) |
 
@@ -132,6 +136,15 @@ Working examples in `examples-wat/`:
 | `br-table.jam.wat` | Switch/jump table | br_table tests |
 | `bit-ops.jam.wat` | clz, ctz, popcnt | bit operation tests |
 | `rotate.jam.wat` | rotl, rotr | rotation tests |
+| `entry-points.jam.wat` | Multiple entry points (main/main2) | PC=0 and PC=5 |
+| `recursive.jam.wat` | Recursive factorial | tests call stack |
+| `nested-calls.jam.wat` | Nested function calls | multi-level calls |
+| `call-indirect.jam.wat` | Indirect function calls via table | dispatch tests |
+| `i64-ops.jam.wat` | 64-bit integer operations | div, rem, shifts |
+| `many-locals.jam.wat` | Functions with >4 local variables | spilling tests |
+| `block-result.jam.wat` | Block result values | control flow |
+| `block-br-test.jam.wat` | Block branch tests | br/br_if |
+| `stack-test.jam.wat` | Operand stack tests | stack depth |
 
 AssemblyScript examples in `examples-as/`:
 
@@ -153,6 +166,7 @@ crates/
       spi.rs          # JAM format encoder
   wasm-pvm-cli/       # Command-line tool
 examples-wat/         # Example WASM programs (*.jam.wat)
+examples-as/          # AssemblyScript examples
 scripts/
   run-jam.ts          # PVM test runner
   test-all.ts         # Automated test suite
@@ -177,7 +191,7 @@ cargo test
 # Run clippy
 cargo clippy -- -D warnings
 
-# Run full integration test suite (56 tests)
+# Run full integration test suite (58 tests)
 npx tsx scripts/test-all.ts
 
 # Test a single example
@@ -187,7 +201,7 @@ npx tsx scripts/run-jam.ts /tmp/test.jam --args=05000000
 
 ## License
 
-[MIT](./LICENSE) (TODO: Add license file)
+[MIT](./LICENSE)
 
 ## Contributing
 

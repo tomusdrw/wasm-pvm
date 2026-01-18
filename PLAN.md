@@ -188,7 +188,7 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 
 ---
 
-## Remaining Work
+## Remaining Work for V1 MVP
 
 ### Phase 7: Advanced Control Flow ✅ COMPLETE
 - [x] Translate `br_table` (switch/jump table)
@@ -212,9 +212,62 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 ### Phase 10: Memory & Data (Partial)
 - [x] i8/i16 load/store variants (load8_u/s, load16_u/s, load32_u/s, store8, store16, store32)
 - [ ] Proper WASM memory with base offset translation
-- [ ] Data section initialization
+- [ ] **Data section initialization** ⚠️ BLOCKS anan-as
 
-### V1 Milestone: anan-as in PVM
+---
+
+## V1 Milestone: anan-as in PVM
+
+**Goal**: Compile anan-as (AssemblyScript PVM interpreter) to WASM → PVM, run PVM-in-PVM.
+
+### Remaining Tasks (Priority Order)
+
+#### 🔴 CRITICAL: Data Section Initialization
+**Status**: Not implemented  
+**Impact**: Blocks anan-as compilation - anan-as has multiple `(data ...)` sections
+
+**Required work**:
+1. Parse WASM `DataSection` in `translate/mod.rs`
+2. Initialize data in SPI `rw_data` section at correct offsets
+3. Support both active and passive data segments
+4. Update memory layout to account for initialized data
+
+#### 🟡 HIGH: Stack Overflow Detection
+**Status**: Not implemented  
+**Impact**: Deep recursion in anan-as interpreter may corrupt memory
+
+**Required work**:
+1. Add stack depth checking in call emission
+2. Implement configurable stack size limits  
+3. Emit TRAP on stack overflow
+
+#### 🟡 MEDIUM: Proper WASM Memory Model
+**Status**: Partial (hardcoded memory.size=256, memory.grow=-1)  
+**Impact**: anan-as may expect dynamic memory
+
+**Required work**:
+1. Track actual memory size from WASM module
+2. Support memory.grow up to PVM limits
+3. Base address translation for WASM memory operations
+
+#### 🟢 LOW: call_indirect Signature Validation  
+**Status**: Not implemented (trusts caller)  
+**Impact**: Type safety violation possible
+
+**Required work**:
+1. Validate function signatures at runtime
+2. Add type checking before dispatch table lookup
+3. Emit TRAP on signature mismatch
+
+#### 🟢 LOW: Operand Stack Spilling
+**Status**: Hardcoded 5-register limit  
+**Impact**: Complex expressions may fail
+
+**Required work**:
+1. Implement stack spilling to memory when depth > 5
+2. Use call stack area for temporary operand storage
+
+### V1 Verification Checklist
 - [ ] Compile anan-as (AssemblyScript PVM interpreter) to WASM
 - [ ] Translate WASM to PVM using wasm-pvm
 - [ ] Run the compiled PVM interpreter inside a PVM interpreter
@@ -305,7 +358,7 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 
 ### Test Infrastructure
 - `scripts/run-spi.ts` - Run SPI binaries on anan-as interpreter
-- `scripts/test-all.ts` - Automated test suite (44 tests)
+- `scripts/test-all.ts` - Automated test suite (58 tests)
 - `vendor/anan-as` - PVM reference implementation (submodule)
 
 ---
@@ -356,12 +409,14 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - 58 integration tests passing
 
 ### V1 Release (Target: anan-as in PVM)
-- WASM MVP compliance (except floats)
-- Comprehensive test suite (ongoing)
-- Documentation (ongoing)
-- Recursion support (Phase 8)
-- Indirect calls (Phase 9)
-- Successfully compile and run anan-as PVM interpreter
+- [x] WASM MVP compliance (except floats)
+- [x] Comprehensive test suite (58 tests)
+- [x] Documentation
+- [x] Recursion support (Phase 8) ✅
+- [x] Indirect calls (Phase 9) ✅
+- [ ] **Data section initialization** ← Primary blocker
+- [ ] Stack overflow detection
+- [ ] Successfully compile and run anan-as PVM interpreter
 
 ---
 

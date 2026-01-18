@@ -6,31 +6,34 @@ This document tracks known issues, bugs, and improvements for future work. Items
 
 ## Compiler Limitations
 
-### No recursion support
-**Severity**: Medium  
-**Status**: Known limitation (Phase 8)
+### No data section initialization
+**Severity**: High  
+**Status**: Open (Blocks V1 milestone)
 
-Recursive function calls will not work correctly. Spilled locals use fixed memory addresses per function (at `0x30200 + func_idx * 512`), not a proper call stack. Each function gets 512 bytes for spilled locals.
+WASM data sections are ignored during compilation. Programs that rely on initialized memory (e.g., string literals, lookup tables) will have uninitialized memory.
 
-**Impact**: Programs with recursive functions will corrupt their own local variables.
+**Impact**: Complex programs like anan-as that use `(data ...)` sections will not work correctly.
 
-**Workaround**: Convert recursive algorithms to iterative using explicit loops.
+**Error**: No error - data is silently ignored.
 
-**Fix needed**: Implement proper call stack with frame pointer, push/pop spilled locals on call/return.
+**Fix needed**: 
+1. Parse WASM `DataSection` in `translate/mod.rs`
+2. Initialize data in SPI `rw_data` section at correct offsets
+3. Support active data segments with offset expressions
 
 ---
 
-### No `call_indirect` support
+### No stack overflow detection
 **Severity**: Medium  
-**Status**: Planned (Phase 6+)
+**Status**: Open
 
-WASM `call_indirect` instruction (indirect function calls via table) is not implemented. Programs using function pointers or vtables will fail.
+Deep recursion can corrupt memory without any error. The call stack grows downward from 0xFEFE0000 but there's no guard to prevent it from overwriting other memory regions.
 
-**Error**: `Unsupported instruction: CallIndirect`
+**Impact**: Recursive programs with deep call stacks may corrupt globals or heap.
 
-**Workaround**: Use direct `call` instructions where possible.
+**Workaround**: Avoid deep recursion; use iterative algorithms.
 
-**Fix needed**: Build function table from WASM table section, translate `call_indirect` to table lookup + indirect jump.
+**Fix needed**: Add stack depth checking in call emission, emit TRAP on overflow.
 
 ---
 
@@ -122,6 +125,59 @@ When you discover a new issue:
 - Caller saves return address (jump table index) in r0
 - Arguments passed via callee's local registers (r9+)
 - Return value in r1
+- Proper function prologue/epilogue
+
+---
+
+### ~~Spilled locals memory fault~~ (Resolved 2025-01-17)
+**Resolution**: Moved spilled locals from 0x30000 to 0x30200 (within heap area). Heap pages are now automatically calculated based on the number of functions to ensure enough space for spilled locals.
+
+---
+
+### ~~Missing i64 operations~~ (Resolved 2025-01-17)
+**Resolution**: Implemented all i64 operations:
+- i64.div_u, i64.div_s, i64.rem_u, i64.rem_s
+- i64.ge_u, i64.ge_s, i64.le_u, i64.le_s
+- i64.and, i64.or, i64.xor
+- i64.shl, i64.shr_u, i64.shr_s
+- i64.load, i64.store
+
+---
+
+### ~~No recursion support~~ (Resolved 2025-01-18)
+**Resolution**: Implemented proper call stack with frame management:
+- Save/restore operand stack values across calls
+- Save/restore locals (r9-r12) to call stack
+- Dynamic frame size based on operand stack depth
+- Spilled locals (for functions with >4 locals) still use fixed memory, but register locals are saved
+
+---
+
+### ~~No `call_indirect` support~~ (Resolved 2025-01-18)
+**Resolution**: Implemented indirect function calls via table:
+- Parse WASM table and element sections
+- Build function table in RO memory at 0x10000
+- Dispatch table maps indices to jump table references
+- `call_indirect` performs table lookup + indirect jump
+
+---
+
+### ~~`if/else/end` control flow not implemented~~ (Resolved 2025-01-17)
+**Resolution**: Implemented in Phase 3. Uses `BRANCH_EQ_IMM` for condition, `JUMP` for else branch, proper label management.
+
+---
+
+### ~~Limited local variable count (4 max)~~ (Resolved 2025-01-17)
+**Resolution**: Implemented local spilling to memory. Locals 0-3 use registers r9-r12, locals 4+ are spilled to memory at `0x30200 + func_idx * 512 + (local_idx - 4) * 8`.
+
+---
+
+### ~~Function calls not implemented~~ (Resolved 2025-01-17)
+**Resolution**: Implemented `call` instruction with:
+- Jump table for return addresses (PVM requires JUMP_IND targets in jump table)
+- Caller saves return address (jump table index) in r0
+- Arguments passed via callee's local registers (r9+)
+- Return value in r7
 - Proper function prologue/epilogue
 
 ---
