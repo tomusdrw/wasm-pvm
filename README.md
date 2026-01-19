@@ -6,7 +6,9 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 
 **Project Goal**: Enable writing JAM programs in AssemblyScript (TypeScript-like) or hand-written WAT, compiled to PVM bytecode.
 
-**V1 Milestone**: Compile [anan-as](https://github.com/polkavm/anan-as) (PVM interpreter in AssemblyScript) to WASM → PVM, and run a PVM interpreter inside a PVM interpreter.
+**V1 Milestone**: Compile [anan-as](https://github.com/polkavm/anan-as) (PVM interpreter in AssemblyScript) to WASM → PVM.
+
+**Current Achievement**: anan-as successfully compiles to a 423KB JAM file! The compiled output is a library (not standalone), so full PVM-in-PVM would require a wrapper with a `main()` entry point.
 
 ### Working Features
 
@@ -30,7 +32,9 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 - `i32.load/store`, `i64.load/store`
 - Sub-word variants: `load8_u/s`, `load16_u/s`, `load32_u/s`, `store8`, `store16`, `store32`
 - `memory.size`, `memory.grow` (returns -1)
+- `memory.fill`, `memory.copy` (bulk memory operations)
 - `global.get`, `global.set`
+- WASM data section initialization
 
 **Functions**:
 - `call` with proper return value handling
@@ -43,12 +47,17 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 **Type Conversions**:
 - `i32.wrap_i64`
 - `i64.extend_i32_s`, `i64.extend_i32_u`
+- `i32.extend8_s`, `i32.extend16_s` (sign extension)
+- `i64.extend8_s`, `i64.extend16_s`, `i64.extend32_s` (sign extension)
+
+**Import Handling**:
+- Imported functions are stubbed (`abort` → TRAP, others → no-op)
 
 ### Not Yet Implemented
-- Data section initialization (WASM data segments)
-- Floating point (rejected by design - PVM has no FP)
+- Floating point (rejected by design - PVM has no FP; stubs exist for dead code)
 - Stack overflow detection for deep recursion
 - Runtime signature validation for `call_indirect`
+- Dynamic memory growth (`memory.grow` returns -1)
 
 ## Quick Start
 
@@ -116,6 +125,7 @@ WASM programs must follow the SPI entrypoint convention:
 | `0x00030000` | Globals storage (compiler-managed) |
 | `0x00030100` | User heap (~64KB available until 0x3FFFF) |
 | `0x00040000` | Spilled locals (512 bytes per function) |
+| `0x00050000` | WASM linear memory base (data sections placed here) |
 | `0xFEFE0000` | Stack segment end |
 | `0xFEFF0000` | Arguments (input data) |
 | `0xFFFF0000` | EXIT address (HALT) |

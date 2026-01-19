@@ -6,30 +6,13 @@ This document tracks known issues, bugs, and improvements for future work. Items
 
 ## Compiler Limitations
 
-### No data section initialization
-**Severity**: High  
-**Status**: Open (Blocks V1 milestone)
-
-WASM data sections are ignored during compilation. Programs that rely on initialized memory (e.g., string literals, lookup tables) will have uninitialized memory.
-
-**Impact**: Complex programs like anan-as that use `(data ...)` sections will not work correctly.
-
-**Error**: No error - data is silently ignored.
-
-**Fix needed**: 
-1. Parse WASM `DataSection` in `translate/mod.rs`
-2. Initialize data in SPI `rw_data` section at correct offsets
-3. Support active data segments with offset expressions
-
----
-
 ### No stack overflow detection
 **Severity**: Medium
-**Status**: Open (may be related to Game of Life issues)
+**Status**: Open (Phase 13)
 
 Deep recursion can corrupt memory without any error. The call stack grows downward from 0xFEFE0000 but there's no guard to prevent it from overwriting other memory regions.
 
-**Impact**: Recursive programs with deep call stacks may corrupt globals or heap. Game of Life may be hitting this issue.
+**Impact**: Recursive programs with deep call stacks may corrupt globals or heap.
 
 **Workaround**: Avoid deep recursion; use iterative algorithms.
 
@@ -37,51 +20,46 @@ Deep recursion can corrupt memory without any error. The call stack grows downwa
 
 ---
 
-### Operand stack limited to 5 slots
-**Severity**: Medium (may be causing Game of Life bug)
-**Status**: Implemented but potentially buggy
-
-The operand stack uses registers r2-r6 (5 slots). Complex expressions requiring more than 5 intermediate values will fail.
-
-**File**: `crates/wasm-pvm/src/translate/stack.rs`
-
-**Error**: `Stack overflow: max depth exceeded`
-
-**Workaround**: Break complex expressions into smaller parts using locals.
-
-**Fix needed**: Debug and fix operand stack spilling - Game of Life suggests there may be bugs in the spill/restore logic for deep expressions.
-
----
-
 ### No floating point support
 **Severity**: N/A  
 **Status**: By design
 
-PVM has no floating point instructions. WASM modules containing any float operations will be rejected at compile time.
+PVM has no floating point instructions. WASM modules containing any float operations will be rejected at compile time (except for dead code paths where stubs are used).
 
 **Error**: `Floating point operations not supported`
 
 **Workaround**: Use fixed-point arithmetic or integer-only algorithms.
 
+**Note**: Float truncation operations (`i32.trunc_sat_f64_u`, etc.) are stubbed to return 0. This allows compilation of modules with float operations in dead code paths (like anan-as), but calling these operations will produce incorrect results.
+
 ---
 
-### Game of Life multi-step execution fault
-**Severity**: High
-**Status**: Open (currently being debugged)
+### anan-as requires local modifications
+**Severity**: Low (workaround available)
+**Status**: Known limitation
 
-Game of Life example compiles and runs correctly with 0 steps, but faults with exit code `0x60000` (invalid memory access) when running with 1+ steps.
+The anan-as PVM interpreter uses `Math.min()` which compiles to f64 operations in AssemblyScript. To compile anan-as with wasm-pvm, the following local modifications are needed:
 
-**Symptom**: Memory fault at address `0x60000` = 2 × `0x30000`, suggesting possible address doubling bug.
+1. Replace `Math.min(4, x)` with `mini32(4, x)` in `arguments.ts`, `program-build.ts`
+2. Replace `Math.min(PAGE_SIZE, x)` with `minu32(PAGE_SIZE, x)` in `memory.ts`
+3. Add `mini32` and `minu32` helper functions to `math.ts`
+4. Rebuild with `npm run build`
 
-**Impact**: Complex expressions with deep operand stack usage may not work correctly.
+These modifications are in the local submodule and need to be committed upstream or to a fork.
 
-**File**: `examples-as/assembly/life.ts` (step_once function with 8 neighbor calculations)
+---
 
-**Debugging needed**:
-1. Verify AssemblyScript correctness in standard WASM runtime
-2. Check operand stack spilling logic for deep expressions
-3. Verify address calculations in function calls with spilled locals
-4. Check for conflicts between spill area and call frames
+### anan-as is a library, not a standalone program
+**Severity**: N/A
+**Status**: Known limitation
+
+The compiled anan-as JAM file (423KB) is a library with API functions like `resetGeneric()`, `nSteps()`, etc. It does not have a `main()` entry point.
+
+To achieve full PVM-in-PVM execution, a WASM wrapper would be needed that:
+1. Provides a `main(args_ptr, args_len)` entry point
+2. Parses input (PVM program bytes)
+3. Calls the anan-as API functions
+4. Returns results via globals
 
 ---
 
@@ -229,4 +207,31 @@ When you discover a new issue:
 
 ### ~~No `br_table` support~~ (Resolved 2025-01-18)
 **Resolution**: Implemented `br_table` instruction using a series of compare-and-branch instructions. Each table entry is compared with the index, and if matched, branches to the corresponding target. Out-of-bounds indices fall through to the default target.
+
+---
+
+### ~~No data section initialization~~ (Resolved 2025-01-19)
+**Resolution**: Implemented WASM data section parsing and initialization. Data segments are placed in the SPI `rw_data` section at WASM_MEMORY_BASE (0x50000). Active data segments with offset expressions are supported.
+
+---
+
+### ~~Operand stack limited to 5 slots~~ (Resolved 2025-01-19)
+**Resolution**: Implemented operand stack spilling to memory when depth exceeds 5. Fixed bugs in spill/restore logic for function calls and `local.tee` operations. Game of Life now works correctly with any number of steps.
+
+---
+
+### ~~Game of Life multi-step execution fault~~ (Resolved 2025-01-19)
+**Resolution**: Fixed three bugs:
+1. `I64Load` instruction was using invalid patterns
+2. Spilled operand stack across function calls was reading from r7 instead of spill area
+3. `local.tee` with spilled operand stack didn't check `pending_spill` and used wrong temp registers
+
+---
+
+### ~~Import function calls not supported~~ (Resolved 2025-01-19)
+**Resolution**: Implemented import function stubbing. Imported functions pop their arguments and:
+- `abort` emits TRAP
+- Other imports are no-ops (useful for console.log, etc.)
+
+This allows compilation of anan-as which imports `abort` and `console.log`.
 

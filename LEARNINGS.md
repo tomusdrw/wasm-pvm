@@ -306,14 +306,22 @@ Example STORE_IND_U32: memory[regs[base] + offset] = regs[src]
 ### Memory Operations
 | WASM | PVM |
 |------|-----|
-| i32.load offset=N | LOAD_IND_U32 rD, rBase, N |
-| i32.store offset=N | STORE_IND_U32 rBase, rVal, N |
-| memory.grow | SBRK (or host call) |
+| i32.load offset=N | LOAD_IND_U32 rD, rBase, N (with WASM_MEMORY_BASE offset) |
+| i32.store offset=N | STORE_IND_U32 rBase, rVal, N (with WASM_MEMORY_BASE offset) |
+| memory.grow | Returns -1 (not supported) |
+| memory.fill | Loop: store byte, increment dest, decrement count |
+| memory.copy | Loop: load byte, store byte, increment both, decrement count |
 
 **Address Translation:**
 - WASM addresses start at 0
 - PVM addresses < 0x10000 cause panic
-- Solution: Add base offset (0x30000 for RW data in SPI)
+- WASM linear memory base: 0x50000 (WASM_MEMORY_BASE)
+- WASM data sections placed at 0x50000 + offset in rw_data
+
+### Import Handling
+Imported functions are stubbed:
+- `abort` → emits TRAP
+- Other imports → pop arguments, no-op (useful for console.log, etc.)
 
 ---
 
@@ -526,10 +534,12 @@ This ensures the heap always starts at 0x30000 (after 2 segments + 1 for RO).
 1. ~~What are PVM's calling conventions?~~ → See Calling Convention section above
 2. ~~How to handle WASM globals?~~ → Store at 0x30000 + idx*4
 3. ~~What's the best strategy for br_table?~~ → ✅ Implemented using linear compare-and-branch (2025-01-18)
-4. ~~Should we support floating point?~~ → No, reject
+4. ~~Should we support floating point?~~ → No, reject (stubs for dead code paths)
 5. ~~How to handle memory.grow?~~ → Returns -1 (growth not supported)
 6. ~~How to support recursion?~~ → ✅ Implemented by saving operand stack to call stack (2025-01-18)
 7. ~~How to implement call_indirect?~~ → ✅ Implemented using dispatch table in RO memory (2025-01-18)
+8. ~~How to handle WASM imports?~~ → ✅ Stub with TRAP (abort) or no-op (others) (2025-01-19)
+9. ~~How to handle data sections?~~ → ✅ Initialize in rw_data at WASM_MEMORY_BASE (2025-01-19)
 
 ---
 

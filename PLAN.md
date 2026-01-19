@@ -433,23 +433,24 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| **Game of Life bug blocks Phase 2** | High | **Phase 11 in progress** - fix operand stack spilling |
-| Data section complexity | High | **Phase 12 planned** - systematic implementation |
-| PVM instruction set insufficient | Medium | Check all WASM ops map to PVM early |
-| Register pressure too high | Medium | **Phase 11 validating** spilling implementation |
-| Control flow edge cases | Medium | Comprehensive test suite |
-| Memory model mismatch | Medium | Define clear address translation |
+| ~~Game of Life bug blocks Phase 2~~ | ~~High~~ | ✅ Resolved - Phase 11 complete |
+| ~~Data section complexity~~ | ~~High~~ | ✅ Resolved - Phase 12 complete |
+| PVM instruction set insufficient | Medium | ✅ All needed WASM ops map to PVM |
+| ~~Register pressure too high~~ | ~~Medium~~ | ✅ Resolved - spilling works correctly |
+| Control flow edge cases | Medium | ✅ Comprehensive test suite (58 tests) |
+| Memory model mismatch | Medium | ✅ Clear address translation defined |
 | Recursion stack overflow | Medium | Phase 13: add stack overflow detection |
 | Performance issues | Low | Not a priority for v1 |
+| anan-as is library not standalone | Low | Would need wrapper for full PVM-in-PVM |
 
 ---
 
 ## Open Questions to Resolve
 
 1. ~~**PVM Calling Convention**~~: ✅ Resolved - See SPI convention above
-2. **Host Calls**: How to handle WASM imports? Map to PVM ecalli?
+2. ~~**Host Calls**~~: ✅ Resolved - Stub imports (TRAP for abort, no-op for others)
 3. ~~**Memory Growth**~~: ✅ Returns -1 (not supported)
-4. ~~**Floating Point**~~: ✅ Resolved - PVM has no FP, reject WASM with floats
+4. ~~**Floating Point**~~: ✅ Resolved - PVM has no FP, stubs for dead code paths
 5. **Stack Size**: Configurable in SPI format (stackSize field, up to 16MB)
 
 ---
@@ -464,7 +465,7 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 - 58 integration tests passing
 
 ### V1 Release (Target: anan-as in PVM)
-**Current Phase**: 11 (Game of Life debugging)
+**Current Phase**: 12b COMPLETE - anan-as compiles successfully!
 
 **Completed Features**:
 - [x] WASM MVP compliance (except floats)
@@ -472,21 +473,16 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 - [x] Documentation
 - [x] Recursion support (Phase 8) ✅
 - [x] Indirect calls (Phase 9) ✅
+- [x] Game of Life debugging (Phase 11) ✅
+- [x] Data section initialization (Phase 12) ✅
+- [x] Import function stubbing (Phase 12b) ✅
+- [x] anan-as compilation (423KB JAM file) ✅
 
-**Phase 11**: Game of Life debugging (In Progress)
-- [ ] Fix operand stack spilling for complex expressions
-- [ ] Validate function call handling with spilled locals
-
-**Phase 12**: Data section initialization (Next)
-- [ ] Parse WASM data sections
-- [ ] Initialize SPI RW data segments
-- [ ] Enable anan-as compilation
-
-**Phase 13-15**: Remaining V1 features (After Phase 12)
-- [ ] Stack overflow detection
-- [ ] Enhanced memory model
-- [ ] Runtime safety improvements
-- [ ] Successfully compile and run anan-as PVM interpreter
+**Remaining work for full PVM-in-PVM**:
+- [ ] Create wrapper with main() entry point that calls anan-as API
+- [ ] Stack overflow detection (Phase 13)
+- [ ] Enhanced memory model (Phase 14)
+- [ ] Runtime safety improvements (Phase 15)
 
 ---
 
