@@ -11,7 +11,7 @@
     (local $i i32)
     (local $sum i32)
     
-    (local.set $base (i32.const 0x30100))
+    (local.set $base (i32.const 0))
     
     ;; Write 0..15 to buffer
     (local.set $i (i32.const 0))

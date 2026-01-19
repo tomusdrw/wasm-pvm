@@ -14,7 +14,7 @@
     (local $dst i32)
     (local $sum i32)
     
-    (local.set $src (i32.const 0x30100))  ;; source buffer
+    (local.set $src (i32.const 0))  ;; source buffer
     (local.set $dst (i32.const 0x30200))  ;; dest buffer
     
     ;; Initialize source buffer with pattern: cell[y*16+x] = (y + x) & 1

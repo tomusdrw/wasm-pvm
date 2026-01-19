@@ -540,6 +540,81 @@ This ensures the heap always starts at 0x30000 (after 2 segments + 1 for RO).
 7. ~~How to implement call_indirect?~~ → ✅ Implemented using dispatch table in RO memory (2025-01-18)
 8. ~~How to handle WASM imports?~~ → ✅ Stub with TRAP (abort) or no-op (others) (2025-01-19)
 9. ~~How to handle data sections?~~ → ✅ Initialize in rw_data at WASM_MEMORY_BASE (2025-01-19)
+10. **PVM-in-PVM memory corruption** → 🔍 Under investigation (2025-01-19)
+
+---
+
+## PVM-in-PVM Investigation (2025-01-19)
+
+### Problem Summary
+When running anan-as (compiled to PVM) as an interpreter for an inner PVM program, execution fails with a FAULT at PC 1819, attempting to access memory address ~170MB (0x0A218A68).
+
+### Root Cause Analysis
+
+**Symptom:** A `LOAD_IND_U32` instruction tries to read from an extremely large address.
+
+**Trace Analysis:**
+1. At PC 160515, a `MUL_32` computes `r4 = 196716 * 196716 = 42,478,992` (32-bit wrapped)
+2. The value 196716 (0x3006C) is the **address** of global 27 (`__heap_base`), not its **value** (54292)
+3. This corrupted value propagates through array indexing: `base + index * 4`
+4. Eventually leads to accessing address 0x0A218A68
+
+**Key Finding:** Something stores the global ADDRESS (0x3006C) into WASM linear memory instead of loading the global VALUE (54292) and storing that.
+
+### Memory Layout Context
+```
+WASM Linear Memory:
+  0x00000 - WASM address 0 (maps to PVM 0x50000)
+  0x0D414 - __heap_base value (global 27)
+  0x0F800 - Address where corrupted value was loaded from
+
+PVM Memory:
+  0x30000 - Globals storage (global N at 0x30000 + N*4)
+  0x3006C - Address of global 27 (= 0x30000 + 27*4)
+  0x50000 - WASM_MEMORY_BASE (WASM linear memory starts here)
+  0x5F800 - PVM address of WASM offset 0xF800
+```
+
+### Suspected Causes
+
+1. **AS Runtime Class Pointers**: AssemblyScript stores class metadata pointers in objects. If a global address is accidentally stored where a class pointer should be, method dispatch or field access will compute garbage addresses.
+
+2. **Memory Initialization Issue**: The rw_data section initializes both globals (at 0x30000) and WASM data sections (at 0x50000+). If there's overlap or misalignment, global addresses could leak into WASM memory.
+
+3. **64-bit vs 32-bit Confusion**: PVM uses 64-bit registers, WASM uses 32-bit addresses. Sign extension or truncation issues could produce unexpected values.
+
+### Debugging Scripts Created
+- `scripts/debug-pvm.ts` - Runs anan-pvm with verbose tracing
+- `scripts/inspect-jam.ts` - Inspects JAM file structure and disassembles around specific PC
+
+### Additional Findings (continued analysis)
+
+**Memory Layout Verification:**
+- rw_data section: 152,586 bytes (0x2540A)
+- rw_data covers PVM addresses 0x30000 to 0x5540A
+- WASM address 0xF800 = PVM address 0x5F800, which is BEYOND rw_data
+- Memory from 0x5540A to heap end is zero-initialized (not garbage)
+
+**The corrupted value (196716) at 0x5F800 was WRITTEN during execution**, not from initial data. The trace searched 17M+ lines but didn't find a direct `STORE` of 196716, suggesting it may be written through a complex path (function pointer, array element, etc.).
+
+### Next Steps to Debug
+
+1. **Trace ALL stores to address range 0x5F7xx-0x5F8xx** - The value must be written somewhere. May need binary search with early termination.
+
+2. **Check AS runtime internals**: The AS runtime stores class IDs and vtable pointers in object headers. If an object is allocated at 0x5F800-ish and its class pointer gets corrupted...
+
+3. **Test with simpler AS program**: Create a minimal AS program that just allocates an array. This isolates whether basic allocation works.
+
+4. **Binary search execution**: Run with limited gas/steps to find approximately when the corruption occurs, then zoom in.
+
+### Test Commands
+```bash
+# Run integration tests (all 58 pass)
+npx tsx scripts/test-all.ts
+
+# Run PVM-in-PVM test (currently failing with FAULT)
+npx tsx scripts/test-pvm-in-pvm.ts
+```
 
 ---
 

@@ -18,7 +18,7 @@
     (local $tmp4 i32)    ;; local 9 -> spilled
     (local $tmp5 i32)    ;; local 10 -> spilled
     
-    (local.set $base (i32.const 0x30100))
+    (local.set $base (i32.const 0))
     
     ;; Write checkerboard pattern using tmp variables
     (local.set $y (i32.const 0))

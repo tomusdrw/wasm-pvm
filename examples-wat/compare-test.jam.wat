@@ -20,7 +20,7 @@
     (local $result_addr i32)
     
     ;; Result address
-    (local.set $result_addr (i32.const 0x30100))
+    (local.set $result_addr (i32.const 0))
     
     ;; Test 0: 3 < 5 should be 1
     (i32.store8 (local.get $result_addr)

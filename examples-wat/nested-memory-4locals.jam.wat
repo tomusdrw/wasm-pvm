@@ -12,7 +12,7 @@
     
     ;; Note: params use local 0, 1 -> r9, r10
     
-    ;; Write checkerboard pattern to 0x30100
+    ;; Write checkerboard pattern to 0
     (local.set $y (i32.const 0))
     (block $y_exit
       (loop $y_loop
@@ -23,10 +23,10 @@
           (loop $x_loop
             (br_if $x_exit (i32.ge_s (local.get $x) (i32.const 4)))
             
-            ;; store (y + x) & 1 at 0x30100 + y*4 + x
+            ;; store (y + x) & 1 at 0 + y*4 + x
             (i32.store8 
               (i32.add 
-                (i32.const 0x30100)
+                (i32.const 0)
                 (i32.add 
                   (i32.shl (local.get $y) (i32.const 2))
                   (local.get $x)))
@@ -49,7 +49,7 @@
     (i32.store (i32.const 0x30200)
       (i32.add
         (i32.add
-          (i32.load8_u (i32.const 0x30100))
+          (i32.load8_u (i32.const 0))
           (i32.shl (i32.load8_u (i32.const 0x30101)) (i32.const 8)))
         (i32.add
           (i32.shl (i32.load8_u (i32.const 0x30102)) (i32.const 16))

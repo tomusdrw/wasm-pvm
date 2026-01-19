@@ -10,8 +10,8 @@
     (local $addr i32)
     (local $val i32)
     
-    ;; addr = 0x30100
-    (local.set $addr (i32.const 0x30100))
+    ;; addr = 0
+    (local.set $addr (i32.const 0))
     
     ;; Store 42 at addr
     (i32.store8 (local.get $addr) (i32.const 42))

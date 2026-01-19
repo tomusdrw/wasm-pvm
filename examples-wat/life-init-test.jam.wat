@@ -9,7 +9,7 @@
   (func (export "main") (param $args_ptr i32) (param $args_len i32)
     (local $buf_a i32)
     
-    (local.set $buf_a (i32.const 0x30100))
+    (local.set $buf_a (i32.const 0))
     
     ;; Initialize a horizontal blinker at row 1: (0,1), (1,1), (2,1)
     (i32.store8 (i32.add (local.get $buf_a) (i32.const 4)) (i32.const 1))  ;; (0,1)

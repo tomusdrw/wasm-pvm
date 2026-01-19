@@ -117,6 +117,15 @@ impl CodeEmitter {
     }
 
     fn define_label(&mut self, label: usize) {
+        // PVM requires that jump targets be valid basic block starts.
+        // A basic block starts after a terminating instruction.
+        // If the previous instruction is not a terminator, we must emit FALLTHROUGH
+        // to create a valid basic block boundary.
+        if let Some(last) = self.instructions.last() {
+            if !last.is_terminating() {
+                self.emit(Instruction::Fallthrough);
+            }
+        }
         self.labels[label] = Some(self.current_offset());
     }
 
@@ -664,10 +673,14 @@ pub fn translate_function(
 fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext) {
     if ctx.is_main {
         if ctx.num_params >= 1 {
+            // Subtract WASM_MEMORY_BASE from args_ptr so that when memory operations
+            // add it back, we get the correct PVM address (0xFEFF0000).
+            // This allows WASM code to treat args_ptr as a regular pointer that
+            // goes through the same translation as all other memory addresses.
             emitter.emit(Instruction::AddImm32 {
                 dst: FIRST_LOCAL_REG,
                 src: ARGS_PTR_REG,
-                value: 0,
+                value: -WASM_MEMORY_BASE,
             });
         }
         if ctx.num_params >= 2 {
@@ -693,6 +706,14 @@ fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bo
                 base: 2,
                 offset: 0,
             });
+            // Translate result_ptr from WASM address to PVM address
+            // The WASM code sets result_ptr as a WASM linear memory address,
+            // but the caller expects a PVM address.
+            emitter.emit(Instruction::AddImm32 {
+                dst: ARGS_PTR_REG,
+                src: ARGS_PTR_REG,
+                value: WASM_MEMORY_BASE,
+            });
         }
         if let Some(len_idx) = ctx.result_len_global {
             let offset = (len_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
@@ -713,7 +734,9 @@ fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bo
         });
         emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
     } else {
-        if has_return {
+        // Only pop return value if there's something on the stack
+        // (there might not be if an explicit 'return' already handled it)
+        if has_return && emitter.stack.depth() > 0 {
             let ret_val = emitter.spill_pop();
             emitter.emit(Instruction::AddImm32 {
                 dst: RETURN_VALUE_REG,
@@ -887,37 +910,41 @@ fn translate_op(
         Operator::I32Load { memarg } | Operator::I64Load32U { memarg } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU32 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I32Store { memarg } | Operator::I64Store32 { memarg } => {
             let value = emitter.spill_pop();
             let addr = emitter.spill_pop();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::StoreIndU32 {
                 base: addr,
                 src: value,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I64Load { memarg } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU64 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I64Store { memarg } => {
             let value = emitter.spill_pop();
             let addr = emitter.spill_pop();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::StoreIndU64 {
                 base: addr,
                 src: value,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I32Const { value } => {
@@ -1446,11 +1473,60 @@ fn translate_op(
             }
         }
         Operator::Return => {
-            emitter.emit(Instruction::LoadImm {
-                reg: 2,
-                value: EXIT_ADDRESS,
-            });
-            emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
+            // For the main entry function, return means exit the program
+            // For other functions, return to caller via jump table
+            if ctx.is_main {
+                // Load result_ptr and result_len if available
+                if let Some(ptr_idx) = ctx.result_ptr_global {
+                    let offset = (ptr_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
+                    emitter.emit(Instruction::LoadImm {
+                        reg: 2,
+                        value: offset,
+                    });
+                    emitter.emit(Instruction::LoadIndU32 {
+                        dst: ARGS_PTR_REG,
+                        base: 2,
+                        offset: 0,
+                    });
+                    emitter.emit(Instruction::AddImm32 {
+                        dst: ARGS_PTR_REG,
+                        src: ARGS_PTR_REG,
+                        value: WASM_MEMORY_BASE,
+                    });
+                }
+                if let Some(len_idx) = ctx.result_len_global {
+                    let offset = (len_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
+                    emitter.emit(Instruction::LoadImm {
+                        reg: 2,
+                        value: offset,
+                    });
+                    emitter.emit(Instruction::LoadIndU32 {
+                        dst: ARGS_LEN_REG,
+                        base: 2,
+                        offset: 0,
+                    });
+                }
+                emitter.emit(Instruction::LoadImm {
+                    reg: 2,
+                    value: EXIT_ADDRESS,
+                });
+                emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
+            } else {
+                // Handle return value if present
+                if ctx.has_return {
+                    let ret_val = emitter.spill_pop();
+                    emitter.emit(Instruction::AddImm32 {
+                        dst: RETURN_VALUE_REG,
+                        src: ret_val,
+                        value: 0,
+                    });
+                }
+                // Return to caller via jump table
+                emitter.emit(Instruction::JumpInd {
+                    reg: RETURN_ADDR_REG,
+                    offset: 0,
+                });
+            }
         }
         Operator::Call { function_index } => {
             let (num_args, has_return) = ctx
@@ -1509,11 +1585,20 @@ fn translate_op(
             });
         }
         Operator::MemoryGrow { mem: 0, .. } => {
+            // memory.grow(pages) - tries to grow memory by `pages` pages
+            // We don't actually grow memory, but we can pretend to succeed if
+            // the requested size is within our pre-allocated limit.
+            // Return: previous size in pages if success, -1 if failure
+            //
+            // For now, return the current size (256) to indicate success.
+            // This works because we've pre-allocated plenty of memory and
+            // AssemblyScript's runtime just wants to ensure memory is available.
             let _ = emitter.spill_pop();
             let dst = emitter.spill_push();
+            // Return current size (256 pages) to indicate success
             emitter.emit(Instruction::LoadImm {
                 reg: dst,
-                value: -1,
+                value: 256,
             });
         }
         Operator::MemoryFill { mem: 0 } => {
@@ -1783,46 +1868,51 @@ fn translate_op(
         Operator::I32Load8U { memarg } | Operator::I64Load8U { memarg } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU8 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I32Load8S { memarg } | Operator::I64Load8S { memarg } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndI8 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I32Load16U { memarg } | Operator::I64Load16U { memarg } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU16 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I32Load16S { memarg } | Operator::I64Load16S { memarg } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndI16 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I64Load32S { memarg } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU32 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
             emitter.emit(Instruction::SignExtend16 { dst, src: dst });
             emitter.emit(Instruction::SignExtend16 { dst, src: dst });
@@ -1830,19 +1920,21 @@ fn translate_op(
         Operator::I32Store8 { memarg } | Operator::I64Store8 { memarg } => {
             let val = emitter.spill_pop();
             let addr = emitter.spill_pop();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::StoreIndU8 {
                 base: addr,
                 src: val,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I32Store16 { memarg } | Operator::I64Store16 { memarg } => {
             let val = emitter.spill_pop();
             let addr = emitter.spill_pop();
+            // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::StoreIndU16 {
                 base: addr,
                 src: val,
-                offset: memarg.offset as i32,
+                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
             });
         }
         Operator::I32Rotl => {

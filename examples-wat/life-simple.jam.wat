@@ -128,7 +128,7 @@
     (local $buf_b i32)
     (local $size i32)
     
-    (local.set $buf_a (i32.const 0x30100))
+    (local.set $buf_a (i32.const 0))
     (local.set $buf_b (i32.const 0x30200))
     (local.set $size (i32.const 4))
     

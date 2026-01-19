@@ -23,6 +23,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut function_type_indices = Vec::new();
     let mut globals: Vec<GlobalType> = Vec::new();
     let mut global_names: Vec<Option<String>> = Vec::new();
+    let mut global_init_values: Vec<i32> = Vec::new();
     let mut main_func_idx: Option<u32> = None;
     let mut secondary_entry_func_idx: Option<u32> = None;
     let mut tables: Vec<wasmparser::TableType> = Vec::new();
@@ -65,6 +66,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                     let g = global?;
                     globals.push(g.ty);
                     global_names.push(None);
+                    // Extract initial value from the const expression
+                    let init_value = eval_const_i32(&g.init_expr)?;
+                    global_init_values.push(init_value);
                 }
             }
             Payload::TableSection(reader) => {
@@ -104,12 +108,22 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             Payload::ExportSection(reader) => {
                 for export in reader {
                     let export = export?;
-                    if let wasmparser::ExternalKind::Func = export.kind {
-                        if export.name == "main" {
-                            main_func_idx = Some(export.index);
-                        } else if export.name == "main2" {
-                            secondary_entry_func_idx = Some(export.index);
+                    match export.kind {
+                        wasmparser::ExternalKind::Func => {
+                            if export.name == "main" {
+                                main_func_idx = Some(export.index);
+                            } else if export.name == "main2" {
+                                secondary_entry_func_idx = Some(export.index);
+                            }
                         }
+                        wasmparser::ExternalKind::Global => {
+                            // Record global names from exports for result_ptr/result_len detection
+                            let idx = export.index as usize;
+                            if idx < global_names.len() {
+                                global_names[idx] = Some(export.name.to_string());
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -141,7 +155,11 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         return Err(Error::NoExportedFunction);
     }
 
-    let main_func_idx = main_func_idx.unwrap_or(0) as usize;
+    // main_func_idx is the global function index from exports
+    // Convert to local function index by subtracting imported functions
+    let main_func_idx = main_func_idx
+        .map(|idx| idx as usize - num_imported_funcs as usize)
+        .unwrap_or(0);
 
     let mut result_ptr_global = None;
     let mut result_len_global = None;
@@ -219,7 +237,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         "Entry header must be exactly 10 bytes"
     );
 
-    let secondary_entry_idx_resolved = secondary_entry_func_idx.map(|idx| idx as usize);
+    // Convert secondary entry from global to local function index
+    let secondary_entry_idx_resolved =
+        secondary_entry_func_idx.map(|idx| idx as usize - num_imported_funcs as usize);
 
     for (local_func_idx, func) in functions.iter().enumerate() {
         // Global function index = num_imported_funcs + local_func_idx
@@ -322,7 +342,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     // rw_data_section byte N goes to PVM address 0x30000 + N
     // WASM memory offset 0 should be at PVM address 0x50000 = 0x30000 + 0x20000
     // So WASM data at offset X goes to rw_data_section byte (0x20000 + X)
-    let rw_data_section = build_rw_data(&data_segments);
+    let rw_data_section = build_rw_data(&data_segments, &global_init_values);
 
     let heap_pages = calculate_heap_pages(functions.len(), &data_segments);
 
@@ -332,27 +352,45 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         .with_rw_data(rw_data_section))
 }
 
-/// Build the `rw_data` section from WASM data segments.
+/// Build the `rw_data` section from WASM data segments and global initializers.
 ///
-/// The RW data segment in SPI is loaded at 0x30000. WASM linear memory starts at
-/// `WASM_MEMORY_BASE` (0x50000). So WASM offset X maps to `rw_data` offset (0x20000 + X).
-fn build_rw_data(data_segments: &[DataSegment]) -> Vec<u8> {
-    if data_segments.is_empty() {
-        return Vec::new();
-    }
+/// The RW data segment in SPI is loaded at 0x30000. Layout:
+/// - 0x30000+ : Global variables (4 bytes each)
+/// - 0x50000+ : WASM linear memory (data segments)
+///
+/// WASM linear memory starts at `WASM_MEMORY_BASE` (0x50000).
+/// So WASM offset X maps to `rw_data` offset (0x20000 + X).
+fn build_rw_data(data_segments: &[DataSegment], global_init_values: &[i32]) -> Vec<u8> {
+    // Calculate the minimum size needed for globals
+    let globals_end = global_init_values.len() * 4;
 
-    // Calculate the size of rw_data needed
-    // We need to cover from 0x30000 to at least WASM_MEMORY_BASE + max(wasm_offset + data_len)
+    // Calculate the size needed for data segments
     let wasm_to_rw_offset = codegen::WASM_MEMORY_BASE as u32 - 0x30000;
 
-    let max_end = data_segments
+    let data_end = data_segments
         .iter()
         .map(|seg| wasm_to_rw_offset + seg.offset + seg.data.len() as u32)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0) as usize;
 
-    let mut rw_data = vec![0u8; max_end as usize];
+    // Total size is the max of globals area and data segments
+    let total_size = globals_end.max(data_end);
 
+    if total_size == 0 {
+        return Vec::new();
+    }
+
+    let mut rw_data = vec![0u8; total_size];
+
+    // Initialize globals at the start of rw_data (0x30000+)
+    for (i, &value) in global_init_values.iter().enumerate() {
+        let offset = i * 4;
+        if offset + 4 <= rw_data.len() {
+            rw_data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    // Copy data segments to their WASM memory locations
     for seg in data_segments {
         let rw_offset = (wasm_to_rw_offset + seg.offset) as usize;
         if rw_offset + seg.data.len() <= rw_data.len() {
@@ -377,17 +415,16 @@ fn calculate_heap_pages(num_functions: usize, data_segments: &[DataSegment]) -> 
     let spilled_locals_end = codegen::SPILLED_LOCALS_BASE as usize
         + num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
 
-    // WASM memory end (include data segments + some extra for heap)
+    // WASM memory end (include data segments + dynamic allocation)
+    // We tell WASM code that memory.size = 256 pages (16MB), so we should
+    // allocate enough to cover potential heap growth.
+    // For anan-as (PVM interpreter), we need more memory because it allocates
+    // data structures for the inner PVM. Use 1024 pages (64MB) for safety.
     let wasm_memory_end = if data_segments.is_empty() {
-        codegen::WASM_MEMORY_BASE as usize + 64 * 1024 // 64KB default
+        codegen::WASM_MEMORY_BASE as usize + 1024 * 64 * 1024 // 64MB (1024 pages)
     } else {
-        let max_data_end = data_segments
-            .iter()
-            .map(|seg| codegen::WASM_MEMORY_BASE as usize + seg.offset as usize + seg.data.len())
-            .max()
-            .unwrap_or(codegen::WASM_MEMORY_BASE as usize);
-        // Add 64KB for dynamic allocation
-        max_data_end + 64 * 1024
+        // Use 1024 pages (64MB) of WASM memory for complex programs
+        codegen::WASM_MEMORY_BASE as usize + 1024 * 64 * 1024
     };
 
     let end = spilled_locals_end.max(wasm_memory_end);

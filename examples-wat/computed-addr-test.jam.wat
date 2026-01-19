@@ -11,8 +11,8 @@
     (local $offset i32)
     (local $val i32)
     
-    ;; base = 0x30100
-    (local.set $base (i32.const 0x30100))
+    ;; base = 0
+    (local.set $base (i32.const 0))
     ;; offset = 5
     (local.set $offset (i32.const 5))
     

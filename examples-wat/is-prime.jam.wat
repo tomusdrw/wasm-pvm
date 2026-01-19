@@ -56,10 +56,10 @@
       )
     )
     
-    ;; Store result at 0x30100
-    (i32.store (i32.const 0x30100) (local.get $result))
+    ;; Store result at 0
+    (i32.store (i32.const 0) (local.get $result))
     
-    (global.set $result_ptr (i32.const 0x30100))
+    (global.set $result_ptr (i32.const 0))
     (global.set $result_len (i32.const 4))
   )
 )

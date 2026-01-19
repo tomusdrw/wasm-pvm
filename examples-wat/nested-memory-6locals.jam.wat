@@ -12,7 +12,7 @@
     (local $sum i32)     ;; local 4 -> spilled
     (local $base i32)    ;; local 5 -> spilled
     
-    (local.set $base (i32.const 0x30100))
+    (local.set $base (i32.const 0))
     
     ;; Write checkerboard pattern
     (local.set $y (i32.const 0))
