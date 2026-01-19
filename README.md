@@ -208,6 +208,9 @@ npx tsx scripts/test-all.ts
 # Test a single example
 cargo run -p wasm-pvm-cli --quiet -- compile examples-wat/factorial.jam.wat -o /tmp/test.jam
 npx tsx scripts/run-jam.ts /tmp/test.jam --args=05000000
+
+# Verify a JAM file structure
+npx tsx scripts/verify-jam.ts /tmp/test.jam
 ```
 
 ## License

@@ -248,6 +248,13 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 **Note**: The compiled anan-as JAM file (423KB) is a library, not a standalone program.
 Full PVM-in-PVM would require a wrapper that calls the API functions (resetGeneric, nSteps, etc.).
 
+**Verification**: The compiled JAM file is structurally valid and can be loaded by the PVM interpreter:
+- 632 bytes RO data (dispatch table)
+- 152KB RW data (WASM linear memory with data sections)
+- 1746 jump table entries (function entry points and return addresses)
+- ~64,133 PVM instructions
+- `prepareProgram` succeeds when loading the JAM file
+
 ### Phase 13: Stack Overflow Detection (PHASE 3)
 **Status**: Not implemented
 **Impact**: Deep recursion in anan-as interpreter may corrupt memory
