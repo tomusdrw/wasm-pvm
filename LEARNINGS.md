@@ -24,6 +24,46 @@ This document captures technical learnings, design decisions, and discoveries ma
 
 ---
 
+## AssemblyScript Runtime Analysis (Phase 16a)
+
+**Investigation**: Created complex allocation tests to isolate PVM-in-PVM infinite recursion causes.
+
+**Test Setup**:
+- `examples-as/assembly/alloc-test.ts` with object graphs, circular references, and nested allocations
+- Compiled with three AS runtimes: `stub`, `minimal`, `incremental`
+- Executed on PVM to verify allocation behavior
+
+**Findings**:
+- **All runtimes work correctly** on PVM with complex allocations (expected result: 1107)
+- **Stub runtime**: 141KB JAM, works despite having allocation infrastructure
+- **Minimal runtime**: 154KB JAM, includes garbage collection but executes successfully
+- **Incremental runtime**: 159KB JAM, full GC, executes successfully
+
+**Conclusion**: Basic AS allocation patterns don't reproduce PVM-in-PVM recursion issue. The problem likely involves:
+- More complex runtime patterns specific to anan-as interpreter
+- Potential interaction between compiled anan-as and its own runtime when nested
+- Specific allocation patterns that trigger pathological GC behavior
+
+## PVM-in-PVM Infrastructure (Phase 16b)
+
+**Setup**: Created complete PVM-in-PVM test harness using anan-as main-wrapper.ts.
+
+**Architecture**:
+- `main-wrapper.ts`: SPI-compatible main() function that accepts PVM program + args + registers
+- Compiled anan-as to PVM: 326KB JAM file with main() entry point
+- Test harness: `scripts/test-pvm-in-pvm.ts` runs compiled anan-as inside regular anan-as
+
+**Current Status**: Test harness executes but compiled anan-as fails with PANIC (status 1). Expected - debug needed.
+
+**Key Components**:
+- SPI program extraction: Converts JAM format to raw PVM blob for resetGeneric()
+- Input formatting: program_len + pvm_blob + registers + gas + steps + args
+- Result parsing: status + pc + gas_left + registers from compiled anan-as output
+
+**Debug Path**: Issue likely in register/memory setup or SPI program interpretation within compiled anan-as.
+
+---
+
 ## PVM Program Blob Format
 
 Source: `vendor/anan-as/assembly/program.ts`

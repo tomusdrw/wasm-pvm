@@ -309,32 +309,44 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 
 **Testing**: All 62 integration tests pass, including call_indirect and signature validation tests
 
-### Phase 16a: AS Runtime Isolation (Allocations)
-**Status**: Planned
-**Impact**: Isolates why AS runtime causes infinite recursion/corruption in PVM-in-PVM
+### ✅ Phase 16a: AS Runtime Isolation (Allocations) - COMPLETED (2025-01-20)
+**Status**: COMPLETE
+**Impact**: Tested complex AS allocations on PVM - all runtimes work correctly, but didn't isolate PVM-in-PVM issue
 
-**Goal**: Determine minimal viable AS runtime for PVM.
+**Findings**:
+- Created complex allocation test with object graphs and circular references
+- All three AS runtimes (`stub`, `minimal`, `incremental`) execute successfully on PVM
+- Expected result (1107) returned correctly across all runtimes
+- Basic allocation patterns don't reproduce the infinite recursion issue
 
-**Tasks**:
-1. Create `examples-as/alloc-test.ts` with basic allocations:
-   - `new Array<i32>(10)`
-   - `class Foo { x: i32 }`
-2. Compile with different runtimes:
-   - `stub` (expect failure without allocator)
-   - `minimal` (simple allocator)
-   - `incremental` (full GC)
-3. Run on PVM and analyze traces.
+**Conclusion**: PVM-in-PVM recursion issue requires more specific analysis of anan-as runtime patterns.
 
-### Phase 16b: PVM-in-PVM Validation (BLOCKED)
-**Status**: Blocked - AS runtime infinite recursion issue
-**Impact**: Validates full correctness of wasm-pvm by running compiled programs through compiled anan-as
-**Timeline**: 1-2 weeks
-**Prerequisites**: Phase 13 completed, Phase 14 completed
+### Phase 16b: PVM-in-PVM Validation (IN PROGRESS)
+**Status**: Test harness created, tests failing (expected)
+**Impact**: PVM-in-PVM test infrastructure is in place
+**Timeline**: Debug and fix test failures
 
-**Goal**: Run all existing examples through the PVM-in-PVM approach:
-1. Compile anan-as (PVM interpreter) to JAM using wasm-pvm
-2. Run each example JAM file as input to the compiled anan-as
-3. Verify outputs match direct execution
+**Completed**:
+- ✅ Created `scripts/test-pvm-in-pvm.ts` - orchestrates PVM-in-PVM execution
+- ✅ Modified anan-as main-wrapper.ts to work with SPI programs
+- ✅ Compiled anan-as to PVM (326KB JAM file)
+- ✅ Test harness runs but compiled anan-as fails with PANIC status
+
+**Next Steps**: Debug why compiled anan-as fails when running inner programs
+
+### Phase 16c: SPI-Only Execution (IN PROGRESS)
+**Status**: Modified anan-as main-wrapper.ts to use resetJAM for SPI execution
+**Impact**: Both regular and PVM-in-PVM execution now use SPI format exclusively
+
+**Completed**:
+- ✅ Modified anan-as main-wrapper.ts to use `resetJAM(program, pc, gas, args)` instead of `resetGeneric`
+- ✅ `resetJAM` handles SPI format directly via `decodeSpi`
+- ✅ Updated test harness to pass SPI programs directly (no PVM blob extraction needed)
+- ✅ SPI is now the only format used throughout the toolchain
+
+**Current Issue**: anan-as builds successfully include main() but contain floating point code that our compiler rejects
+
+**Next Steps**: Either remove floating point from anan-as or create minimal SPI runner in examples-as
 
 **Required work**:
 

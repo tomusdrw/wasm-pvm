@@ -11,6 +11,9 @@
     "build:fibonacci": "asc assembly/fibonacci.ts -o build/fibonacci.wasm -t build/fibonacci.wat --runtime stub --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=",
     "build:gcd": "asc assembly/gcd.ts -o build/gcd.wasm -t build/gcd.wat --runtime stub --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=",
     "build:life": "asc assembly/life.ts -o build/life.wasm -t build/life.wat --runtime stub --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=",
+    "build:alloc-test-stub": "asc assembly/alloc-test.ts -o build/alloc-test-stub.wasm -t build/alloc-test-stub.wat --runtime stub --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=",
+    "build:alloc-test-minimal": "asc assembly/alloc-test.ts -o build/alloc-test-minimal.wasm -t build/alloc-test-minimal.wat --runtime minimal --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=",
+    "build:alloc-test-incremental": "asc assembly/alloc-test.ts -o build/alloc-test-incremental.wasm -t build/alloc-test-incremental.wat --runtime incremental --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=",
     "clean": "rm -rf build"
   },
   "devDependencies": {
