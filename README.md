@@ -2,7 +2,7 @@
 
 A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) bytecode for execution on the JAM (Join-Accumulate Machine) protocol.
 
-## Status: Active Development (58 tests passing)
+## Status: Active Development (62 tests passing)
 
 **Project Goal**: Enable writing JAM programs in AssemblyScript (TypeScript-like) or hand-written WAT, compiled to PVM bytecode.
 
@@ -55,9 +55,11 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 
 ### Not Yet Implemented
 - Floating point (rejected by design - PVM has no FP; stubs exist for dead code)
-- Stack overflow detection for deep recursion
 - Runtime signature validation for `call_indirect`
 - Dynamic memory growth (`memory.grow` returns -1)
+
+### Runtime Safety
+- **Stack overflow detection**: Deep recursion triggers PANIC (configurable 64KB default limit)
 
 ## Quick Start
 
@@ -202,7 +204,7 @@ cargo test
 # Run clippy
 cargo clippy -- -D warnings
 
-# Run full integration test suite (58 tests)
+# Run full integration test suite (62 tests)
 npx tsx scripts/test-all.ts
 
 # Test a single example

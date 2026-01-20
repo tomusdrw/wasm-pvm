@@ -8,15 +8,56 @@ This document tracks known issues, bugs, and improvements for future work. Items
 
 ### No stack overflow detection
 **Severity**: Medium
-**Status**: Open (Phase 13)
+**Status**: Resolved (Phase 13)
 
-Deep recursion can corrupt memory without any error. The call stack grows downward from 0xFEFE0000 but there's no guard to prevent it from overwriting other memory regions.
+Deep recursion was causing silent memory corruption.
+**Resolution**: Implemented stack limit checks in function prologues. Emits TRAP on overflow.
 
-**Impact**: Recursive programs with deep call stacks may corrupt globals or heap.
+---
 
-**Workaround**: Avoid deep recursion; use iterative algorithms.
+### `memory.copy` incorrect for overlapping regions
+**Severity**: High
+**Status**: Open
 
-**Fix needed**: Add stack depth checking in call emission, emit TRAP on overflow.
+The implementation uses a forward copy loop (`dest++`, `src++`). This violates the WASM specification for overlapping regions where `dest > src`, which requires a backward copy to avoid overwriting source data before it is read.
+
+**Impact**: `memmove`-like operations may corrupt data.
+
+**Fix needed**: Check if `dest > src` and regions overlap; if so, copy backward (from end to start).
+
+---
+
+### Division overflow checks missing
+**Severity**: Medium
+**Status**: Open
+
+`i32.div_s` and `i64.div_s` do not check for `INT_MIN / -1` overflow or division by zero. WASM requires a TRAP for these cases.
+
+**Current behavior**: Relies on PVM instruction behavior (likely returns `INT_MIN` or `-1` without trapping).
+
+**Fix needed**: Add explicit checks for `divisor == 0` and `(dividend == INT_MIN && divisor == -1)` before division instructions.
+
+---
+
+### Import return values ignored
+**Severity**: Medium
+**Status**: Open
+
+Imported functions are stubbed as no-ops. If an imported function signature specifies a return value, the stub does not push anything to the stack/return register.
+
+**Impact**: Callers expecting a return value will read garbage or cause stack underflow.
+
+**Fix needed**: Push a dummy value (0) if the imported function signature has a return type.
+
+---
+
+### Passive data segments (`memory.init`) not supported
+**Severity**: Low
+**Status**: Known Limitation
+
+Only active data segments (initialized at instantiation) are supported. Passive segments and `memory.init` instruction are not implemented.
+
+**Workaround**: Use active segments or manual initialization code.
 
 ---
 
@@ -31,55 +72,6 @@ PVM has no floating point instructions. WASM modules containing any float operat
 **Workaround**: Use fixed-point arithmetic or integer-only algorithms.
 
 **Note**: Float truncation operations (`i32.trunc_sat_f64_u`, etc.) are stubbed to return 0. This allows compilation of modules with float operations in dead code paths (like anan-as), but calling these operations will produce incorrect results.
-
----
-
-### anan-as requires local modifications
-**Severity**: Low (workaround available)
-**Status**: Known limitation
-
-The anan-as PVM interpreter uses `Math.min()` which compiles to f64 operations in AssemblyScript. To compile anan-as with wasm-pvm, the following local modifications are needed:
-
-1. Replace `Math.min(4, x)` with `mini32(4, x)` in `arguments.ts`, `program-build.ts`
-2. Replace `Math.min(PAGE_SIZE, x)` with `minu32(PAGE_SIZE, x)` in `memory.ts`
-3. Add `mini32` and `minu32` helper functions to `math.ts`
-4. Rebuild with `npm run build`
-
-These modifications are in the local submodule and need to be committed upstream or to a fork.
-
----
-
-### anan-as is a library, not a standalone program
-**Severity**: N/A
-**Status**: Known limitation
-
-The compiled anan-as JAM file (423KB) is a library with API functions like `resetGeneric()`, `nSteps()`, etc. It does not have a `main()` entry point.
-
-To achieve full PVM-in-PVM execution, a WASM wrapper would be needed that:
-1. Provides a `main(args_ptr, args_len)` entry point
-2. Parses input (PVM program bytes)
-3. Calls the anan-as API functions
-4. Returns results via globals
-
----
-
-## Test Infrastructure
-
-### `getMemory()` doesn't return bytes in test runner
-**File**: `scripts/run-spi.ts`  
-**Severity**: Low  
-**Status**: Open
-
-The `getMemory()` call from anan-as doesn't return the actual memory bytes in the test output. Results are verified via globals instead.
-
-**Current behavior**:
-```
-=== Return Value ===
-  Address: 0x30100
-  Length: 4 bytes
-```
-
-**Workaround**: Results are verified by reading globals $result_ptr and $result_len.
 
 ---
 
@@ -107,17 +99,17 @@ When you discover a new issue:
 
 ## Resolved Issues
 
-### ~~`if/else/end` control flow not implemented~~ (Resolved 2025-01-17)
+### ~~`if/else/end` control flow not implemented~~ (Resolved 2026-01-17)
 **Resolution**: Implemented in Phase 3. Uses `BRANCH_EQ_IMM` for condition, `JUMP` for else branch, proper label management.
 
 ---
 
-### ~~Limited local variable count (4 max)~~ (Resolved 2025-01-17)
+### ~~Limited local variable count (4 max)~~ (Resolved 2026-01-17)
 **Resolution**: Implemented local spilling to memory. Locals 0-3 use registers r9-r12, locals 4+ are spilled to memory at `0x30200 + func_idx * 512 + (local_idx - 4) * 8`.
 
 ---
 
-### ~~Function calls not implemented~~ (Resolved 2025-01-17)
+### ~~Function calls not implemented~~ (Resolved 2026-01-17)
 **Resolution**: Implemented `call` instruction with:
 - Jump table for return addresses (PVM requires JUMP_IND targets in jump table)
 - Caller saves return address (jump table index) in r0
@@ -127,12 +119,12 @@ When you discover a new issue:
 
 ---
 
-### ~~Spilled locals memory fault~~ (Resolved 2025-01-17)
+### ~~Spilled locals memory fault~~ (Resolved 2026-01-17)
 **Resolution**: Moved spilled locals from 0x30000 to 0x30200 (within heap area). Heap pages are now automatically calculated based on the number of functions to ensure enough space for spilled locals.
 
 ---
 
-### ~~Missing i64 operations~~ (Resolved 2025-01-17)
+### ~~Missing i64 operations~~ (Resolved 2026-01-17)
 **Resolution**: Implemented all i64 operations:
 - i64.div_u, i64.div_s, i64.rem_u, i64.rem_s
 - i64.ge_u, i64.ge_s, i64.le_u, i64.le_s
@@ -142,7 +134,7 @@ When you discover a new issue:
 
 ---
 
-### ~~No recursion support~~ (Resolved 2025-01-18)
+### ~~No recursion support~~ (Resolved 2026-01-18)
 **Resolution**: Implemented proper call stack with frame management:
 - Save/restore operand stack values across calls
 - Save/restore locals (r9-r12) to call stack
@@ -151,7 +143,7 @@ When you discover a new issue:
 
 ---
 
-### ~~No `call_indirect` support~~ (Resolved 2025-01-18)
+### ~~No `call_indirect` support~~ (Resolved 2026-01-18)
 **Resolution**: Implemented indirect function calls via table:
 - Parse WASM table and element sections
 - Build function table in RO memory at 0x10000
@@ -160,17 +152,17 @@ When you discover a new issue:
 
 ---
 
-### ~~`if/else/end` control flow not implemented~~ (Resolved 2025-01-17)
+### ~~`if/else/end` control flow not implemented~~ (Resolved 2026-01-17)
 **Resolution**: Implemented in Phase 3. Uses `BRANCH_EQ_IMM` for condition, `JUMP` for else branch, proper label management.
 
 ---
 
-### ~~Limited local variable count (4 max)~~ (Resolved 2025-01-17)
+### ~~Limited local variable count (4 max)~~ (Resolved 2026-01-17)
 **Resolution**: Implemented local spilling to memory. Locals 0-3 use registers r9-r12, locals 4+ are spilled to memory at `0x30200 + func_idx * 512 + (local_idx - 4) * 8`.
 
 ---
 
-### ~~Function calls not implemented~~ (Resolved 2025-01-17)
+### ~~Function calls not implemented~~ (Resolved 2026-01-17)
 **Resolution**: Implemented `call` instruction with:
 - Jump table for return addresses (PVM requires JUMP_IND targets in jump table)
 - Caller saves return address (jump table index) in r0
@@ -180,12 +172,12 @@ When you discover a new issue:
 
 ---
 
-### ~~Spilled locals memory fault~~ (Resolved 2025-01-17)
+### ~~Spilled locals memory fault~~ (Resolved 2026-01-17)
 **Resolution**: Moved spilled locals from 0x30000 to 0x30200 (within heap area). Heap pages are now automatically calculated based on the number of functions to ensure enough space for spilled locals.
 
 ---
 
-### ~~Missing i64 operations~~ (Resolved 2025-01-17)
+### ~~Missing i64 operations~~ (Resolved 2026-01-17)
 **Resolution**: Implemented all i64 operations:
 - i64.div_u, i64.div_s, i64.rem_u, i64.rem_s
 - i64.ge_u, i64.ge_s, i64.le_u, i64.le_s
@@ -195,32 +187,32 @@ When you discover a new issue:
 
 ---
 
-### ~~LICENSE file missing~~ (Resolved 2025-01-18)
+### ~~LICENSE file missing~~ (Resolved 2026-01-18)
 **Resolution**: Added MIT LICENSE file.
 
 ---
 
-### ~~Block result values not supported~~ (Resolved 2025-01-18)
+### ~~Block result values not supported~~ (Resolved 2026-01-18)
 **Resolution**: Implemented block result value handling. Blocks, loops, and if/else now properly track and propagate result values. The stack depth is restored at block end, and `br` instructions copy the result value to the correct stack position.
 
 ---
 
-### ~~No `br_table` support~~ (Resolved 2025-01-18)
+### ~~No `br_table` support~~ (Resolved 2026-01-18)
 **Resolution**: Implemented `br_table` instruction using a series of compare-and-branch instructions. Each table entry is compared with the index, and if matched, branches to the corresponding target. Out-of-bounds indices fall through to the default target.
 
 ---
 
-### ~~No data section initialization~~ (Resolved 2025-01-19)
+### ~~No data section initialization~~ (Resolved 2026-01-19)
 **Resolution**: Implemented WASM data section parsing and initialization. Data segments are placed in the SPI `rw_data` section at WASM_MEMORY_BASE (0x50000). Active data segments with offset expressions are supported.
 
 ---
 
-### ~~Operand stack limited to 5 slots~~ (Resolved 2025-01-19)
+### ~~Operand stack limited to 5 slots~~ (Resolved 2026-01-19)
 **Resolution**: Implemented operand stack spilling to memory when depth exceeds 5. Fixed bugs in spill/restore logic for function calls and `local.tee` operations. Game of Life now works correctly with any number of steps.
 
 ---
 
-### ~~Game of Life multi-step execution fault~~ (Resolved 2025-01-19)
+### ~~Game of Life multi-step execution fault~~ (Resolved 2026-01-19)
 **Resolution**: Fixed three bugs:
 1. `I64Load` instruction was using invalid patterns
 2. Spilled operand stack across function calls was reading from r7 instead of spill area
@@ -228,7 +220,7 @@ When you discover a new issue:
 
 ---
 
-### ~~Import function calls not supported~~ (Resolved 2025-01-19)
+### ~~Import function calls not supported~~ (Resolved 2026-01-19)
 **Resolution**: Implemented import function stubbing. Imported functions pop their arguments and:
 - `abort` emits TRAP
 - Other imports are no-ops (useful for console.log, etc.)

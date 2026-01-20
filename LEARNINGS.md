@@ -308,7 +308,8 @@ Example STORE_IND_U32: memory[regs[base] + offset] = regs[src]
 |------|-----|
 | i32.load offset=N | LOAD_IND_U32 rD, rBase, N (with WASM_MEMORY_BASE offset) |
 | i32.store offset=N | STORE_IND_U32 rBase, rVal, N (with WASM_MEMORY_BASE offset) |
-| memory.grow | Returns -1 (not supported) |
+| memory.size | Load from compiler-managed global at `0x30000 + num_user_globals*4` |
+| memory.grow(n) | Check `current + n <= max_pages`, update global, return old size or -1 |
 | memory.fill | Loop: store byte, increment dest, decrement count |
 | memory.copy | Loop: load byte, store byte, increment both, decrement count |
 
@@ -506,6 +507,14 @@ At 0x10000, we store a dispatch table mapping table indices to jump table refere
 dispatch[i] = 2 * (func_entry_base + func_idx + 1)
 ```
 
+**Signature validation (2025-01-19):**
+Dispatch table entries are now 8 bytes:
+```
+[0..3]  jump address (u32)
+[4..7]  type index (u32)
+```
+At runtime, `call_indirect` loads the type index from offset 4 and traps if it doesn't match the expected type.
+
 ### Jump Table Extension
 The jump table contains both return addresses (for calls) and function entry offsets:
 ```
@@ -516,12 +525,16 @@ jumpTable = [ret_addr_0, ret_addr_1, ..., func_offset_0, func_offset_1, ...]
 ### Implementation Steps
 1. Pop table index from operand stack
 2. Save to r8 (SAVED_TABLE_IDX_REG)
-3. Compute dispatch address: `r8 = r8 * 4 + 0x10000`
-4. Load jump table reference: `r8 = mem[r8]`
-5. Load return address into r0 (will be fixed up)
-6. `JUMP_IND r8, 0` - jumps to function via jump table
-7. Function returns via `JUMP_IND r0, 0`
-8. Restore locals and operand stack
+3. Compute dispatch address: `r8 = r8 * 8 + 0x10000`
+4. Load type index: `r7 = mem[r8 + 4]`
+5. Compare with expected type index; TRAP on mismatch
+6. Load jump table reference: `r8 = mem[r8]`
+7. Load return address into r0 (will be fixed up)
+8. `JUMP_IND r8, 0` - jumps to function via jump table
+9. Function returns via `JUMP_IND r0, 0`
+10. Restore locals and operand stack
+
+**Bug fix (2025-01-19):** The stack overflow check in `emit_call_indirect` must not clobber operand stack registers (r2-r6). Use a temporary save/restore for r9 and reuse it for the stack limit; otherwise arguments can be corrupted before they’re popped into locals.
 
 ### Memory Layout Impact
 To ensure consistent heap placement, we always emit at least 1 byte of RO data.
@@ -535,7 +548,7 @@ This ensures the heap always starts at 0x30000 (after 2 segments + 1 for RO).
 2. ~~How to handle WASM globals?~~ → Store at 0x30000 + idx*4
 3. ~~What's the best strategy for br_table?~~ → ✅ Implemented using linear compare-and-branch (2025-01-18)
 4. ~~Should we support floating point?~~ → No, reject (stubs for dead code paths)
-5. ~~How to handle memory.grow?~~ → Returns -1 (growth not supported)
+5. ~~How to handle memory.grow?~~ → ✅ Implemented with compiler-managed global (2025-01-19)
 6. ~~How to support recursion?~~ → ✅ Implemented by saving operand stack to call stack (2025-01-18)
 7. ~~How to implement call_indirect?~~ → ✅ Implemented using dispatch table in RO memory (2025-01-18)
 8. ~~How to handle WASM imports?~~ → ✅ Stub with TRAP (abort) or no-op (others) (2025-01-19)

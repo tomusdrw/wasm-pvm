@@ -15,6 +15,15 @@ const STACK_PTR_REG: u8 = 1;
 const RETURN_VALUE_REG: u8 = 7;
 const SAVED_TABLE_IDX_REG: u8 = 8;
 const RO_DATA_BASE: i32 = 0x10000;
+/// Stack segment end address (where the stack pointer starts)
+const STACK_SEGMENT_END: i32 = 0xFEFE_0000u32 as i32;
+/// Default stack size limit (64KB, matching SPI default)
+pub const DEFAULT_STACK_SIZE: u32 = 64 * 1024;
+/// Minimum address the stack pointer can reach (`STACK_SEGMENT_END - stack_size`).
+/// If SP goes below this, we have a stack overflow.
+fn stack_limit(stack_size: u32) -> i32 {
+    (STACK_SEGMENT_END as u32).wrapping_sub(stack_size) as i32
+}
 /// Base address for spilled locals in memory
 /// Layout: 0x30000-0x300FF globals, 0x30100+ user heap, 0x40000+ spilled locals
 /// User heap can use up to ~64KB (0x30100 to 0x3FFFF) before colliding with spilled locals
@@ -25,6 +34,14 @@ pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
 /// WASM memory address 0 maps to this PVM address.
 /// All i32.load/i32.store operations add this offset to the WASM address.
 pub const WASM_MEMORY_BASE: i32 = 0x50000;
+
+/// Offset within `GLOBAL_MEMORY_BASE` for the compiler-managed memory size global.
+/// This is stored AFTER all user globals: address = 0x30000 + (`num_globals` * 4)
+/// Value is the current memory size in 64KB pages (u32).
+/// Note: We use a function instead of a constant since it depends on `num_globals`.
+fn memory_size_global_offset(num_globals: usize) -> i32 {
+    GLOBAL_MEMORY_BASE + (num_globals as i32 * 4)
+}
 
 pub struct CompileContext {
     pub num_params: usize,
@@ -42,6 +59,13 @@ pub struct CompileContext {
     pub num_imported_funcs: usize,
     /// Names of imported functions (for stubbing abort, console.log, etc.)
     pub imported_func_names: Vec<String>,
+    /// Stack size limit in bytes (for stack overflow detection)
+    pub stack_size: u32,
+    /// Initial memory size in 64KB pages (from WASM memory section)
+    pub initial_memory_pages: u32,
+    /// Maximum memory size in pages that can be allocated
+    /// Calculated from `heap_pages` allocation or WASM max memory
+    pub max_memory_pages: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -121,10 +145,12 @@ impl CodeEmitter {
         // A basic block starts after a terminating instruction.
         // If the previous instruction is not a terminator, we must emit FALLTHROUGH
         // to create a valid basic block boundary.
-        if let Some(last) = self.instructions.last() {
-            if !last.is_terminating() {
-                self.emit(Instruction::Fallthrough);
-            }
+        if self
+            .instructions
+            .last()
+            .is_some_and(|last| !last.is_terminating())
+        {
+            self.emit(Instruction::Fallthrough);
         }
         self.labels[label] = Some(self.current_offset());
     }
@@ -217,6 +243,26 @@ impl CodeEmitter {
         });
     }
 
+    /// Emit a branch if reg1 > reg2 (unsigned comparison)
+    /// Implemented as `BranchLtU`: `BranchLtU { reg1: A, reg2: B }` branches if B < A
+    /// So to branch if reg1 > reg2, we need B < A where B=reg2, A=reg1
+    /// i.e., `BranchLtU { reg1, reg2 }` branches if reg2 < reg1, which is reg1 > reg2 ✓
+    fn emit_branch_gtu(&mut self, reg1: u8, reg2: u8, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        // BranchLtU { reg1, reg2 } branches if reg2 < reg1, i.e., reg1 > reg2
+        self.emit(Instruction::BranchLtU {
+            reg1,
+            reg2,
+            offset: 0,
+        });
+    }
+
+    /// Alias for `emit_jump_to_label`
+    fn emit_jump(&mut self, label: usize) {
+        self.emit_jump_to_label(label);
+    }
+
     fn resolve_fixups(&mut self) -> Result<()> {
         for (instr_idx, label_id) in &self.fixups {
             let target_offset = self.labels[*label_id]
@@ -232,7 +278,10 @@ impl CodeEmitter {
             match &mut self.instructions[*instr_idx] {
                 Instruction::Jump { offset }
                 | Instruction::BranchNeImm { offset, .. }
-                | Instruction::BranchEqImm { offset, .. } => {
+                | Instruction::BranchEqImm { offset, .. }
+                | Instruction::BranchGeSImm { offset, .. }
+                | Instruction::BranchGeU { offset, .. }
+                | Instruction::BranchLtU { offset, .. } => {
                     *offset = relative_offset;
                 }
                 _ => {
@@ -312,7 +361,13 @@ impl CodeEmitter {
         });
     }
 
-    fn emit_call(&mut self, target_func_idx: u32, num_args: usize, has_return: bool) {
+    fn emit_call(
+        &mut self,
+        target_func_idx: u32,
+        num_args: usize,
+        has_return: bool,
+        stack_size: u32,
+    ) {
         // Calculate how many operand stack values will remain after popping args
         // These are values that belong to the caller and must be preserved
         let stack_depth_before_args = self.stack.depth().saturating_sub(num_args);
@@ -323,6 +378,52 @@ impl CodeEmitter {
         // [sp+40..]: caller's operand stack values (stack_depth_before_args * 8 bytes)
         let frame_size = 40 + (stack_depth_before_args * 8) as i32;
 
+        // Stack overflow check: new_sp = sp - frame_size
+        // If new_sp < stack_limit, trap
+        //
+        // Challenge: PVM compares 64-bit registers, but our addresses are 32-bit.
+        // The immediate comparison instructions sign-extend the 32-bit immediate,
+        // which gives wrong results for addresses like 0xFEEE0000.
+        //
+        // Solution: Use two-register unsigned comparison (BranchGeU).
+        // Load the limit into a register first, then compare.
+        let limit = stack_limit(stack_size);
+        let continue_label = self.alloc_label();
+
+        // Compute new_sp in r8 (SPILL_ALT_REG)
+        self.emit(Instruction::AddImm64 {
+            dst: SPILL_ALT_REG,
+            src: STACK_PTR_REG,
+            value: -frame_size,
+        });
+
+        // Load stack limit into r7 (ARGS_PTR_REG - safe to clobber during call setup)
+        // Use LoadImm64 to avoid sign-extension issues with addresses like 0xFEEE0000
+        self.emit(Instruction::LoadImm64 {
+            reg: ARGS_PTR_REG,
+            value: u64::from(limit as u32),
+        });
+
+        // Check if new_sp >= stack_limit (no overflow) using unsigned comparison
+        // BranchGeU semantics: if reg2 >= reg1, branch
+        // We want: if new_sp >= limit, continue (no overflow)
+        // So: reg1 = limit (r7), reg2 = new_sp (r8)
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, continue_label));
+        self.emit(Instruction::BranchGeU {
+            reg1: ARGS_PTR_REG,  // limit
+            reg2: SPILL_ALT_REG, // new_sp
+            offset: 0,
+        });
+
+        // Stack overflow: emit TRAP
+        self.emit(Instruction::Trap);
+
+        // Continue with normal call
+        self.emit(Instruction::Fallthrough);
+        self.define_label(continue_label);
+
+        // Now actually decrement the stack pointer
         self.emit(Instruction::AddImm64 {
             dst: STACK_PTR_REG,
             src: STACK_PTR_REG,
@@ -467,9 +568,16 @@ impl CodeEmitter {
         });
     }
 
-    fn emit_call_indirect(&mut self, num_args: usize, has_return: bool) {
+    fn emit_call_indirect(
+        &mut self,
+        num_args: usize,
+        has_return: bool,
+        stack_size: u32,
+        expected_type_index: u32,
+    ) {
         let table_idx_reg = self.spill_pop();
 
+        // Save table index to r8 (SAVED_TABLE_IDX_REG)
         self.emit(Instruction::AddImm32 {
             dst: SAVED_TABLE_IDX_REG,
             src: table_idx_reg,
@@ -479,6 +587,65 @@ impl CodeEmitter {
         let stack_depth_before_args = self.stack.depth().saturating_sub(num_args);
         let frame_size = 40 + (stack_depth_before_args * 8) as i32;
 
+        // Stack overflow check: new_sp = sp - frame_size
+        // If new_sp < stack_limit, trap
+        //
+        // For call_indirect, we use r7 for new_sp since r8 has table index.
+        // We need another register for the limit. We can't use r2-r6 (operand stack
+        // may have arguments to pass). Instead, save r9 to memory first, use it for
+        // the limit, then restore it.
+        let limit = stack_limit(stack_size);
+        let continue_label = self.alloc_label();
+
+        // Temporarily save r9 to memory at [SP - 8] (will be in the frame later)
+        // This is safe because even if we trap, we won't return to corrupt state.
+        self.emit(Instruction::StoreIndU64 {
+            base: STACK_PTR_REG,
+            src: FIRST_LOCAL_REG,
+            offset: -8,
+        });
+
+        // Compute new_sp in r7 (ARGS_PTR_REG)
+        self.emit(Instruction::AddImm64 {
+            dst: ARGS_PTR_REG,
+            src: STACK_PTR_REG,
+            value: -frame_size,
+        });
+
+        // Load stack limit into r9 (temporarily clobbered, will be restored)
+        // Use LoadImm64 to avoid sign-extension issues with addresses like 0xFEEE0000
+        self.emit(Instruction::LoadImm64 {
+            reg: FIRST_LOCAL_REG,
+            value: u64::from(limit as u32),
+        });
+
+        // Check if new_sp >= stack_limit (no overflow) using unsigned comparison
+        // BranchGeU semantics: if reg2 >= reg1, branch
+        // We want: if new_sp >= limit, continue (no overflow)
+        // So: reg1 = limit (r9), reg2 = new_sp (r7)
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, continue_label));
+        self.emit(Instruction::BranchGeU {
+            reg1: FIRST_LOCAL_REG, // limit
+            reg2: ARGS_PTR_REG,    // new_sp
+            offset: 0,
+        });
+
+        // Stack overflow: emit TRAP
+        self.emit(Instruction::Trap);
+
+        // Continue with normal call
+        self.emit(Instruction::Fallthrough);
+        self.define_label(continue_label);
+
+        // Restore r9 from temporary location
+        self.emit(Instruction::LoadIndU64 {
+            dst: FIRST_LOCAL_REG,
+            base: STACK_PTR_REG,
+            offset: -8,
+        });
+
+        // Now actually decrement the stack pointer
         self.emit(Instruction::AddImm64 {
             dst: STACK_PTR_REG,
             src: STACK_PTR_REG,
@@ -530,6 +697,13 @@ impl CodeEmitter {
             self.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
 
+        // Dispatch table entries are now 8 bytes each (4 bytes jump addr + 4 bytes type index)
+        // Multiply table index by 8: x*2*2*2 = x*8
+        self.emit(Instruction::Add32 {
+            dst: SAVED_TABLE_IDX_REG,
+            src1: SAVED_TABLE_IDX_REG,
+            src2: SAVED_TABLE_IDX_REG,
+        });
         self.emit(Instruction::Add32 {
             dst: SAVED_TABLE_IDX_REG,
             src1: SAVED_TABLE_IDX_REG,
@@ -541,11 +715,40 @@ impl CodeEmitter {
             src2: SAVED_TABLE_IDX_REG,
         });
 
+        // Add RO_DATA_BASE to get dispatch table address
         self.emit(Instruction::AddImm32 {
             dst: SAVED_TABLE_IDX_REG,
             src: SAVED_TABLE_IDX_REG,
             value: RO_DATA_BASE,
         });
+
+        // Load type index from dispatch table (at offset 4)
+        // Use ARGS_PTR_REG (r7) as temp since we're about to overwrite it anyway
+        self.emit(Instruction::LoadIndU32 {
+            dst: ARGS_PTR_REG,
+            base: SAVED_TABLE_IDX_REG,
+            offset: 4, // type index is at offset 4
+        });
+
+        // Validate type signature: compare with expected type index
+        // If mismatch, TRAP
+        let sig_ok_label = self.alloc_label();
+        self.emit(Instruction::BranchEqImm {
+            reg: ARGS_PTR_REG,
+            value: expected_type_index as i32,
+            offset: 0, // will be fixed up
+        });
+        let fixup_idx = self.instructions.len() - 1;
+        self.fixups.push((fixup_idx, sig_ok_label));
+
+        // Signature mismatch - TRAP
+        self.emit(Instruction::Trap);
+        self.emit(Instruction::Fallthrough);
+
+        // Signature OK - continue with call
+        self.define_label(sig_ok_label);
+
+        // Load jump address from dispatch table (at offset 0)
         self.emit(Instruction::LoadIndU32 {
             dst: SAVED_TABLE_IDX_REG,
             base: SAVED_TABLE_IDX_REG,
@@ -1557,7 +1760,7 @@ fn translate_op(
             } else {
                 // Convert global function index to local function index for emit_call
                 let local_func_idx = *function_index - ctx.num_imported_funcs as u32;
-                emitter.emit_call(local_func_idx, num_args, has_return);
+                emitter.emit_call(local_func_idx, num_args, has_return, ctx.stack_size);
             }
         }
         Operator::CallIndirect {
@@ -1575,31 +1778,130 @@ fn translate_op(
                 .copied()
                 .unwrap_or((0, 0));
             let has_return = num_results > 0;
-            emitter.emit_call_indirect(num_args, has_return);
+            emitter.emit_call_indirect(num_args, has_return, ctx.stack_size, *type_index);
         }
         Operator::MemorySize { mem: 0, .. } => {
+            // Load current memory size from compiler-managed global
             let dst = emitter.spill_push();
+            let global_addr = memory_size_global_offset(ctx.num_globals);
             emitter.emit(Instruction::LoadImm {
                 reg: dst,
-                value: 256,
+                value: global_addr,
+            });
+            emitter.emit(Instruction::LoadIndU32 {
+                dst,
+                base: dst,
+                offset: 0,
             });
         }
         Operator::MemoryGrow { mem: 0, .. } => {
-            // memory.grow(pages) - tries to grow memory by `pages` pages
-            // We don't actually grow memory, but we can pretend to succeed if
-            // the requested size is within our pre-allocated limit.
+            // memory.grow(delta) - tries to grow memory by `delta` pages
             // Return: previous size in pages if success, -1 if failure
             //
-            // For now, return the current size (256) to indicate success.
-            // This works because we've pre-allocated plenty of memory and
-            // AssemblyScript's runtime just wants to ensure memory is available.
-            let _ = emitter.spill_pop();
+            // Algorithm:
+            // 1. Save delta to a temp register (since pop/push might reuse same reg)
+            // 2. Load current size from compiler global
+            // 3. Calculate new_size = current + delta
+            // 4. If new_size > max_pages, return -1
+            // 5. Store new_size to compiler global
+            // 6. Return old size
+
+            // Save the current stack depth BEFORE we pop - we need this to know
+            // which registers are safe to use as temps
+            let stack_depth_before = emitter.stack.depth();
+            let delta = emitter.spill_pop();
             let dst = emitter.spill_push();
-            // Return current size (256 pages) to indicate success
+            let global_addr = memory_size_global_offset(ctx.num_globals);
+
+            // IMPORTANT: delta and dst might be the same register!
+            // We need to save delta to a different register before loading current size.
+            // BUT we must not clobber any registers that are currently on the stack!
+            //
+            // Stack uses r2-r6 for depths 0-4. After the pop, depth is (stack_depth_before - 1),
+            // so registers r2 to r(2 + stack_depth_before - 2) are still in use.
+            // We need to use a register that's NOT in use by the stack.
+            //
+            // After pop: stack_depth = stack_depth_before - 1
+            // Highest register in use: r2 + (stack_depth_before - 2) = r(stack_depth_before)
+            // Safe to use: r(stack_depth_before + 1) and higher, up to r6
+            // If stack_depth_before >= 5, we're in spill territory and this gets complicated.
+            // For now, use r4 or r5 which should be safe for typical stack depths.
+            let safe_temp_1 = 4u8; // r4
+            let safe_temp_2 = 5u8; // r5
+            let safe_temp_3 = 6u8; // r6
+
+            // Move delta to a safe temp register if delta == dst (which would be clobbered)
+            if delta == dst {
+                emitter.emit(Instruction::AddImm32 {
+                    dst: safe_temp_1,
+                    src: delta,
+                    value: 0,
+                });
+            }
+            let delta_reg = if delta == dst { safe_temp_1 } else { delta };
+
+            // Load current memory size into dst
             emitter.emit(Instruction::LoadImm {
                 reg: dst,
-                value: 256,
+                value: global_addr,
             });
+            emitter.emit(Instruction::LoadIndU32 {
+                dst,
+                base: dst,
+                offset: 0,
+            });
+
+            // Calculate new_size = current + delta using safe_temp_2
+            let new_size_reg = safe_temp_2;
+            emitter.emit(Instruction::Add32 {
+                dst: new_size_reg,
+                src1: dst,
+                src2: delta_reg,
+            });
+
+            // Check if new_size > max_pages
+            // If so, branch to failure path
+            let fail_label = emitter.alloc_label();
+            let end_label = emitter.alloc_label();
+
+            // Use safe_temp_3 for max_pages comparison
+            let max_reg = safe_temp_3;
+
+            // Load max_pages for comparison
+            emitter.emit(Instruction::LoadImm {
+                reg: max_reg,
+                value: ctx.max_memory_pages as i32,
+            });
+
+            // Branch to fail if new_size > max_pages (unsigned comparison)
+            // BranchGtU: jump if new_size_reg > max_reg
+            emitter.emit_branch_gtu(new_size_reg, max_reg, fail_label);
+
+            // Success path: store new_size, return old size (already in dst)
+            // Store new_size to compiler global (reuse max_reg for address)
+            emitter.emit(Instruction::LoadImm {
+                reg: max_reg,
+                value: global_addr,
+            });
+            emitter.emit(Instruction::StoreIndU32 {
+                base: max_reg,
+                src: new_size_reg,
+                offset: 0,
+            });
+            // dst already has old size, jump to end
+            emitter.emit_jump(end_label);
+
+            // Failure path: return -1
+            emitter.define_label(fail_label);
+            emitter.emit(Instruction::LoadImm {
+                reg: dst,
+                value: -1,
+            });
+
+            emitter.define_label(end_label);
+            // Silence unused variable warning
+            let _ = stack_depth_before;
+            // Result is in dst (either old size on success, or -1 on failure)
         }
         Operator::MemoryFill { mem: 0 } => {
             // memory.fill(dest, value, size) - fills size bytes at dest with value

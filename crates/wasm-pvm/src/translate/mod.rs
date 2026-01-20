@@ -9,6 +9,25 @@ pub use codegen::CompileContext;
 
 const ENTRY_HEADER_SIZE: usize = 10;
 
+/// Parsed WASM memory limits
+#[derive(Debug, Clone, Copy)]
+struct MemoryLimits {
+    /// Initial memory size in 64KB pages
+    initial_pages: u32,
+    /// Maximum memory size in pages (None = no explicit limit)
+    max_pages: Option<u32>,
+}
+
+impl Default for MemoryLimits {
+    fn default() -> Self {
+        // Default: 1 page initial, no max limit
+        Self {
+            initial_pages: 1,
+            max_pages: None,
+        }
+    }
+}
+
 /// Represents an active data segment parsed from WASM
 struct DataSegment {
     /// Offset in WASM linear memory (where the data goes)
@@ -29,6 +48,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut tables: Vec<wasmparser::TableType> = Vec::new();
     let mut table_elements: Vec<(u32, u32, Vec<u32>)> = Vec::new();
     let mut data_segments: Vec<DataSegment> = Vec::new();
+    let mut memory_limits = MemoryLimits::default();
     let mut num_imported_funcs: u32 = 0;
     let mut imported_func_type_indices: Vec<u32> = Vec::new();
     let mut imported_func_names: Vec<String> = Vec::new();
@@ -74,6 +94,16 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             Payload::TableSection(reader) => {
                 for table in reader {
                     tables.push(table?.ty);
+                }
+            }
+            Payload::MemorySection(reader) => {
+                // Parse the first memory (WASM MVP only supports one memory)
+                if let Some(memory) = reader.into_iter().next() {
+                    let mem = memory?;
+                    memory_limits = MemoryLimits {
+                        initial_pages: mem.initial as u32,
+                        max_pages: mem.maximum.map(|m| m as u32),
+                    };
                 }
             }
             Payload::ElementSection(reader) => {
@@ -157,9 +187,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 
     // main_func_idx is the global function index from exports
     // Convert to local function index by subtracting imported functions
-    let main_func_idx = main_func_idx
-        .map(|idx| idx as usize - num_imported_funcs as usize)
-        .unwrap_or(0);
+    let main_func_idx = main_func_idx.map_or(0, |idx| idx as usize - num_imported_funcs as usize);
 
     let mut result_ptr_global = None;
     let mut result_len_global = None;
@@ -213,6 +241,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             }
         }
     }
+
+    // Calculate heap/memory info early since we need max_memory_pages for codegen
+    let (heap_pages, max_memory_pages) =
+        calculate_heap_pages(functions.len(), &data_segments, &memory_limits);
 
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
@@ -277,6 +309,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             type_signatures: type_signatures.clone(),
             num_imported_funcs: num_imported_funcs as usize,
             imported_func_names: imported_func_names.clone(),
+            stack_size: codegen::DEFAULT_STACK_SIZE,
+            initial_memory_pages: memory_limits.initial_pages,
+            max_memory_pages,
         };
 
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
@@ -314,15 +349,32 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         }
     }
 
+    // Build dispatch table for call_indirect.
+    // Each entry is 8 bytes: 4 bytes jump address + 4 bytes type index (for signature validation).
     let mut ro_data = vec![0u8];
     if !function_table.is_empty() {
         ro_data.clear();
         for &func_idx in &function_table {
             if func_idx == u32::MAX {
-                ro_data.extend_from_slice(&u32::MAX.to_le_bytes());
+                // Invalid entry - store u32::MAX for both jump address and type index
+                ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // jump address
+                ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // type index
             } else {
+                // Valid entry - store jump address and type index
                 let jump_ref = 2 * (func_entry_jump_table_base + func_idx as usize + 1) as u32;
                 ro_data.extend_from_slice(&jump_ref.to_le_bytes());
+                // Get the type index for this function
+                let type_idx = if (func_idx as usize) < num_imported_funcs as usize {
+                    // Imported function - use imported_func_type_indices
+                    *imported_func_type_indices
+                        .get(func_idx as usize)
+                        .unwrap_or(&u32::MAX)
+                } else {
+                    // Local function - use function_type_indices
+                    let local_idx = func_idx as usize - num_imported_funcs as usize;
+                    *function_type_indices.get(local_idx).unwrap_or(&u32::MAX)
+                };
+                ro_data.extend_from_slice(&type_idx.to_le_bytes());
             }
         }
     }
@@ -342,9 +394,14 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     // rw_data_section byte N goes to PVM address 0x30000 + N
     // WASM memory offset 0 should be at PVM address 0x50000 = 0x30000 + 0x20000
     // So WASM data at offset X goes to rw_data_section byte (0x20000 + X)
-    let rw_data_section = build_rw_data(&data_segments, &global_init_values);
+    // (heap_pages and max_memory_pages were already calculated earlier)
+    let _ = max_memory_pages; // silence unused variable warning
 
-    let heap_pages = calculate_heap_pages(functions.len(), &data_segments);
+    let rw_data_section = build_rw_data(
+        &data_segments,
+        &global_init_values,
+        memory_limits.initial_pages,
+    );
 
     Ok(SpiProgram::new(blob)
         .with_heap_pages(heap_pages)
@@ -355,14 +412,22 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 /// Build the `rw_data` section from WASM data segments and global initializers.
 ///
 /// The RW data segment in SPI is loaded at 0x30000. Layout:
-/// - 0x30000+ : Global variables (4 bytes each)
+/// - 0x30000+ : Global variables (4 bytes each, including compiler-managed memory size)
 /// - 0x50000+ : WASM linear memory (data segments)
 ///
 /// WASM linear memory starts at `WASM_MEMORY_BASE` (0x50000).
 /// So WASM offset X maps to `rw_data` offset (0x20000 + X).
-fn build_rw_data(data_segments: &[DataSegment], global_init_values: &[i32]) -> Vec<u8> {
+///
+/// The compiler-managed memory size global is stored at index `num_user_globals`,
+/// i.e., right after all user-defined globals.
+fn build_rw_data(
+    data_segments: &[DataSegment],
+    global_init_values: &[i32],
+    initial_memory_pages: u32,
+) -> Vec<u8> {
     // Calculate the minimum size needed for globals
-    let globals_end = global_init_values.len() * 4;
+    // +1 for the compiler-managed memory size global
+    let globals_end = (global_init_values.len() + 1) * 4;
 
     // Calculate the size needed for data segments
     let wasm_to_rw_offset = codegen::WASM_MEMORY_BASE as u32 - 0x30000;
@@ -382,12 +447,19 @@ fn build_rw_data(data_segments: &[DataSegment], global_init_values: &[i32]) -> V
 
     let mut rw_data = vec![0u8; total_size];
 
-    // Initialize globals at the start of rw_data (0x30000+)
+    // Initialize user globals at the start of rw_data (0x30000+)
     for (i, &value) in global_init_values.iter().enumerate() {
         let offset = i * 4;
         if offset + 4 <= rw_data.len() {
             rw_data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         }
+    }
+
+    // Initialize compiler-managed memory size global (right after user globals)
+    let mem_size_offset = global_init_values.len() * 4;
+    if mem_size_offset + 4 <= rw_data.len() {
+        rw_data[mem_size_offset..mem_size_offset + 4]
+            .copy_from_slice(&initial_memory_pages.to_le_bytes());
     }
 
     // Copy data segments to their WASM memory locations
@@ -401,7 +473,13 @@ fn build_rw_data(data_segments: &[DataSegment], global_init_values: &[i32]) -> V
     rw_data
 }
 
-fn calculate_heap_pages(num_functions: usize, data_segments: &[DataSegment]) -> u16 {
+/// Calculate heap pages needed and the maximum memory pages available.
+/// Returns (`heap_pages`, `max_memory_pages`).
+fn calculate_heap_pages(
+    num_functions: usize,
+    data_segments: &[DataSegment],
+    memory_limits: &MemoryLimits,
+) -> (u16, u32) {
     // Memory layout:
     // 0x30000-0x300FF: Globals (256 bytes)
     // 0x30100-0x3FFFF: User heap (~64KB)
@@ -415,25 +493,23 @@ fn calculate_heap_pages(num_functions: usize, data_segments: &[DataSegment]) -> 
     let spilled_locals_end = codegen::SPILLED_LOCALS_BASE as usize
         + num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
 
-    // WASM memory end (include data segments + dynamic allocation)
-    // We tell WASM code that memory.size = 256 pages (16MB), so we should
-    // allocate enough to cover potential heap growth.
-    // For anan-as (PVM interpreter), we need more memory because it allocates
-    // data structures for the inner PVM. Use 1024 pages (64MB) for safety.
-    let wasm_memory_end = if data_segments.is_empty() {
-        codegen::WASM_MEMORY_BASE as usize + 1024 * 64 * 1024 // 64MB (1024 pages)
-    } else {
-        // Use 1024 pages (64MB) of WASM memory for complex programs
-        codegen::WASM_MEMORY_BASE as usize + 1024 * 64 * 1024
-    };
+    // Determine the maximum WASM memory pages we'll allow
+    // Priority: WASM explicit max > default based on usage
+    let default_max_pages: u32 = if data_segments.is_empty() { 256 } else { 1024 };
+    let max_memory_pages = memory_limits.max_pages.unwrap_or(default_max_pages);
+
+    // WASM memory end based on max pages allocation
+    // Each WASM page is 64KB (65536 bytes)
+    let wasm_memory_end =
+        codegen::WASM_MEMORY_BASE as usize + (max_memory_pages as usize) * 64 * 1024;
 
     let end = spilled_locals_end.max(wasm_memory_end);
 
     // Total bytes from heap base (0x30000) to end
     let total_bytes = end - 0x30000;
-    let pages = total_bytes.div_ceil(4096);
+    let heap_pages = total_bytes.div_ceil(4096);
 
-    pages.max(16) as u16
+    (heap_pages.max(16) as u16, max_memory_pages)
 }
 
 fn resolve_call_fixups(

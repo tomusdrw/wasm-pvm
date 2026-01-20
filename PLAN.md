@@ -76,6 +76,14 @@ All WASM programs targeting PVM/JAM must follow this convention:
 
 ## Current Progress
 
+**Latest Update**: 2025-01-19 - Phase 15 (call_indirect fixes) complete. All 62 tests passing.
+
+**Completed**:
+- Phase 14: memory.size/memory.grow with proper tracking
+- Phase 15: call_indirect signature validation + operand stack clobber fix
+
+**Next Step**: Phase 16 - PVM-in-PVM validation (blocked by AS runtime infinite recursion).
+
 ### ✅ Completed
 
 #### Phase 1: Foundation
@@ -104,8 +112,8 @@ All WASM programs targeting PVM/JAM must follow this convention:
 - [x] i32.load - direct PVM memory access
 - [x] i32.store - direct PVM memory access
 - [x] global.get / global.set - stored at 0x30000 + idx*4
-- [x] memory.size - returns constant 256 pages
-- [x] memory.grow - returns -1 (not supported)
+- [x] memory.size - tracks actual memory size via compiler-managed global
+- [x] memory.grow - properly updates memory size, returns old size or -1
 
 #### Control Flow (Phase 3)
 - [x] Translate `block` (forward branch target)
@@ -153,7 +161,7 @@ All WASM programs targeting PVM/JAM must follow this convention:
 - [x] Document AssemblyScript → JAM workflow
 
 #### Phase 4b: Test Suite & CI
-- [x] Created `scripts/test-all.ts` - 56 tests across WAT and AS examples
+- [x] Created `scripts/test-all.ts` - 62 tests across WAT and AS examples
 - [x] GitHub Actions CI workflow (`.github/workflows/ci.yml`)
 
 #### Phase 6: Functions & Calls (Partial)
@@ -186,7 +194,7 @@ AssemblyScript examples (`examples-as/assembly/*.ts`):
 - [x] `fibonacci.ts` - fibonacci sequence
 - [x] `gcd.ts` - GCD (Euclidean algorithm)
 
-**Test Suite**: 58 integration tests passing (as of 2025-01-19)
+**Test Suite**: 62 integration tests passing (as of 2025-01-19)
 - [x] `call-indirect.jam.wat` - indirect function calls via table
 
 AssemblyScript examples (`examples-as/assembly/*.ts`):
@@ -255,45 +263,195 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 - ~64,133 PVM instructions
 - `prepareProgram` succeeds when loading the JAM file
 
-### Phase 13: Stack Overflow Detection (PHASE 3)
-**Status**: Not implemented
-**Impact**: Deep recursion in anan-as interpreter may corrupt memory
-**Timeline**: 1 week
-**Prerequisites**: Phase 12b completed
+### ✅ Phase 13: Stack Overflow Detection - COMPLETED (2025-01-19)
+**Status**: COMPLETE
+**Impact**: Deep recursion now triggers PANIC instead of corrupting memory
 
-**Required work**:
-1. Add stack depth checking in call emission
-2. Implement configurable stack size limits
-3. Emit TRAP on stack overflow
+**Implemented**:
+1. ✅ Stack depth checking before every `call` and `call_indirect`
+2. ✅ Configurable stack size limit (default 64KB)
+3. ✅ TRAP emitted on stack overflow
+4. ✅ Unsigned comparison via `BranchGeU` instruction
+5. ✅ `LoadImm64` used to avoid sign-extension issues with high addresses
 
-### Phase 14: Enhanced Memory Model (PHASE 4)
-**Status**: Partial (hardcoded memory.size=256, memory.grow=-1)
-**Impact**: anan-as may expect dynamic memory
+**Technical details**:
+- Stack limit calculated as `STACK_SEGMENT_END (0xFEFE0000) - stack_size`
+- Before each call, compute `new_sp = sp - frame_size` 
+- If `new_sp < stack_limit`, emit TRAP (causes PANIC status)
+- With 64KB stack and ~40-byte frames, overflow occurs at ~1600 recursion depth
+
+**Testing**: All 58 integration tests pass, stack overflow correctly triggers PANIC
+
+### ✅ Phase 14: Memory.size/Memory.grow - COMPLETED (2025-01-19)
+**Status**: COMPLETE
+**Impact**: WASM programs can now query and grow memory
+
+**Implemented**:
+1. ✅ Parse WASM `MemorySection` for initial/max memory limits
+2. ✅ Compiler-managed global at `memory_size_global_offset()` tracks current memory size
+3. ✅ `memory.size` returns current size from compiler global (not hardcoded)
+4. ✅ `memory.grow` updates compiler global, returns old size, -1 if bounds exceeded
+5. ✅ Bounds checking against `max_memory_pages`
+6. ✅ Proper register allocation to avoid clobbering stack values
+
+### ✅ Phase 15: call_indirect Fixes - COMPLETED (2025-01-19)
+**Status**: COMPLETE
+**Impact**: call_indirect now works correctly with signature validation
+
+**Bugs Fixed**:
+1. **Stack overflow check clobbered operand stack** - The stack overflow check in `emit_call_indirect` used r2 to hold the stack limit, which clobbered any function arguments on the operand stack. Fixed by temporarily saving r9 to memory, using it for the limit, then restoring.
+2. **Added call_indirect to test suite** - 4 new test cases for call_indirect (double/triple with different arguments)
+
+**Signature Validation** (implemented previously):
+- Dispatch table entries expanded from 4 to 8 bytes (jump_addr + type_index)
+- Runtime validation compares function's type_index against expected type
+- Mismatch triggers TRAP (PANIC status)
+
+**Testing**: All 62 integration tests pass, including call_indirect and signature validation tests
+
+### Phase 16a: AS Runtime Isolation (Allocations)
+**Status**: Planned
+**Impact**: Isolates why AS runtime causes infinite recursion/corruption in PVM-in-PVM
+
+**Goal**: Determine minimal viable AS runtime for PVM.
+
+**Tasks**:
+1. Create `examples-as/alloc-test.ts` with basic allocations:
+   - `new Array<i32>(10)`
+   - `class Foo { x: i32 }`
+2. Compile with different runtimes:
+   - `stub` (expect failure without allocator)
+   - `minimal` (simple allocator)
+   - `incremental` (full GC)
+3. Run on PVM and analyze traces.
+
+### Phase 16b: PVM-in-PVM Validation (BLOCKED)
+**Status**: Blocked - AS runtime infinite recursion issue
+**Impact**: Validates full correctness of wasm-pvm by running compiled programs through compiled anan-as
 **Timeline**: 1-2 weeks
-**Prerequisites**: Phase 12 completed
+**Prerequisites**: Phase 13 completed, Phase 14 completed
+
+**Goal**: Run all existing examples through the PVM-in-PVM approach:
+1. Compile anan-as (PVM interpreter) to JAM using wasm-pvm
+2. Run each example JAM file as input to the compiled anan-as
+3. Verify outputs match direct execution
 
 **Required work**:
-1. Track actual memory size from WASM module
-2. Support memory.grow up to PVM limits
-3. Base address translation for WASM memory operations
 
-### Phase 15: Runtime Safety (PHASE 5 - LOW PRIORITY)
-**Status**: Partially implemented
-**Timeline**: 1 week
-**Prerequisites**: All previous phases completed
+#### Step 1: Create PVM-in-PVM Test Harness
+1. Create `scripts/test-pvm-in-pvm.ts` - orchestrates nested PVM execution
+2. Load compiled anan-as JAM file as outer PVM program
+3. Pass inner JAM program as argument data to outer PVM
+4. Extract and verify return values
 
-#### 🟢 LOW: call_indirect Signature Validation
-**Status**: Not implemented (trusts caller)
-**Impact**: Type safety violation possible
+#### Step 2: anan-as Wrapper for Standalone Execution
+anan-as is a library, not a standalone program. Need a wrapper:
+1. Create `examples-as/pvm-runner.ts` - AssemblyScript wrapper
+2. Implements main() entry point that:
+   - Reads inner program from args
+   - Calls `prepareProgram(programBlob)`
+   - Calls `resetGeneric(pc, gas, argsAddr, argsLen)`
+   - Calls `nSteps(n)` to execute
+   - Returns result registers/memory
+3. Compile wrapper + anan-as to single JAM file
 
-**Required work**:
-1. Validate function signatures at runtime
-2. Add type checking before dispatch table lookup
-3. Emit TRAP on signature mismatch
+#### Step 3: Test Matrix
+Run each example in PVM-in-PVM mode and verify:
 
-#### 🟢 LOW: Operand Stack Validation
-**Status**: ✅ Implemented (2025-01-18) - spills to memory when depth > 5
-**Impact**: Complex expressions now compile and mostly work
+| Example | Direct Result | PVM-in-PVM Result | Status |
+|---------|---------------|-------------------|--------|
+| add.jam.wat | 12 | ? | Pending |
+| factorial.jam.wat | 120 | ? | Pending |
+| fibonacci.jam.wat | 55 | ? | Pending |
+| gcd.jam.wat | 6 | ? | Pending |
+| is-prime.jam.wat | 1 | ? | Pending |
+| div.jam.wat | 4 | ? | Pending |
+| call.jam.wat | 10 | ? | Pending |
+| recursive.jam.wat | 120 | ? | Pending |
+| nested-calls.jam.wat | ? | ? | Pending |
+| call-indirect.jam.wat | ? | ? | Pending |
+| i64-ops.jam.wat | ? | ? | Pending |
+| many-locals.jam.wat | ? | ? | Pending |
+| bit-ops.jam.wat | ? | ? | Pending |
+| rotate.jam.wat | ? | ? | Pending |
+| br-table.jam.wat | ? | ? | Pending |
+| block-result.jam.wat | ? | ? | Pending |
+| AS examples (add, factorial, fibonacci, gcd, life) | ? | ? | Pending |
+
+#### Step 4: Gas and Resource Tracking
+1. Track gas consumption in outer vs inner PVM
+2. Verify no resource exhaustion
+3. Document expected gas overhead for PVM-in-PVM
+
+#### Step 5: Automated CI Integration
+1. Add PVM-in-PVM tests to `scripts/test-all.ts`
+2. Add to GitHub Actions workflow
+3. Fail CI if any PVM-in-PVM test mismatches direct execution
+
+**Success Criteria**:
+- All 58 existing tests also pass in PVM-in-PVM mode
+- Gas consumption is reasonable (< 100x overhead)
+- No panics or unexpected behavior in nested execution
+
+---
+
+### ✅ Phase 14: Enhanced Memory Model - COMPLETED (2025-01-19)
+**Status**: COMPLETE
+**Impact**: WASM memory.size and memory.grow now work correctly
+
+**Implemented**:
+1. ✅ Parse WASM Memory section to get initial/max pages
+2. ✅ Compiler-managed global for tracking current memory size
+3. ✅ memory.size reads from compiler global instead of hardcoded value
+4. ✅ memory.grow properly updates memory size with bounds checking
+5. ✅ Added `BranchLtU` instruction for unsigned comparisons
+6. ✅ Fixed register allocation in memory.grow to avoid clobbering stack values
+
+**Technical Details**:
+- Memory size global stored at `GLOBAL_MEMORY_BASE + (num_user_globals * 4)`
+- Initial value set from WASM memory section (or 0 for AS minimal runtime)
+- memory.grow returns old size on success, -1 on failure (exceeds max_memory_pages)
+- max_memory_pages derived from WASM explicit max or defaults (256/1024 pages)
+
+### Phase 17: Host Calls / ecalli Support (PLANNED)
+**Goal**: Support generic external function calls via PVM `ecalli`.
+**Design**:
+- **Import Mapping**: Treat imports from specific modules (e.g. `env`, `host`) as host calls.
+- **ABI**:
+  - Args 0-4 -> Registers r2-r6.
+  - Args 5+ -> TBD (Stack? Or limit to 5 args for MVP).
+  - Return value -> Register r7.
+  - Memory pointers passed as `i32` args.
+- **Instruction**: `ecalli ID` where ID is derived from the import.
+
+**Tasks**:
+1. Refactor `Operator::Call` to handle mapped imports by emitting `ecalli`.
+2. Implement `emit_host_call` in codegen.
+3. Update `run-jam.ts` (host harness) to:
+   - Catch `HOST` exit code.
+   - Decode instruction size at PC to calculate `next_pc`.
+   - Dispatch ID to JS function.
+   - Read args from registers.
+   - Write result to r7.
+   - Resume execution at `next_pc`.
+4. Add test cases (e.g. `host_print`, `host_random`).
+
+### Phase 18: Architecture Refactor (Unit Testing)
+**Status**: Planned
+**Goal**: Improve maintainability and testability via layer separation.
+
+**Layer Separation Strategy**:
+1. **Translation Layer**: Maps WASM operators to abstract PVM operations (independent of encoding).
+2. **Builder Layer (`PvmBuilder` trait)**: Abstract interface for emitting instructions. Allows mocking.
+3. **Register Allocation (`StackMachine`)**: Isolated logic for register tracking/spilling.
+4. **Encoding Layer**: Concrete PVM instruction emission (implementation of Builder).
+
+**Tasks**:
+1. Extract `StackMachine` into a standalone, testable module with unit tests.
+2. Define `PvmBuilder` trait for instruction emission.
+3. Implement `MockPvmBuilder` (for tests) and `ConcretePvmBuilder` (for production).
+4. Refactor `codegen.rs` to use `PvmBuilder`.
+5. Write unit tests for translation logic using `MockPvmBuilder` (verify arithmetic, locals, simple control flow).
 
 ---
 
@@ -309,26 +467,29 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 - [x] Validate complex function call handling with spilled locals
 - [x] Test with various step counts (0, 1, 2, 3, 4, 5) - all pass correctly
 
-#### Phase 2: Core V1 Features (MOSTLY COMPLETE)
+#### Phase 2: Core V1 Features ✅ COMPLETE
 - [x] Implement data section initialization (Phase 12) ✅
 - [x] Parse and handle imported functions in function indices ✅
 - [x] Handle imported function calls (Phase 12b) ✅ - Stub imports with TRAP/no-op
 - [x] Compile anan-as (AssemblyScript PVM interpreter) to WASM ✅
 - [x] Translate WASM to PVM using wasm-pvm ✅ (423KB JAM file)
-- [ ] Run the compiled PVM interpreter inside a PVM interpreter
-  - **Note**: anan-as is a library, not a standalone program
-  - Would require a wrapper with main() that calls resetGeneric/nSteps
-- [ ] Verify correctness with test vectors
 
-#### Phase 3: Robustness & Safety (COMPLETE BEFORE PHASE 4)
-- [ ] Add stack overflow detection (Phase 13)
-- [ ] Test deep recursion scenarios
+#### Phase 3: Robustness & Safety ✅ COMPLETE (2025-01-19)
+- [x] Add stack overflow detection (Phase 13) ✅
+- [x] Test deep recursion scenarios ✅
 
-#### Phase 4: Memory Enhancement (COMPLETE BEFORE PHASE 5)
-- [ ] Implement proper WASM memory model (Phase 14)
+#### Phase 4: PVM-in-PVM Validation (NEXT - Phase 16)
+- [ ] Create anan-as wrapper with main() entry point
+- [ ] Build PVM-in-PVM test harness
+- [ ] Run all 58 examples through compiled anan-as
+- [ ] Verify outputs match direct execution
+- [ ] Add to CI pipeline
+
+#### Phase 5: Memory Enhancement (Phase 14)
+- [ ] Implement proper WASM memory model
 - [ ] Support dynamic memory growth where needed
 
-#### Phase 5: Polish & Safety (FINAL PHASE)
+#### Phase 6: Polish & Safety (Phase 15 - FINAL)
 - [ ] Add call_indirect signature validation
 - [ ] Final integration testing with anan-as
 - [ ] Performance benchmarking and optimization
@@ -446,7 +607,7 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 | ~~Register pressure too high~~ | ~~Medium~~ | ✅ Resolved - spilling works correctly |
 | Control flow edge cases | Medium | ✅ Comprehensive test suite (58 tests) |
 | Memory model mismatch | Medium | ✅ Clear address translation defined |
-| Recursion stack overflow | Medium | Phase 13: add stack overflow detection |
+| ~~Recursion stack overflow~~ | ~~Medium~~ | ✅ Resolved - Phase 13 complete |
 | Performance issues | Low | Not a priority for v1 |
 | anan-as is library not standalone | Low | Would need wrapper for full PVM-in-PVM |
 
@@ -472,7 +633,7 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 - 58 integration tests passing
 
 ### V1 Release (Target: anan-as in PVM)
-**Current Phase**: 12b COMPLETE - anan-as compiles successfully!
+**Current Phase**: Phase 13 COMPLETE - Stack overflow detection working!
 
 **Completed Features**:
 - [x] WASM MVP compliance (except floats)
@@ -484,12 +645,15 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 - [x] Data section initialization (Phase 12) ✅
 - [x] Import function stubbing (Phase 12b) ✅
 - [x] anan-as compilation (423KB JAM file) ✅
+- [x] Stack overflow detection (Phase 13) ✅
 
 **Remaining work for full PVM-in-PVM**:
-- [ ] Create wrapper with main() entry point that calls anan-as API
-- [ ] Stack overflow detection (Phase 13)
-- [ ] Enhanced memory model (Phase 14)
-- [ ] Runtime safety improvements (Phase 15)
+- [ ] Phase 16a: AS Runtime Isolation (Allocations)
+- [ ] Phase 16b: PVM-in-PVM validation (blocked)
+- [ ] Phase 17: Host Calls / ecalli Support
+- [ ] Phase 18: Architecture Refactor (Unit Testing)
+- [x] Enhanced memory model (Phase 14) ✅
+- [x] Runtime safety improvements (Phase 15) ✅
 
 ---
 

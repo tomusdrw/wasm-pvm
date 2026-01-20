@@ -33,6 +33,9 @@ pub enum Instruction {
     StoreIndU64 { base: u8, src: u8, offset: i32 },
     BranchNeImm { reg: u8, value: i32, offset: i32 },
     BranchEqImm { reg: u8, value: i32, offset: i32 },
+    BranchGeSImm { reg: u8, value: i32, offset: i32 },
+    BranchGeU { reg1: u8, reg2: u8, offset: i32 },
+    BranchLtU { reg1: u8, reg2: u8, offset: i32 },
     SetLtU { dst: u8, src1: u8, src2: u8 },
     SetLtS { dst: u8, src1: u8, src2: u8 },
     And { dst: u8, src1: u8, src2: u8 },
@@ -182,6 +185,15 @@ impl Instruction {
             Self::BranchEqImm { reg, value, offset } => {
                 encode_one_reg_one_imm_one_off(Opcode::BranchEqImm, *reg, *value, *offset)
             }
+            Self::BranchGeSImm { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::BranchGeSImm, *reg, *value, *offset)
+            }
+            Self::BranchGeU { reg1, reg2, offset } => {
+                encode_two_reg_one_off(Opcode::BranchGeU, *reg1, *reg2, *offset)
+            }
+            Self::BranchLtU { reg1, reg2, offset } => {
+                encode_two_reg_one_off(Opcode::BranchLtU, *reg1, *reg2, *offset)
+            }
             Self::SetLtUImm { dst, src, value } => {
                 let mut bytes = vec![Opcode::SetLtUImm as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
                 bytes.extend_from_slice(&encode_imm(*value));
@@ -273,6 +285,9 @@ impl Instruction {
                 | Self::JumpInd { .. }
                 | Self::BranchNeImm { .. }
                 | Self::BranchEqImm { .. }
+                | Self::BranchGeSImm { .. }
+                | Self::BranchGeU { .. }
+                | Self::BranchLtU { .. }
         )
     }
 }
@@ -290,6 +305,12 @@ fn encode_one_reg_one_imm_one_off(opcode: Opcode, reg: u8, imm: i32, offset: i32
     let imm_len = imm_enc.len() as u8;
     let mut bytes = vec![opcode as u8, (imm_len << 4) | (reg & 0x0F)];
     bytes.extend_from_slice(&imm_enc);
+    bytes.extend_from_slice(&offset.to_le_bytes());
+    bytes
+}
+
+fn encode_two_reg_one_off(opcode: Opcode, reg1: u8, reg2: u8, offset: i32) -> Vec<u8> {
+    let mut bytes = vec![opcode as u8, (reg1 & 0x0F) << 4 | (reg2 & 0x0F)];
     bytes.extend_from_slice(&offset.to_le_bytes());
     bytes
 }

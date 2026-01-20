@@ -35,7 +35,7 @@ async function main() {
   }
   
   if (!spiFile) {
-    console.error('Usage: run-spi.ts <spi-file> [--pc=0] [--args=hex] [--gas=1000000] [--verbose]');
+    console.error('Usage: run-jam.ts <spi-file> [--pc=0] [--args=hex] [--gas=1000000] [--verbose]');
     process.exit(1);
   }
   
