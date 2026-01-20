@@ -81,5 +81,8 @@ jobs:
       - name: Build anan-as
         run: cd vendor/anan-as && npm run build
 
+      - name: Install examples-as dependencies
+        run: cd examples-as && npm ci
+
       - name: Run integration tests
         run: npx tsx scripts/test-all.ts
