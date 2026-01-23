@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ananAsPath = path.join(__dirname, '../vendor/anan-as/build/release.js');
+const ananAsPath = path.join(__dirname, '../vendor/anan-as/dist/bin/index.js');
 
 async function main() {
   const args = process.argv.slice(2);
