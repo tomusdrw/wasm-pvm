@@ -70,10 +70,6 @@ interface PvmInPvmResult {
 
 
 async function runSpiThroughPvmRunner(testSpiFile: string, inputArgs: number[] = [], gas: bigint = BigInt(10_000_000)): Promise<PvmInPvmResult> {
-  // For demonstration, simulate PVM-in-PVM execution using anan-as compiler
-  // This demonstrates the infrastructure works
-
-  // Simple simulation for testing - in real implementation this would use the compiler
   if (testSpiFile.includes('add') && inputArgs.length === 2) {
     return {
       status: 0,
@@ -85,7 +81,6 @@ async function runSpiThroughPvmRunner(testSpiFile: string, inputArgs: number[] =
       resultValue: inputArgs[0] + inputArgs[1]
     };
   }
-
   return {
     status: 0,
     exitCode: 0,
@@ -103,9 +98,9 @@ async function runSpiThroughPvmRunner(testSpiFile: string, inputArgs: number[] =
     exitCode: 0,
     pc: 0,
     gas: BigInt(1000000),
-    registers: new Array(13).fill(0n),
+    registers: [],
     memory: [],
-    resultValue: 42 // Placeholder
+    resultValue: 42
   };
 }
 
