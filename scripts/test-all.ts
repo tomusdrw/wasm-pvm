@@ -12,6 +12,45 @@ import { testCases } from './test-cases.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '..');
+const examplesWatDir = path.join(projectRoot, 'examples-wat');
+const examplesAsBuildDir = path.join(projectRoot, 'examples-as', 'build');
+
+function compileWatIfAvailable(testName: string, jamFile: string): void {
+  const watFile = path.join(examplesWatDir, `${testName}.jam.wat`);
+  if (!fs.existsSync(watFile)) {
+    return;
+  }
+
+  const cmd = `cargo run -p wasm-pvm-cli -- compile ${watFile} -o ${jamFile}`;
+  execSync(cmd, {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+}
+
+function compileAsIfAvailable(testName: string, jamFile: string): void {
+  // AssemblyScript tests are prefixed with 'as-'
+  if (!testName.startsWith('as-')) {
+    return;
+  }
+  
+  // Extract the base name (e.g., 'as-add' -> 'add')
+  const baseName = testName.slice(3);
+  const wasmFile = path.join(examplesAsBuildDir, `${baseName}.wasm`);
+  
+  if (!fs.existsSync(wasmFile)) {
+    console.log(`  ⚠️  WASM file not found: ${wasmFile}`);
+    return;
+  }
+
+  const cmd = `cargo run -p wasm-pvm-cli -- compile ${wasmFile} -o ${jamFile}`;
+  execSync(cmd, {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+}
 
 function runJamFile(jamFile: string, args: string, pc?: number): number {
   const cmd = pc !== undefined
@@ -119,6 +158,9 @@ async function main() {
 
     console.log(`Testing ${testCase.name}...`);
     const jamFile = path.join(projectRoot, 'dist', `${testCase.name}.jam`);
+
+    compileWatIfAvailable(testCase.name, jamFile);
+    compileAsIfAvailable(testCase.name, jamFile);
 
     // Check if JAM file exists
     if (!fs.existsSync(jamFile)) {

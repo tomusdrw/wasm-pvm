@@ -39,8 +39,8 @@ export const testCases: TestCase[] = [
   {
     name: 'gcd',
     tests: [
-      { args: '3000000018000000', expected: 6, description: 'gcd(48, 18) = 6' },
-      { args: '6400000036000000', expected: 4, description: 'gcd(100, 56) = 4' },
+      { args: '3000000012000000', expected: 6, description: 'gcd(48, 18) = 6' },
+      { args: '6400000038000000', expected: 4, description: 'gcd(100, 56) = 4' },
       { args: '1100000011000000', expected: 17, description: 'gcd(17, 17) = 17' },
       { args: '01000000ff000000', expected: 1, description: 'gcd(1, 255) = 1' },
     ],
@@ -80,24 +80,24 @@ export const testCases: TestCase[] = [
   {
     name: 'call-indirect',
     tests: [
-      { args: '05000000', expected: 10, description: 'call_indirect double(5) = 10' },
-      { args: '05000000', expected: 15, description: 'call_indirect triple(5) = 15' },
-      { args: '0a000000', expected: 20, description: 'call_indirect double(10) = 20' },
-      { args: '0a000000', expected: 30, description: 'call_indirect triple(10) = 30' },
+      { args: '0000000005000000', expected: 10, description: 'call_indirect double(5) = 10' },
+      { args: '0100000005000000', expected: 15, description: 'call_indirect triple(5) = 15' },
+      { args: '000000000a000000', expected: 20, description: 'call_indirect double(10) = 20' },
+      { args: '010000000a000000', expected: 30, description: 'call_indirect triple(10) = 30' },
     ],
   },
   {
     name: 'i64-ops',
     tests: [
-      { args: '64000000070000000000000000000000', expected: 14, description: 'i64.div_u(100, 7) = 14' },
-      { args: '64000000070000000000000000000000', expected: 2, description: 'i64.rem_u(100, 7) = 2' },
-      { args: 'ff000000000000000400000000000000', expected: 4080, description: 'i64.shl(0xFF, 4) = 4080' },
-      { args: 'ff000000000000000400000000000000', expected: 4080, description: 'i64.shr_u(0xFF00, 4) = 4080' },
-      { args: 'f0f0000000000000f00f000000000000', expected: 240, description: 'i64.and(0xF0F0, 0x0FF0) = 240' },
-      { args: 'f0f0000000000000f00f000000000000', expected: 65520, description: 'i64.or(0xF0F0, 0x0FF0) = 65520' },
-      { args: 'f0f0000000000000f00f000000000000', expected: 65280, description: 'i64.xor(0xF0F0, 0x0FF0) = 65280' },
-      { args: '64000000320000000000000000000000', expected: 1, description: 'i64.ge_u(100, 50) = 1' },
-      { args: '32000000640000000000000000000000', expected: 1, description: 'i64.le_u(50, 100) = 1' },
+      { args: '00000000', expected: 14, description: 'i64.div_u(100, 7) = 14' },
+      { args: '01000000', expected: 2, description: 'i64.rem_u(100, 7) = 2' },
+      { args: '02000000', expected: 4080, description: 'i64.shl(0xFF, 4) = 4080' },
+      { args: '03000000', expected: 4080, description: 'i64.shr_u(0xFF00, 4) = 4080' },
+      { args: '04000000', expected: 240, description: 'i64.and(0xF0F0, 0x0FF0) = 240' },
+      { args: '05000000', expected: 65520, description: 'i64.or(0xF0F0, 0x0FF0) = 65520' },
+      { args: '06000000', expected: 65280, description: 'i64.xor(0xF0F0, 0x0FF0) = 65280' },
+      { args: '07000000', expected: 1, description: 'i64.ge_u(100, 50) = 1' },
+      { args: '08000000', expected: 1, description: 'i64.le_u(50, 100) = 1' },
     ],
   },
   {
@@ -141,8 +141,8 @@ export const testCases: TestCase[] = [
   {
     name: 'as-gcd',
     tests: [
-      { args: '3000000018000000', expected: 6, description: 'AS: gcd(48, 18) = 6' },
-      { args: '6400000036000000', expected: 4, description: 'AS: gcd(100, 56) = 4' },
+      { args: '3000000012000000', expected: 6, description: 'AS: gcd(48, 18) = 6' },
+      { args: '6400000038000000', expected: 4, description: 'AS: gcd(100, 56) = 4' },
       { args: '1100000011000000', expected: 17, description: 'AS: gcd(17, 17) = 17' },
     ],
   },
