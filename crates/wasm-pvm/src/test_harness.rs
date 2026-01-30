@@ -33,6 +33,14 @@
 //! }
 //! ```
 
+#![allow(
+    clippy::match_same_arms,
+    clippy::must_use_candidate,
+    clippy::manual_assert,
+    clippy::missing_panics_doc,
+    clippy::uninlined_format_args
+)]
+
 use crate::pvm::{Instruction, Opcode};
 use crate::{Error, Result, SpiProgram, compile};
 
