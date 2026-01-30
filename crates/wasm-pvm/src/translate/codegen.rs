@@ -929,8 +929,13 @@ fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bo
                 base: 2,
                 offset: 0,
             });
+            // Calculate end pointer: r8 = r7 + r8 (ptr + len)
+            emitter.emit(Instruction::Add32 {
+                dst: ARGS_LEN_REG,
+                src1: ARGS_PTR_REG,
+                src2: ARGS_LEN_REG,
+            });
         }
-
         emitter.emit(Instruction::LoadImm {
             reg: 2,
             value: EXIT_ADDRESS,
@@ -1707,6 +1712,12 @@ fn translate_op(
                         dst: ARGS_LEN_REG,
                         base: 2,
                         offset: 0,
+                    });
+                    // Calculate end pointer: r8 = r7 + r8 (ptr + len)
+                    emitter.emit(Instruction::Add32 {
+                        dst: ARGS_LEN_REG,
+                        src1: ARGS_PTR_REG,
+                        src2: ARGS_LEN_REG,
                     });
                 }
                 emitter.emit(Instruction::LoadImm {

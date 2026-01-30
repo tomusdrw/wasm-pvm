@@ -84,5 +84,8 @@ jobs:
       - name: Install examples-as dependencies
         run: cd examples-as && npm ci
 
+      - name: Build examples-as
+        run: cd examples-as && npm run build
+
       - name: Run integration tests
         run: npx tsx scripts/test-all.ts
