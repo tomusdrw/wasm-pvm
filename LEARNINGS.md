@@ -24,6 +24,27 @@ This document captures technical learnings, design decisions, and discoveries ma
 
 ---
 
+## Stack Overflow Detection (Phase 13)
+
+**Implementation**: Added stack overflow detection to prevent silent memory corruption during deep recursion.
+
+**Mechanism**:
+1. Calculate `new_sp = sp - frame_size` before each function call
+2. Compare against `stack_limit = STACK_SEGMENT_END - stack_size` (default 64KB)
+3. Use unsigned comparison (`BranchGeU`) to handle high addresses like `0xFEEE0000`
+4. Emit `TRAP` instruction on overflow, causing PANIC status
+
+**Code Locations**:
+- `codegen.rs:390-424` - Stack overflow check in `emit_call()`
+- `codegen.rs:597-639` - Stack overflow check in `emit_call_indirect()`
+
+**Configuration**:
+- Default stack size: 64KB (configurable in SPI format up to 16MB)
+- With ~40 byte frames, overflow occurs at ~1600 recursion depth
+- Stack grows downward from `0xFEFE0000`
+
+---
+
 ## PVM-in-PVM Implementation (Phase 16b)
 
 **Achievement**: Successfully implemented true PVM-in-PVM execution where a compiled PVM program runs SPI programs.
@@ -85,6 +106,12 @@ This document captures technical learnings, design decisions, and discoveries ma
 - Enable running arbitrary PVM programs within PVM
 
 **Memory Management**: Add proper page fault handling and dynamic memory allocation
+
+**Known Limitations** (see KNOWN_ISSUES.md for details):
+- `memory.copy` doesn't handle overlapping regions (violates WASM spec for memmove-like operations)
+- Division overflow checks not implemented (INT_MIN / -1 should trap)
+- Import return values ignored (stubs don't push dummy values for has_return)
+- Passive data segments not supported (memory.init not implemented)
 
 ---
 
