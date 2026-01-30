@@ -107,6 +107,9 @@ vendor/                    # Git submodules (anan-as, zink)
 | Add test case | `scripts/test-cases.ts` | Hex args, little-endian |
 | Fix test execution | `scripts/test-all.ts` | `runJamFile()` |
 | Fix result parsing | `scripts/run-jam.ts` | Memory chunk reconstruction |
+| Debug execution step-by-step | `scripts/trace-steps.ts` | Shows PC, gas, registers per step |
+| Quick trace (simple programs) | `scripts/trace-jam.ts` | 50 steps default, minimal output |
+| Verify JAM file structure | `scripts/verify-jam.ts` | Parse headers, jump table, code |
 | Add global handling | `translate/mod.rs` | `compile()` globals section |
 | Update PVM spec | `gp-0.7.2.md` | Appendix A is key |
 
@@ -167,10 +170,12 @@ Spilled locals: `0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)`
 4. Update `LEARNINGS.md` if non-obvious
 
 ### Debug Translation Issue
-1. Disassemble generated PVM: `npx tsx scripts/run-jam.ts <file> --args=...`
-2. Compare expected vs actual instruction sequence
-3. Check register allocation in `codegen.rs`
-4. Verify control flow graph
+1. Execute and inspect result: `npx tsx scripts/run-jam.ts <file> --args=...`
+2. Step-by-step trace: `npx tsx scripts/trace-steps.ts <file> <args> <steps>`
+3. Verify JAM structure: `npx tsx scripts/verify-jam.ts <file>`
+4. Compare expected vs actual instruction sequence
+5. Check register allocation in `codegen.rs`
+6. Verify control flow graph
 
 ### Add Test Case
 ```typescript

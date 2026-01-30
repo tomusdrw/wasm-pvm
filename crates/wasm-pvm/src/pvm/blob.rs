@@ -21,6 +21,11 @@ impl ProgramBlob {
     }
 
     #[must_use]
+    pub fn instructions(&self) -> &[Instruction] {
+        &self.instructions
+    }
+
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let (code, mask) = self.encode_code_and_mask();
         let code_len = code.len();
