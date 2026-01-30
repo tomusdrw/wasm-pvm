@@ -6,9 +6,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+test-harness = ["dep:wat"]
+
 [dependencies]
 wasmparser.workspace = true
 thiserror.workspace = true
+wat = { workspace = true, optional = true }
+
+[dev-dependencies]
+wat.workspace = true
 
 [lints]
 workspace = true

@@ -487,6 +487,7 @@ version = "0.1.0"
 dependencies = [
  "thiserror",
  "wasmparser 0.219.2",
+ "wat",
 ]
 
 [[package]]

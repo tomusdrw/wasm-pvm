@@ -45,6 +45,11 @@ impl SpiProgram {
     }
 
     #[must_use]
+    pub fn code(&self) -> &ProgramBlob {
+        &self.code
+    }
+
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let code_blob = self.code.encode();
 
