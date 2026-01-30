@@ -1,233 +1,192 @@
-# WASM-PVM Project - AI Agent Guidelines
+# WASM-PVM Project - AI Agent Knowledge Base
 
-This document provides context and guidelines for AI agents working on the WASM to PVM recompiler project.
-
----
-
-## Project Context
-
-**Goal**: Build a recompiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) bytecode.
-
-**Language**: Rust (latest stable)
-
-**Key Documents**:
-- `PLAN.md` - Project roadmap and architecture
-- `LEARNINGS.md` - Technical discoveries and design decisions
-- `gp-0.7.2.md` - Gray Paper (PVM specification)
-- `examples-wat/` - Example WASM programs in text format
+**Project**: WebAssembly to PolkaVM (PVM) bytecode recompiler  
+**Stack**: Rust (core) + TypeScript (tests) + AssemblyScript (examples)  
+**Docs**: `PLAN.md` (roadmap), `LEARNINGS.md` (tech discoveries), `gp-0.7.2.md` (PVM spec)
 
 ---
 
-## Code Standards
+## Quick Start
 
-### Rust Style
-- Follow `rustfmt` defaults
-- Use `clippy` with default lints (treat warnings as errors)
-- Prefer `thiserror` for error types
-- Use `log` or `tracing` for diagnostics
-- Document public APIs with doc comments
+```bash
+# Build
+cargo build --release
 
-### Project Structure
+# Test
+cargo test                    # Unit tests (Rust)
+npx tsx scripts/test-all.ts   # Integration tests (62 tests)
+
+# Compile WASM → JAM
+cargo run -p wasm-pvm-cli -- compile examples-wat/add.jam.wat -o dist/add.jam
+
+# Run JAM
+npx tsx scripts/run-jam.ts dist/add.jam --args=0500000007000000
+```
+
+---
+
+## Structure
+
 ```
 crates/
-├── wasm-pvm/           # Main recompiler library
-│   ├── src/
-│   │   ├── lib.rs
-│   │   ├── wasm/       # WASM parsing and analysis
-│   │   ├── ir/         # Intermediate representation
-│   │   ├── pvm/        # PVM instruction definitions
-│   │   ├── codegen/    # Code generation
-│   │   └── error.rs
-│   └── Cargo.toml
-├── wasm-pvm-cli/       # Command-line interface
-└── pvm-asm/            # PVM assembler/disassembler
+├── wasm-pvm/              # Core library
+│   └── src/
+│       ├── translate/     # WASM→PVM translation [COMPLEX - see AGENTS.md]
+│       │   ├── codegen.rs (2402 lines - main logic)
+│       │   ├── mod.rs     (683 lines - orchestration)
+│       │   └── stack.rs   (152 lines - operand stack)
+│       ├── pvm/           # PVM instruction definitions
+│       │   ├── instruction.rs  # Instruction enum + encoding
+│       │   ├── opcode.rs       # Opcode constants
+│       │   └── blob.rs         # Program blob format
+│       ├── spi.rs         # JAM/SPI format encoder
+│       └── error.rs       # Error types (thiserror)
+└── wasm-pvm-cli/          # CLI binary
+    └── src/main.rs        # Single-file CLI (62 lines)
+
+scripts/                   # TypeScript tooling [see AGENTS.md]
+├── test-all.ts            # Test runner
+├── run-jam.ts             # JAM execution
+└── test-cases.ts          # Test definitions
+
+examples-wat/              # WAT test programs
+examples-as/               # AssemblyScript examples
+vendor/                    # Git submodules (anan-as, zink)
 ```
-
-### Naming Conventions
-- Types: `PascalCase`
-- Functions/methods: `snake_case`
-- Constants: `SCREAMING_SNAKE_CASE`
-- Modules: `snake_case`
-- Use descriptive names that indicate WASM vs PVM context
-
-### Error Handling
-- Use `Result<T, E>` for fallible operations
-- Define domain-specific error types
-- Include source location in error messages when available
-- Never panic in library code (except for internal bugs)
 
 ---
 
 ## Domain Knowledge
 
-### WASM Concepts (Source)
-- **Stack-based**: Operations push/pop from implicit operand stack
-- **Structured control flow**: Blocks, loops, if/else with branch targets
-- **Locals**: Function-local variables accessed by index
-- **Linear memory**: Byte-addressable, grows in 64KB pages
-- **Tables**: For indirect function calls
+### WASM (Source)
+- Stack-based bytecode
+- Structured control flow (blocks, loops, if/else)
+- Linear memory (0-indexed, 64KB pages)
 
-### PVM Concepts (Target)
-- **Register-based**: 13 general-purpose 64-bit registers
-- **Basic blocks**: Flat control flow with jumps/branches
-- **Gas metering**: All instructions cost gas
-- **Paged memory**: Addresses < 2^16 cause panic
-- **Host calls**: `ecalli` instruction for external functions
+### PVM (Target)
+- Register-based (13 x 64-bit registers)
+- Flat control flow with jumps/branches
+- Gas metering on all instructions
+- Memory: addresses < 2^16 panic
 
 ### Translation Challenges
-1. **Stack → Registers**: Map WASM operand stack to PVM registers
-2. **Structured → Flat**: Convert WASM blocks to PVM jumps
-3. **Address translation**: WASM 0-indexed memory to PVM paged memory
+1. Stack→Registers: Map WASM operand stack to r2-r6
+2. Structured→Flat: Convert WASM blocks to PVM jumps
+3. Address translation: WASM 0-based → PVM 0x50000-based
 
 ---
 
-## Working on This Project
+## Conventions
 
-### Before Making Changes
-1. Read relevant sections of `PLAN.md` and `LEARNINGS.md`
-2. Check `gp-0.7.2.md` (Gray Paper) for PVM specification details
-3. Review existing code patterns in the codebase
-4. Run tests to ensure baseline is working
+### Code Style
+- `rustfmt` defaults, `clippy` warnings = errors
+- `unsafe_code = "deny"` (workspace lint)
+- `thiserror` for errors, `tracing` for logging
+- Unit tests inline under `#[cfg(test)]`
 
-### When Implementing Features
-1. Start with a failing test (if appropriate)
-2. Implement the minimal solution
-3. Add documentation for public APIs
-4. Update `LEARNINGS.md` with any new discoveries
-5. Run `cargo fmt` and `cargo clippy`
+### Naming
+- Types: `PascalCase`, Functions: `snake_case`
+- Constants: `SCREAMING_SNAKE_CASE`
+- Indicate WASM vs PVM context in names
 
-### When Adding Tests
-- Unit tests go in the same file as the code (under `#[cfg(test)]`)
-- Integration tests go in `tests/` directory
-- WAT test files go in `tests/wat/` or `examples-wat/`
-- Name test functions descriptively: `test_<what>_<scenario>`
+### Project-Specific
+- No `lib/` folder in crates - flat src structure
+- Integration tests in TypeScript (not `tests/*.rs`)
+- Memory addresses hardcoded as magic constants
+- 4 local variables max without spilling
 
-### Key Files to Know
+---
 
-| File | Purpose |
-|------|---------|
-| `PLAN.md` | Project roadmap, current phase |
-| `LEARNINGS.md` | Technical discoveries, design decisions |
-| `gp-0.7.2.md` | PVM specification (Appendix A is key) |
-| `examples-wat/*.wat` | Example WASM programs to compile |
+## Where to Look
+
+| Task | Location | Notes |
+|------|----------|-------|
+| Add WASM operator | `translate/codegen.rs` | `translate_op()` match arm |
+| Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
+| Fix translation bug | `translate/codegen.rs` | Check `emit_*` functions |
+| Add test case | `scripts/test-cases.ts` | Hex args, little-endian |
+| Fix test execution | `scripts/test-all.ts` | `runJamFile()` |
+| Fix result parsing | `scripts/run-jam.ts` | Memory chunk reconstruction |
+| Add global handling | `translate/mod.rs` | `compile()` globals section |
+| Update PVM spec | `gp-0.7.2.md` | Appendix A is key |
+
+---
+
+## Anti-Patterns (Forbidden)
+
+1. **No `unsafe` code** - Strictly forbidden by workspace lint
+2. **No panics in library code** - Use `Result<>` with `Error::Internal`
+3. **No floating point** - PVM lacks FP support; reject WASM floats
+4. **Don't break register conventions** - Hardcoded in multiple files
+5. **No standard Rust test dir** - Use TypeScript for integration tests
+
+---
+
+## Memory Layout (Hardcoded)
+
+| Address | Purpose |
+|---------|---------|
+| `0x30000` | Globals storage |
+| `0x30100` | User heap (results) |
+| `0x40000` | Spilled locals |
+| `0x50000` | WASM linear memory base |
+| `0xFEFF0000` | Arguments (args_ptr) |
+| `0xFFFF0000` | EXIT address (HALT) |
+
+---
+
+## Register Allocation
+
+| Register | Usage |
+|----------|-------|
+| r0 | Return address (jump table index) |
+| r1 | Stack pointer / Return value |
+| r2-r6 | Operand stack (5 slots) |
+| r7 | SPI args pointer / scratch |
+| r8 | SPI args length / saved table idx |
+| r9-r12 | Local variables (first 4) |
+
+Spilled locals: `0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)`
+
+---
+
+## Subdirectory Docs
+
+- **`crates/wasm-pvm/src/translate/AGENTS.md`** - Translation module details, codegen patterns
+- **`crates/wasm-pvm/src/pvm/AGENTS.md`** - PVM instruction encoding
+- **`scripts/AGENTS.md`** - TypeScript test tooling
 
 ---
 
 ## Common Tasks
 
-### Adding a New WASM Instruction
-1. Find the instruction in WASM spec
-2. Determine equivalent PVM sequence
-3. Add translation in `codegen/` module
-4. Add test case
-5. Document any non-obvious mappings in `LEARNINGS.md`
+### Add WASM Instruction
+1. Find in WASM spec → determine PVM sequence
+2. Add to `translate/codegen.rs:translate_op()`
+3. Add test case to `scripts/test-cases.ts`
+4. Update `LEARNINGS.md` if non-obvious
 
-### Adding a New PVM Instruction
-1. Find the instruction in Gray Paper Appendix A
-2. Add to `PvmOpcode` enum in `pvm/` module
-3. Implement encoding
-4. Add to disassembler
-5. Add tests
-
-### Debugging Translation Issues
-1. Disassemble the generated PVM code
-2. Compare with expected instruction sequence
-3. Check register allocation decisions
+### Debug Translation Issue
+1. Disassemble generated PVM: `npx tsx scripts/run-jam.ts <file> --args=...`
+2. Compare expected vs actual instruction sequence
+3. Check register allocation in `codegen.rs`
 4. Verify control flow graph
 
----
-
-## Testing Commands
-
-```bash
-# Run all tests
-cargo test
-
-# Run specific test
-cargo test test_add_function
-
-# Run with output
-cargo test -- --nocapture
-
-# Check formatting
-cargo fmt --check
-
-# Run lints
-cargo clippy -- -D warnings
-
-# Run a specific example
-cargo run -p wasm-pvm-cli -- compile examples-wat/add.wat -o output.pvm
-
-# Run full integration test suite (56 tests)
-npx tsx scripts/test-all.ts
-
-# Run a compiled JAM file
-npx tsx scripts/run-jam.ts /tmp/out.jam --args=<hex>
+### Add Test Case
+```typescript
+// In scripts/test-cases.ts
+{ 
+  name: 'mytest',
+  tests: [
+    { args: '05000000', expected: 5, description: 'Test 5' }
+  ]
+}
 ```
-
----
-
-## Asking for Clarification
-
-If you're unsure about:
-- **PVM semantics**: Check `gp-0.7.2.md` Appendix A, or ask
-- **WASM semantics**: Check official WASM spec, or ask
-- **Design decisions**: Check `LEARNINGS.md`, or ask
-- **Project direction**: Check `PLAN.md`, or ask
-
-When in doubt, ask rather than guess. Document any answers in the appropriate file.
-
----
-
-## Updating Documentation
-
-### When to Update LEARNINGS.md
-- Discovered non-obvious PVM behavior
-- Made a design decision with alternatives
-- Found a gotcha or edge case
-- Resolved an open question
-
-### When to Update PLAN.md
-- Completed a phase/milestone
-- Scope changed
-- New risks identified
-- Timeline adjusted
-
-### When to Update AGENTS.md
-- Project structure changed
-- New conventions established
-- Common tasks changed
-
----
-
-## Quick Reference: PVM Registers (Implemented)
-
-| Register | Usage in wasm-pvm |
-|----------|-------------------|
-| r0 | Return address (jump table index for function calls) |
-| r1 | Stack pointer / Return value from function calls |
-| r2-r6 | Operand stack (5 slots) |
-| r7 | SPI args pointer (0xFEFF0000) / scratch for rotates |
-| r8 | SPI args length / scratch for rotates |
-| r9-r12 | Local variables (first 4 locals) |
-
-**Memory for spilled locals**: `0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)`
-
----
-
-## Quick Reference: Gas Costs
-
-From Gray Paper - each instruction has a gas cost (ϱ∆). Some examples:
-- trap: 0
-- fallthrough: 0
-- ecalli: 0
-- load_imm_64: 0
-- (Check Appendix A for full list)
+Args are hex little-endian u32s.
 
 ---
 
 ## Contact
 
-Project maintainer: @tomusdrw
-
-For questions about PVM: Check Gray Paper or PolkaVM repository issues.
+Maintainer: @tomusdrw  
+PVM questions: Gray Paper or PolkaVM repo
