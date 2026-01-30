@@ -1,7 +1,7 @@
 //! Test harness for wasm-pvm unit tests
 //!
 //! This module provides utilities for testing the WASM to PVM compiler.
-//! It is only available when running tests (`#[cfg(test)]`).
+//! It is available when running tests (`#[cfg(test)]`) or when the `test-harness` feature is enabled (`feature = "test-harness"`).
 //!
 //! # Example
 //!
