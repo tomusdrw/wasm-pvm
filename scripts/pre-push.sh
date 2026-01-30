@@ -16,9 +16,10 @@ echo "🔍 Running Clippy..."
 cargo clippy -- -D warnings
 echo "✅ Clippy OK"
 
-# Run unit tests (includes test-harness tests)
+# Run unit tests (all packages)
 echo "🧪 Running unit tests..."
 cargo test --package wasm-pvm --features test-harness
+cargo test --package wasm-pvm-cli
 echo "✅ Unit tests OK"
 
 # Build the project

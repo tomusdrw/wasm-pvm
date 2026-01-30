@@ -3,8 +3,8 @@
 //! This file shows various ways to use the test_harness module
 //! for testing WASM to PVM compilation.
 
-use wasm_pvm::test_harness::*;
 use wasm_pvm::Opcode;
+use wasm_pvm::test_harness::*;
 
 // =============================================================================
 // Basic Pattern Matching Examples

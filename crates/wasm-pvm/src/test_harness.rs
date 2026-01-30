@@ -34,7 +34,7 @@
 //! ```
 
 use crate::pvm::{Instruction, Opcode};
-use crate::{compile, Error, Result, SpiProgram};
+use crate::{Error, Result, SpiProgram, compile};
 
 /// Parse WAT (WebAssembly Text) format to WASM binary
 pub fn wat_to_wasm(wat: &str) -> Result<Vec<u8>> {
