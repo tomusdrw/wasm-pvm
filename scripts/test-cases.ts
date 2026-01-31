@@ -10,6 +10,12 @@ export interface TestCase {
 
 export const testCases: TestCase[] = [
   {
+    name: 'start-section',
+    tests: [
+      { args: '00000000', expected: 42, description: 'start-section returns 42' },
+    ],
+  },
+  {
     name: 'add',
     tests: [
       { args: '0500000007000000', expected: 12, description: '5 + 7 = 12' },
