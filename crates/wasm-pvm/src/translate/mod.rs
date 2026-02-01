@@ -274,12 +274,30 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     );
 
     // Convert secondary entry from global to local function index
-    let secondary_entry_idx_resolved =
-        secondary_entry_func_idx.map(|idx| idx as usize - num_imported_funcs as usize);
+    let secondary_entry_idx_resolved = secondary_entry_func_idx.and_then(|idx| {
+        idx.checked_sub(num_imported_funcs)
+            .map(|v| v as usize)
+            .or_else(|| {
+                eprintln!(
+                    "Warning: secondary entry function {} is an imported function, ignoring",
+                    idx
+                );
+                None
+            })
+    });
 
     // Convert start function from global to local function index
-    let start_func_idx_resolved =
-        start_func_idx.map(|idx| idx as usize - num_imported_funcs as usize);
+    let start_func_idx_resolved = start_func_idx.and_then(|idx| {
+        idx.checked_sub(num_imported_funcs)
+            .map(|v| v as usize)
+            .or_else(|| {
+                eprintln!(
+                    "Warning: start function {} is an imported function, ignoring",
+                    idx
+                );
+                None
+            })
+    });
 
     for (local_func_idx, func) in functions.iter().enumerate() {
         // Global function index = num_imported_funcs + local_func_idx
@@ -325,10 +343,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
         function_offsets.push(func_start_offset);
 
-        // If this is the main function and we have a start function, execute the start function first.
+        // If this is an entry function and we have a start function, execute the start function first.
         // We need to preserve r7 (args_ptr) and r8 (args_len) as they are used by main.
         // We use stack to save/restore registers.
-        if let Some(start_local_idx) = start_func_idx_resolved.filter(|_| is_main) {
+        if let Some(start_local_idx) = start_func_idx_resolved.filter(|_| is_entry_func) {
             // Save r7 and r8 to stack
             // 1. Reserve 16 bytes on stack: sub r1, r1, 16
             all_instructions.push(Instruction::AddImm64 {

@@ -7,6 +7,7 @@ This document tracks known issues, bugs, and improvements for future work. Items
 ## Compiler Limitations
 
 ### ~~No stack overflow detection~~ (RESOLVED - Phase 13)
+
 **Severity**: Medium
 **Status**: ✅ Resolved (2025-01-19)
 
@@ -109,7 +110,9 @@ When you discover a new issue:
 ## Resolved Issues
 
 ### ~~Stack overflow detection~~ (Resolved 2025-01-19)
+
 **Resolution**: Implemented stack overflow detection in function prologues:
+
 - Calculate `new_sp = sp - frame_size` before each call
 - Compare against `stack_limit = STACK_SEGMENT_END - stack_size` using unsigned comparison
 - Emit TRAP on overflow (causes PANIC status)
@@ -133,7 +136,7 @@ When you discover a new issue:
 - Jump table for return addresses (PVM requires JUMP_IND targets in jump table)
 - Caller saves return address (jump table index) in r0
 - Arguments passed via callee's local registers (r9+)
-- Return value in r1
+- Return value in r7
 - Proper function prologue/epilogue
 
 ---
@@ -186,7 +189,7 @@ When you discover a new issue:
 - Jump table for return addresses (PVM requires JUMP_IND targets in jump table)
 - Caller saves return address (jump table index) in r0
 - Arguments passed via callee's local registers (r9+)
-- Return value in r1
+- Return value in r7
 - Proper function prologue/epilogue
 
 ---
