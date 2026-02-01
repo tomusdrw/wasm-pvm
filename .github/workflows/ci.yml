@@ -56,10 +56,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: '20'
+          bun-version: latest
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -88,4 +88,4 @@ jobs:
         run: cd examples-as && npm run build
 
       - name: Run integration tests
-        run: npx tsx scripts/test-all.ts
+        run: bun scripts/test-all.ts
