@@ -2285,6 +2285,18 @@ fn translate_op(
                 src1: result,
                 src2: 7,
             });
+            // Mask to 32 bits for i32 operation (0xFFFFFFFF as i32 is -1)
+            let mask = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm {
+                reg: mask,
+                value: -1i32,
+            });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::And {
+                dst: result,
+                src1: result,
+                src2: mask,
+            });
         }
         Operator::I32Rotr => {
             let n = emitter.spill_pop();
@@ -2320,6 +2332,18 @@ fn translate_op(
                 dst: result,
                 src1: result,
                 src2: 7,
+            });
+            // Mask to 32 bits for i32 operation (0xFFFFFFFF as i32 is -1)
+            let mask = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm {
+                reg: mask,
+                value: -1i32,
+            });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::And {
+                dst: result,
+                src1: result,
+                src2: mask,
             });
         }
         Operator::I64Rotl => {
