@@ -152,4 +152,105 @@ export const testCases: TestCase[] = [
       { args: '1100000011000000', expected: 17, description: 'AS: gcd(17, 17) = 17' },
     ],
   },
+  {
+    name: 'bit-ops',
+    tests: [
+      { args: '0000000001000000', expected: 24, description: 'clz(1) = 31 (leading zeros in 32-bit)' },
+      { args: '0000000080000000', expected: 0, description: 'clz(0x80000000) = 0 (MSB set)' },
+      { args: '0100000001000000', expected: 0, description: 'ctz(1) = 0 (LSB set)' },
+      { args: '0100000002000000', expected: 1, description: 'ctz(2) = 1' },
+      { args: '02000000ffffffff', expected: 32, description: 'popcnt(0xffffffff) = 32' },
+      { args: '02000000f0f0f0f0', expected: 16, description: 'popcnt(0xf0f0f0f0) = 16' },
+    ],
+  },
+  {
+    name: 'recursive',
+    tests: [
+      { args: '00000000', expected: 1, description: 'recursive factorial(0) = 1' },
+      { args: '01000000', expected: 1, description: 'recursive factorial(1) = 1' },
+      { args: '05000000', expected: 120, description: 'recursive factorial(5) = 120' },
+      { args: '07000000', expected: 5040, description: 'recursive factorial(7) = 5040' },
+    ],
+  },
+  {
+    name: 'rotate',
+    tests: [
+      { args: '00000000ff00000001000000', expected: 0xff00, description: 'rotl(0xff, 1) = 0x1fe' },
+      { args: '00000000ff00000008000000', expected: 0xff00, description: 'rotl(0xff, 8) shifts left 8' },
+      { args: '01000000ff00000001000000', expected: 0x8000007f, description: 'rotr(0xff, 1) rotates right' },
+      { args: '01000000abcd000010000000', expected: 0xabcd, description: 'rotr(0xabcd, 16) swaps bytes' },
+    ],
+  },
+  {
+    name: 'br-table',
+    tests: [
+      { args: '00000000', expected: 100, description: 'br_table case 0 returns 100' },
+      { args: '01000000', expected: 200, description: 'br_table case 1 returns 200' },
+      { args: '02000000', expected: 300, description: 'br_table case 2 returns 300' },
+      { args: '03000000', expected: 999, description: 'br_table default case returns 999' },
+      { args: '04000000', expected: 999, description: 'br_table out of bounds returns 999' },
+    ],
+  },
+  {
+    name: 'block-result',
+    tests: [
+      { args: '00000000', expected: 42, description: 'block with result returns 42' },
+      { args: '01000000', expected: 100, description: 'block with br returns 100 (not 999)' },
+    ],
+  },
+  {
+    name: 'stack-test',
+    tests: [
+      { args: '00000000', expected: 30, description: 'stack operations: 10*2 + 10 = 30' },
+      { args: '01000000', expected: 50, description: 'stack operations: 20*2 + 10 = 50' },
+    ],
+  },
+  {
+    name: 'simple-memory-test',
+    tests: [
+      { args: '00000000', expected: 42, description: 'memory store8/load8_u: store 42, read back 42' },
+    ],
+  },
+  {
+    name: 'nested-calls',
+    tests: [
+      { args: '00000000', expected: 2, description: 'nested calls: add_two(0) = 2' },
+      { args: '05000000', expected: 7, description: 'nested calls: add_two(5) = 7' },
+      { args: '64000000', expected: 102, description: 'nested calls: add_two(100) = 102' },
+    ],
+  },
+  {
+    name: 'compare-test',
+    tests: [
+      { args: '00000000', expected: 1, description: 'comparison: 3 < 5 = 1' },
+      { args: '01000000', expected: 0, description: 'comparison: 5 < 3 = 0' },
+      { args: '02000000', expected: 1, description: 'comparison: 10 > 5 = 1' },
+      { args: '03000000', expected: 0, description: 'comparison: 5 > 10 = 0' },
+    ],
+  },
+  {
+    name: 'br-table',
+    tests: [
+      { args: '00000000', expected: 100, description: 'br_table case 0 returns 100' },
+      { args: '01000000', expected: 200, description: 'br_table case 1 returns 200' },
+      { args: '02000000', expected: 300, description: 'br_table case 2 returns 300' },
+      { args: '03000000', expected: 999, description: 'br_table default case returns 999' },
+      { args: '04000000', expected: 999, description: 'br_table out of bounds returns 999' },
+    ],
+  },
+  {
+    name: 'block-br-test',
+    tests: [
+      { args: '00000000', expected: 10, description: 'block with conditional br (skip branch)' },
+      { args: '01000000', expected: 20, description: 'block with conditional br (take branch)' },
+      { args: '02000000', expected: 30, description: 'nested blocks with br_if' },
+    ],
+  },
+  {
+    name: 'computed-addr-test',
+    tests: [
+      { args: '00000000', expected: 42, description: 'computed address with offset = 42' },
+      { args: '01000000', expected: 84, description: 'computed address with scale = 84' },
+    ],
+  },
 ];

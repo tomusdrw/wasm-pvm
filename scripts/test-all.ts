@@ -21,7 +21,7 @@ function compileWatIfAvailable(testName: string, jamFile: string): void {
     return;
   }
 
-  const cmd = `cargo run -p wasm-pvm-cli -- compile ${watFile} -o ${jamFile}`;
+  const cmd = `cargo run -p wasm-pvm-cli --release -- compile ${watFile} -o ${jamFile}`;
   execSync(cmd, {
     cwd: projectRoot,
     encoding: 'utf8',
