@@ -8,6 +8,7 @@ This document tracks known issues, bugs, and improvements for future work. Items
 
 ### ~~No stack overflow detection~~ (RESOLVED - Phase 13)
 
+
 **Severity**: Medium
 **Status**: ✅ Resolved (2025-01-19)
 
@@ -71,7 +72,7 @@ Only active data segments (initialized at instantiation) are supported. Passive 
 
 **Workaround**: Use active segments or manual initialization code.
 
-**Verification**: Source inspection at `codegen.rs:177` explicitly states: "Passive data segments are ignored for now (used with memory.init)".
+**Verification**: Source inspection at `translate/mod.rs:177` explicitly states: "Passive data segments are ignored for now (used with memory.init)".
 
 ---
 
@@ -114,7 +115,6 @@ When you discover a new issue:
 ## Resolved Issues
 
 ### ~~Stack overflow detection~~ (Resolved 2025-01-19)
-
 **Resolution**: Implemented stack overflow detection in function prologues:
 
 - Calculate `new_sp = sp - frame_size` before each call
@@ -193,7 +193,7 @@ When you discover a new issue:
 - Jump table for return addresses (PVM requires JUMP_IND targets in jump table)
 - Caller saves return address (jump table index) in r0
 - Arguments passed via callee's local registers (r9+)
-- Return value in r7
+- Return value in r1
 - Proper function prologue/epilogue
 
 ---
