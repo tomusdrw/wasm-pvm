@@ -72,7 +72,7 @@ Only active data segments (initialized at instantiation) are supported. Passive 
 
 **Workaround**: Use active segments or manual initialization code.
 
-**Verification**: Source inspection at `codegen.rs:177` explicitly states: "Passive data segments are ignored for now (used with memory.init)".
+**Verification**: Source inspection at `translate/mod.rs:177` explicitly states: "Passive data segments are ignored for now (used with memory.init)".
 
 ---
 
