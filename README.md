@@ -88,10 +88,10 @@ Requires Node.js and the anan-as PVM implementation (included as submodule):
 cd vendor/anan-as && npm ci && npm run build && cd ../..
 
 # Run with arguments (little-endian u32s)
-npx tsx scripts/run-jam.ts output.jam --args=0500000007000000
+bun scripts/run-jam.ts output.jam --args=0500000007000000
 
 # Example: add.jam.wat with args 5 and 7 → returns 12
-npx tsx scripts/run-jam.ts output.jam --args=0500000007000000
+bun scripts/run-jam.ts output.jam --args=0500000007000000
 # Output shows: As U32: 12
 ```
 
@@ -205,14 +205,14 @@ cargo test
 cargo clippy -- -D warnings
 
 # Run full integration test suite (62 tests)
-npx tsx scripts/test-all.ts
+bun scripts/test-all.ts
 
 # Test a single example
 cargo run -p wasm-pvm-cli --quiet -- compile examples-wat/factorial.jam.wat -o /tmp/test.jam
-npx tsx scripts/run-jam.ts /tmp/test.jam --args=05000000
+bun scripts/run-jam.ts /tmp/test.jam --args=05000000
 
 # Verify a JAM file structure
-npx tsx scripts/verify-jam.ts /tmp/test.jam
+bun scripts/verify-jam.ts /tmp/test.jam
 ```
 
 ## License

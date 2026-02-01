@@ -1,7 +1,7 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Automated test suite for wasm-pvm examples using anan-as CLI
- * Usage: npx tsx scripts/test-all.ts [--filter=pattern] [--verbose]
+ * Usage: bun scripts/test-all.ts [--filter=pattern] [--verbose]
  */
 
 import { execSync } from 'node:child_process';
@@ -21,12 +21,14 @@ function compileWatIfAvailable(testName: string, jamFile: string): void {
     return;
   }
 
+  console.time('compile');
   const cmd = `cargo run -p wasm-pvm-cli --release -- compile ${watFile} -o ${jamFile}`;
   execSync(cmd, {
     cwd: projectRoot,
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe']
   });
+  console.timeEnd('compile');
 }
 
 function compileAsIfAvailable(testName: string, jamFile: string): void {
@@ -54,15 +56,17 @@ function compileAsIfAvailable(testName: string, jamFile: string): void {
 
 function runJamFile(jamFile: string, args: string, pc?: number): number {
   const cmd = pc !== undefined
-    ? `npx tsx scripts/run-jam.ts ${jamFile} --args=${args} --pc=${pc}`
-    : `npx tsx scripts/run-jam.ts ${jamFile} --args=${args}`;
+    ? `bun scripts/run-jam.ts ${jamFile} --args=${args} --pc=${pc}`
+    : `bun scripts/run-jam.ts ${jamFile} --args=${args}`;
 
   try {
+    console.time('run');
     const output = execSync(cmd, {
       cwd: projectRoot,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe']
     });
+    console.timeEnd('run');
 
     // Parse the output to extract the result
     // Assuming the output contains something like "Result: 42" or similar
@@ -122,11 +126,9 @@ function runJamFile(jamFile: string, args: string, pc?: number): number {
 
     throw new Error(`Could not parse result from output: ${output}`);
   } catch (error: any) {
-    // For now, don't fail on execution errors - the infrastructure is what we're testing
     if (error.stdout) console.log(error.stdout.toString());
     if (error.stderr) console.error(error.stderr.toString());
-    console.log(`  (Execution failed, but continuing for infrastructure test: ${error.message.split('\n')[0]})`);
-    return 42; // dummy value
+    throw new Error(`  (Execution failed, but continuing for infrastructure test: ${error.message.split('\n')[0]})`);
   }
 }
 
@@ -147,9 +149,6 @@ async function main() {
   let passedTests = 0;
   let failedTests = 0;
   const failures: string[] = [];
-
-  // Filter test cases if requested
-  const filteredTestCases = filter ? testCases.filter(tc => tc.name.includes(filter)) : testCases;
 
   for (const testCase of testCases) {
     if (filter && !testCase.name.includes(filter)) {

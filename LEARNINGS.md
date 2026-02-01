@@ -754,10 +754,10 @@ PVM Memory:
 ### Test Commands
 ```bash
 # Run integration tests (all 58 pass)
-npx tsx scripts/test-all.ts
+bun scripts/test-all.ts
 
 # Run PVM-in-PVM test (currently failing with FAULT)
-npx tsx scripts/test-pvm-in-pvm.ts
+bun scripts/test-pvm-in-pvm.ts
 ```
 
 ---

@@ -45,7 +45,7 @@ echo "✅ examples-as OK"
 
 # Run full integration test suite
 echo "🧪 Running full integration test suite (test-all.ts)..."
-npx tsx scripts/test-all.ts
+bun scripts/test-all.ts
 echo "✅ Integration tests OK"
 
 echo ""

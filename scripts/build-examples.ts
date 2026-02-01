@@ -1,7 +1,7 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Compile all .jam.wat examples into JAM bytecode files under ./dist
- * Usage: npx tsx scripts/build-examples.ts
+ * Usage: bun scripts/build-examples.ts
  */
 
 import { execSync } from 'node:child_process';

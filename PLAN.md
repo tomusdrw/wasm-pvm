@@ -453,7 +453,7 @@ Run each example in PVM-in-PVM mode and verify:
 4. Root cause and fix any issues
 
 **Success Criteria**:
-- [ ] `npx tsx scripts/test-pvm-in-pvm.ts --filter=add` passes with real execution
+- [ ] `bun scripts/test-pvm-in-pvm.ts --filter=add` passes with real execution
 - [ ] All 62 tests pass in PVM-in-PVM mode
 - [ ] Results match direct execution exactly
 - [ ] Gas overhead documented (< 100x acceptable)
