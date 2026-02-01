@@ -45,6 +45,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let mut global_init_values: Vec<i32> = Vec::new();
     let mut main_func_idx: Option<u32> = None;
     let mut secondary_entry_func_idx: Option<u32> = None;
+    let mut start_func_idx: Option<u32> = None;
     let mut tables: Vec<wasmparser::TableType> = Vec::new();
     let mut table_elements: Vec<(u32, u32, Vec<u32>)> = Vec::new();
     let mut data_segments: Vec<DataSegment> = Vec::new();
@@ -90,6 +91,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                     let init_value = eval_const_i32(&g.init_expr)?;
                     global_init_values.push(init_value);
                 }
+            }
+            Payload::StartSection { func, .. } => {
+                start_func_idx = Some(func);
             }
             Payload::TableSection(reader) => {
                 for table in reader {
@@ -270,8 +274,26 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     );
 
     // Convert secondary entry from global to local function index
-    let secondary_entry_idx_resolved =
-        secondary_entry_func_idx.map(|idx| idx as usize - num_imported_funcs as usize);
+    let secondary_entry_idx_resolved = secondary_entry_func_idx.and_then(|idx| {
+        idx.checked_sub(num_imported_funcs)
+            .map(|v| v as usize)
+            .or_else(|| {
+                eprintln!(
+                    "Warning: secondary entry function {idx} is an imported function, ignoring"
+                );
+                None
+            })
+    });
+
+    // Convert start function from global to local function index
+    let start_func_idx_resolved = start_func_idx.and_then(|idx| {
+        idx.checked_sub(num_imported_funcs)
+            .map(|v| v as usize)
+            .or_else(|| {
+                eprintln!("Warning: start function {idx} is an imported function, ignoring");
+                None
+            })
+    });
 
     for (local_func_idx, func) in functions.iter().enumerate() {
         // Global function index = num_imported_funcs + local_func_idx
@@ -316,6 +338,96 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
         function_offsets.push(func_start_offset);
+
+        // If this is an entry function and we have a start function, execute the start function first.
+        // We need to preserve r7 (args_ptr) and r8 (args_len) as they are used by main.
+        // We use stack to save/restore registers.
+        if let Some(start_local_idx) = start_func_idx_resolved.filter(|_| is_entry_func) {
+            // Save r7 and r8 to stack
+            // 1. Reserve 16 bytes on stack: sub r1, r1, 16
+            all_instructions.push(Instruction::AddImm64 {
+                dst: codegen::STACK_PTR_REG,
+                src: codegen::STACK_PTR_REG,
+                value: -16,
+            });
+
+            // 2. Store r7 (offset 0): store64 r7, [r1+0] -> StoreIndU64 { base: r1, src: r7, offset: 0 }
+            all_instructions.push(Instruction::StoreIndU64 {
+                base: codegen::STACK_PTR_REG,
+                src: codegen::ARGS_PTR_REG,
+                offset: 0,
+            });
+
+            // 3. Store r8 (offset 8): store64 r8, [r1+8] -> StoreIndU64 { base: r1, src: r8, offset: 8 }
+            all_instructions.push(Instruction::StoreIndU64 {
+                base: codegen::STACK_PTR_REG,
+                src: codegen::ARGS_LEN_REG,
+                offset: 8,
+            });
+
+            // Call start function
+            // We need to construct the instructions first, then register the fixup.
+            // The fixup needs absolute index in all_instructions?
+
+            // resolve_call_fixups iterates (instr_base, fixup).
+            // return_addr_idx = instr_base + fixup.return_addr_instr
+
+            // So if we push (0, fixup), then fixup.return_addr_instr should be the actual index in all_instructions.
+            let current_instr_idx = all_instructions.len();
+
+            // loadimm64 r0, <placeholder>
+            all_instructions.push(Instruction::LoadImm64 {
+                reg: codegen::RETURN_ADDR_REG,
+                value: 0,
+            });
+
+            // add64 r0, r0, r1 (add stack offset? No, PVM uses flat return address?)
+            // PVM spec: "Call: set r0 to return address, jump to target"
+            // Our implementation: Load return address (jump table entry) into r0.
+            // Wait, return address is an index into the jump table?
+            // resolve_call_fixups:
+            //   jump_table.push(return_addr_offset)
+            //   jump_table_address = (index + 1) * 2
+            //   Instruction::LoadImm64 { value } = jump_table_address
+
+            // So we just need LoadImm64.
+
+            // Jump to target
+            // jump <placeholder>
+            all_instructions.push(Instruction::Jump { offset: 0 });
+
+            // Fixup for this call
+            let call_fixup = codegen::CallFixup {
+                target_func: start_local_idx as u32,
+                return_addr_instr: 0, // Relative to start of sequence
+                jump_instr: 1,        // relative to start of sequence
+            };
+
+            // We register this fixup with base = current_instr_idx
+            all_call_fixups.push((current_instr_idx, call_fixup));
+
+            // Restore r7 and r8 from stack
+            // 1. Load r7: load64 r7, [r1+0]
+            all_instructions.push(Instruction::LoadIndU64 {
+                dst: codegen::ARGS_PTR_REG,
+                base: codegen::STACK_PTR_REG,
+                offset: 0,
+            });
+
+            // 2. Load r8: load64 r8, [r1+8]
+            all_instructions.push(Instruction::LoadIndU64 {
+                dst: codegen::ARGS_LEN_REG,
+                base: codegen::STACK_PTR_REG,
+                offset: 8,
+            });
+
+            // 3. Restore stack: add r1, r1, 16
+            all_instructions.push(Instruction::AddImm64 {
+                dst: codegen::STACK_PTR_REG,
+                src: codegen::STACK_PTR_REG,
+                value: 16,
+            });
+        }
 
         let translation = codegen::translate_function(func, &ctx)?;
 

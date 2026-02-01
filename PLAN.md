@@ -335,7 +335,8 @@ Full PVM-in-PVM would require a wrapper that calls the API functions (resetGener
 - ✅ **Argument Passing Format**: SPI args format defined for PVM runner input
 
 **Architecture**:
-```
+
+```text
 Test Script → anan-as CLI → PVM Runner (compiled to PVM) → SPI Program Execution → Results
 ```
 

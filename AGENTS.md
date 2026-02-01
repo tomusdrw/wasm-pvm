@@ -122,6 +122,7 @@ vendor/                    # Git submodules (anan-as, zink)
 3. **No floating point** - PVM lacks FP support; reject WASM floats
 4. **Don't break register conventions** - Hardcoded in multiple files
 5. **No standard Rust test dir** - Use TypeScript for integration tests
+6. **NEVER use --no-verify on git push** - Always ensure tests and linters pass before pushing
 
 ---
 

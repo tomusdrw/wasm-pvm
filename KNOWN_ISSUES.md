@@ -7,6 +7,8 @@ This document tracks known issues, bugs, and improvements for future work. Items
 ## Compiler Limitations
 
 ### ~~No stack overflow detection~~ (RESOLVED - Phase 13)
+
+
 **Severity**: Medium
 **Status**: ✅ Resolved (2025-01-19)
 
@@ -17,6 +19,7 @@ Deep recursion was causing silent memory corruption.
 ---
 
 ### `memory.copy` incorrect for overlapping regions
+
 **Severity**: High
 **Status**: 🔴 Open (Verified 2025-01-30)
 
@@ -31,6 +34,7 @@ The implementation uses a forward copy loop (`dest++`, `src++`). This violates t
 ---
 
 ### Division overflow checks missing
+
 **Severity**: Medium
 **Status**: 🔴 Open (Verified 2025-01-30)
 
@@ -45,6 +49,7 @@ The implementation uses a forward copy loop (`dest++`, `src++`). This violates t
 ---
 
 ### Import return values ignored
+
 **Severity**: Medium
 **Status**: 🔴 Open (Verified 2025-01-30)
 
@@ -59,6 +64,7 @@ Imported functions are stubbed as no-ops. If an imported function signature spec
 ---
 
 ### Passive data segments (`memory.init`) not supported
+
 **Severity**: Low
 **Status**: 🔵 Known Limitation (Verified 2025-01-30)
 
@@ -110,6 +116,7 @@ When you discover a new issue:
 
 ### ~~Stack overflow detection~~ (Resolved 2025-01-19)
 **Resolution**: Implemented stack overflow detection in function prologues:
+
 - Calculate `new_sp = sp - frame_size` before each call
 - Compare against `stack_limit = STACK_SEGMENT_END - stack_size` using unsigned comparison
 - Emit TRAP on overflow (causes PANIC status)
@@ -133,7 +140,7 @@ When you discover a new issue:
 - Jump table for return addresses (PVM requires JUMP_IND targets in jump table)
 - Caller saves return address (jump table index) in r0
 - Arguments passed via callee's local registers (r9+)
-- Return value in r1
+- Return value in r7
 - Proper function prologue/epilogue
 
 ---

@@ -40,7 +40,7 @@ This document captures technical learnings, design decisions, and discoveries ma
 
 **Configuration**:
 - Default stack size: 64KB (configurable in SPI format up to 16MB)
-- With ~40 byte frames, overflow occurs at ~1600 recursion depth
+- With ~40-byte frames, overflow occurs at ~1600 recursion depth
 - Stack grows downward from `0xFEFE0000`
 
 ---
