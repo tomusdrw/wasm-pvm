@@ -18,6 +18,7 @@ Deep recursion was causing silent memory corruption.
 ---
 
 ### `memory.copy` incorrect for overlapping regions
+
 **Severity**: High
 **Status**: 🔴 Open (Verified 2025-01-30)
 
@@ -32,6 +33,7 @@ The implementation uses a forward copy loop (`dest++`, `src++`). This violates t
 ---
 
 ### Division overflow checks missing
+
 **Severity**: Medium
 **Status**: 🔴 Open (Verified 2025-01-30)
 
@@ -46,6 +48,7 @@ The implementation uses a forward copy loop (`dest++`, `src++`). This violates t
 ---
 
 ### Import return values ignored
+
 **Severity**: Medium
 **Status**: 🔴 Open (Verified 2025-01-30)
 
@@ -60,6 +63,7 @@ Imported functions are stubbed as no-ops. If an imported function signature spec
 ---
 
 ### Passive data segments (`memory.init`) not supported
+
 **Severity**: Low
 **Status**: 🔵 Known Limitation (Verified 2025-01-30)
 
