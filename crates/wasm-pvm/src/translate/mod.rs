@@ -279,8 +279,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             .map(|v| v as usize)
             .or_else(|| {
                 eprintln!(
-                    "Warning: secondary entry function {} is an imported function, ignoring",
-                    idx
+                    "Warning: secondary entry function {idx} is an imported function, ignoring"
                 );
                 None
             })
@@ -291,10 +290,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         idx.checked_sub(num_imported_funcs)
             .map(|v| v as usize)
             .or_else(|| {
-                eprintln!(
-                    "Warning: start function {} is an imported function, ignoring",
-                    idx
-                );
+                eprintln!("Warning: start function {idx} is an imported function, ignoring");
                 None
             })
     });
