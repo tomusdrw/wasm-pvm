@@ -6,58 +6,72 @@ This document tracks known issues, bugs, and improvements for future work. Items
 
 ## Compiler Limitations
 
-### No stack overflow detection
+### ~~No stack overflow detection~~ (RESOLVED - Phase 13)
+
 **Severity**: Medium
-**Status**: Resolved (Phase 13)
+**Status**: ✅ Resolved (2025-01-19)
 
 Deep recursion was causing silent memory corruption.
 **Resolution**: Implemented stack limit checks in function prologues. Emits TRAP on overflow.
+**Verification**: Code at `codegen.rs:390-424` (emit_call) and `codegen.rs:597-639` (emit_call_indirect) shows proper stack limit checks using unsigned comparison.
 
 ---
 
 ### `memory.copy` incorrect for overlapping regions
+
 **Severity**: High
-**Status**: Open
+**Status**: 🔴 Open (Verified 2025-01-30)
 
 The implementation uses a forward copy loop (`dest++`, `src++`). This violates the WASM specification for overlapping regions where `dest > src`, which requires a backward copy to avoid overwriting source data before it is read.
 
 **Impact**: `memmove`-like operations may corrupt data.
+
+**Verification**: Source inspection at `codegen.rs:1969-2047` confirms only forward copy is implemented. No overlap detection or backward copy path exists.
 
 **Fix needed**: Check if `dest > src` and regions overlap; if so, copy backward (from end to start).
 
 ---
 
 ### Division overflow checks missing
+
 **Severity**: Medium
-**Status**: Open
+**Status**: 🔴 Open (Verified 2025-01-30)
 
 `i32.div_s` and `i64.div_s` do not check for `INT_MIN / -1` overflow or division by zero. WASM requires a TRAP for these cases.
 
 **Current behavior**: Relies on PVM instruction behavior (likely returns `INT_MIN` or `-1` without trapping).
+
+**Verification**: Source inspection at `codegen.rs:1201-1209` (I32DivS) and `codegen.rs:1399-1407` (I64DivS) confirms direct PVM division without overflow checks.
 
 **Fix needed**: Add explicit checks for `divisor == 0` and `(dividend == INT_MIN && divisor == -1)` before division instructions.
 
 ---
 
 ### Import return values ignored
+
 **Severity**: Medium
-**Status**: Open
+**Status**: 🔴 Open (Verified 2025-01-30)
 
 Imported functions are stubbed as no-ops. If an imported function signature specifies a return value, the stub does not push anything to the stack/return register.
 
 **Impact**: Callers expecting a return value will read garbage or cause stack underflow.
+
+**Verification**: Source inspection at `codegen.rs:1752-1770` confirms imports pop arguments but do not push return values. Comment at line 1770 explicitly acknowledges this gap: "For has_return, we'd need to push a dummy value, but abort/console.log don't return".
 
 **Fix needed**: Push a dummy value (0) if the imported function signature has a return type.
 
 ---
 
 ### Passive data segments (`memory.init`) not supported
+
 **Severity**: Low
-**Status**: Known Limitation
+**Status**: 🔵 Known Limitation (Verified 2025-01-30)
 
 Only active data segments (initialized at instantiation) are supported. Passive segments and `memory.init` instruction are not implemented.
 
 **Workaround**: Use active segments or manual initialization code.
+
+**Verification**: Source inspection at `codegen.rs:177` explicitly states: "Passive data segments are ignored for now (used with memory.init)".
 
 ---
 
@@ -99,6 +113,18 @@ When you discover a new issue:
 
 ## Resolved Issues
 
+### ~~Stack overflow detection~~ (Resolved 2025-01-19)
+
+**Resolution**: Implemented stack overflow detection in function prologues:
+
+- Calculate `new_sp = sp - frame_size` before each call
+- Compare against `stack_limit = STACK_SEGMENT_END - stack_size` using unsigned comparison
+- Emit TRAP on overflow (causes PANIC status)
+- Default 64KB stack limit allows ~1600 recursion depth with 40-byte frames
+- Verification: `codegen.rs:390-424` (emit_call), `codegen.rs:597-639` (emit_call_indirect)
+
+---
+
 ### ~~`if/else/end` control flow not implemented~~ (Resolved 2026-01-17)
 **Resolution**: Implemented in Phase 3. Uses `BRANCH_EQ_IMM` for condition, `JUMP` for else branch, proper label management.
 
@@ -114,7 +140,7 @@ When you discover a new issue:
 - Jump table for return addresses (PVM requires JUMP_IND targets in jump table)
 - Caller saves return address (jump table index) in r0
 - Arguments passed via callee's local registers (r9+)
-- Return value in r1
+- Return value in r7
 - Proper function prologue/epilogue
 
 ---

@@ -4,14 +4,14 @@ use wasmparser::{FunctionBody, Operator};
 
 use super::stack::StackMachine;
 
-const ARGS_PTR_REG: u8 = 7;
-const ARGS_LEN_REG: u8 = 8;
+pub const ARGS_PTR_REG: u8 = 7;
+pub const ARGS_LEN_REG: u8 = 8;
 const FIRST_LOCAL_REG: u8 = 9;
 const MAX_LOCAL_REGS: usize = 4;
 const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 const EXIT_ADDRESS: i32 = -65536;
-const RETURN_ADDR_REG: u8 = 0;
-const STACK_PTR_REG: u8 = 1;
+pub const RETURN_ADDR_REG: u8 = 0;
+pub const STACK_PTR_REG: u8 = 1;
 const RETURN_VALUE_REG: u8 = 7;
 const SAVED_TABLE_IDX_REG: u8 = 8;
 const RO_DATA_BASE: i32 = 0x10000;
