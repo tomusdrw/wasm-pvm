@@ -84,16 +84,19 @@ function runJamFile(jamFile: string, args: string, pc?: number): number {
     const resultMatch = output.match(/Result:\s*\[0x([0-9a-fA-F]+)\]/);
 
     if (resultMatch) {
-      const hexResult = resultMatch[1];
-      // Parse as little-endian u32 (first 4 bytes if result is longer)
-      if (hexResult.length >= 8) {
-        const bytes = hexResult.match(/.{2}/g)?.slice(0, 4) || [];
-        // Little-endian: bytes are in reverse order
-        const value = parseInt(bytes.reverse().join(''), 16);
-        return value;
+      let hexResult = resultMatch[1];
+      
+      // Normalize to exactly 8 hex chars
+      if (hexResult.length < 8) {
+        hexResult = hexResult.padEnd(8, '0');
+      } else if (hexResult.length > 8) {
+        hexResult = hexResult.slice(0, 8);
       }
-      // Fallback: parse entire hex as single number
-      return parseInt(hexResult, 16);
+
+      const bytes = hexResult.match(/.{2}/g) || [];
+      // Little-endian: bytes are in reverse order
+      const value = parseInt(bytes.reverse().join(''), 16);
+      return value;
     }
 
     throw new Error(`Could not parse result from output: ${output}`);
