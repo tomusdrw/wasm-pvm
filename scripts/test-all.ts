@@ -128,7 +128,7 @@ function runJamFile(jamFile: string, args: string, pc?: number): number {
   } catch (error: any) {
     if (error.stdout) console.log(error.stdout.toString());
     if (error.stderr) console.error(error.stderr.toString());
-    throw new Error(`  (Execution failed, but continuing for infrastructure test: ${error.message.split('\n')[0]})`);
+    throw new Error(`Execution failed: ${error.message.split('\n')[0]}`, { cause: error });
   }
 }
 
