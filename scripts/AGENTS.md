@@ -73,22 +73,22 @@ const ptr_end = Number(result.registers[8]);
 
 ```bash
 # Run all tests
-npx tsx scripts/test-all.ts
+bun scripts/test-all.ts
 
 # Filter tests
-npx tsx scripts/test-all.ts --filter=add
+bun scripts/test-all.ts --filter=add
 
 # Run single JAM
-npx tsx scripts/run-jam.ts dist/add.jam --args=0500000007000000
+bun scripts/run-jam.ts dist/add.jam --args=0500000007000000
 
 # Quick trace (50 steps default) - for simple debugging
-npx tsx scripts/trace-jam.ts dist/add.jam 0500000007000000
+bun scripts/trace-jam.ts dist/add.jam 0500000007000000
 
 # Detailed trace with final state (50K steps default) - for infinite loops
-npx tsx scripts/trace-steps.ts dist/life.jam 01000000 100000
+bun scripts/trace-steps.ts dist/life.jam 01000000 100000
 
 # Verify JAM file structure
-npx tsx scripts/verify-jam.ts dist/add.jam
+bun scripts/verify-jam.ts dist/add.jam
 ```
 
 ## Debugging and Tracing
@@ -108,13 +108,13 @@ npx tsx scripts/verify-jam.ts dist/add.jam
 - Default 50 steps (will OOG on complex programs)
 - Raw anan-as verbose output
 - Use for: Simple programs, quick sanity checks
-- Syntax: `npx tsx scripts/trace-jam.ts <jam-file> [hex-args] [max-steps]`
+- Syntax: `bun scripts/trace-jam.ts <jam-file> [hex-args] [max-steps]`
 
 **trace-steps.ts** - Comprehensive debugging:
 - Default 50,000 steps
 - Shows final register state formatted as `r0=value, r1=value, ...`
 - Use for: Infinite loops, debugging why a program fails
-- Syntax: `npx tsx scripts/trace-steps.ts <jam-file> [hex-args] [max-steps]`
+- Syntax: `bun scripts/trace-steps.ts <jam-file> [hex-args] [max-steps]`
 
 ### Debugging Workflow
 
@@ -139,10 +139,10 @@ ARGUMENTS:           ; Instruction arguments
 The trace shows **every step** - use grep to filter:
 ```bash
 # Find all jumps to PC=42
-npx tsx scripts/trace-steps.ts prog.jam args 1000 | grep "PC = 42"
+bun scripts/trace-steps.ts prog.jam args 1000 | grep "PC = 42"
 
 # Watch gas consumption
-npx tsx scripts/trace-steps.ts prog.jam args 100 | grep "GAS ="
+bun scripts/trace-steps.ts prog.jam args 100 | grep "GAS ="
 ```
 
 ## Anti-Patterns

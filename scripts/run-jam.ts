@@ -1,7 +1,7 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Run JAM files with hex arguments using anan-as library
- * Usage: npx tsx scripts/run-jam.ts <jam-file> --args=<hex-args> [--pc=<pc>] [--gas=<gas>]
+ * Usage: bun scripts/run-jam.ts <jam-file> --args=<hex-args> [--pc=<pc>] [--gas=<gas>]
  */
 
 import { readFileSync } from 'node:fs';
@@ -30,7 +30,7 @@ async function main() {
   const args = process.argv.slice(2);
 
   if (args.length < 1) {
-    console.error('Usage: npx tsx scripts/run-jam.ts <jam-file> --args=<hex-args> [--pc=<pc>] [--gas=<gas>]');
+    console.error('Usage: bun scripts/run-jam.ts <jam-file> --args=<hex-args> [--pc=<pc>] [--gas=<gas>]');
     process.exit(1);
   }
 
@@ -79,7 +79,9 @@ async function main() {
         programArgs
     );
     
+    console.time('runProgram');
     const result = runProgram(prog, gas, pc, false, true);
+    console.timeEnd('runProgram');
 
     console.log(`Status: ${result.status}`);
     console.log(`Exit code: ${result.exitCode}`);

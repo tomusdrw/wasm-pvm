@@ -14,13 +14,13 @@ cargo build --release
 
 # Test
 cargo test                    # Unit tests (Rust)
-npx tsx scripts/test-all.ts   # Integration tests (62 tests)
+bun scripts/test-all.ts       # Integration tests (62 tests)
 
 # Compile WASM → JAM
 cargo run -p wasm-pvm-cli -- compile examples-wat/add.jam.wat -o dist/add.jam
 
 # Run JAM
-npx tsx scripts/run-jam.ts dist/add.jam --args=0500000007000000
+bun scripts/run-jam.ts dist/add.jam --args=0500000007000000
 ```
 
 ---
@@ -171,9 +171,9 @@ Spilled locals: `0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)`
 4. Update `LEARNINGS.md` if non-obvious
 
 ### Debug Translation Issue
-1. Execute and inspect result: `npx tsx scripts/run-jam.ts <file> --args=...`
-2. Step-by-step trace: `npx tsx scripts/trace-steps.ts <file> <args> <steps>`
-3. Verify JAM structure: `npx tsx scripts/verify-jam.ts <file>`
+1. Execute and inspect result: `bun scripts/run-jam.ts <file> --args=...`
+2. Step-by-step trace: `bun scripts/trace-steps.ts <file> <args> <steps>`
+3. Verify JAM structure: `bun scripts/verify-jam.ts <file>`
 4. Compare expected vs actual instruction sequence
 5. Check register allocation in `codegen.rs`
 6. Verify control flow graph

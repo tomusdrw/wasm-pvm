@@ -1,8 +1,8 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Verify that a JAM/SPI file is structurally valid.
  * 
- * Usage: npx tsx scripts/verify-jam.ts <jam-file>
+ * Usage: bun scripts/verify-jam.ts <jam-file>
  */
 
 import fs from 'node:fs';

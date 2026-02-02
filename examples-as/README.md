@@ -14,7 +14,7 @@ npm run build
 # Compile to PVM and run (from project root)
 cd ..
 cargo run -p wasm-pvm-cli -- compile examples-as/build/add.wasm -o /tmp/add.spi
-npx tsx scripts/run-spi.ts /tmp/add.spi --args=0500000007000000
+bun scripts/run-spi.ts /tmp/add.spi --args=0500000007000000
 # Result: 5 + 7 = 12
 ```
 
@@ -109,7 +109,7 @@ cat build/myprogram.wat
 cargo run -p wasm-pvm-cli -- compile build/myprogram.wasm -o myprogram.spi
 
 # 6. Run on PVM interpreter
-npx tsx ../scripts/run-spi.ts myprogram.spi --args=<hex-encoded-input>
+bun ../scripts/run-spi.ts myprogram.spi --args=<hex-encoded-input>
 ```
 
 ## Limitations

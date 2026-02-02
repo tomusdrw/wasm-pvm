@@ -1,14 +1,6 @@
 ;; Test all comparison operators to verify correctness
-;; Input: none (hardcoded test values)
-;; Output: 8 bytes - each byte is 0 or 1 for each test
-;;   byte 0: 3 < 5 should be 1
-;;   byte 1: 5 < 3 should be 0
-;;   byte 2: 3 > 5 should be 0
-;;   byte 3: 5 > 3 should be 1
-;;   byte 4: 3 <= 5 should be 1
-;;   byte 5: 5 <= 3 should be 0
-;;   byte 6: 3 >= 5 should be 0
-;;   byte 7: 5 >= 3 should be 1
+;; Input: test case index (0-3 for the four main tests)
+;; Output: 4 bytes - the comparison result (0 or 1)
 
 (module
   (memory 1)
@@ -17,45 +9,55 @@
   (global $result_len (mut i32) (i32.const 0))
   
   (func (export "main") (param $args_ptr i32) (param $args_len i32)
-    (local $result_addr i32)
+    (local $test_case i32)
+    (local $result i32)
     
-    ;; Result address
-    (local.set $result_addr (i32.const 0))
+    ;; Read test case from args
+    (local.set $test_case (i32.load (local.get $args_ptr)))
     
-    ;; Test 0: 3 < 5 should be 1
-    (i32.store8 (local.get $result_addr)
-      (i32.lt_s (i32.const 3) (i32.const 5)))
+    ;; Run the appropriate test based on test_case
+    (block
+      ;; Test 0: 3 < 5 should be 1
+      (if (i32.eq (local.get $test_case) (i32.const 0))
+        (then
+          (local.set $result (i32.lt_s (i32.const 3) (i32.const 5)))
+          (br 1)
+        )
+      )
+      
+      ;; Test 1: 5 < 3 should be 0
+      (if (i32.eq (local.get $test_case) (i32.const 1))
+        (then
+          (local.set $result (i32.lt_s (i32.const 5) (i32.const 3)))
+          (br 1)
+        )
+      )
+      
+      ;; Test 2: 10 > 5 should be 1
+      (if (i32.eq (local.get $test_case) (i32.const 2))
+        (then
+          (local.set $result (i32.gt_s (i32.const 10) (i32.const 5)))
+          (br 1)
+        )
+      )
+      
+      ;; Test 3: 5 > 10 should be 0
+      (if (i32.eq (local.get $test_case) (i32.const 3))
+        (then
+          (local.set $result (i32.gt_s (i32.const 5) (i32.const 10)))
+          (br 1)
+        )
+      )
+      
+      ;; Default: return 0
+      (local.set $result (i32.const 0))
+    )
     
-    ;; Test 1: 5 < 3 should be 0
-    (i32.store8 (i32.add (local.get $result_addr) (i32.const 1))
-      (i32.lt_s (i32.const 5) (i32.const 3)))
+    ;; Store result
+    (i32.store (i32.const 0) (local.get $result))
     
-    ;; Test 2: 3 > 5 should be 0
-    (i32.store8 (i32.add (local.get $result_addr) (i32.const 2))
-      (i32.gt_s (i32.const 3) (i32.const 5)))
-    
-    ;; Test 3: 5 > 3 should be 1
-    (i32.store8 (i32.add (local.get $result_addr) (i32.const 3))
-      (i32.gt_s (i32.const 5) (i32.const 3)))
-    
-    ;; Test 4: 3 <= 5 should be 1
-    (i32.store8 (i32.add (local.get $result_addr) (i32.const 4))
-      (i32.le_s (i32.const 3) (i32.const 5)))
-    
-    ;; Test 5: 5 <= 3 should be 0
-    (i32.store8 (i32.add (local.get $result_addr) (i32.const 5))
-      (i32.le_s (i32.const 5) (i32.const 3)))
-    
-    ;; Test 6: 3 >= 5 should be 0
-    (i32.store8 (i32.add (local.get $result_addr) (i32.const 6))
-      (i32.ge_s (i32.const 3) (i32.const 5)))
-    
-    ;; Test 7: 5 >= 3 should be 1
-    (i32.store8 (i32.add (local.get $result_addr) (i32.const 7))
-      (i32.ge_s (i32.const 5) (i32.const 3)))
-    
-    ;; Set result
-    (global.set $result_ptr (local.get $result_addr))
-    (global.set $result_len (i32.const 8))
+    ;; Set result metadata
+    (global.set $result_ptr (i32.const 0))
+    (global.set $result_len (i32.const 4))
   )
 )

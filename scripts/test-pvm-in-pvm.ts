@@ -1,10 +1,10 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * PVM-in-PVM Test Harness
  *
  * Compiles anan-as compiler to PVM, then runs test cases through the compiled anan-as-in-pvm.
  *
- * Usage: npx tsx scripts/test-pvm-in-pvm.ts [--filter=pattern] [--verbose]
+ * Usage: bun scripts/test-pvm-in-pvm.ts [--filter=pattern] [--verbose]
  */
 
 import fs from 'node:fs';
