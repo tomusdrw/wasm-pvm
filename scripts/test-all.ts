@@ -55,9 +55,20 @@ function compileAsIfAvailable(testName: string, jamFile: string): void {
 }
 
 function runJamFile(jamFile: string, args: string, pc?: number): number {
-  const cmd = pc !== undefined
-    ? `bun scripts/run-jam.ts ${jamFile} --args=${args} --pc=${pc}`
-    : `bun scripts/run-jam.ts ${jamFile} --args=${args}`;
+  // Build anan-as CLI command
+  // Format: anan-as run --spi --no-metadata --no-logs [--pc <n>] <file.jam> 0x<hex-args>
+  const ananAsCli = path.join(projectRoot, 'vendor/anan-as/dist/bin/index.js');
+  let cmd = `node ${ananAsCli} run --spi --no-metadata --no-logs`;
+  
+  if (pc !== undefined) {
+    cmd += ` --pc=${pc}`;
+  }
+  
+  // Add gas (default 100M to match previous behavior)
+  cmd += ` --gas=100000000`;
+  
+  // Add file and hex args (with 0x prefix)
+  cmd += ` ${jamFile} 0x${args}`;
 
   try {
     console.time('run');
@@ -68,60 +79,24 @@ function runJamFile(jamFile: string, args: string, pc?: number): number {
     });
     console.timeEnd('run');
 
-    // Parse the output to extract the result
-    // Assuming the output contains something like "Result: 42" or similar
-    const resultMatch = output.match(/Result:\s*(\d+)/) ||
-                       output.match(/result:\s*(\d+)/) ||
-                       output.match(/(\d+)\s*$/);
+    // Parse the hex result format: Result: [0x0c000000]
+    // The result is a little-endian hex array, extract and convert to decimal
+    const resultMatch = output.match(/Result:\s*\[0x([0-9a-fA-F]+)\]/);
 
     if (resultMatch) {
-      return parseInt(resultMatch[1], 10);
-    }
+      let hexResult = resultMatch[1];
+      
+      // Normalize to exactly 8 hex chars
+      if (hexResult.length < 8) {
+        hexResult = hexResult.padEnd(8, '0');
+      } else if (hexResult.length > 8) {
+        hexResult = hexResult.slice(0, 8);
+      }
 
-    // Check for Registers output from anan-as
-    // Registers: [4294901760, 4278059008, 0, 0, 0, 0, 0, 4278124544, 8, 0, 0, 0, 0]
-    // The result is usually in r0? No, r0 is return address.
-    // WASM return value?
-    // In SPI convention, result is returned via memory buffer pointed by result_ptr?
-    // But `add.jam.wat` implementation?
-
-    // examples-wat/add.jam.wat:
-    // (func (export "main") (param $args_ptr i32) (param $args_len i32)
-    //   ...
-    //   (global.set $result_ptr (i32.const 0x30100))
-    //   (global.set $result_len (i32.const 4))
-    // )
-
-    // If it sets global result_ptr/len.
-    // But `anan-as` run command prints Registers.
-    // Does it print memory? No.
-
-    // BUT `anan-as` output does NOT show the result value directly if it is in memory.
-    // We need to read the memory.
-
-    // However, for `add.jam`, maybe it returns via registers too?
-    // No, PVM doesn't have return registers for the whole program.
-
-    // Wait, the previous test output showed:
-    // Finished with status: 4 (OOG)
-    // Registers: [...]
-
-    // If status is 4, it failed.
-    // If status is 0 (HALT).
-
-    // I need to parse the output carefully.
-    // If `anan-as` doesn't print the memory result, I can't check it.
-
-    // But `test-all.ts` expected `12`.
-    // Maybe I should modify `anan-as` to print result from memory?
-    // Or modify `run-jam.ts` to use `anan-as` library and inspect memory.
-
-    // Let's first enable output parsing.
-
-    // If we can't parse, try to get the last number in the output
-    const numbers = output.match(/\d+/g);
-    if (numbers && numbers.length > 0) {
-      return parseInt(numbers[numbers.length - 1], 10);
+      const bytes = hexResult.match(/.{2}/g) || [];
+      // Little-endian: bytes are in reverse order
+      const value = parseInt(bytes.reverse().join(''), 16);
+      return value;
     }
 
     throw new Error(`Could not parse result from output: ${output}`);
