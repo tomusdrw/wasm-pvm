@@ -874,22 +874,45 @@ pub fn translate_function(
 }
 
 fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext) {
-    if ctx.is_main {
-        if ctx.num_params >= 1 {
-            // Subtract WASM_MEMORY_BASE from args_ptr so that when memory operations
-            // add it back, we get the correct PVM address (0xFEFF0000).
-            // This allows WASM code to treat args_ptr as a regular pointer that
-            // goes through the same translation as all other memory addresses.
-            emitter.emit(Instruction::AddImm32 {
-                dst: FIRST_LOCAL_REG,
-                src: ARGS_PTR_REG,
-                value: -WASM_MEMORY_BASE,
-            });
-        }
+    if ctx.is_main && ctx.num_params >= 1 {
+        // For main(), SPI convention passes:
+        //   r7 = args_ptr (raw PVM address, e.g., 0xFEFF0000)
+        //   r8 = args_len
+        //
+        // WASM code expects to use `local.get $args_ptr` which reads from r9 (local 0).
+        // All memory load/store operations add WASM_MEMORY_BASE (0x50000) to translate
+        // WASM addresses to PVM addresses.
+        //
+        // To make this work, we:
+        // 1. Subtract WASM_MEMORY_BASE from args_ptr so loads read from correct location:
+        //    adjusted_ptr = 0xFEFF0000 - 0x50000 = 0xFEFA0000
+        //    load(adjusted_ptr) → load(0xFEFA0000 + 0x50000) = load(0xFEFF0000) ✓
+        // 2. Copy the adjusted value to r9 (local 0 / $args_ptr)
+        // 3. Copy args_len to r10 (local 1 / $args_len) if present
+        //
+        // IMPORTANT: Use AddImm64 (not AddImm32) to avoid sign-extension issues.
+        // AddImm32 with a negative value would sign-extend the result to 64 bits,
+        // corrupting the address (e.g., 0xFEFA0000 → 0xFFFFFFFFFEFA0000).
+
+        // Adjust args_ptr in r7
+        emitter.emit(Instruction::AddImm64 {
+            dst: ARGS_PTR_REG,
+            src: ARGS_PTR_REG,
+            value: -WASM_MEMORY_BASE,
+        });
+
+        // Copy adjusted args_ptr to r9 (local 0)
+        emitter.emit(Instruction::AddImm32 {
+            dst: FIRST_LOCAL_REG, // r9
+            src: ARGS_PTR_REG,    // r7
+            value: 0,
+        });
+
+        // Copy args_len to r10 (local 1) if there's a second parameter
         if ctx.num_params >= 2 {
             emitter.emit(Instruction::AddImm32 {
-                dst: FIRST_LOCAL_REG + 1,
-                src: ARGS_LEN_REG,
+                dst: FIRST_LOCAL_REG + 1, // r10
+                src: ARGS_LEN_REG,        // r8
                 value: 0,
             });
         }
