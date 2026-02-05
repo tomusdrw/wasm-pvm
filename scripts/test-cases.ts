@@ -243,16 +243,26 @@ export const testCases: TestCase[] = [
       { args: '01000000', expected: 84, description: 'computed address with scale = 84' },
     ],
   },
-  // Additional AssemblyScript tests
-  // Note: as-alloc-test-minimal and as-alloc-test-incremental run out of gas (100M not enough)
-  // due to complex object allocations and potential GC overhead
+  // Additional AssemblyScript tests - allocation tests with different AS runtime configurations
   {
-    name: 'as-alloc-test-stub',
+    name: 'as-alloc-test-minimal',
     tests: [
       // Creates 5 Foo objects (x=0,10,20,30,40) with Bar children (value=0,100,200,300,400)
       // Plus 3 temp arrays with computed values
       // Total = 1100 (objects) + 7 (arrays) = 1107
-      { args: '', expected: 1107, description: 'AS: alloc test (stub) = 1107' },
+      { args: '', expected: 1107, description: 'AS: alloc test (minimal runtime) = 1107' },
+    ],
+  },
+  {
+    name: 'as-alloc-test-stub',
+    tests: [
+      { args: '', expected: 1107, description: 'AS: alloc test (stub runtime) = 1107' },
+    ],
+  },
+  {
+    name: 'as-alloc-test-incremental',
+    tests: [
+      { args: '', expected: 1107, description: 'AS: alloc test (incremental GC) = 1107' },
     ],
   },
   {
