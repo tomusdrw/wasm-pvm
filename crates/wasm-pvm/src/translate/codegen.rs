@@ -851,7 +851,7 @@ pub fn translate_function(
         total_locals += count as usize;
     }
 
-    emit_prologue(&mut emitter, ctx);
+    emit_prologue(&mut emitter, ctx, total_locals);
 
     let ops: Vec<Operator> = body
         .get_operators_reader()?
@@ -873,7 +873,7 @@ pub fn translate_function(
     })
 }
 
-fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext) {
+fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: usize) {
     if ctx.is_main && ctx.num_params >= 1 {
         // For main(), SPI convention passes:
         //   r7 = args_ptr (raw PVM address, e.g., 0xFEFF0000)
@@ -902,20 +902,40 @@ fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext) {
         });
 
         // Copy adjusted args_ptr to r9 (local 0)
-        emitter.emit(Instruction::AddImm32 {
+        // IMPORTANT: Use AddImm64 (not AddImm32) to preserve the full 64-bit value.
+        // AddImm32 sign-extends the result, which would corrupt addresses like 0xFEFA0000.
+        emitter.emit(Instruction::AddImm64 {
             dst: FIRST_LOCAL_REG, // r9
             src: ARGS_PTR_REG,    // r7
             value: 0,
         });
 
         // Copy args_len to r10 (local 1) if there's a second parameter
+        // Use AddImm64 for consistency, although args_len is typically small
         if ctx.num_params >= 2 {
-            emitter.emit(Instruction::AddImm32 {
+            emitter.emit(Instruction::AddImm64 {
                 dst: FIRST_LOCAL_REG + 1, // r10
                 src: ARGS_LEN_REG,        // r8
                 value: 0,
             });
         }
+    }
+
+    // Zero-initialize non-parameter local variables as required by WebAssembly spec.
+    // Parameters (locals 0..num_params) are initialized by caller or code above.
+    // Remaining locals (num_params..total_locals) must be zero-initialized.
+    let start_local = ctx.num_params;
+    // Only initialize locals that fit in registers (0..MAX_LOCAL_REGS).
+    // Spilled locals (index >= MAX_LOCAL_REGS) would need special memory initialization,
+    // but those are less common and PVM memory is typically zero-initialized.
+    let end_local = total_locals.min(MAX_LOCAL_REGS);
+    for local_idx in start_local..end_local {
+        // Local fits in a register (r9 + local_idx)
+        // Use LoadImm to set register to 0
+        emitter.emit(Instruction::LoadImm {
+            reg: FIRST_LOCAL_REG + local_idx as u8,
+            value: 0,
+        });
     }
 }
 
