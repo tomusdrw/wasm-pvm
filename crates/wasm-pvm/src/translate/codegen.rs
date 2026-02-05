@@ -1855,24 +1855,45 @@ fn translate_op(
             // so registers r2 to r(2 + stack_depth_before - 2) are still in use.
             // We need to use a register that's NOT in use by the stack.
             //
-            // After pop: stack_depth = stack_depth_before - 1
-            // Highest register in use: r2 + (stack_depth_before - 2) = r(stack_depth_before)
-            // Safe to use: r(stack_depth_before + 1) and higher, up to r6
-            // If stack_depth_before >= 5, we're in spill territory and this gets complicated.
-            // For now, use r4 or r5 which should be safe for typical stack depths.
-            let safe_temp_1 = 4u8; // r4
-            let safe_temp_2 = 5u8; // r5
-            let safe_temp_3 = 6u8; // r6
+            // Using r4/r5 is unsafe if stack depth >= 3!
+            // We use r7 and r8 which are designated scratch registers in our convention
+            // (saved/restored by entry prologue if needed).
+            let safe_temp_1 = 7u8; // r7 (ARGS_PTR_REG, but treated as scratch)
+            let safe_temp_2 = 8u8; // r8 (ARGS_LEN_REG, but treated as scratch)
+                                   // For the 3rd temp, we need another safe register.
+                                   // Stack uses r2-r6. If depth is high, r6 is used.
+                                   // Locals start at r9.
+                                   // r0 is return addr (unsafe to clobber).
+                                   // r1 is SP.
+                                   //
+                                   // We'll use a high local register that is unlikely to be used, or spill?
+                                   // Actually, we can reuse 'delta' register if we are careful.
 
-            // Move delta to a safe temp register if delta == dst (which would be clobbered)
+            // Let's use r13? No, only 13 registers (0-12).
+            // r12 is local 3.
+
+            // Let's check if we can reuse registers.
+            // We need: delta_reg, dst, new_size_reg, max_reg.
+
+            // dst is target for 'current size'.
+
+            // Let's use r7 for delta copy.
+            // dst (stack top).
+            // r8 for new_size.
+            // r7 for max (reuse r7).
+
+            let scratch_1 = 7u8;
+            let scratch_2 = 8u8;
+
+            // Move delta to scratch_1 if delta == dst
             if delta == dst {
                 emitter.emit(Instruction::AddImm32 {
-                    dst: safe_temp_1,
+                    dst: scratch_1,
                     src: delta,
                     value: 0,
                 });
             }
-            let delta_reg = if delta == dst { safe_temp_1 } else { delta };
+            let delta_reg = if delta == dst { scratch_1 } else { delta };
 
             // Load current memory size into dst
             emitter.emit(Instruction::LoadImm {
@@ -1885,8 +1906,8 @@ fn translate_op(
                 offset: 0,
             });
 
-            // Calculate new_size = current + delta using safe_temp_2
-            let new_size_reg = safe_temp_2;
+            // Calculate new_size = current + delta using scratch_2
+            let new_size_reg = scratch_2;
             emitter.emit(Instruction::Add32 {
                 dst: new_size_reg,
                 src1: dst,
@@ -1894,12 +1915,11 @@ fn translate_op(
             });
 
             // Check if new_size > max_pages
-            // If so, branch to failure path
             let fail_label = emitter.alloc_label();
             let end_label = emitter.alloc_label();
 
-            // Use safe_temp_3 for max_pages comparison
-            let max_reg = safe_temp_3;
+            // Use scratch_1 for max_pages comparison (delta_reg no longer needed)
+            let max_reg = scratch_1;
 
             // Load max_pages for comparison
             emitter.emit(Instruction::LoadImm {

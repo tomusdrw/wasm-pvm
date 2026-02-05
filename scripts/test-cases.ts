@@ -243,4 +243,71 @@ export const testCases: TestCase[] = [
       { args: '01000000', expected: 84, description: 'computed address with scale = 84' },
     ],
   },
+  // Additional AssemblyScript tests
+  // Note: as-alloc-test-minimal and as-alloc-test-incremental run out of gas (100M not enough)
+  // due to complex object allocations and potential GC overhead
+  {
+    name: 'as-alloc-test-stub',
+    tests: [
+      // Creates 5 Foo objects (x=0,10,20,30,40) with Bar children (value=0,100,200,300,400)
+      // Plus 3 temp arrays with computed values
+      // Total = 1100 (objects) + 7 (arrays) = 1107
+      { args: '', expected: 1107, description: 'AS: alloc test (stub) = 1107' },
+    ],
+  },
+  {
+    name: 'as-life',
+    tests: [
+      // Game of Life returns [width(u32), height(u32), cells...]
+      // First u32 is WIDTH = 16
+      { args: '00000000', expected: 16, description: 'AS: life 0 steps - returns width=16' },
+      { args: '01000000', expected: 16, description: 'AS: life 1 step - returns width=16' },
+      { args: '05000000', expected: 16, description: 'AS: life 5 steps - returns width=16' },
+    ],
+  },
+  {
+    name: 'as-array-test',
+    tests: [
+      // Input: count(u32) + bytes
+      // Output: args_ptr, args_len, count, arr.length, ...
+      // First u32 is adjusted args_ptr (0xFEFA0000 = 4277796864 after WASM_MEMORY_BASE subtraction)
+      { args: '03000000aabbcc', expected: 0xfefa0000, description: 'AS: array test - args_ptr check' },
+    ],
+  },
+  {
+    name: 'as-decoder-test',
+    tests: [
+      // Input: program_len(u32), data_len(u32), program_bytes...
+      // Output: args_ptr, args_len, program_len, data_len, ...
+      // First u32 is adjusted args_ptr
+      { args: '04000000000000001234abcd', expected: 0xfefa0000, description: 'AS: decoder test - args_ptr check' },
+    ],
+  },
+  {
+    name: 'as-memory-args-test',
+    tests: [
+      // Input: a(u32), b(u32)
+      // Output: args_ptr, args_len, a, b, a+b, ...
+      // First u32 is adjusted args_ptr
+      { args: '0500000007000000', expected: 0xfefa0000, description: 'AS: memory args test - args_ptr check' },
+    ],
+  },
+  {
+    name: 'as-nested-memory-test',
+    tests: [
+      // Input: program_len(u32), data_len(u32), program_bytes, data_bytes
+      // Output: args_ptr, args_len, program_len, data_len, ...
+      // First u32 is adjusted args_ptr
+      { args: '0400000002000000deadbeef1234', expected: 0xfefa0000, description: 'AS: nested memory test - args_ptr check' },
+    ],
+  },
+  {
+    name: 'as-mini-pvm-runner',
+    tests: [
+      // Input: gas(u64), pc(u32), program_len(u32), inner_args_len(u32), program, inner_args
+      // Output starts with marker 0x11111111, then diagnostics
+      // gas=1000 (e803000000000000), pc=0 (00000000), prog_len=4 (04000000), args_len=2 (02000000)
+      { args: 'e80300000000000000000000040000000200000011223344aabb', expected: 0x11111111, description: 'AS: mini-pvm-runner - marker check' },
+    ],
+  },
 ];

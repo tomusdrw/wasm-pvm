@@ -51,9 +51,10 @@
       )
     )
     
-    ;; Store result
-    (i32.store (i32.const 0x30200) (local.get $val))
-    (global.set $result_ptr (i32.const 0x30200))
+    ;; Store result at WASM address 0x200 (-> PVM address 0x50200)
+    (i32.store (i32.const 0x200) (local.get $val))
+    ;; result_ptr is WASM address - epilogue adds WASM_MEMORY_BASE
+    (global.set $result_ptr (i32.const 0x200))
     (global.set $result_len (i32.const 4))
   )
 )

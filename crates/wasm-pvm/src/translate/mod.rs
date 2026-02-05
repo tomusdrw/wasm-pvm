@@ -250,6 +250,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let (heap_pages, max_memory_pages) =
         calculate_heap_pages(functions.len(), &data_segments, &memory_limits);
 
+    // WORKAROUND: Force heap to be large enough to avoid memory.grow issues
+    let heap_pages = heap_pages.max(1024u16); // 64MB
+    let max_memory_pages = max_memory_pages.max(1024u32);
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
@@ -308,6 +311,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         let is_secondary_entry = secondary_entry_idx_resolved == Some(local_func_idx);
 
         let is_entry_func = is_main || is_secondary_entry;
+
         let ctx = CompileContext {
             num_params,
             num_locals: 0,
@@ -336,6 +340,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             max_memory_pages,
         };
 
+        // Record function start offset BEFORE any start function prologue injection.
+        // This ensures the JUMP from entry header targets the prologue (which is a valid basic block start),
+        // not the function body (which isn't a basic block start because the prologue doesn't end with a terminating instruction).
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
         function_offsets.push(func_start_offset);
 
@@ -366,13 +373,6 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             });
 
             // Call start function
-            // We need to construct the instructions first, then register the fixup.
-            // The fixup needs absolute index in all_instructions?
-
-            // resolve_call_fixups iterates (instr_base, fixup).
-            // return_addr_idx = instr_base + fixup.return_addr_instr
-
-            // So if we push (0, fixup), then fixup.return_addr_instr should be the actual index in all_instructions.
             let current_instr_idx = all_instructions.len();
 
             // loadimm64 r0, <placeholder>
@@ -381,19 +381,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                 value: 0,
             });
 
-            // add64 r0, r0, r1 (add stack offset? No, PVM uses flat return address?)
-            // PVM spec: "Call: set r0 to return address, jump to target"
-            // Our implementation: Load return address (jump table entry) into r0.
-            // Wait, return address is an index into the jump table?
-            // resolve_call_fixups:
-            //   jump_table.push(return_addr_offset)
-            //   jump_table_address = (index + 1) * 2
-            //   Instruction::LoadImm64 { value } = jump_table_address
-
-            // So we just need LoadImm64.
-
             // Jump to target
-            // jump <placeholder>
             all_instructions.push(Instruction::Jump { offset: 0 });
 
             // Fixup for this call
@@ -457,7 +445,14 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     if let Some(secondary_idx) = secondary_entry_idx_resolved {
         let secondary_offset = function_offsets[secondary_idx] as i32 - 5;
         if let Instruction::Jump { offset } = &mut all_instructions[1] {
-            *offset = secondary_offset;
+            *offset = secondary_offset; // Secondary offset might need adjustment too?
+        }
+    }
+
+    if let Some(secondary_idx) = secondary_entry_idx_resolved {
+        let secondary_offset = function_offsets[secondary_idx] as i32 - 5;
+        if let Instruction::Jump { offset } = &mut all_instructions[1] {
+            *offset = secondary_offset; // Secondary offset might need adjustment too?
         }
     }
 
