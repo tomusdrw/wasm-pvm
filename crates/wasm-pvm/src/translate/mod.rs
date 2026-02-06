@@ -250,9 +250,15 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let (heap_pages, max_memory_pages) =
         calculate_heap_pages(functions.len(), &data_segments, &memory_limits);
 
-    // WORKAROUND: Force heap to be large enough to avoid memory.grow issues
-    let heap_pages = heap_pages.max(1024u16); // 64MB
-    let max_memory_pages = max_memory_pages.max(1024u32);
+    // WORKAROUND: Force heap to be large enough to avoid memory.grow issues.
+    // Only raise max_memory_pages when the module has no explicit max,
+    // to avoid allowing memory.grow past the WASM-declared limit.
+    let heap_pages = heap_pages.max(1024u16); // 4MB (1024 * 4KB PVM pages)
+    let max_memory_pages = if memory_limits.max_pages.is_some() {
+        max_memory_pages
+    } else {
+        max_memory_pages.max(1024u32)
+    };
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
