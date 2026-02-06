@@ -751,6 +751,5 @@ Run each example in PVM-in-PVM mode and verify:
 - [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) - Known bugs and limitations
 - [AGENTS.md](./AGENTS.md) - AI agent guidelines
 - [Ananas PVM](./vendor/anan-as) - PVM reference implementation (submodule)
-- [Zink Compiler](./vendor/zink) - WASM→EVM compiler for architecture inspiration (submodule)
 - [WebAssembly Spec](https://webassembly.github.io/spec/)
 - [AssemblyScript](https://www.assemblyscript.org/) - TypeScript-like language to WASM

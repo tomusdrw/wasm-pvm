@@ -841,5 +841,4 @@ bun scripts/test-pvm-in-pvm.ts
 
 - [Gray Paper v0.7.2](./gp-0.7.2.md) - JAM protocol specification
 - [Ananas PVM](./vendor/anan-as) - PVM reference implementation (submodule)
-- [Zink Compiler](./vendor/zink) - WASM→EVM compiler inspiration (submodule)
 - [WebAssembly Spec](https://webassembly.github.io/spec/) - WASM specification

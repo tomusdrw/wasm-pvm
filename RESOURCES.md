@@ -8,9 +8,6 @@
 - [Ananas PVM](./vendor/anan-as) - AssemblyScript PVM implementation
   - Key files: `assembly/spi.ts`, `assembly/instructions.ts`, `assembly/program.ts`
   - Contains SPI format details, instruction encoding, memory layout
-- [Zink Compiler](./vendor/zink) - WASM→EVM compiler (architecture inspiration)
-  - Key files: `codegen/src/visitor/mod.rs`, `codegen/src/codegen/function.rs`
-  - Uses wasmparser's VisitOperator pattern
 
 ## Test Files
 - [Minimal WASM examples](./examples-wat) - WAT test programs

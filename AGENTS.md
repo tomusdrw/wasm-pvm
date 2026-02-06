@@ -51,7 +51,7 @@ scripts/                   # TypeScript tooling [see AGENTS.md]
 
 examples-wat/              # WAT test programs
 examples-as/               # AssemblyScript examples
-vendor/                    # Git submodules (anan-as, zink)
+vendor/                    # Git submodules (anan-as)
 ```
 
 ---
