@@ -1878,8 +1878,7 @@ fn translate_op(
             // Using r4/r5 is unsafe if stack depth >= 3!
             // We use r7 and r8 which are designated scratch registers in our convention
             // (saved/restored by entry prologue if needed).
-            let safe_temp_1 = 7u8; // r7 (ARGS_PTR_REG, but treated as scratch)
-            let safe_temp_2 = 8u8; // r8 (ARGS_LEN_REG, but treated as scratch)
+            // Safe temp registers: r7 (ARGS_PTR_REG) and r8 (ARGS_LEN_REG) treated as scratch
             // For the 3rd temp, we need another safe register.
             // Stack uses r2-r6. If depth is high, r6 is used.
             // Locals start at r9.
