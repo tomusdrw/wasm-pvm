@@ -16,7 +16,7 @@ fn test_as_nested_repro() {
     // Find the main function area (approximately)
     // Looking for patterns related to the nested if-result
     for (i, instr) in instructions.iter().enumerate() {
-        println!("{:4}: {:?}", i, instr);
+        println!("{i:4}: {instr:?}");
     }
 
     assert!(!instructions.is_empty());

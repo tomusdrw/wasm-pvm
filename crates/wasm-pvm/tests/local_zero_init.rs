@@ -77,5 +77,5 @@ fn test_local_zero_init() {
 
     println!("\n=== Local Zero Init Test ===");
     println!("Generated {} instructions", instructions.len());
-    println!("Contains LoadImm 0 for local init: {}", has_load_imm_zero);
+    println!("Contains LoadImm 0 for local init: {has_load_imm_zero}");
 }

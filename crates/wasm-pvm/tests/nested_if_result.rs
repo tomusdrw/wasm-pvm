@@ -90,7 +90,7 @@ fn test_nested_if_result_instructions() {
     // Print all instructions for debugging
     println!("Generated {} instructions:", instructions.len());
     for (i, instr) in instructions.iter().enumerate() {
-        println!("{:4}: {:?}", i, instr);
+        println!("{i:4}: {instr:?}");
     }
 
     // The test should compile without panicking
@@ -215,7 +215,7 @@ fn test_exact_nested_repro() {
     println!("\n=== Exact Nested Repro ===");
     println!("Generated {} instructions:", instructions.len());
     for (i, instr) in instructions.iter().enumerate() {
-        println!("{:4}: {:?}", i, instr);
+        println!("{i:4}: {instr:?}");
     }
 
     assert!(!instructions.is_empty());
@@ -290,7 +290,7 @@ fn test_nested_with_call() {
     println!("\n=== Nested If-Result with Function Call ===");
     println!("Generated {} instructions:", instructions.len());
     for (i, instr) in instructions.iter().enumerate() {
-        println!("{:4}: {:?}", i, instr);
+        println!("{i:4}: {instr:?}");
     }
 
     assert!(!instructions.is_empty());
@@ -356,13 +356,13 @@ fn test_simple_nested_if_result() {
     println!("\n=== Simple Nested If-Result ===");
     println!("Generated {} instructions:", instructions.len());
     for (i, instr) in instructions.iter().enumerate() {
-        println!("{:4}: {:?}", i, instr);
+        println!("{i:4}: {instr:?}");
     }
 
     assert!(!instructions.is_empty());
 }
 
-/// Test that matches the EXACT AssemblyScript __get pattern:
+/// Test that matches the EXACT `AssemblyScript` __get pattern:
 /// - A function with internal control flow (if-unreachable bounds check)
 /// - Called after a ternary with memory load in THEN branch + drop
 const AS_GET_PATTERN_WAT: &str = r#"
@@ -527,7 +527,7 @@ fn test_as_get_pattern() {
     println!("\n=== AssemblyScript __get Pattern ===");
     println!("Generated {} instructions:", instructions.len());
     for (i, instr) in instructions.iter().enumerate() {
-        println!("{:4}: {:?}", i, instr);
+        println!("{i:4}: {instr:?}");
     }
 
     assert!(!instructions.is_empty());

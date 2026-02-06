@@ -1,6 +1,6 @@
 //! Example tests demonstrating the test harness
 //!
-//! This file shows various ways to use the test_harness module
+//! This file shows various ways to use the `test_harness` module
 //! for testing WASM to PVM compilation.
 
 use wasm_pvm::Opcode;
@@ -360,11 +360,11 @@ fn test_predicate_patterns() {
 
 #[test]
 fn test_invalid_wat() {
-    let invalid_wat = r#"
+    let invalid_wat = r"
         (module
             (this is invalid)
         )
-    "#;
+    ";
 
     let result = compile_wat(invalid_wat);
     assert!(result.is_err(), "Should fail on invalid WAT");
@@ -372,11 +372,11 @@ fn test_invalid_wat() {
 
 #[test]
 fn test_no_function() {
-    let wat = r#"
+    let wat = r"
         (module
             (memory 1)
         )
-    "#;
+    ";
 
     let result = compile_wat(wat);
     // Should error because there's no function at all
