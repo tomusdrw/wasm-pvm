@@ -1880,14 +1880,14 @@ fn translate_op(
             // (saved/restored by entry prologue if needed).
             let safe_temp_1 = 7u8; // r7 (ARGS_PTR_REG, but treated as scratch)
             let safe_temp_2 = 8u8; // r8 (ARGS_LEN_REG, but treated as scratch)
-                                   // For the 3rd temp, we need another safe register.
-                                   // Stack uses r2-r6. If depth is high, r6 is used.
-                                   // Locals start at r9.
-                                   // r0 is return addr (unsafe to clobber).
-                                   // r1 is SP.
-                                   //
-                                   // We'll use a high local register that is unlikely to be used, or spill?
-                                   // Actually, we can reuse 'delta' register if we are careful.
+            // For the 3rd temp, we need another safe register.
+            // Stack uses r2-r6. If depth is high, r6 is used.
+            // Locals start at r9.
+            // r0 is return addr (unsafe to clobber).
+            // r1 is SP.
+            //
+            // We'll use a high local register that is unlikely to be used, or spill?
+            // Actually, we can reuse 'delta' register if we are careful.
 
             // Let's use r13? No, only 13 registers (0-12).
             // r12 is local 3.

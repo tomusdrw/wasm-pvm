@@ -66,11 +66,14 @@ fn test_local_zero_init() {
 
     // Verify we have LoadImm instructions for zero-initializing locals
     // The function $sum_to_n has 2 non-parameter locals that need initialization
-    let has_load_imm_zero = instructions.iter().any(|instr| {
-        matches!(instr, wasm_pvm::pvm::Instruction::LoadImm { value: 0, .. })
-    });
+    let has_load_imm_zero = instructions
+        .iter()
+        .any(|instr| matches!(instr, wasm_pvm::pvm::Instruction::LoadImm { value: 0, .. }));
 
-    assert!(has_load_imm_zero, "Should have LoadImm 0 instructions for local initialization");
+    assert!(
+        has_load_imm_zero,
+        "Should have LoadImm 0 instructions for local initialization"
+    );
 
     println!("\n=== Local Zero Init Test ===");
     println!("Generated {} instructions", instructions.len());

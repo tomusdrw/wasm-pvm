@@ -97,7 +97,7 @@ export function main(args_ptr: i32, args_len: i32): void {
       for (let i: i32 = 0; i < 32; i++) {
         tempArr[i] = <u8>((round * 32 + i) & 0xFF);
       }
-      result += tempArr[0] + tempArr[31];
+      result += <u32>tempArr[0] + <u32>tempArr[31];
     }
   } else {
     // Step 5+: Return total sum
@@ -135,7 +135,7 @@ export function main(args_ptr: i32, args_len: i32): void {
       for (let i: i32 = 0; i < 32; i++) {
         tempArr[i] = <u8>((round * 32 + i) & 0xFF);
       }
-      result += tempArr[0] + tempArr[31];
+      result += <u32>tempArr[0] + <u32>tempArr[31];
     }
   }
 

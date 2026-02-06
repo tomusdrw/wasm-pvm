@@ -115,6 +115,65 @@ This document captures technical learnings, design decisions, and discoveries ma
 
 ---
 
+## Local Variable Zero-Initialization Bug (Phase 16d - 2026-02-06)
+
+**Problem**: WASM spec requires all local variables to be zero-initialized, but wasm-pvm was not initializing non-parameter locals.
+
+**Symptom**: Loop counters starting with garbage values, causing loops to not execute correctly.
+
+**Root Cause**: In `emit_prologue()`, only parameters were being set up. Non-parameter locals (indices >= num_params) were left uninitialized.
+
+**Fix**: Added `LoadImm { reg, value: 0 }` instructions in `emit_prologue()` for all non-parameter locals that fit in registers (local_idx < MAX_LOCAL_REGS).
+
+**Code Location**: `crates/wasm-pvm/src/translate/codegen.rs` lines 924-937
+
+**Test**: `crates/wasm-pvm/tests/local_zero_init.rs`
+
+---
+
+## AssemblyScript u8 Arithmetic Semantics (Phase 16e - 2026-02-06)
+
+**Problem**: AssemblyScript tests for complex allocations were failing with a consistent 256-byte difference.
+
+**Investigation Path**:
+1. Created `alloc-loop-debug.ts` to isolate the allocation loop
+2. Found that individual rounds 0-3 passed but round 4 (with values >= 128) failed
+3. Created `u8-two-elem-test.ts` to test Uint8Array with multiple elements
+4. Discovered: single element works, but summing two elements >= 128 fails
+
+**Root Cause**: AssemblyScript applies `& 0xFF` mask to the result of u8 arithmetic, even when assigning to a u32 variable.
+
+```typescript
+// BUG: 128 + 159 = 287 & 0xFF = 31
+result = arr[0] + arr[1];
+
+// FIX: cast to u32 first to avoid the mask
+result = <u32>arr[0] + <u32>arr[1];  // = 287 ✓
+```
+
+**Generated WAT Analysis**:
+```wat
+;; AS generates this for u8 + u8:
+call $~lib/typedarray/Uint8Array#__get  ;; returns i32
+call $~lib/typedarray/Uint8Array#__get  ;; returns i32
+i32.add
+i32.const 255
+i32.and  ;; <-- This mask causes overflow for values > 255!
+```
+
+**Impact**: Any u8 addition that exceeds 255 will wrap incorrectly. This is NOT a wasm-pvm bug - it's AS type semantics.
+
+**Files Fixed**:
+- `examples-as/assembly/complex-alloc-test.ts`
+- `examples-as/assembly/complex-alloc-debug.ts`
+- `examples-as/assembly/alloc-loop-debug.ts` (new debug test)
+- `examples-as/assembly/u8-store-test.ts` (new debug test)
+- `examples-as/assembly/u8-two-elem-test.ts` (new debug test)
+
+**Lesson**: When summing Uint8Array elements in AssemblyScript where the result may exceed 255, always cast to u32/i32 first.
+
+---
+
 ## AssemblyScript Runtime Analysis (Phase 16a)
 
 **Investigation**: Created complex allocation tests to isolate PVM-in-PVM infinite recursion causes.

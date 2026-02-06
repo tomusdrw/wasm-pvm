@@ -76,14 +76,17 @@ All WASM programs targeting PVM/JAM must follow this convention:
 
 ## Current Progress
 
-**Latest Update**: 2025-01-30 - Documentation audit complete. All 62 integration tests + 30 Rust unit tests passing.
+**Latest Update**: 2026-02-06 - All 339 integration tests + 7 Rust tests passing. Fixed local zero-init bug and AS u8 arithmetic issues.
 
 **Completed**:
 - Phase 14: memory.size/memory.grow with proper tracking
 - Phase 15: call_indirect signature validation + operand stack clobber fix
 - Phase 16: PVM-in-PVM infrastructure complete (test harness working, basic arithmetic validated)
+- Phase 16d: Local variable zero-initialization bug fix (WASM spec compliance)
+- Phase 16e: AS complex-alloc tests fixed (u8 arithmetic semantics issue)
 
 **Next Steps**:
+- Phase 19: Working PVM-in-PVM Test Execution (IMMEDIATE PRIORITY)
 - Phase 17: Host Calls / ecalli Support (planned)
 - Phase 18: Architecture Refactor (unit testing improvements)
 
