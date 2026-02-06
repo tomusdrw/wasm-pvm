@@ -246,10 +246,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         }
     }
 
-    // Calculate heap/memory info early since we need max_memory_pages for codegen
+    // Calculate heap/memory info early since we need max_memory_pages for codegen.
+    // The min floor of 1024 WASM pages is applied inside when no explicit max is declared.
     let (heap_pages, max_memory_pages) =
-        calculate_heap_pages(functions.len(), &data_segments, &memory_limits);
-
+        calculate_heap_pages(functions.len(), &data_segments, &memory_limits)?;
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
@@ -308,6 +308,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         let is_secondary_entry = secondary_entry_idx_resolved == Some(local_func_idx);
 
         let is_entry_func = is_main || is_secondary_entry;
+
         let ctx = CompileContext {
             num_params,
             num_locals: 0,
@@ -336,6 +337,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             max_memory_pages,
         };
 
+        // Record function start offset BEFORE any start function prologue injection.
+        // This ensures the JUMP from entry header targets the prologue (which is a valid basic block start),
+        // not the function body (which isn't a basic block start because the prologue doesn't end with a terminating instruction).
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
         function_offsets.push(func_start_offset);
 
@@ -366,13 +370,6 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             });
 
             // Call start function
-            // We need to construct the instructions first, then register the fixup.
-            // The fixup needs absolute index in all_instructions?
-
-            // resolve_call_fixups iterates (instr_base, fixup).
-            // return_addr_idx = instr_base + fixup.return_addr_instr
-
-            // So if we push (0, fixup), then fixup.return_addr_instr should be the actual index in all_instructions.
             let current_instr_idx = all_instructions.len();
 
             // loadimm64 r0, <placeholder>
@@ -381,19 +378,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                 value: 0,
             });
 
-            // add64 r0, r0, r1 (add stack offset? No, PVM uses flat return address?)
-            // PVM spec: "Call: set r0 to return address, jump to target"
-            // Our implementation: Load return address (jump table entry) into r0.
-            // Wait, return address is an index into the jump table?
-            // resolve_call_fixups:
-            //   jump_table.push(return_addr_offset)
-            //   jump_table_address = (index + 1) * 2
-            //   Instruction::LoadImm64 { value } = jump_table_address
-
-            // So we just need LoadImm64.
-
             // Jump to target
-            // jump <placeholder>
             all_instructions.push(Instruction::Jump { offset: 0 });
 
             // Fixup for this call
@@ -591,7 +576,7 @@ fn calculate_heap_pages(
     num_functions: usize,
     data_segments: &[DataSegment],
     memory_limits: &MemoryLimits,
-) -> (u16, u32) {
+) -> Result<(u16, u32)> {
     // Memory layout:
     // 0x30000-0x300FF: Globals (256 bytes)
     // 0x30100-0x3FFFF: User heap (~64KB)
@@ -605,10 +590,13 @@ fn calculate_heap_pages(
     let spilled_locals_end = codegen::SPILLED_LOCALS_BASE as usize
         + num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
 
-    // Determine the maximum WASM memory pages we'll allow
-    // Priority: WASM explicit max > default based on usage
+    // Determine the maximum WASM memory pages we'll allow.
+    // Respect the module's explicit max; only apply a floor when no max is declared.
     let default_max_pages: u32 = if data_segments.is_empty() { 256 } else { 1024 };
-    let max_memory_pages = memory_limits.max_pages.unwrap_or(default_max_pages);
+    let max_memory_pages = match memory_limits.max_pages {
+        Some(declared_max) => declared_max,
+        None => default_max_pages.max(1024),
+    };
 
     // WASM memory end based on max pages allocation
     // Each WASM page is 64KB (65536 bytes)
@@ -621,7 +609,15 @@ fn calculate_heap_pages(
     let total_bytes = end - 0x30000;
     let heap_pages = total_bytes.div_ceil(4096);
 
-    (heap_pages.max(16) as u16, max_memory_pages)
+    // Ensure a minimum of 1024 PVM pages (4MB) for heap
+    let heap_pages = heap_pages.max(1024);
+    let heap_pages = u16::try_from(heap_pages).map_err(|_| {
+        Error::Internal(format!(
+            "heap size {heap_pages} pages exceeds u16::MAX ({}) — module too large",
+            u16::MAX
+        ))
+    })?;
+    Ok((heap_pages, max_memory_pages))
 }
 
 fn resolve_call_fixups(

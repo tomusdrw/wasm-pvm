@@ -8,12 +8,15 @@
   (start $start)
   
   (func (export "main") (param $args_ptr i32) (param $args_len i32)
-    ;; Return result (pointer to 0x30100)
-    (global.set $result_ptr (i32.const 0x30100))
+    ;; Use WASM linear memory address 0x100.
+    ;; result_ptr should be a WASM address - the epilogue adds WASM_MEMORY_BASE
+    ;; So WASM address 0x100 becomes PVM address 0x50100
+    (global.set $result_ptr (i32.const 0x100))
     (global.set $result_len (i32.const 4))
-    
-    ;; Store global value to result area
-    (i32.store (i32.const 0x30100) (global.get $g))
+
+    ;; Store global value to result area (at WASM address 0x100)
+    ;; The i32.store address also gets WASM_MEMORY_BASE added by the compiler
+    (i32.store (i32.const 0x100) (global.get $g))
   )
   
   (global $result_ptr (export "result_ptr") (mut i32) (i32.const 0))

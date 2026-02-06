@@ -87,5 +87,8 @@ jobs:
       - name: Build examples-as
         run: cd examples-as && npm run build
 
+      - name: Build examples-as test modules
+        run: cd examples-as && npm run build:all-tests
+
       - name: Run integration tests
         run: bun scripts/test-all.ts

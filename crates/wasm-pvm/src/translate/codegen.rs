@@ -851,7 +851,7 @@ pub fn translate_function(
         total_locals += count as usize;
     }
 
-    emit_prologue(&mut emitter, ctx);
+    emit_prologue(&mut emitter, ctx, total_locals);
 
     let ops: Vec<Operator> = body
         .get_operators_reader()?
@@ -873,26 +873,69 @@ pub fn translate_function(
     })
 }
 
-fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext) {
-    if ctx.is_main {
-        if ctx.num_params >= 1 {
-            // Subtract WASM_MEMORY_BASE from args_ptr so that when memory operations
-            // add it back, we get the correct PVM address (0xFEFF0000).
-            // This allows WASM code to treat args_ptr as a regular pointer that
-            // goes through the same translation as all other memory addresses.
-            emitter.emit(Instruction::AddImm32 {
-                dst: FIRST_LOCAL_REG,
-                src: ARGS_PTR_REG,
-                value: -WASM_MEMORY_BASE,
-            });
-        }
+fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: usize) {
+    if ctx.is_main && ctx.num_params >= 1 {
+        // For main(), SPI convention passes:
+        //   r7 = args_ptr (raw PVM address, e.g., 0xFEFF0000)
+        //   r8 = args_len
+        //
+        // WASM code expects to use `local.get $args_ptr` which reads from r9 (local 0).
+        // All memory load/store operations add WASM_MEMORY_BASE (0x50000) to translate
+        // WASM addresses to PVM addresses.
+        //
+        // To make this work, we:
+        // 1. Subtract WASM_MEMORY_BASE from args_ptr so loads read from correct location:
+        //    adjusted_ptr = 0xFEFF0000 - 0x50000 = 0xFEFA0000
+        //    load(adjusted_ptr) → load(0xFEFA0000 + 0x50000) = load(0xFEFF0000) ✓
+        // 2. Copy the adjusted value to r9 (local 0 / $args_ptr)
+        // 3. Copy args_len to r10 (local 1 / $args_len) if present
+        //
+        // IMPORTANT: Use AddImm64 (not AddImm32) to avoid sign-extension issues.
+        // AddImm32 with a negative value would sign-extend the result to 64 bits,
+        // corrupting the address (e.g., 0xFEFA0000 → 0xFFFFFFFFFEFA0000).
+
+        // Adjust args_ptr in r7
+        emitter.emit(Instruction::AddImm64 {
+            dst: ARGS_PTR_REG,
+            src: ARGS_PTR_REG,
+            value: -WASM_MEMORY_BASE,
+        });
+
+        // Copy adjusted args_ptr to r9 (local 0)
+        // IMPORTANT: Use AddImm64 (not AddImm32) to preserve the full 64-bit value.
+        // AddImm32 sign-extends the result, which would corrupt addresses like 0xFEFA0000.
+        emitter.emit(Instruction::AddImm64 {
+            dst: FIRST_LOCAL_REG, // r9
+            src: ARGS_PTR_REG,    // r7
+            value: 0,
+        });
+
+        // Copy args_len to r10 (local 1) if there's a second parameter
+        // Use AddImm64 for consistency, although args_len is typically small
         if ctx.num_params >= 2 {
-            emitter.emit(Instruction::AddImm32 {
-                dst: FIRST_LOCAL_REG + 1,
-                src: ARGS_LEN_REG,
+            emitter.emit(Instruction::AddImm64 {
+                dst: FIRST_LOCAL_REG + 1, // r10
+                src: ARGS_LEN_REG,        // r8
                 value: 0,
             });
         }
+    }
+
+    // Zero-initialize non-parameter local variables as required by WebAssembly spec.
+    // Parameters (locals 0..num_params) are initialized by caller or code above.
+    // Remaining locals (num_params..total_locals) must be zero-initialized.
+    let start_local = ctx.num_params;
+    // Only initialize locals that fit in registers (0..MAX_LOCAL_REGS).
+    // Spilled locals (index >= MAX_LOCAL_REGS) would need special memory initialization,
+    // but those are less common and PVM memory is typically zero-initialized.
+    let end_local = total_locals.min(MAX_LOCAL_REGS);
+    for local_idx in start_local..end_local {
+        // Local fits in a register (r9 + local_idx)
+        // Use LoadImm to set register to 0
+        emitter.emit(Instruction::LoadImm {
+            reg: FIRST_LOCAL_REG + local_idx as u8,
+            value: 0,
+        });
     }
 }
 
@@ -1832,24 +1875,44 @@ fn translate_op(
             // so registers r2 to r(2 + stack_depth_before - 2) are still in use.
             // We need to use a register that's NOT in use by the stack.
             //
-            // After pop: stack_depth = stack_depth_before - 1
-            // Highest register in use: r2 + (stack_depth_before - 2) = r(stack_depth_before)
-            // Safe to use: r(stack_depth_before + 1) and higher, up to r6
-            // If stack_depth_before >= 5, we're in spill territory and this gets complicated.
-            // For now, use r4 or r5 which should be safe for typical stack depths.
-            let safe_temp_1 = 4u8; // r4
-            let safe_temp_2 = 5u8; // r5
-            let safe_temp_3 = 6u8; // r6
+            // Using r4/r5 is unsafe if stack depth >= 3!
+            // We use r7 and r8 which are designated scratch registers in our convention
+            // (saved/restored by entry prologue if needed).
+            // Safe temp registers: r7 (ARGS_PTR_REG) and r8 (ARGS_LEN_REG) treated as scratch
+            // For the 3rd temp, we need another safe register.
+            // Stack uses r2-r6. If depth is high, r6 is used.
+            // Locals start at r9.
+            // r0 is return addr (unsafe to clobber).
+            // r1 is SP.
+            //
+            // We'll use a high local register that is unlikely to be used, or spill?
+            // Actually, we can reuse 'delta' register if we are careful.
 
-            // Move delta to a safe temp register if delta == dst (which would be clobbered)
+            // Let's use r13? No, only 13 registers (0-12).
+            // r12 is local 3.
+
+            // Let's check if we can reuse registers.
+            // We need: delta_reg, dst, new_size_reg, max_reg.
+
+            // dst is target for 'current size'.
+
+            // Let's use r7 for delta copy.
+            // dst (stack top).
+            // r8 for new_size.
+            // r7 for max (reuse r7).
+
+            let scratch_1 = 7u8;
+            let scratch_2 = 8u8;
+
+            // Move delta to scratch_1 if delta == dst
             if delta == dst {
                 emitter.emit(Instruction::AddImm32 {
-                    dst: safe_temp_1,
+                    dst: scratch_1,
                     src: delta,
                     value: 0,
                 });
             }
-            let delta_reg = if delta == dst { safe_temp_1 } else { delta };
+            let delta_reg = if delta == dst { scratch_1 } else { delta };
 
             // Load current memory size into dst
             emitter.emit(Instruction::LoadImm {
@@ -1862,8 +1925,8 @@ fn translate_op(
                 offset: 0,
             });
 
-            // Calculate new_size = current + delta using safe_temp_2
-            let new_size_reg = safe_temp_2;
+            // Calculate new_size = current + delta using scratch_2
+            let new_size_reg = scratch_2;
             emitter.emit(Instruction::Add32 {
                 dst: new_size_reg,
                 src1: dst,
@@ -1871,12 +1934,11 @@ fn translate_op(
             });
 
             // Check if new_size > max_pages
-            // If so, branch to failure path
             let fail_label = emitter.alloc_label();
             let end_label = emitter.alloc_label();
 
-            // Use safe_temp_3 for max_pages comparison
-            let max_reg = safe_temp_3;
+            // Use scratch_1 for max_pages comparison (delta_reg no longer needed)
+            let max_reg = scratch_1;
 
             // Load max_pages for comparison
             emitter.emit(Instruction::LoadImm {
