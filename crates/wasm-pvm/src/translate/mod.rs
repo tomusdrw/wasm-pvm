@@ -249,7 +249,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     // Calculate heap/memory info early since we need max_memory_pages for codegen.
     // The min floor of 1024 WASM pages is applied inside when no explicit max is declared.
     let (heap_pages, max_memory_pages) =
-        calculate_heap_pages(functions.len(), &data_segments, &memory_limits);
+        calculate_heap_pages(functions.len(), &data_segments, &memory_limits)?;
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
@@ -576,7 +576,7 @@ fn calculate_heap_pages(
     num_functions: usize,
     data_segments: &[DataSegment],
     memory_limits: &MemoryLimits,
-) -> (u16, u32) {
+) -> Result<(u16, u32)> {
     // Memory layout:
     // 0x30000-0x300FF: Globals (256 bytes)
     // 0x30100-0x3FFFF: User heap (~64KB)
@@ -610,7 +610,14 @@ fn calculate_heap_pages(
     let heap_pages = total_bytes.div_ceil(4096);
 
     // Ensure a minimum of 1024 PVM pages (4MB) for heap
-    (heap_pages.max(1024) as u16, max_memory_pages)
+    let heap_pages = heap_pages.max(1024);
+    let heap_pages = u16::try_from(heap_pages).map_err(|_| {
+        Error::Internal(format!(
+            "heap size {heap_pages} pages exceeds u16::MAX ({}) — module too large",
+            u16::MAX
+        ))
+    })?;
+    Ok((heap_pages, max_memory_pages))
 }
 
 fn resolve_call_fixups(
