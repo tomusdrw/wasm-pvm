@@ -66,7 +66,7 @@ export function main(args_ptr: i32, args_len: i32): void {
     // Expected: 1
   } else if (step == 6) {
     // Test 6: Sum just first two elements
-    result = arr1[0] + arr1[1];
+    result = <u32>arr1[0] + <u32>arr1[1];
     // Expected: 0 + 1 = 1
   } else if (step == 7) {
     // Test 7: Two iterations only (hardcoded)

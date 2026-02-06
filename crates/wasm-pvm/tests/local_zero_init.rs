@@ -8,7 +8,7 @@ use wasm_pvm::test_harness::*;
 /// Test that local variables are zero-initialized even when not explicitly set.
 /// This was causing bugs where loop counters would start with garbage values.
 #[test]
-fn test_local_zero_init() {
+fn test_wasm_local_zero_init() {
     // This WAT relies on $1 (the loop counter) being zero-initialized.
     // Without proper initialization, the loop would not execute correctly.
     let wat = r#"
@@ -64,18 +64,15 @@ fn test_local_zero_init() {
     let program = compile_wat(wat).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
-    // Verify we have LoadImm instructions for zero-initializing locals
-    // The function $sum_to_n has 2 non-parameter locals that need initialization
-    let has_load_imm_zero = instructions
+    // Verify we have LoadImm instructions for zero-initializing locals.
+    // The function $sum_to_n has 2 non-parameter locals ($i, $sum) that need initialization.
+    let zero_init_count = instructions
         .iter()
-        .any(|instr| matches!(instr, wasm_pvm::pvm::Instruction::LoadImm { value: 0, .. }));
+        .filter(|instr| matches!(instr, wasm_pvm::pvm::Instruction::LoadImm { value: 0, .. }))
+        .count();
 
     assert!(
-        has_load_imm_zero,
-        "Should have LoadImm 0 instructions for local initialization"
+        zero_init_count >= 2,
+        "Expected at least 2 LoadImm 0 instructions for local zero-init, found {zero_init_count}"
     );
-
-    println!("\n=== Local Zero Init Test ===");
-    println!("Generated {} instructions", instructions.len());
-    println!("Contains LoadImm 0 for local init: {has_load_imm_zero}");
 }

@@ -38,11 +38,11 @@ export function main(args_ptr: i32, args_len: i32): void {
     // Nested if-result
     if (step == 1) {
       // Ternary that produces a value, then dropped
-      const limit: i32 = args_len > 1 ? load<u8>(args_ptr + 1) : 5;
+      const _limit: i32 = args_len > 1 ? load<u8>(args_ptr + 1) : 5; // intentionally unused
       // 100 + 42 = 142
       result = addWithMem(100, 42);
     } else if (step == 2) {
-      const limit: i32 = args_len > 1 ? load<u8>(args_ptr + 1) : 5;
+      const _limit: i32 = args_len > 1 ? load<u8>(args_ptr + 1) : 5; // intentionally unused
       // 200 + 42 = 242
       result = addWithMem(200, 42);
     } else if (step == 3) {
@@ -55,7 +55,7 @@ export function main(args_ptr: i32, args_len: i32): void {
     } else if (step == 5) {
       // loadAt with runtime base (DATA_HEAP from local)
       const base: i32 = DATA_HEAP;
-      const limit: i32 = args_len > 1 ? load<u8>(args_ptr + 1) : 5;
+      const _limit: i32 = args_len > 1 ? load<u8>(args_ptr + 1) : 5; // intentionally unused
       result = loadAt(base, 1);
       // Expected: 20
     } else {

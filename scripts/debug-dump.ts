@@ -8,18 +8,23 @@ const ananAsPath = path.join(__dirname, '../vendor/anan-as/build/release.js');
 
 async function main() {
   const jamFile = process.argv[2];
-  const argsHex = process.argv[3] || '';
-  
+  const rawArgsHex = (process.argv[3] ?? '').replace(/^0x/i, '');
+
   if (!jamFile) {
     console.error('Usage: debug-dump.ts <jam-file> [args-hex]');
     process.exit(1);
   }
 
+  if (rawArgsHex.length > 0 && (rawArgsHex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(rawArgsHex))) {
+    console.error('Error: args-hex must be an even-length hex string (optional 0x prefix)');
+    process.exit(1);
+  }
+
   const ananAs = await import(ananAsPath);
   const spiData = fs.readFileSync(jamFile);
-  const argsBytes = [];
-  for (let i = 0; i < argsHex.length; i += 2) {
-    argsBytes.push(parseInt(argsHex.slice(i, i + 2), 16));
+  const argsBytes: number[] = [];
+  for (let i = 0; i < rawArgsHex.length; i += 2) {
+    argsBytes.push(parseInt(rawArgsHex.slice(i, i + 2), 16));
   }
   
   console.log(`Loading ${jamFile} (${spiData.length} bytes)`);
@@ -86,6 +91,7 @@ async function main() {
     }
     
     if (hasData) {
+        val = val >>> 0; // coerce to unsigned 32-bit
         if (val != 0) {
             console.log(`0x${addr.toString(16)}: 0x${val.toString(16).padStart(8, '0')} (${val})`);
             buffer.push(val);

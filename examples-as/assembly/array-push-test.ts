@@ -28,7 +28,7 @@ export function main(args_ptr: i32, args_len: i32): void {
   // Read them back and compute sum to verify correctness
   // Expected sum: 0+1+2+3+4+5+6+7 = 28
   let sum: i32 = 0;
-  for (let i = 0; i < arr.length; i++) {
+  for (let i: i32 = 0; i < arr.length; i++) {
     // Each arr[i] should equal i
     // If it doesn't, the sum will be wrong
     sum += arr[i];

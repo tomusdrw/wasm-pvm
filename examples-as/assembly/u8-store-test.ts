@@ -67,7 +67,7 @@ export function main(args_ptr: i32, args_len: i32): void {
     // Create Uint8Array pointing to this memory... not directly possible
     // Instead, just test direct memory
     store<u8>(ptr + 1, 159);
-    result = load<u8>(ptr) + load<u8>(ptr + 1);  // Expected: 287
+    result = <u32>load<u8>(ptr) + <u32>load<u8>(ptr + 1);  // Expected: 287
   } else {
     result = 99;
   }

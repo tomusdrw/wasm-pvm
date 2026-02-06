@@ -11,7 +11,7 @@ export let result_len: i32 = 0;
 
 function lowerBytes(data: Uint8Array): u8[] {
   const r = new Array<u8>(data.length);
-  for (let i = 0; i < data.length; i++) {
+  for (let i: i32 = 0; i < data.length; i++) {
     r[i] = data[i];
   }
   return r;

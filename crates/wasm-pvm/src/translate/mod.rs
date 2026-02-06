@@ -445,14 +445,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     if let Some(secondary_idx) = secondary_entry_idx_resolved {
         let secondary_offset = function_offsets[secondary_idx] as i32 - 5;
         if let Instruction::Jump { offset } = &mut all_instructions[1] {
-            *offset = secondary_offset; // Secondary offset might need adjustment too?
-        }
-    }
-
-    if let Some(secondary_idx) = secondary_entry_idx_resolved {
-        let secondary_offset = function_offsets[secondary_idx] as i32 - 5;
-        if let Instruction::Jump { offset } = &mut all_instructions[1] {
-            *offset = secondary_offset; // Secondary offset might need adjustment too?
+            *offset = secondary_offset;
         }
     }
 

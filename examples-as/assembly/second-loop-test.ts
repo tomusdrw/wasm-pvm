@@ -96,7 +96,7 @@ export function main(args_ptr: i32, args_len: i32): void {
 
     // What value is at arr2 + 12 (the length field)?
     const arr2Ptr = changetype<usize>(arr2);
-    result = load<i32>(arr2Ptr, 12);
+    result = <u32>load<i32>(arr2Ptr, 12);
     // Expected: 10
   } else if (step == 4) {
     // Test 4: Check loop counter state after loop 1

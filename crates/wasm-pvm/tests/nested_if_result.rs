@@ -6,7 +6,7 @@
 use wasm_pvm::test_harness::*;
 
 /// Minimal WAT that reproduces the nested if-result bug
-const NESTED_IF_RESULT_WAT: &str = r#"
+const WASM_NESTED_IF_RESULT_WAT: &str = r#"
 (module
     (memory 1)
     (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32)
@@ -83,8 +83,8 @@ const NESTED_IF_RESULT_WAT: &str = r#"
 "#;
 
 #[test]
-fn test_nested_if_result_instructions() {
-    let program = compile_wat(NESTED_IF_RESULT_WAT).expect("Failed to compile");
+fn test_wasm_nested_if_result_instructions() {
+    let program = compile_wat(WASM_NESTED_IF_RESULT_WAT).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
     // Print all instructions for debugging
@@ -98,7 +98,7 @@ fn test_nested_if_result_instructions() {
 }
 
 /// Test matching the exact nested-repro pattern
-const EXACT_NESTED_REPRO_WAT: &str = r#"
+const WASM_EXACT_NESTED_REPRO_WAT: &str = r#"
 (module
     (memory 1)
 
@@ -208,8 +208,8 @@ const EXACT_NESTED_REPRO_WAT: &str = r#"
 "#;
 
 #[test]
-fn test_exact_nested_repro() {
-    let program = compile_wat(EXACT_NESTED_REPRO_WAT).expect("Failed to compile");
+fn test_wasm_exact_nested_repro() {
+    let program = compile_wat(WASM_EXACT_NESTED_REPRO_WAT).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
     println!("\n=== Exact Nested Repro ===");
@@ -222,7 +222,7 @@ fn test_exact_nested_repro() {
 }
 
 /// Test with a function call inside nested if-result
-const NESTED_WITH_CALL_WAT: &str = r#"
+const WASM_NESTED_WITH_CALL_WAT: &str = r#"
 (module
     (memory 1)
 
@@ -283,8 +283,8 @@ const NESTED_WITH_CALL_WAT: &str = r#"
 "#;
 
 #[test]
-fn test_nested_with_call() {
-    let program = compile_wat(NESTED_WITH_CALL_WAT).expect("Failed to compile");
+fn test_wasm_nested_with_call() {
+    let program = compile_wat(WASM_NESTED_WITH_CALL_WAT).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
     println!("\n=== Nested If-Result with Function Call ===");
@@ -297,7 +297,7 @@ fn test_nested_with_call() {
 }
 
 /// A simpler test to verify the pattern
-const SIMPLE_NESTED_WAT: &str = r#"
+const WASM_SIMPLE_NESTED_WAT: &str = r#"
 (module
     (memory 1)
     (func (export "main") (param $cond i32) (result i32)
@@ -349,8 +349,8 @@ const SIMPLE_NESTED_WAT: &str = r#"
 "#;
 
 #[test]
-fn test_simple_nested_if_result() {
-    let program = compile_wat(SIMPLE_NESTED_WAT).expect("Failed to compile");
+fn test_wasm_simple_nested_if_result() {
+    let program = compile_wat(WASM_SIMPLE_NESTED_WAT).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
     println!("\n=== Simple Nested If-Result ===");
@@ -365,7 +365,7 @@ fn test_simple_nested_if_result() {
 /// Test that matches the EXACT `AssemblyScript` __get pattern:
 /// - A function with internal control flow (if-unreachable bounds check)
 /// - Called after a ternary with memory load in THEN branch + drop
-const AS_GET_PATTERN_WAT: &str = r#"
+const WASM_AS_GET_PATTERN_WAT: &str = r#"
 (module
     (memory 1)
 
@@ -520,8 +520,8 @@ const AS_GET_PATTERN_WAT: &str = r#"
 "#;
 
 #[test]
-fn test_as_get_pattern() {
-    let program = compile_wat(AS_GET_PATTERN_WAT).expect("Failed to compile");
+fn test_wasm_as_get_pattern() {
+    let program = compile_wat(WASM_AS_GET_PATTERN_WAT).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
     println!("\n=== AssemblyScript __get Pattern ===");

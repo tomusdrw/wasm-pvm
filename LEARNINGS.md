@@ -152,6 +152,7 @@ result = <u32>arr[0] + <u32>arr[1];  // = 287 ✓
 ```
 
 **Generated WAT Analysis**:
+
 ```wat
 ;; AS generates this for u8 + u8:
 call $~lib/typedarray/Uint8Array#__get  ;; returns i32

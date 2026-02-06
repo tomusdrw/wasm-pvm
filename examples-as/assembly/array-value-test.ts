@@ -36,7 +36,7 @@ export function main(args_ptr: i32, args_len: i32): void {
     // Expected: 2
   } else if (step == 3) {
     // Test 3: Return arr1[0] + arr1[1] * 10
-    result = arr1[0] + <u32>arr1[1] * 10;
+    result = <u32>arr1[0] + <u32>arr1[1] * 10;
     // Expected: 0 + 1*10 = 10
   } else if (step == 4) {
     // Test 4: Loop and check each value

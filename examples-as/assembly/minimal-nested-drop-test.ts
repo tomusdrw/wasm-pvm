@@ -54,7 +54,7 @@ export function main(args_ptr: i32, args_len: i32): void {
     // Expected: 42
   }
 
-  store<i32>(RESULT_HEAP, result);
+  store<u32>(RESULT_HEAP, result);
   result_ptr = RESULT_HEAP;
   result_len = 4;
 }
