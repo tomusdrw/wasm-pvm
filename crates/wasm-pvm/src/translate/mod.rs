@@ -246,19 +246,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         }
     }
 
-    // Calculate heap/memory info early since we need max_memory_pages for codegen
+    // Calculate heap/memory info early since we need max_memory_pages for codegen.
+    // The min floor of 1024 WASM pages is applied inside when no explicit max is declared.
     let (heap_pages, max_memory_pages) =
         calculate_heap_pages(functions.len(), &data_segments, &memory_limits);
-
-    // WORKAROUND: Force heap to be large enough to avoid memory.grow issues.
-    // Only raise max_memory_pages when the module has no explicit max,
-    // to avoid allowing memory.grow past the WASM-declared limit.
-    let heap_pages = heap_pages.max(1024u16); // 4MB (1024 * 4KB PVM pages)
-    let max_memory_pages = if memory_limits.max_pages.is_some() {
-        max_memory_pages
-    } else {
-        max_memory_pages.max(1024u32)
-    };
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
@@ -599,10 +590,13 @@ fn calculate_heap_pages(
     let spilled_locals_end = codegen::SPILLED_LOCALS_BASE as usize
         + num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
 
-    // Determine the maximum WASM memory pages we'll allow
-    // Priority: WASM explicit max > default based on usage
+    // Determine the maximum WASM memory pages we'll allow.
+    // Respect the module's explicit max; only apply a floor when no max is declared.
     let default_max_pages: u32 = if data_segments.is_empty() { 256 } else { 1024 };
-    let max_memory_pages = memory_limits.max_pages.unwrap_or(default_max_pages);
+    let max_memory_pages = match memory_limits.max_pages {
+        Some(declared_max) => declared_max,
+        None => default_max_pages.max(1024),
+    };
 
     // WASM memory end based on max pages allocation
     // Each WASM page is 64KB (65536 bytes)
@@ -615,7 +609,8 @@ fn calculate_heap_pages(
     let total_bytes = end - 0x30000;
     let heap_pages = total_bytes.div_ceil(4096);
 
-    (heap_pages.max(16) as u16, max_memory_pages)
+    // Ensure a minimum of 1024 PVM pages (4MB) for heap
+    (heap_pages.max(1024) as u16, max_memory_pages)
 }
 
 fn resolve_call_fixups(
