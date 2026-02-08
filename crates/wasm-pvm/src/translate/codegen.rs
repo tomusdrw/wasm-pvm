@@ -30,6 +30,10 @@ fn stack_limit(stack_size: u32) -> i32 {
 pub const SPILLED_LOCALS_BASE: i32 = 0x40000;
 /// Bytes allocated per function for spilled locals (64 locals * 8 bytes)
 pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
+/// Temporary area for passing overflow parameters (5th+ args) during call_indirect.
+/// The caller writes here, and the callee's prologue copies to its spilled local addresses.
+/// Supports up to 8 overflow parameters (64 bytes).
+const PARAM_OVERFLOW_BASE: i32 = 0x3FF00;
 /// Base address for WASM linear memory in PVM address space.
 /// WASM memory address 0 maps to this PVM address.
 /// All i32.load/i32.store operations add this offset to the WASM address.
@@ -367,16 +371,22 @@ impl CodeEmitter {
         num_args: usize,
         has_return: bool,
         stack_size: u32,
+        func_idx: usize,
+        total_locals: usize,
     ) {
         // Calculate how many operand stack values will remain after popping args
         // These are values that belong to the caller and must be preserved
         let stack_depth_before_args = self.stack.depth().saturating_sub(num_args);
+        let num_spilled_locals = total_locals.saturating_sub(MAX_LOCAL_REGS);
 
         // Frame layout on stack (growing down):
         // [sp+0]: return address (r0)
         // [sp+8..40]: locals r9-r12 (4 * 8 = 32 bytes)
-        // [sp+40..]: caller's operand stack values (stack_depth_before_args * 8 bytes)
-        let frame_size = 40 + (stack_depth_before_args * 8) as i32;
+        // [sp+40..40+S*8]: spilled locals (S = num_spilled_locals, 8 bytes each)
+        // [sp+40+S*8..]: caller's operand stack values (stack_depth_before_args * 8 bytes)
+        let spilled_frame_bytes = (num_spilled_locals * 8) as i32;
+        let operand_stack_start = 40 + spilled_frame_bytes;
+        let frame_size = operand_stack_start + (stack_depth_before_args * 8) as i32;
 
         // Stack overflow check: new_sp = sp - frame_size
         // If new_sp < stack_limit, trap
@@ -447,6 +457,30 @@ impl CodeEmitter {
             });
         }
 
+        // Save spilled locals (index >= MAX_LOCAL_REGS) from global memory to stack frame.
+        // These live at fixed addresses (SPILLED_LOCALS_BASE + func_idx*512 + offset)
+        // and would be clobbered by recursive calls to the same function.
+        for i in 0..num_spilled_locals {
+            let mem_offset = spilled_local_offset(func_idx, MAX_LOCAL_REGS + i);
+            // Load spilled local address into temp register
+            self.emit(Instruction::LoadImm {
+                reg: SPILL_ALT_REG,
+                value: mem_offset,
+            });
+            // Load spilled local value from global memory
+            self.emit(Instruction::LoadIndU32 {
+                dst: SPILL_ALT_REG,
+                base: SPILL_ALT_REG,
+                offset: 0,
+            });
+            // Store to stack frame
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: SPILL_ALT_REG,
+                offset: (40 + i * 8) as i32,
+            });
+        }
+
         // Save caller's operand stack values (those below the arguments)
         // For values in registers (depth < 5): save directly from register
         // For spilled values (depth >= 5): load from old spill area, then save to frame
@@ -462,7 +496,7 @@ impl CodeEmitter {
                 self.emit(Instruction::StoreIndU64 {
                     base: STACK_PTR_REG,
                     src: SPILL_ALT_REG,
-                    offset: (40 + i * 8) as i32,
+                    offset: (operand_stack_start + (i * 8) as i32),
                 });
             } else {
                 // Value in register: save directly
@@ -470,16 +504,34 @@ impl CodeEmitter {
                 self.emit(Instruction::StoreIndU64 {
                     base: STACK_PTR_REG,
                     src: reg,
-                    offset: (40 + i * 8) as i32,
+                    offset: (operand_stack_start + (i * 8) as i32),
                 });
             }
         }
 
-        // Pop arguments and copy to local registers for the callee
+        // Pop arguments and copy to local registers (or overflow area) for the callee.
+        // Locals 0-3 fit in registers r9-r12. Locals 4+ go to PARAM_OVERFLOW_BASE,
+        // which the callee's prologue copies to its own spilled local addresses.
         for i in 0..num_args {
             let src = self.spill_pop();
-            let dst = FIRST_LOCAL_REG + (num_args - 1 - i) as u8;
-            self.emit(Instruction::AddImm32 { dst, src, value: 0 });
+            let local_idx = num_args - 1 - i;
+            if local_idx < MAX_LOCAL_REGS {
+                let dst = FIRST_LOCAL_REG + local_idx as u8;
+                self.emit(Instruction::AddImm32 { dst, src, value: 0 });
+            } else {
+                // Write to parameter overflow area
+                let overflow_offset =
+                    PARAM_OVERFLOW_BASE + ((local_idx - MAX_LOCAL_REGS) * 8) as i32;
+                self.emit(Instruction::LoadImm {
+                    reg: SPILL_ALT_REG,
+                    value: overflow_offset,
+                });
+                self.emit(Instruction::StoreIndU32 {
+                    base: SPILL_ALT_REG,
+                    src,
+                    offset: 0,
+                });
+            }
         }
 
         let return_addr_instr_idx = self.instructions.len();
@@ -516,6 +568,45 @@ impl CodeEmitter {
             });
         }
 
+        // Restore spilled locals from stack frame back to global memory.
+        // We use r7 (ARGS_PTR_REG) as a temp for the address, but r7 also holds
+        // the callee's return value. Save r7 to [sp+0] (return addr slot, already
+        // restored to r0) and restore it after.
+        if num_spilled_locals > 0 {
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: RETURN_VALUE_REG,
+                offset: 0, // reuse return address slot
+            });
+        }
+        for i in 0..num_spilled_locals {
+            let mem_offset = spilled_local_offset(func_idx, MAX_LOCAL_REGS + i);
+            // Load saved value from stack frame
+            self.emit(Instruction::LoadIndU64 {
+                dst: SPILL_ALT_REG,
+                base: STACK_PTR_REG,
+                offset: (40 + i * 8) as i32,
+            });
+            // Load spilled local address into ARGS_PTR_REG (r7) as temp
+            self.emit(Instruction::LoadImm {
+                reg: ARGS_PTR_REG,
+                value: mem_offset,
+            });
+            // Store value back to global memory
+            self.emit(Instruction::StoreIndU32 {
+                base: ARGS_PTR_REG,
+                src: SPILL_ALT_REG,
+                offset: 0,
+            });
+        }
+        if num_spilled_locals > 0 {
+            self.emit(Instruction::LoadIndU64 {
+                dst: RETURN_VALUE_REG,
+                base: STACK_PTR_REG,
+                offset: 0,
+            });
+        }
+
         // Restore caller's operand stack values
         // For values in registers (depth < 5): restore directly to register
         // For spilled values (depth >= 5): load from frame, then store to old spill area
@@ -525,7 +616,7 @@ impl CodeEmitter {
                 self.emit(Instruction::LoadIndU64 {
                     dst: SPILL_ALT_REG,
                     base: STACK_PTR_REG,
-                    offset: (40 + i * 8) as i32,
+                    offset: (operand_stack_start + (i * 8) as i32),
                 });
                 // Store to old spill area (relative to old SP, which is new_sp + frame_size)
                 let spill_offset = frame_size + OPERAND_SPILL_BASE + StackMachine::spill_offset(i);
@@ -540,7 +631,7 @@ impl CodeEmitter {
                 self.emit(Instruction::LoadIndU64 {
                     dst: reg,
                     base: STACK_PTR_REG,
-                    offset: (40 + i * 8) as i32,
+                    offset: (operand_stack_start + (i * 8) as i32),
                 });
             }
         }
@@ -574,6 +665,8 @@ impl CodeEmitter {
         has_return: bool,
         stack_size: u32,
         expected_type_index: u32,
+        func_idx: usize,
+        total_locals: usize,
     ) {
         let table_idx_reg = self.spill_pop();
 
@@ -585,7 +678,10 @@ impl CodeEmitter {
         });
 
         let stack_depth_before_args = self.stack.depth().saturating_sub(num_args);
-        let frame_size = 40 + (stack_depth_before_args * 8) as i32;
+        let num_spilled_locals = total_locals.saturating_sub(MAX_LOCAL_REGS);
+        let spilled_frame_bytes = (num_spilled_locals * 8) as i32;
+        let operand_stack_start = 40 + spilled_frame_bytes;
+        let frame_size = operand_stack_start + (stack_depth_before_args * 8) as i32;
 
         // Stack overflow check: new_sp = sp - frame_size
         // If new_sp < stack_limit, trap
@@ -667,6 +763,34 @@ impl CodeEmitter {
             });
         }
 
+        // Save the table index (r8/SAVED_TABLE_IDX_REG) to [sp-8] before it gets
+        // clobbered by spilled local saves, operand stack saves, and argument pops
+        // which all use r8 (SPILL_ALT_REG) as a temp register.
+        self.emit(Instruction::StoreIndU64 {
+            base: STACK_PTR_REG,
+            src: SAVED_TABLE_IDX_REG,
+            offset: -8,
+        });
+
+        // Save spilled locals (same as emit_call)
+        for i in 0..num_spilled_locals {
+            let mem_offset = spilled_local_offset(func_idx, MAX_LOCAL_REGS + i);
+            self.emit(Instruction::LoadImm {
+                reg: SPILL_ALT_REG,
+                value: mem_offset,
+            });
+            self.emit(Instruction::LoadIndU32 {
+                dst: SPILL_ALT_REG,
+                base: SPILL_ALT_REG,
+                offset: 0,
+            });
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: SPILL_ALT_REG,
+                offset: (40 + i * 8) as i32,
+            });
+        }
+
         // Save caller's operand stack values (same as emit_call)
         for i in 0..stack_depth_before_args {
             if StackMachine::needs_spill(i) {
@@ -679,23 +803,50 @@ impl CodeEmitter {
                 self.emit(Instruction::StoreIndU64 {
                     base: STACK_PTR_REG,
                     src: SPILL_ALT_REG,
-                    offset: (40 + i * 8) as i32,
+                    offset: (operand_stack_start + (i * 8) as i32),
                 });
             } else {
                 let reg = StackMachine::reg_at_depth(i);
                 self.emit(Instruction::StoreIndU64 {
                     base: STACK_PTR_REG,
                     src: reg,
-                    offset: (40 + i * 8) as i32,
+                    offset: (operand_stack_start + (i * 8) as i32),
                 });
             }
         }
 
+        // Pop arguments and copy to local registers (or overflow area) for the callee.
+        // For call_indirect, we don't know the callee's func_idx, so overflow params
+        // go to a fixed temporary area (PARAM_OVERFLOW_BASE). The callee's prologue
+        // copies them to its own spilled local addresses.
         for i in 0..num_args {
             let src = self.spill_pop();
-            let dst = FIRST_LOCAL_REG + (num_args - 1 - i) as u8;
-            self.emit(Instruction::AddImm32 { dst, src, value: 0 });
+            let local_idx = num_args - 1 - i;
+            if local_idx < MAX_LOCAL_REGS {
+                let dst = FIRST_LOCAL_REG + local_idx as u8;
+                self.emit(Instruction::AddImm32 { dst, src, value: 0 });
+            } else {
+                // Write to parameter overflow area
+                let overflow_offset =
+                    PARAM_OVERFLOW_BASE + ((local_idx - MAX_LOCAL_REGS) * 8) as i32;
+                self.emit(Instruction::LoadImm {
+                    reg: SPILL_ALT_REG,
+                    value: overflow_offset,
+                });
+                self.emit(Instruction::StoreIndU32 {
+                    base: SPILL_ALT_REG,
+                    src,
+                    offset: 0,
+                });
+            }
         }
+
+        // Restore the table index (r8) from [sp-8] before dispatch table lookup
+        self.emit(Instruction::LoadIndU64 {
+            dst: SAVED_TABLE_IDX_REG,
+            base: STACK_PTR_REG,
+            offset: -8,
+        });
 
         // Dispatch table entries are now 8 bytes each (4 bytes jump addr + 4 bytes type index)
         // Multiply table index by 8: x*2*2*2 = x*8
@@ -791,13 +942,47 @@ impl CodeEmitter {
             });
         }
 
+        // Restore spilled locals from stack frame back to global memory.
+        // Save/restore r7 (return value) around this since we use it as temp.
+        if num_spilled_locals > 0 {
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: RETURN_VALUE_REG,
+                offset: 0,
+            });
+        }
+        for i in 0..num_spilled_locals {
+            let mem_offset = spilled_local_offset(func_idx, MAX_LOCAL_REGS + i);
+            self.emit(Instruction::LoadIndU64 {
+                dst: SPILL_ALT_REG,
+                base: STACK_PTR_REG,
+                offset: (40 + i * 8) as i32,
+            });
+            self.emit(Instruction::LoadImm {
+                reg: ARGS_PTR_REG,
+                value: mem_offset,
+            });
+            self.emit(Instruction::StoreIndU32 {
+                base: ARGS_PTR_REG,
+                src: SPILL_ALT_REG,
+                offset: 0,
+            });
+        }
+        if num_spilled_locals > 0 {
+            self.emit(Instruction::LoadIndU64 {
+                dst: RETURN_VALUE_REG,
+                base: STACK_PTR_REG,
+                offset: 0,
+            });
+        }
+
         // Restore caller's operand stack values (same as emit_call)
         for i in 0..stack_depth_before_args {
             if StackMachine::needs_spill(i) {
                 self.emit(Instruction::LoadIndU64 {
                     dst: SPILL_ALT_REG,
                     base: STACK_PTR_REG,
-                    offset: (40 + i * 8) as i32,
+                    offset: (operand_stack_start + (i * 8) as i32),
                 });
                 let spill_offset = frame_size + OPERAND_SPILL_BASE + StackMachine::spill_offset(i);
                 self.emit(Instruction::StoreIndU64 {
@@ -810,7 +995,7 @@ impl CodeEmitter {
                 self.emit(Instruction::LoadIndU64 {
                     dst: reg,
                     base: STACK_PTR_REG,
-                    offset: (40 + i * 8) as i32,
+                    offset: (operand_stack_start + (i * 8) as i32),
                 });
             }
         }
@@ -921,21 +1106,80 @@ fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: 
         }
     }
 
+    // Copy overflow parameters (5th+) from PARAM_OVERFLOW_BASE to spilled local addresses.
+    // The caller writes params 4+ to PARAM_OVERFLOW_BASE + (idx-4)*8 for both direct
+    // and indirect calls. We copy them to this function's spilled local addresses.
+    if !ctx.is_main && ctx.num_params > MAX_LOCAL_REGS {
+        for param_idx in MAX_LOCAL_REGS..ctx.num_params {
+            let overflow_offset =
+                PARAM_OVERFLOW_BASE + ((param_idx - MAX_LOCAL_REGS) * 8) as i32;
+            let spilled_offset = spilled_local_offset(ctx.func_idx, param_idx);
+            // Load from overflow area
+            emitter.emit(Instruction::LoadImm {
+                reg: SPILL_ALT_REG,
+                value: overflow_offset,
+            });
+            emitter.emit(Instruction::LoadIndU32 {
+                dst: SPILL_ALT_REG,
+                base: SPILL_ALT_REG,
+                offset: 0,
+            });
+            // Store to spilled local address
+            emitter.emit(Instruction::LoadImm {
+                reg: ARGS_PTR_REG,
+                value: spilled_offset,
+            });
+            emitter.emit(Instruction::StoreIndU32 {
+                base: ARGS_PTR_REG,
+                src: SPILL_ALT_REG,
+                offset: 0,
+            });
+        }
+    }
+
     // Zero-initialize non-parameter local variables as required by WebAssembly spec.
     // Parameters (locals 0..num_params) are initialized by caller or code above.
     // Remaining locals (num_params..total_locals) must be zero-initialized.
     let start_local = ctx.num_params;
-    // Only initialize locals that fit in registers (0..MAX_LOCAL_REGS).
-    // Spilled locals (index >= MAX_LOCAL_REGS) would need special memory initialization,
-    // but those are less common and PVM memory is typically zero-initialized.
+    // Initialize register-based locals (0..MAX_LOCAL_REGS)
     let end_local = total_locals.min(MAX_LOCAL_REGS);
     for local_idx in start_local..end_local {
-        // Local fits in a register (r9 + local_idx)
-        // Use LoadImm to set register to 0
         emitter.emit(Instruction::LoadImm {
             reg: FIRST_LOCAL_REG + local_idx as u8,
             value: 0,
         });
+    }
+
+    // Zero-initialize spilled locals (index >= MAX_LOCAL_REGS).
+    // These live at fixed global memory addresses and may retain values from
+    // previous calls to the same function (e.g. recursive calls).
+    if total_locals > MAX_LOCAL_REGS {
+        let start_spilled = if start_local > MAX_LOCAL_REGS {
+            start_local
+        } else {
+            MAX_LOCAL_REGS
+        };
+        if start_spilled < total_locals {
+            // Load 0 into r8 once, then use it for all stores
+            emitter.emit(Instruction::LoadImm {
+                reg: SPILL_ALT_REG,
+                value: 0,
+            });
+            for local_idx in start_spilled..total_locals {
+                let offset = spilled_local_offset(ctx.func_idx, local_idx);
+                // Load address into r7 (safe in prologue)
+                emitter.emit(Instruction::LoadImm {
+                    reg: ARGS_PTR_REG,
+                    value: offset,
+                });
+                // Store 0 (from r8) to the spilled local address
+                emitter.emit(Instruction::StoreIndU32 {
+                    base: ARGS_PTR_REG,
+                    src: SPILL_ALT_REG,
+                    offset: 0,
+                });
+            }
+        }
     }
 }
 
@@ -1024,7 +1268,7 @@ fn translate_op(
     op: &Operator,
     emitter: &mut CodeEmitter,
     ctx: &CompileContext,
-    _total_locals: usize,
+    total_locals: usize,
 ) -> Result<()> {
     match op {
         Operator::LocalGet { local_index } => {
@@ -1999,7 +2243,7 @@ fn translate_op(
             } else {
                 // Convert global function index to local function index for emit_call
                 let local_func_idx = *function_index - ctx.num_imported_funcs as u32;
-                emitter.emit_call(local_func_idx, num_args, has_return, ctx.stack_size);
+                emitter.emit_call(local_func_idx, num_args, has_return, ctx.stack_size, ctx.func_idx, total_locals);
             }
         }
         Operator::CallIndirect {
@@ -2017,7 +2261,7 @@ fn translate_op(
                 .copied()
                 .unwrap_or((0, 0));
             let has_return = num_results > 0;
-            emitter.emit_call_indirect(num_args, has_return, ctx.stack_size, *type_index);
+            emitter.emit_call_indirect(num_args, has_return, ctx.stack_size, *type_index, ctx.func_idx, total_locals);
         }
         Operator::MemorySize { mem: 0, .. } => {
             // Load current memory size from compiler-managed global
@@ -2146,6 +2390,34 @@ fn translate_op(
                 src: new_size_reg,
                 offset: 0,
             });
+
+            // Actually grow PVM memory via SBRK instruction.
+            // Compute delta_bytes = (new_size - old_size) * 65536 in max_reg (scratch).
+            // new_size is in new_size_reg, old_size is in dst.
+            emitter.emit(Instruction::Sub32 {
+                dst: max_reg,
+                src1: new_size_reg,
+                src2: dst,
+            });
+            // Shift left by 16 to multiply by 65536 (WASM page size)
+            {
+                let shift_amount = scratch_2; // reuse r8 for shift amount
+                emitter.emit(Instruction::LoadImm {
+                    reg: shift_amount,
+                    value: 16,
+                });
+                emitter.emit(Instruction::ShloL32 {
+                    dst: max_reg,
+                    src1: max_reg,
+                    src2: shift_amount,
+                });
+            }
+            // SBRK: src=max_reg (bytes to allocate), dst=max_reg (receives old break, discarded)
+            emitter.emit(Instruction::Sbrk {
+                dst: max_reg,
+                src: max_reg,
+            });
+
             // dst already has old size, jump to end
             emitter.emit_jump(end_label);
 

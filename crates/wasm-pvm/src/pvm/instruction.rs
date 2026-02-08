@@ -46,6 +46,7 @@ pub enum Instruction {
     ShloL32 { dst: u8, src1: u8, src2: u8 },
     ShloR32 { dst: u8, src1: u8, src2: u8 },
     SharR32 { dst: u8, src1: u8, src2: u8 },
+    Sbrk { dst: u8, src: u8 },
     CountSetBits64 { dst: u8, src: u8 },
     CountSetBits32 { dst: u8, src: u8 },
     LeadingZeroBits64 { dst: u8, src: u8 },
@@ -213,6 +214,7 @@ impl Instruction {
             Self::SharR32 { dst, src1, src2 } => {
                 encode_three_reg(Opcode::SharR32, *dst, *src1, *src2)
             }
+            Self::Sbrk { dst, src } => encode_two_reg(Opcode::Sbrk, *dst, *src),
             Self::CountSetBits64 { dst, src } => encode_two_reg(Opcode::CountSetBits64, *dst, *src),
             Self::CountSetBits32 { dst, src } => encode_two_reg(Opcode::CountSetBits32, *dst, *src),
             Self::LeadingZeroBits64 { dst, src } => {

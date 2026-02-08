@@ -52,7 +52,7 @@ function runTestThroughAnanAsInPvm(testName: string, args: string, innerPc?: num
 
   // Build the input buffer for the outer interpreter:
   // 8 (gas) + 4 (pc) + 4 (spi-program-len) + 4 (inner-args-len) + program + args
-  const gas = BigInt(100_000_000); // 100M gas
+  const gas = BigInt(100_000_000); // 100M gas for inner program
   const pc = innerPc ?? 0;
 
   const inputBuffer = Buffer.alloc(8 + 4 + 4 + 4 + innerProgram.length + innerArgs.length);
@@ -86,7 +86,7 @@ function runTestThroughAnanAsInPvm(testName: string, args: string, innerPc?: num
 
   // Run the outer PVM (compiled anan-as interpreter) with this input
   const ananAsCli = path.join(projectRoot, 'vendor/anan-as/dist/bin/index.js');
-  const cmd = `node ${ananAsCli} run --spi --no-metadata --no-logs --gas=1000000000 ${ANAN_AS_COMPILER_JAM} 0x${inputHex}`;
+  const cmd = `node ${ananAsCli} run --spi --no-metadata --no-logs --gas=10000000000 ${ANAN_AS_COMPILER_JAM} 0x${inputHex}`;
 
   if (verbose) {
     console.log(`    Input: gas=${gas}, pc=${pc}, prog_len=${innerProgram.length}, args_len=${innerArgs.length}`);
