@@ -668,8 +668,9 @@ export const testCases: TestCase[] = [
       { args: '06', expected: 2, description: 'AS: arr[2] after ternary' },
       { args: '07', expected: 3, description: 'AS: arr[3] after ternary' },
       { args: '08', expected: 123, description: 'AS: arr[0..3] without ternary' },
-      // Note: step 9 exposes multi-ternary bug (v0,v1,v2 all become 0)
-      { args: '09', expected: 0, description: 'AS: arr[0..2] multi-ternary (bug)' },
+      // Note: step 9 previously exposed multi-ternary bug (v0,v1,v2 all became 0).
+      // Fixed by using SPILL_ALT_REG for GlobalSet/LocalSet temp to avoid clobbering operand stack.
+      { args: '09', expected: 12, description: 'AS: arr[0..2] multi-ternary' },
     ],
   },
   {

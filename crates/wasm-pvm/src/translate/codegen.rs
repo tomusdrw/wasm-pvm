@@ -1062,13 +1062,14 @@ fn translate_op(
             } else {
                 let offset = spilled_local_offset(ctx.func_idx, idx);
                 let src = emitter.spill_pop();
-                let temp = if src == 2 { 3 } else { 2 };
+                // Use SPILL_ALT_REG (r8) as temp to avoid clobbering operand stack registers (r2-r6).
+                // src is always r2-r7 (never r8) for a single pop, so r8 is safe.
                 emitter.emit(Instruction::LoadImm {
-                    reg: temp,
+                    reg: SPILL_ALT_REG,
                     value: offset,
                 });
                 emitter.emit(Instruction::StoreIndU32 {
-                    base: temp,
+                    base: SPILL_ALT_REG,
                     src,
                     offset: 0,
                 });
@@ -1147,13 +1148,14 @@ fn translate_op(
         Operator::GlobalSet { global_index } => {
             let offset = global_offset(*global_index);
             let src = emitter.spill_pop();
-            let temp = if src == 2 { 3 } else { 2 };
+            // Use SPILL_ALT_REG (r8) as temp to avoid clobbering operand stack registers (r2-r6).
+            // src is always r2-r7 (never r8) for a single pop, so r8 is safe.
             emitter.emit(Instruction::LoadImm {
-                reg: temp,
+                reg: SPILL_ALT_REG,
                 value: offset,
             });
             emitter.emit(Instruction::StoreIndU32 {
-                base: temp,
+                base: SPILL_ALT_REG,
                 src,
                 offset: 0,
             });
@@ -1271,7 +1273,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I32Eq | Operator::I64Eq => {
+        Operator::I64Eq => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1286,10 +1288,30 @@ fn translate_op(
                 value: 1,
             });
         }
-        Operator::I32Ne | Operator::I64Ne => {
-            // NE: a != b → (a XOR b) != 0 → 0 < (a XOR b)
-            // PVM SetLtU semantics: dst = src2 < src1
-            // So for 0 < xor_result, we need SetLtU { src1: xor_result, src2: 0 }
+        Operator::I32Eq => {
+            // i32.eq must only compare the lower 32 bits.
+            // i32.const sign-extends (LoadImm) while i32.load zero-extends (LoadIndU32),
+            // so the upper 32 bits may differ. Truncate XOR result to 32 bits via AddImm32.
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: a,
+                src2: b,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst,
+                src: dst,
+                value: 0,
+            });
+            emitter.emit(Instruction::SetLtUImm {
+                dst,
+                src: dst,
+                value: 1,
+            });
+        }
+        Operator::I64Ne => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1306,8 +1328,34 @@ fn translate_op(
             let _ = emitter.spill_pop();
             emitter.emit(Instruction::SetLtU {
                 dst,
-                src1: dst,  // xor_result
-                src2: zero, // 0 < xor_result when xor_result > 0
+                src1: dst,
+                src2: zero,
+            });
+        }
+        Operator::I32Ne => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: a,
+                src2: b,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst,
+                src: dst,
+                value: 0,
+            });
+            let zero = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm {
+                reg: zero,
+                value: 0,
+            });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: dst,
+                src2: zero,
             });
         }
         Operator::I32And | Operator::I64And => {
@@ -1469,7 +1517,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I32GtU | Operator::I64GtU => {
+        Operator::I64GtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1479,9 +1527,35 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32GtS | Operator::I64GtS => {
+        Operator::I32GtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
+            // Normalize both operands to sign-extended 32-bit for correct 64-bit comparison.
+            // Sign-extension preserves both signed and unsigned 32-bit ordering.
+            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
+            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: a,
+                src2: b,
+            });
+        }
+        Operator::I64GtS => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtS {
+                dst,
+                src1: a,
+                src2: b,
+            });
+        }
+        Operator::I32GtS => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
+            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
@@ -1493,7 +1567,7 @@ fn translate_op(
         // Pop b (top), pop a (second)
         // PVM SetLt semantics: dst = src2 < src1 (verified in anan-as: reg[b] < reg[a])
         // For a < b, we need SetLt { src1: b, src2: a } so it computes a < b
-        Operator::I32LtU | Operator::I64LtU => {
+        Operator::I64LtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1503,7 +1577,19 @@ fn translate_op(
                 src2: a,
             });
         }
-        Operator::I32LtS | Operator::I64LtS => {
+        Operator::I32LtU => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
+            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: b,
+                src2: a,
+            });
+        }
+        Operator::I64LtS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1513,7 +1599,19 @@ fn translate_op(
                 src2: a,
             });
         }
-        Operator::I32GeU | Operator::I64GeU => {
+        Operator::I32LtS => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
+            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtS {
+                dst,
+                src1: b,
+                src2: a,
+            });
+        }
+        Operator::I64GeU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1531,7 +1629,27 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32GeS | Operator::I64GeS => {
+        Operator::I32GeU => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
+            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: b,
+                src2: a,
+            });
+            let one = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        Operator::I64GeS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1549,7 +1667,27 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32LeU | Operator::I64LeU => {
+        Operator::I32GeS => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
+            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtS {
+                dst,
+                src1: b,
+                src2: a,
+            });
+            let one = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        Operator::I64LeU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1567,7 +1705,27 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32LeS | Operator::I64LeS => {
+        Operator::I32LeU => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
+            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: a,
+                src2: b,
+            });
+            let one = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        Operator::I64LeS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1585,10 +1743,37 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32Eqz | Operator::I64Eqz => {
+        Operator::I32LeS => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
+            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtS {
+                dst,
+                src1: a,
+                src2: b,
+            });
+            let one = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        Operator::I64Eqz => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtUImm { dst, src, value: 1 });
+        }
+        Operator::I32Eqz => {
+            let src = emitter.spill_pop();
+            let dst = emitter.spill_push();
+            // Normalize to 32-bit: upper bits may be garbage from mixed i32 sources
+            emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+            emitter.emit(Instruction::SetLtUImm { dst, src: dst, value: 1 });
         }
         Operator::Block { blockty } => {
             let has_result = !matches!(blockty, wasmparser::BlockType::Empty);

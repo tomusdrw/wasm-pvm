@@ -456,26 +456,22 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                 // Invalid entry - store u32::MAX for both jump address and type index
                 ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // jump address
                 ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // type index
+            } else if (func_idx as usize) < num_imported_funcs as usize {
+                // Imported function - can't be called via call_indirect in PVM
+                ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // jump address
+                ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // type index
             } else {
-                // Valid entry - store jump address and type index
-                let jump_ref = 2 * (func_entry_jump_table_base + func_idx as usize + 1) as u32;
+                // Valid local entry - convert WASM func_idx to local function index
+                let local_func_idx = func_idx as usize - num_imported_funcs as usize;
+                // Jump ref uses local_func_idx to index into jump table function entries
+                let jump_ref = 2 * (func_entry_jump_table_base + local_func_idx + 1) as u32;
                 ro_data.extend_from_slice(&jump_ref.to_le_bytes());
-                // Get the type index for this function
-                let type_idx = if (func_idx as usize) < num_imported_funcs as usize {
-                    // Imported function - use imported_func_type_indices
-                    *imported_func_type_indices
-                        .get(func_idx as usize)
-                        .unwrap_or(&u32::MAX)
-                } else {
-                    // Local function - use function_type_indices
-                    let local_idx = func_idx as usize - num_imported_funcs as usize;
-                    *function_type_indices.get(local_idx).unwrap_or(&u32::MAX)
-                };
+                // Get the type index for this local function
+                let type_idx = *function_type_indices.get(local_func_idx).unwrap_or(&u32::MAX);
                 ro_data.extend_from_slice(&type_idx.to_le_bytes());
             }
         }
     }
-
     let blob = crate::pvm::ProgramBlob::new(all_instructions).with_jump_table(jump_table);
 
     // Build rw_data from WASM data segments
