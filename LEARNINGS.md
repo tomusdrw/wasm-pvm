@@ -108,10 +108,31 @@ This document captures technical learnings, design decisions, and discoveries ma
 **Memory Management**: Add proper page fault handling and dynamic memory allocation
 
 **Known Limitations** (see KNOWN_ISSUES.md for details):
-- `memory.copy` doesn't handle overlapping regions (violates WASM spec for memmove-like operations)
-- Division overflow checks not implemented (INT_MIN / -1 should trap)
-- Import return values ignored (stubs don't push dummy values for has_return)
+- ~~`memory.copy` doesn't handle overlapping regions~~ → ✅ Fixed (backward copy path added 2026-02-06)
+- ~~Division overflow checks not implemented~~ → ✅ Fixed (div-by-zero + INT_MIN/-1 checks added 2026-02-09)
+- ~~Import return values ignored~~ → ✅ Fixed (dummy value push for has_return added 2026-02-09)
 - Passive data segments not supported (memory.init not implemented)
+
+---
+
+## Division Overflow & Import Return Fixes (Phase 19a - 2026-02-09)
+
+**Problem 1 - Division overflow**: WASM spec requires trap for division by zero and `INT_MIN / -1` (signed overflow). PVM hardware doesn't trap on these - it returns garbage values instead.
+
+**Fix**: Added checks before all 8 div/rem operations:
+- **Div-by-zero**: `BranchNeImm(divisor, 0, ok) + Trap` for all div/rem ops
+- **Signed overflow**: `BranchNeImm(dividend, INT_MIN, ok) + BranchNeImm(divisor, -1, ok) + Trap` for i32.div_s
+- **i64 signed overflow**: Since `i64::MIN` doesn't fit in a 32-bit immediate, uses `LoadImm64 + Xor` approach with fast path (skip if divisor != -1)
+
+**Problem 2 - Import returns**: Imported function stubs popped arguments but didn't push return values, causing stack underflow.
+
+**Fix**: Added `spill_push() + LoadImm(0)` when import signature has a return type.
+
+**Key Insight**: PVM follows RISC-V semantics for division edge cases (returns specific values instead of trapping), so WASM-level checks are always required. The i64 overflow check is tricky because `BranchNeImm` only supports 32-bit immediates.
+
+**Code Locations**: `codegen.rs` helper methods `emit_div_by_zero_check`, `emit_i32_signed_div_overflow_check`, `emit_i64_signed_div_overflow_check`
+
+**Tests**: `tests/division_checks.rs` (8 tests), `tests/import_returns.rs` (4 tests)
 
 ---
 

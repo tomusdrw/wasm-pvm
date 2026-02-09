@@ -18,48 +18,35 @@ Deep recursion was causing silent memory corruption.
 
 ---
 
-### `memory.copy` incorrect for overlapping regions
+### ~~`memory.copy` incorrect for overlapping regions~~ (RESOLVED - 2026-02-06)
 
 **Severity**: High
-**Status**: 🔴 Open (Verified 2025-01-30)
+**Status**: ✅ Resolved (2026-02-06)
 
-The implementation uses a forward copy loop (`dest++`, `src++`). This violates the WASM specification for overlapping regions where `dest > src`, which requires a backward copy to avoid overwriting source data before it is read.
-
-**Impact**: `memmove`-like operations may corrupt data.
-
-**Verification**: Source inspection at `codegen.rs:1969-2047` confirms only forward copy is implemented. No overlap detection or backward copy path exists.
-
-**Fix needed**: Check if `dest > src` and regions overlap; if so, copy backward (from end to start).
+The implementation was updated to include a backward copy path when `dest > src`. When regions overlap with `dest > src`, the copy starts from the end and works backward (like `memmove`). See `codegen.rs:2551-2672`.
 
 ---
 
-### Division overflow checks missing
+### ~~Division overflow checks missing~~ (RESOLVED - 2026-02-09)
 
 **Severity**: Medium
-**Status**: 🔴 Open (Verified 2025-01-30)
+**Status**: ✅ Resolved (2026-02-09)
 
-`i32.div_s` and `i64.div_s` do not check for `INT_MIN / -1` overflow or division by zero. WASM requires a TRAP for these cases.
-
-**Current behavior**: Relies on PVM instruction behavior (likely returns `INT_MIN` or `-1` without trapping).
-
-**Verification**: Source inspection at `codegen.rs:1201-1209` (I32DivS) and `codegen.rs:1399-1407` (I64DivS) confirms direct PVM division without overflow checks.
-
-**Fix needed**: Add explicit checks for `divisor == 0` and `(dividend == INT_MIN && divisor == -1)` before division instructions.
+Added WASM-spec-compliant division checks:
+- **Div-by-zero check**: All 8 div/rem operations (i32/i64, signed/unsigned) now emit `BranchNeImm + Trap` before the division instruction.
+- **INT_MIN / -1 overflow**: `i32.div_s` and `i64.div_s` now check for signed overflow. For i64, uses `LoadImm64 + Xor` approach since `i64::MIN` doesn't fit in a 32-bit immediate. Optimized with fast path that skips the check when divisor != -1.
+- **Regression tests**: 8 tests in `tests/division_checks.rs` verify all check behaviors.
 
 ---
 
-### Import return values ignored
+### ~~Import return values ignored~~ (RESOLVED - 2026-02-09)
 
 **Severity**: Medium
-**Status**: 🔴 Open (Verified 2025-01-30)
+**Status**: ✅ Resolved (2026-02-09)
 
-Imported functions are stubbed as no-ops. If an imported function signature specifies a return value, the stub does not push anything to the stack/return register.
+Imported function stubs now push a dummy value (0) when the import signature has a return type, maintaining stack balance for callers.
 
-**Impact**: Callers expecting a return value will read garbage or cause stack underflow.
-
-**Verification**: Source inspection at `codegen.rs:1752-1770` confirms imports pop arguments but do not push return values. Comment at line 1770 explicitly acknowledges this gap: "For has_return, we'd need to push a dummy value, but abort/console.log don't return".
-
-**Fix needed**: Push a dummy value (0) if the imported function signature has a return type.
+**Regression tests**: 4 tests in `tests/import_returns.rs` verify import handling.
 
 ---
 
