@@ -99,10 +99,7 @@ fn test_spill_across_function_call() {
     )
     .expect("compile");
     let instructions = extract_instructions(&program);
-    assert!(
-        !instructions.is_empty(),
-        "Should compile spill across call"
-    );
+    assert!(!instructions.is_empty(), "Should compile spill across call");
 }
 
 /// Multiple spilled values across a function call.

@@ -177,11 +177,7 @@ mod tests {
 
         assert!(mask_bits[0], "PC 0 should be instruction start");
         for pc in 1..10 {
-            assert!(
-                !mask_bits[pc],
-                "PC {} should NOT be instruction start",
-                pc
-            );
+            assert!(!mask_bits[pc], "PC {} should NOT be instruction start", pc);
         }
         assert!(mask_bits[10], "PC 10 should be instruction start (Trap)");
     }

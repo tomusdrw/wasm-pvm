@@ -1114,8 +1114,7 @@ fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: 
     // and indirect calls. We copy them to this function's spilled local addresses.
     if !ctx.is_main && ctx.num_params > MAX_LOCAL_REGS {
         for param_idx in MAX_LOCAL_REGS..ctx.num_params {
-            let overflow_offset =
-                PARAM_OVERFLOW_BASE + ((param_idx - MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = PARAM_OVERFLOW_BASE + ((param_idx - MAX_LOCAL_REGS) * 8) as i32;
             let spilled_offset = spilled_local_offset(ctx.func_idx, param_idx);
             // Load from overflow area
             emitter.emit(Instruction::LoadImm {
@@ -1788,8 +1787,16 @@ fn translate_op(
             let a = emitter.spill_pop();
             // Normalize both operands to sign-extended 32-bit for correct 64-bit comparison.
             // Sign-extension preserves both signed and unsigned 32-bit ordering.
-            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
@@ -1810,8 +1817,16 @@ fn translate_op(
         Operator::I32GtS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
@@ -1836,8 +1851,16 @@ fn translate_op(
         Operator::I32LtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
@@ -1858,8 +1881,16 @@ fn translate_op(
         Operator::I32LtS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
@@ -1888,8 +1919,16 @@ fn translate_op(
         Operator::I32GeU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
@@ -1926,8 +1965,16 @@ fn translate_op(
         Operator::I32GeS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
@@ -1964,8 +2011,16 @@ fn translate_op(
         Operator::I32LeU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
@@ -2002,8 +2057,16 @@ fn translate_op(
         Operator::I32LeS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-            emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtS {
                 dst,
@@ -2029,7 +2092,11 @@ fn translate_op(
             let dst = emitter.spill_push();
             // Normalize to 32-bit: upper bits may be garbage from mixed i32 sources
             emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
-            emitter.emit(Instruction::SetLtUImm { dst, src: dst, value: 1 });
+            emitter.emit(Instruction::SetLtUImm {
+                dst,
+                src: dst,
+                value: 1,
+            });
         }
         Operator::Block { blockty } => {
             let has_result = !matches!(blockty, wasmparser::BlockType::Empty);
@@ -2079,7 +2146,11 @@ fn translate_op(
                 // Always reset depth: branches (br/return) inside the block may have
                 // left the depth wrong. At the merge point, depth must match the
                 // block's entry depth (+ 1 if the block produces a result).
-                let target_depth = if has_result { stack_depth + 1 } else { stack_depth };
+                let target_depth = if has_result {
+                    stack_depth + 1
+                } else {
+                    stack_depth
+                };
                 emitter.stack.set_depth(target_depth);
                 // Clear stale spill state from unreachable code after br/return
                 emitter.pending_spill = None;
@@ -2095,7 +2166,11 @@ fn translate_op(
                 emitter.define_label(else_label);
                 emitter.define_label(end_label);
                 // Always reset depth (same reasoning as Block above).
-                let target_depth = if has_result { stack_depth + 1 } else { stack_depth };
+                let target_depth = if has_result {
+                    stack_depth + 1
+                } else {
+                    stack_depth
+                };
                 emitter.stack.set_depth(target_depth);
                 // Clear stale spill state from unreachable code after br/return
                 emitter.pending_spill = None;
@@ -2266,15 +2341,19 @@ fn translate_op(
                 // Push dummy return value (0) to maintain stack balance
                 if has_return {
                     let dst = emitter.spill_push();
-                    emitter.emit(Instruction::LoadImm {
-                        reg: dst,
-                        value: 0,
-                    });
+                    emitter.emit(Instruction::LoadImm { reg: dst, value: 0 });
                 }
             } else {
                 // Convert global function index to local function index for emit_call
                 let local_func_idx = *function_index - ctx.num_imported_funcs as u32;
-                emitter.emit_call(local_func_idx, num_args, has_return, ctx.stack_size, ctx.func_idx, total_locals);
+                emitter.emit_call(
+                    local_func_idx,
+                    num_args,
+                    has_return,
+                    ctx.stack_size,
+                    ctx.func_idx,
+                    total_locals,
+                );
             }
         }
         Operator::CallIndirect {
@@ -2292,7 +2371,14 @@ fn translate_op(
                 .copied()
                 .unwrap_or((0, 0));
             let has_return = num_results > 0;
-            emitter.emit_call_indirect(num_args, has_return, ctx.stack_size, *type_index, ctx.func_idx, total_locals);
+            emitter.emit_call_indirect(
+                num_args,
+                has_return,
+                ctx.stack_size,
+                *type_index,
+                ctx.func_idx,
+                total_locals,
+            );
         }
         Operator::MemorySize { mem: 0, .. } => {
             // Load current memory size from compiler-managed global
@@ -2835,7 +2921,11 @@ fn translate_op(
                 base: addr,
                 offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
-            emitter.emit(Instruction::AddImm32 { dst, src: dst, value: 0 });
+            emitter.emit(Instruction::AddImm32 {
+                dst,
+                src: dst,
+                value: 0,
+            });
         }
         Operator::I32Store8 { memarg } | Operator::I64Store8 { memarg } => {
             let val = emitter.spill_pop();

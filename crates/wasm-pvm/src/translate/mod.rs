@@ -40,7 +40,8 @@ struct DataSegment {
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     // Validate WASM module before attempting translation.
     // This catches malformed/invalid modules early with clear error messages.
-    wasmparser::validate(wasm).map_err(|e| Error::Internal(format!("WASM validation error: {e}")))?;
+    wasmparser::validate(wasm)
+        .map_err(|e| Error::Internal(format!("WASM validation error: {e}")))?;
 
     let mut functions = Vec::new();
     let mut func_types: Vec<wasmparser::FuncType> = Vec::new();
@@ -258,8 +259,12 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 
     // Calculate heap/memory info early since we need max_memory_pages for codegen.
     // The min floor of 1024 WASM pages is applied inside when no explicit max is declared.
-    let (heap_pages, max_memory_pages) =
-        calculate_heap_pages(functions.len(), &data_segments, &memory_limits, wasm_memory_base)?;
+    let (heap_pages, max_memory_pages) = calculate_heap_pages(
+        functions.len(),
+        &data_segments,
+        &memory_limits,
+        wasm_memory_base,
+    )?;
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
@@ -478,7 +483,9 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                 let jump_ref = 2 * (func_entry_jump_table_base + local_func_idx + 1) as u32;
                 ro_data.extend_from_slice(&jump_ref.to_le_bytes());
                 // Get the type index for this local function
-                let type_idx = *function_type_indices.get(local_func_idx).unwrap_or(&u32::MAX);
+                let type_idx = *function_type_indices
+                    .get(local_func_idx)
+                    .unwrap_or(&u32::MAX);
                 ro_data.extend_from_slice(&type_idx.to_le_bytes());
             }
         }
@@ -610,8 +617,7 @@ fn calculate_heap_pages(
 
     // WASM memory end based on max pages allocation
     // Each WASM page is 64KB (65536 bytes)
-    let wasm_memory_end =
-        wasm_memory_base as usize + (max_memory_pages as usize) * 64 * 1024;
+    let wasm_memory_end = wasm_memory_base as usize + (max_memory_pages as usize) * 64 * 1024;
 
     let end = spilled_locals_end.max(wasm_memory_end);
 

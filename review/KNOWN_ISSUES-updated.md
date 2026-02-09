@@ -148,10 +148,10 @@ ExitCode 0 means memory fault at address < 0x10000 (reserved memory).
 
 ---
 
-### BUG-5: LocalTee with Spilled Stack Complexity 🔴
+### BUG-5: LocalTee with Spilled Stack Complexity 🟢
 
-**Status**: Mitigated but Fragile  
-**Severity**: High (Bug-prone)  
+**Status**: Tested (2026-02-09)
+**Severity**: High (Bug-prone) - now mitigated with 8 test cases
 **Updated**: 2026-02-09
 
 #### Problem
@@ -172,20 +172,14 @@ The `local.tee` implementation has 3 levels of nesting and multiple edge cases:
 
 ## Medium Priority Issues
 
-### ISSUE-6: No WASM Validation Phase 🟡
+### ISSUE-6: No WASM Validation Phase 🟢
 
-**Status**: Not Implemented  
-**Severity**: Medium  
-**Impact**: Invalid WASM may produce wrong code instead of error
+**Status**: FIXED (2026-02-09)
+**Severity**: Medium
 
-**Description**: The compiler assumes input WASM is valid. No validation of:
-- Type checking
-- Label validity
-- Local index bounds
-- Memory alignment
-- Data segment bounds
-
-**Recommendation**: Add validation phase using `wasmparser::Validator` before translation.
+**Resolution**: Added `wasmparser::validate()` call as the first step in `compile()`.
+Invalid WASM modules now fail early with clear error messages. This caught 3 invalid
+test cases that were silently accepted before.
 
 ---
 
