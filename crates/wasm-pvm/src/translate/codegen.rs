@@ -2,58 +2,19 @@ use crate::pvm::Instruction;
 use crate::{Error, Result};
 use wasmparser::{FunctionBody, Operator};
 
+use super::memory_layout::{
+    self, EXIT_ADDRESS, GLOBAL_MEMORY_BASE, OPERAND_SPILL_BASE, PARAM_OVERFLOW_BASE, RO_DATA_BASE,
+};
 use super::stack::StackMachine;
 
 pub const ARGS_PTR_REG: u8 = 7;
 pub const ARGS_LEN_REG: u8 = 8;
 const FIRST_LOCAL_REG: u8 = 9;
 const MAX_LOCAL_REGS: usize = 4;
-const GLOBAL_MEMORY_BASE: i32 = 0x30000;
-const EXIT_ADDRESS: i32 = -65536;
 pub const RETURN_ADDR_REG: u8 = 0;
 pub const STACK_PTR_REG: u8 = 1;
 const RETURN_VALUE_REG: u8 = 7;
 const SAVED_TABLE_IDX_REG: u8 = 8;
-const RO_DATA_BASE: i32 = 0x10000;
-/// Stack segment end address (where the stack pointer starts)
-const STACK_SEGMENT_END: i32 = 0xFEFE_0000u32 as i32;
-/// Default stack size limit (64KB, matching SPI default)
-pub const DEFAULT_STACK_SIZE: u32 = 64 * 1024;
-/// Minimum address the stack pointer can reach (`STACK_SEGMENT_END - stack_size`).
-/// If SP goes below this, we have a stack overflow.
-fn stack_limit(stack_size: u32) -> i32 {
-    (STACK_SEGMENT_END as u32).wrapping_sub(stack_size) as i32
-}
-/// Base address for spilled locals in memory
-/// Layout: 0x30000-0x300FF globals, 0x30100+ user heap, 0x40000+ spilled locals
-/// User heap can use up to ~64KB (0x30100 to 0x3FFFF) before colliding with spilled locals
-pub const SPILLED_LOCALS_BASE: i32 = 0x40000;
-/// Bytes allocated per function for spilled locals (64 locals * 8 bytes)
-pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
-/// Temporary area for passing overflow parameters (5th+ args) during `call_indirect`.
-/// The caller writes here, and the callee's prologue copies to its spilled local addresses.
-/// Supports up to 8 overflow parameters (64 bytes).
-const PARAM_OVERFLOW_BASE: i32 = 0x3FF00;
-/// Compute the base address for WASM linear memory in PVM address space.
-/// This must be placed after the spilled locals region to avoid overlap.
-/// WASM memory address 0 maps to this PVM address.
-/// All i32.load/i32.store operations add this offset to the WASM address.
-pub fn compute_wasm_memory_base(num_local_funcs: usize) -> i32 {
-    let spilled_locals_end =
-        SPILLED_LOCALS_BASE + (num_local_funcs as i32) * SPILLED_LOCALS_PER_FUNC;
-    // Align up to 64KB boundary (0x10000) for clean page alignment
-    let aligned = (spilled_locals_end + 0xFFFF) & !0xFFFF;
-    // Minimum of 0x50000 to maintain backward compatibility for small modules
-    aligned.max(0x50000)
-}
-
-/// Offset within `GLOBAL_MEMORY_BASE` for the compiler-managed memory size global.
-/// This is stored AFTER all user globals: address = 0x30000 + (`num_globals` * 4)
-/// Value is the current memory size in 64KB pages (u32).
-/// Note: We use a function instead of a constant since it depends on `num_globals`.
-fn memory_size_global_offset(num_globals: usize) -> i32 {
-    GLOBAL_MEMORY_BASE + (num_globals as i32 * 4)
-}
 
 pub struct CompileContext {
     pub num_params: usize,
@@ -114,7 +75,6 @@ enum ControlFrame {
     },
 }
 
-const OPERAND_SPILL_BASE: i32 = -0x100;
 /// Alternate register for second spilled operand in binary operations
 /// Using r8 because r7 is the primary spill temp, and r8 is free during computation
 /// (only used at function call boundaries for args length)
@@ -468,7 +428,7 @@ impl CodeEmitter {
         //    range which is negative as i32. LoadImm sign-extends to i64, producing
         //    0xFFFFFFFF_FExx_xxxx which breaks the unsigned comparison with the
         //    zero-extended stack pointer (0x00000000_FExx_xxxx).
-        let limit = stack_limit(stack_size);
+        let limit = memory_layout::stack_limit(stack_size);
         let continue_label = self.alloc_label();
 
         self.flush_pending_spill();
@@ -759,7 +719,7 @@ impl CodeEmitter {
 
         // Stack overflow check: new_sp = sp - frame_size
         // If new_sp < stack_limit, trap.
-        let limit = stack_limit(stack_size);
+        let limit = memory_layout::stack_limit(stack_size);
         let continue_label = self.alloc_label();
 
         // NOTE: This clobbers r7 (ARGS_PTR_REG) with the limit value.
@@ -1298,13 +1258,12 @@ fn local_reg(idx: usize) -> Option<u8> {
 }
 
 fn spilled_local_offset(func_idx: usize, local_idx: usize) -> i32 {
-    SPILLED_LOCALS_BASE
-        + (func_idx as i32) * SPILLED_LOCALS_PER_FUNC
-        + ((local_idx - MAX_LOCAL_REGS) as i32) * 8
+    let local_offset = ((local_idx - MAX_LOCAL_REGS) as i32) * 8;
+    memory_layout::spilled_local_addr(func_idx, local_offset)
 }
 
 fn global_offset(idx: u32) -> i32 {
-    GLOBAL_MEMORY_BASE + (idx as i32) * 4
+    memory_layout::global_addr(idx)
 }
 
 fn translate_op(
@@ -2338,7 +2297,7 @@ fn translate_op(
         Operator::MemorySize { mem: 0, .. } => {
             // Load current memory size from compiler-managed global
             let dst = emitter.spill_push();
-            let global_addr = memory_size_global_offset(ctx.num_globals);
+            let global_addr = memory_layout::memory_size_global_offset(ctx.num_globals);
             emitter.emit(Instruction::LoadImm {
                 reg: dst,
                 value: global_addr,
@@ -2366,7 +2325,7 @@ fn translate_op(
             let stack_depth_before = emitter.stack.depth();
             let delta = emitter.spill_pop();
             let dst = emitter.spill_push();
-            let global_addr = memory_size_global_offset(ctx.num_globals);
+            let global_addr = memory_layout::memory_size_global_offset(ctx.num_globals);
 
             // IMPORTANT: delta and dst might be the same register!
             // We need to save delta to a different register before loading current size.

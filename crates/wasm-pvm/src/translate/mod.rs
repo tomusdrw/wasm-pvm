@@ -1,4 +1,5 @@
 mod codegen;
+pub mod memory_layout;
 mod stack;
 
 use crate::pvm::Instruction;
@@ -249,7 +250,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     // Compute WASM memory base dynamically to avoid overlap with spilled locals.
     // With many functions, the spilled locals region (0x40000 + N*512) can overlap
     // with the WASM memory region if it's at a fixed 0x50000.
-    let wasm_memory_base = codegen::compute_wasm_memory_base(functions.len());
+    let wasm_memory_base = memory_layout::compute_wasm_memory_base(functions.len());
 
     // Calculate heap/memory info early since we need max_memory_pages for codegen.
     // The min floor of 1024 WASM pages is applied inside when no explicit max is declared.
@@ -337,7 +338,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             type_signatures: type_signatures.clone(),
             num_imported_funcs: num_imported_funcs as usize,
             imported_func_names: imported_func_names.clone(),
-            stack_size: codegen::DEFAULT_STACK_SIZE,
+            stack_size: memory_layout::DEFAULT_STACK_SIZE,
             initial_memory_pages: memory_limits.initial_pages,
             max_memory_pages,
             wasm_memory_base,
@@ -592,8 +593,8 @@ fn calculate_heap_pages(
     // We need to allocate enough pages to cover:
     // 1. Spilled locals
     // 2. WASM linear memory (including data segments)
-    let spilled_locals_end = codegen::SPILLED_LOCALS_BASE as usize
-        + num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
+    let spilled_locals_end = memory_layout::SPILLED_LOCALS_BASE as usize
+        + num_functions * memory_layout::SPILLED_LOCALS_PER_FUNC as usize;
 
     // Determine the maximum WASM memory pages we'll allow.
     // Respect the module's explicit max; only apply a floor when no max is declared.
