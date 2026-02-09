@@ -222,6 +222,20 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         result_len_global = Some(1);
     }
 
+    // Detect if entry functions return (i32, i32) for the new entry point convention.
+    // When an entry function returns two i32 values, they are treated as (result_ptr, result_len).
+    let func_returns_ptr_len = |local_idx: usize| -> bool {
+        function_type_indices
+            .get(local_idx)
+            .and_then(|&type_idx| func_types.get(type_idx as usize))
+            .is_some_and(|ft| {
+                ft.results().len() == 2
+                    && ft.results()[0] == wasmparser::ValType::I32
+                    && ft.results()[1] == wasmparser::ValType::I32
+            })
+    };
+    let main_returns_ptr_len = func_returns_ptr_len(main_func_idx);
+
     // Function signatures indexed by global function index (imports first, then locals)
     let function_signatures: Vec<(usize, bool)> = imported_func_type_indices
         .iter()
@@ -324,22 +338,31 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 
         let is_entry_func = is_main || is_secondary_entry;
 
+        let entry_returns_ptr_len = if is_main {
+            main_returns_ptr_len
+        } else if is_secondary_entry {
+            secondary_entry_idx_resolved.is_some_and(&func_returns_ptr_len)
+        } else {
+            false
+        };
+
         let ctx = CompileContext {
             num_params,
             num_locals: 0,
             num_globals: globals.len(),
-            result_ptr_global: if is_entry_func {
+            result_ptr_global: if is_entry_func && !entry_returns_ptr_len {
                 result_ptr_global
             } else {
                 None
             },
-            result_len_global: if is_entry_func {
+            result_len_global: if is_entry_func && !entry_returns_ptr_len {
                 result_len_global
             } else {
                 None
             },
             is_main: is_entry_func,
             has_return,
+            entry_returns_ptr_len,
             function_offsets: vec![],
             function_signatures: function_signatures.clone(),
             func_idx: global_func_idx,

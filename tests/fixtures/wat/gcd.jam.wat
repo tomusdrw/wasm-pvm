@@ -2,8 +2,6 @@
   (memory 1)
   
   ;; Globals stored at 0x20000 + idx*4 by compiler
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
   
   ;; Compute GCD of two u32 arguments using Euclidean algorithm
   ;; Input: two u32 values (little-endian) at args_ptr
@@ -11,7 +9,7 @@
   ;;
   ;; Register budget: 2 params + 2 locals = 4 (r9-r12)
   ;; Reuse $args_ptr as $a, $args_len as $b after loading args
-  (func (export "main") (param $a i32) (param $b i32)
+  (func (export "main") (param $a i32) (param $b i32) (result i32 i32)
     (local $temp i32)
     (local $rem i32)
     
@@ -50,7 +48,7 @@
     ;; Store result (a) at 0
     (i32.store (i32.const 0) (local.get $a))
     
-    (global.set $result_ptr (i32.const 0))
-    (global.set $result_len (i32.const 4))
+    (i32.const 0)  ;; result_ptr
+    (i32.const 4)  ;; result_len
   )
 )

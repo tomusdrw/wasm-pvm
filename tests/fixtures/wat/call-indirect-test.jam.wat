@@ -1,9 +1,5 @@
 (module
   (memory 1)
-
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
-
   ;; Function table with 4 entries
   (table 4 funcref)
   (elem (i32.const 0) $add_ten $add_twenty $multiply_two $set_99)
@@ -27,7 +23,7 @@
     (i32.const 99)
   )
 
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $step i32)
     (local $val i32)
     (local $func_idx i32)
@@ -40,8 +36,8 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 5) (i32.const 0))
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -52,8 +48,8 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 5) (i32.const 1))
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -64,8 +60,8 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 7) (i32.const 2))
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -76,8 +72,8 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 0) (i32.const 3))
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -91,8 +87,8 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (local.get $val) (i32.const 2))
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -114,8 +110,8 @@
           )
         )
         (i32.store (i32.const 0) (local.get $val))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -129,10 +125,13 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 100) (local.get $func_idx))
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
+
+    (i32.const 0)  ;; default result_ptr
+    (i32.const 0)  ;; default result_len
   )
 )

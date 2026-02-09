@@ -1,9 +1,5 @@
 (module
   (memory 1)
-
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
-
   ;; Table for call_indirect
   (table 2 funcref)
   (elem (i32.const 0) $get_delta $get_delta_plus_ten)
@@ -22,7 +18,7 @@
   ;; - Calls a function via call_indirect
   ;; - Uses the result to update a memory field
   ;; - Loops multiple times
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $step i32)
     (local $obj_ptr i32)       ;; pointer to our "struct" in memory
     (local $pc i32)            ;; "PC" field (what we track)
@@ -77,8 +73,8 @@
           (i32.add (local.get $pc) (i32.add (i32.const 1) (local.get $result)))
         )
         (i32.store (i32.const 0) (i32.load offset=4 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -111,8 +107,8 @@
             (i32.load offset=8 (local.get $obj_ptr))
           )
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -137,8 +133,8 @@
           (i32.add (local.get $temp11)
                    (local.get $temp12))))))))))))
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -164,10 +160,13 @@
           )
         )
         (i32.store (i32.const 0) (i32.load offset=4 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
+
+    (i32.const 0)  ;; default result_ptr
+    (i32.const 0)  ;; default result_len
   )
 )

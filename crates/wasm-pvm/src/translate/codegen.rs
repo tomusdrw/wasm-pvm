@@ -24,6 +24,9 @@ pub struct CompileContext {
     pub result_len_global: Option<u32>,
     pub is_main: bool,
     pub has_return: bool,
+    /// When true, the entry function returns (ptr, len) as multi-value return
+    /// instead of using `result_ptr`/`result_len` globals.
+    pub entry_returns_ptr_len: bool,
     pub function_offsets: Vec<usize>,
     pub function_signatures: Vec<(usize, bool)>,
     pub func_idx: usize,
@@ -1185,8 +1188,26 @@ fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: 
     }
 }
 
-fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bool) {
-    if ctx.is_main {
+fn emit_main_exit(emitter: &mut CodeEmitter, ctx: &CompileContext) {
+    if ctx.entry_returns_ptr_len {
+        // New convention: main returns (ptr, len) as multi-value return.
+        // Stack has [ptr, len] with len on top.
+        let len_reg = emitter.spill_pop();
+        let ptr_reg = emitter.spill_pop();
+        // r7 = ptr + WASM_MEMORY_BASE (translate WASM address to PVM address)
+        emitter.emit(Instruction::AddImm32 {
+            dst: ARGS_PTR_REG,
+            src: ptr_reg,
+            value: ctx.wasm_memory_base,
+        });
+        // r8 = r7 + len (end pointer)
+        emitter.emit(Instruction::Add32 {
+            dst: ARGS_LEN_REG,
+            src1: ARGS_PTR_REG,
+            src2: len_reg,
+        });
+    } else {
+        // Legacy convention: read result_ptr and result_len from globals
         if let Some(ptr_idx) = ctx.result_ptr_global {
             let offset = (ptr_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
             emitter.emit(Instruction::LoadImm {
@@ -1199,8 +1220,6 @@ fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bo
                 offset: 0,
             });
             // Translate result_ptr from WASM address to PVM address
-            // The WASM code sets result_ptr as a WASM linear memory address,
-            // but the caller expects a PVM address.
             emitter.emit(Instruction::AddImm32 {
                 dst: ARGS_PTR_REG,
                 src: ARGS_PTR_REG,
@@ -1225,11 +1244,17 @@ fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bo
                 src2: ARGS_LEN_REG,
             });
         }
-        emitter.emit(Instruction::LoadImm {
-            reg: 2,
-            value: EXIT_ADDRESS,
-        });
-        emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
+    }
+    emitter.emit(Instruction::LoadImm {
+        reg: 2,
+        value: EXIT_ADDRESS,
+    });
+    emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
+}
+
+fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bool) {
+    if ctx.is_main {
+        emit_main_exit(emitter, ctx);
     } else {
         // Only pop return value if there's something on the stack
         // (there might not be if an explicit 'return' already handled it)
@@ -2254,47 +2279,7 @@ fn translate_op(
             // For the main entry function, return means exit the program
             // For other functions, return to caller via jump table
             if ctx.is_main {
-                // Load result_ptr and result_len if available
-                if let Some(ptr_idx) = ctx.result_ptr_global {
-                    let offset = (ptr_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
-                    emitter.emit(Instruction::LoadImm {
-                        reg: 2,
-                        value: offset,
-                    });
-                    emitter.emit(Instruction::LoadIndU32 {
-                        dst: ARGS_PTR_REG,
-                        base: 2,
-                        offset: 0,
-                    });
-                    emitter.emit(Instruction::AddImm32 {
-                        dst: ARGS_PTR_REG,
-                        src: ARGS_PTR_REG,
-                        value: ctx.wasm_memory_base,
-                    });
-                }
-                if let Some(len_idx) = ctx.result_len_global {
-                    let offset = (len_idx as i32) * 4 + GLOBAL_MEMORY_BASE;
-                    emitter.emit(Instruction::LoadImm {
-                        reg: 2,
-                        value: offset,
-                    });
-                    emitter.emit(Instruction::LoadIndU32 {
-                        dst: ARGS_LEN_REG,
-                        base: 2,
-                        offset: 0,
-                    });
-                    // Calculate end pointer: r8 = r7 + r8 (ptr + len)
-                    emitter.emit(Instruction::Add32 {
-                        dst: ARGS_LEN_REG,
-                        src1: ARGS_PTR_REG,
-                        src2: ARGS_LEN_REG,
-                    });
-                }
-                emitter.emit(Instruction::LoadImm {
-                    reg: 2,
-                    value: EXIT_ADDRESS,
-                });
-                emitter.emit(Instruction::JumpInd { reg: 2, offset: 0 });
+                emit_main_exit(emitter, ctx);
             } else {
                 // Handle return value if present
                 if ctx.has_return {
