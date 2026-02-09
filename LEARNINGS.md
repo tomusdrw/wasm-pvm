@@ -858,6 +858,29 @@ bun scripts/test-pvm-in-pvm.ts
 
 ---
 
+## Code Quality Improvements (Phase 19b - 2026-02-09)
+
+### Dead Code Removal & Clippy Fixes
+- Removed dead `check_for_floats()` and `is_float_op()` functions from `mod.rs`
+- Removed unused `FunctionBody` import
+- Fixed all `doc_markdown` clippy warnings
+- Cast-related suppressions retained with comments (intentional for compiler code)
+
+### Debug Assertions for Stack Invariants
+- Added `MAX_STACK_DEPTH` (128) bound check in `push()`
+- Added depth bound check in `set_depth()`
+- Added register range assertions in `reg_at_depth()`, `reg_for_depth()`
+- Added spill depth precondition in `spill_offset()`
+- Added register/depth assertions in codegen `spill_push()`/`spill_pop()`
+
+### Memory Layout Module
+- Extracted all PVM memory address constants from `codegen.rs` into `translate/memory_layout.rs`
+- Single source of truth for: `GLOBAL_MEMORY_BASE`, `SPILLED_LOCALS_BASE`, `STACK_SEGMENT_END`, `EXIT_ADDRESS`, `RO_DATA_BASE`, `PARAM_OVERFLOW_BASE`, `OPERAND_SPILL_BASE`, `DEFAULT_STACK_SIZE`
+- Helper functions: `compute_wasm_memory_base()`, `memory_size_global_offset()`, `spilled_local_addr()`, `global_addr()`, `stack_limit()`
+- Module-level ASCII art diagram of the PVM address space layout
+
+---
+
 ## References
 
 - [Gray Paper v0.7.2](./gp-0.7.2.md) - JAM protocol specification

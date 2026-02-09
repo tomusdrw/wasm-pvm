@@ -189,44 +189,30 @@ The `local.tee` implementation has 3 levels of nesting and multiple edge cases:
 
 ---
 
-### ISSUE-7: Suppressed Compiler Warnings 🟡
+### ISSUE-7: Suppressed Compiler Warnings 🟢
 
-**Status**: Technical Debt  
-**Severity**: Medium  
+**Status**: PARTIALLY FIXED (2026-02-09)
+**Severity**: Medium
 **Files**: `lib.rs`, `codegen.rs`
 
-**Current State**:
-```rust
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::too_many_lines,
-    clippy::missing_errors_doc,
-)]
-```
-
-**Risk**: Hidden bugs in cast operations, unmaintainable code
-
-**Recommendation**: Fix underlying issues and remove suppressions.
+**Resolution**: Dead code removed (`check_for_floats`, `is_float_op`), unused imports cleaned up,
+doc_markdown warnings fixed. Cast-related suppressions retained with explanatory comments since
+they are intentional for compiler code (WASM i32/i64 <-> PVM u8 register operations). Zero clippy
+warnings remain.
 
 ---
 
-### ISSUE-8: Hardcoded Memory Addresses 🟡
+### ISSUE-8: Hardcoded Memory Addresses 🟢
 
-**Status**: Technical Debt  
-**Severity**: Medium  
-**Files**: Throughout codebase
+**Status**: FIXED (2026-02-09)
+**Severity**: Medium
+**Files**: `translate/memory_layout.rs` (new)
 
-**Problem**: Magic numbers scattered across code:
-- `0x30000` - globals
-- `0x40000` - spilled locals
-- `0x50000` - WASM memory
-- `0xFFFF0000` - exit address
-
-**Risk**: Easy to break consistency, hard to modify
-
-**Recommendation**: Create `MemoryLayout` abstraction (see review/proposals/06-proposed-architecture.md)
+**Resolution**: All PVM memory address constants extracted into a dedicated
+`memory_layout` module with full ASCII art layout diagram. Constants include
+`GLOBAL_MEMORY_BASE`, `SPILLED_LOCALS_BASE`, `STACK_SEGMENT_END`, `EXIT_ADDRESS`,
+etc. Helper functions (`compute_wasm_memory_base`, `spilled_local_addr`, `global_addr`)
+centralized there as well.
 
 ---
 
