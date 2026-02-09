@@ -78,7 +78,7 @@ cargo build --release
 
 ```bash
 # From WAT (WebAssembly Text) file
-cargo run -p wasm-pvm-cli -- compile examples-wat/add.jam.wat -o output.jam
+cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o output.jam
 
 # From WASM binary
 cargo run -p wasm-pvm-cli -- compile input.wasm -o output.jam
@@ -93,10 +93,27 @@ Requires Node.js and the anan-as PVM implementation (included as submodule):
 cd vendor/anan-as && npm ci && npm run build && cd ../..
 
 # Run with arguments (little-endian u32s)
-bun scripts/run-jam.ts output.jam --args=0500000007000000
+cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
 
 # Example: add.jam.wat with args 5 and 7 -> returns 12
-bun scripts/run-jam.ts output.jam --args=0500000007000000
+cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
+# Output shows: As U32: 12
+```
+
+
+### Run on PVM Interpreter
+
+Requires Node.js and the anan-as PVM implementation (included as submodule):
+
+```bash
+# Setup (first time only)
+cd vendor/anan-as && npm ci && npm run build && cd ../..
+
+# Run with arguments (little-endian u32s)
+cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
+
+# Example: add.jam.wat with args 5 and 7 -> returns 12
+cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
 # Output shows: As U32: 12
 ```
 
@@ -141,7 +158,7 @@ See `crates/wasm-pvm/src/translate/memory_layout.rs` for the full layout with AS
 
 ## Examples
 
-Working examples in `examples-wat/`:
+Working examples in `tests/fixtures/wat/`:
 
 | File | Description | Verified |
 |------|-------------|----------|
@@ -165,7 +182,7 @@ Working examples in `examples-wat/`:
 | `block-br-test.jam.wat` | Block branch tests | br/br_if |
 | `stack-test.jam.wat` | Operand stack tests | stack depth |
 
-AssemblyScript examples in `examples-as/`:
+AssemblyScript examples in `tests/fixtures/assembly/`:
 
 | File | Description | Verified |
 |------|-------------|----------|
@@ -188,15 +205,17 @@ crates/
         stack.rs      # Operand stack management
       spi.rs          # JAM format encoder
   wasm-pvm-cli/       # Command-line tool
-examples-wat/         # Example WASM programs (*.jam.wat)
-examples-as/          # AssemblyScript examples
-scripts/
-  run-jam.ts          # PVM test runner
-  test-all.ts         # Automated test suite
-  test-pvm-in-pvm.ts  # PVM-in-PVM test harness
+tests/                # Integration tests & tooling
+  fixtures/
+    wat/              # Example WASM programs (*.jam.wat)
+    assembly/         # AssemblyScript examples
+  utils/              # Utility scripts (run-jam, verify-jam)
+  helpers/            # Test helpers
+  data/               # Test definitions
 vendor/
   anan-as/            # PVM reference interpreter (submodule)
 review/               # Architecture review (2026-02-09)
+
 ```
 
 ## Documentation
@@ -219,14 +238,14 @@ cargo test
 cargo clippy -- -D warnings
 
 # Run full integration test suite (62 tests)
-bun scripts/test-all.ts
+cd tests && bun test
 
 # Test a single example
-cargo run -p wasm-pvm-cli --quiet -- compile examples-wat/factorial.jam.wat -o /tmp/test.jam
-bun scripts/run-jam.ts /tmp/test.jam --args=05000000
+cargo run -p wasm-pvm-cli --quiet -- compile tests/fixtures/wat/factorial.jam.wat -o /tmp/test.jam
+cd tests && bun utils/run-jam.ts /tmp/test.jam --args=05000000
 
 # Verify a JAM file structure
-bun scripts/verify-jam.ts /tmp/test.jam
+cd tests && bun utils/verify-jam.ts /tmp/test.jam
 ```
 
 ## License

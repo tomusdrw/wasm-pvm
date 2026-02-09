@@ -14,13 +14,13 @@ cargo build --release
 
 # Test
 cargo test                    # Unit tests (Rust)
-bun scripts/test-all.ts       # Integration tests (62 tests)
+cd tests && bun test          # Integration tests (62 tests)
 
 # Compile WASM → JAM
-cargo run -p wasm-pvm-cli -- compile examples-wat/add.jam.wat -o dist/add.jam
+cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o dist/add.jam
 
 # Run JAM
-bun scripts/run-jam.ts dist/add.jam --args=0500000007000000
+cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 ```
 
 ---
@@ -44,13 +44,15 @@ crates/
 └── wasm-pvm-cli/          # CLI binary
     └── src/main.rs        # Single-file CLI (62 lines)
 
-scripts/                   # TypeScript tooling [see AGENTS.md]
-├── test-all.ts            # Test runner
-├── run-jam.ts             # JAM execution
-└── test-cases.ts          # Test definitions
+tests/                     # Integration tests & tooling
+├── build.ts               # Test build orchestrator
+├── utils/                 # Utility scripts (run-jam, verify-jam)
+├── fixtures/              # Test cases
+│   ├── wat/               # WAT test programs
+│   └── assembly/          # AssemblyScript examples
+├── helpers/               # Test helpers
+└── data/                  # Test definitions (test-cases.ts)
 
-examples-wat/              # WAT test programs
-examples-as/               # AssemblyScript examples
 vendor/                    # Git submodules (anan-as)
 ```
 
@@ -104,12 +106,12 @@ vendor/                    # Git submodules (anan-as)
 | Add WASM operator | `translate/codegen.rs` | `translate_op()` match arm |
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
 | Fix translation bug | `translate/codegen.rs` | Check `emit_*` functions |
-| Add test case | `scripts/test-cases.ts` | Hex args, little-endian |
-| Fix test execution | `scripts/test-all.ts` | `runJamFile()` |
-| Fix result parsing | `scripts/run-jam.ts` | Memory chunk reconstruction |
-| Debug execution step-by-step | `scripts/trace-steps.ts` | Shows PC, gas, registers per step |
-| Quick trace (simple programs) | `scripts/trace-jam.ts` | 50 steps default, minimal output |
-| Verify JAM file structure | `scripts/verify-jam.ts` | Parse headers, jump table, code |
+| Add test case | `tests/data/test-cases.ts` | Hex args, little-endian |
+| Fix test execution | `tests/helpers/run.ts` | `runJam()` |
+| Fix result parsing | `tests/helpers/run.ts` | Memory chunk reconstruction |
+| Debug execution step-by-step | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
+| Quick trace (simple programs) | `tests/utils/trace-jam.ts` | 50 steps default, minimal output |
+| Verify JAM file structure | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
 | Add global handling | `translate/mod.rs` | `compile()` globals section |
 | Update PVM spec | `gp-0.7.2.md` | Appendix A is key |
 
@@ -121,7 +123,7 @@ vendor/                    # Git submodules (anan-as)
 2. **No panics in library code** - Use `Result<>` with `Error::Internal`
 3. **No floating point** - PVM lacks FP support; reject WASM floats
 4. **Don't break register conventions** - Hardcoded in multiple files
-5. **No standard Rust test dir** - Use TypeScript for integration tests
+5. **No standard Rust test dir** - Use `tests/` (TypeScript) for integration tests
 6. **NEVER use --no-verify on git push** - Always ensure tests and linters pass before pushing
 
 ---
@@ -167,7 +169,7 @@ Spilled locals: `0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)`
 ### Add WASM Instruction
 1. Find in WASM spec → determine PVM sequence
 2. Add to `translate/codegen.rs:translate_op()`
-3. Add test case to `scripts/test-cases.ts`
+3. Add test case to `tests/data/test-cases.ts`
 4. Update `LEARNINGS.md` if non-obvious
 
 ### Debug Translation Issue

@@ -135,7 +135,7 @@ Compile [anan-as](https://github.com/polkavm/anan-as) (PVM interpreter in Assemb
 
 ### Phase 16: PVM-in-PVM Infrastructure
 - [x] PVM runner wrapper
-- [x] Test harness (scripts/test-pvm-in-pvm.ts)
+- [x] Test harness (tests/utils/test-pvm-in-pvm.ts)
 - [x] SPI format standardized throughout toolchain
 
 ### Phase 19a: Critical Bug Fixes (2026-02-09)

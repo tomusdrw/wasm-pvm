@@ -79,24 +79,25 @@ The main remaining work is debugging why the PVM-in-PVM inner interpreter PANICs
 - `crates/wasm-pvm/src/translate/codegen.rs` - Main compiler (2,400 lines)
 - `crates/wasm-pvm/src/translate/mod.rs` - Compilation orchestration
 - `crates/wasm-pvm/src/translate/memory_layout.rs` - Memory address constants
-- `scripts/test-all.ts` - Test runner
-- `scripts/test-pvm-in-pvm.ts` - PVM-in-PVM harness
+- `tests/helpers/run.ts` - Test execution helper
+- `tests/utils/test-pvm-in-pvm.ts` - PVM-in-PVM harness
 
 ## Key Commands
 
 ```bash
 # Run all tests
 cargo test
-bun scripts/test-all.ts
+cd tests && bun test
 
 # Run specific test
-bun scripts/test-all.ts --filter=add
+# (Bun test filtering works differently, or use specific file)
+cd tests && bun test -t "add"
 
 # Run PVM-in-PVM
-bun scripts/test-pvm-in-pvm.ts
+cd tests && bun utils/test-pvm-in-pvm.ts
 
 # Trace execution
-bun scripts/trace-steps.ts <jam-file> <args> <steps>
+cd tests && bun utils/trace-steps.ts <jam-file> <args> <steps>
 ```
 
 ---
