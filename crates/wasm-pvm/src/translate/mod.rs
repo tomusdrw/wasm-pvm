@@ -38,6 +38,10 @@ struct DataSegment {
 }
 
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
+    // Validate WASM module before attempting translation.
+    // This catches malformed/invalid modules early with clear error messages.
+    wasmparser::validate(wasm).map_err(|e| Error::Internal(format!("WASM validation error: {e}")))?;
+
     let mut functions = Vec::new();
     let mut func_types: Vec<wasmparser::FuncType> = Vec::new();
     let mut function_type_indices = Vec::new();

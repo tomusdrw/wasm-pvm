@@ -135,15 +135,17 @@ fn test_loop_compilation() {
     let wat = r#"
         (module
             (func (export "main") (param i32) (result i32)
-                (loop (result i32)
-                    local.get 0
-                    i32.const 1
-                    i32.add
-                    local.set 0
-                    local.get 0
-                    i32.const 10
-                    i32.lt_s
-                    br_if 0
+                (block
+                    (loop
+                        local.get 0
+                        i32.const 1
+                        i32.add
+                        local.set 0
+                        local.get 0
+                        i32.const 10
+                        i32.lt_s
+                        br_if 0
+                    )
                 )
                 local.get 0
             )
@@ -418,6 +420,7 @@ fn test_exact_sequence_match() {
             (func (export "main") (result i32)
                 i32.const 5
                 i32.const 10
+                i32.add
             )
         )
     "#;
@@ -426,7 +429,7 @@ fn test_exact_sequence_match() {
     let code = program.code();
     let instructions = code.instructions();
 
-    // Check first few instructions match expected pattern
+    // Check that the two constants appear as LoadImm instructions
     if instructions.len() >= 2 {
         let expected = vec![
             InstructionPattern::LoadImm {
