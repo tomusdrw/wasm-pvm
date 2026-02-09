@@ -277,6 +277,58 @@ impl CodeEmitter {
         self.emit_jump_to_label(label);
     }
 
+    /// Emit a trap if the divisor register is zero (WASM spec: div/rem by zero must trap).
+    fn emit_div_by_zero_check(&mut self, divisor_reg: u8) {
+        let ok_label = self.alloc_label();
+        self.emit_branch_ne_imm_to_label(divisor_reg, 0, ok_label);
+        self.emit(Instruction::Trap);
+        self.define_label(ok_label);
+    }
+
+    /// Emit a trap if dividend == i32::MIN and divisor == -1 (signed overflow).
+    /// WASM spec requires trap for i32.div_s when result would be 2^31.
+    fn emit_i32_signed_div_overflow_check(&mut self, dividend_reg: u8, divisor_reg: u8) {
+        let no_overflow = self.alloc_label();
+        self.emit_branch_ne_imm_to_label(dividend_reg, i32::MIN, no_overflow);
+        self.emit_branch_ne_imm_to_label(divisor_reg, -1, no_overflow);
+        self.emit(Instruction::Trap);
+        self.define_label(no_overflow);
+    }
+
+    /// Emit a trap if dividend == i64::MIN and divisor == -1 (signed overflow).
+    /// WASM spec requires trap for i64.div_s when result would be 2^63.
+    /// Note: this clobbers `divisor_reg` on the slow path but reloads it with -1.
+    fn emit_i64_signed_div_overflow_check(&mut self, dividend_reg: u8, divisor_reg: u8) {
+        let no_overflow = self.alloc_label();
+        // Fast path: if divisor != -1, no overflow possible
+        self.emit_branch_ne_imm_to_label(divisor_reg, -1, no_overflow);
+
+        // Slow path: divisor == -1, check if dividend == i64::MIN
+        // Safe to clobber divisor_reg since we know its value (-1)
+        let reload = self.alloc_label();
+        self.emit(Instruction::LoadImm64 {
+            reg: divisor_reg,
+            value: i64::MIN as u64,
+        });
+        // XOR dividend with i64::MIN: result is 0 iff dividend == i64::MIN
+        self.emit(Instruction::Xor {
+            dst: divisor_reg,
+            src1: divisor_reg,
+            src2: dividend_reg,
+        });
+        self.emit_branch_ne_imm_to_label(divisor_reg, 0, reload);
+        self.emit(Instruction::Trap);
+
+        // Reload divisor value (-1) since we clobbered it
+        self.define_label(reload);
+        self.emit(Instruction::LoadImm {
+            reg: divisor_reg,
+            value: -1,
+        });
+
+        self.define_label(no_overflow);
+    }
+
     fn resolve_fixups(&mut self) -> Result<()> {
         for (instr_idx, label_id) in &self.fixups {
             let target_offset = self.labels[*label_id]
@@ -1460,8 +1512,9 @@ fn translate_op(
             emitter.emit(Instruction::Mul32 { dst, src1, src2 });
         }
         Operator::I32DivU => {
-            let src2 = emitter.spill_pop();
-            let src1 = emitter.spill_pop();
+            let src2 = emitter.spill_pop(); // divisor
+            let src1 = emitter.spill_pop(); // dividend
+            emitter.emit_div_by_zero_check(src2);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::DivU32 {
                 dst,
@@ -1470,8 +1523,10 @@ fn translate_op(
             });
         }
         Operator::I32DivS => {
-            let src2 = emitter.spill_pop();
-            let src1 = emitter.spill_pop();
+            let src2 = emitter.spill_pop(); // divisor
+            let src1 = emitter.spill_pop(); // dividend
+            emitter.emit_div_by_zero_check(src2);
+            emitter.emit_i32_signed_div_overflow_check(src1, src2);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::DivS32 {
                 dst,
@@ -1480,8 +1535,9 @@ fn translate_op(
             });
         }
         Operator::I32RemU => {
-            let src2 = emitter.spill_pop();
-            let src1 = emitter.spill_pop();
+            let src2 = emitter.spill_pop(); // divisor
+            let src1 = emitter.spill_pop(); // dividend
+            emitter.emit_div_by_zero_check(src2);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::RemU32 {
                 dst,
@@ -1490,8 +1546,9 @@ fn translate_op(
             });
         }
         Operator::I32RemS => {
-            let src2 = emitter.spill_pop();
-            let src1 = emitter.spill_pop();
+            let src2 = emitter.spill_pop(); // divisor
+            let src1 = emitter.spill_pop(); // dividend
+            emitter.emit_div_by_zero_check(src2);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::RemS32 {
                 dst,
@@ -1704,8 +1761,9 @@ fn translate_op(
             emitter.emit(Instruction::Mul64 { dst, src1, src2 });
         }
         Operator::I64DivU => {
-            let src2 = emitter.spill_pop();
-            let src1 = emitter.spill_pop();
+            let src2 = emitter.spill_pop(); // divisor
+            let src1 = emitter.spill_pop(); // dividend
+            emitter.emit_div_by_zero_check(src2);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::DivU64 {
                 dst,
@@ -1714,8 +1772,10 @@ fn translate_op(
             });
         }
         Operator::I64DivS => {
-            let src2 = emitter.spill_pop();
-            let src1 = emitter.spill_pop();
+            let src2 = emitter.spill_pop(); // divisor
+            let src1 = emitter.spill_pop(); // dividend
+            emitter.emit_div_by_zero_check(src2);
+            emitter.emit_i64_signed_div_overflow_check(src1, src2);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::DivS64 {
                 dst,
@@ -1724,8 +1784,9 @@ fn translate_op(
             });
         }
         Operator::I64RemU => {
-            let src2 = emitter.spill_pop();
-            let src1 = emitter.spill_pop();
+            let src2 = emitter.spill_pop(); // divisor
+            let src1 = emitter.spill_pop(); // dividend
+            emitter.emit_div_by_zero_check(src2);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::RemU64 {
                 dst,
@@ -1734,8 +1795,9 @@ fn translate_op(
             });
         }
         Operator::I64RemS => {
-            let src2 = emitter.spill_pop();
-            let src1 = emitter.spill_pop();
+            let src2 = emitter.spill_pop(); // divisor
+            let src1 = emitter.spill_pop(); // dividend
+            emitter.emit_div_by_zero_check(src2);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::RemS64 {
                 dst,
@@ -2232,7 +2294,15 @@ fn translate_op(
                 if import_name == "abort" {
                     emitter.emit(Instruction::Trap);
                 }
-                // For has_return, we'd need to push a dummy value, but abort/console.log don't return
+
+                // Push dummy return value (0) to maintain stack balance
+                if has_return {
+                    let dst = emitter.spill_push();
+                    emitter.emit(Instruction::LoadImm {
+                        reg: dst,
+                        value: 0,
+                    });
+                }
             } else {
                 // Convert global function index to local function index for emit_call
                 let local_func_idx = *function_index - ctx.num_imported_funcs as u32;
