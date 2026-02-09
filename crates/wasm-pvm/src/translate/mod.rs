@@ -246,10 +246,15 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         }
     }
 
+    // Compute WASM memory base dynamically to avoid overlap with spilled locals.
+    // With many functions, the spilled locals region (0x40000 + N*512) can overlap
+    // with the WASM memory region if it's at a fixed 0x50000.
+    let wasm_memory_base = codegen::compute_wasm_memory_base(functions.len());
+
     // Calculate heap/memory info early since we need max_memory_pages for codegen.
     // The min floor of 1024 WASM pages is applied inside when no explicit max is declared.
     let (heap_pages, max_memory_pages) =
-        calculate_heap_pages(functions.len(), &data_segments, &memory_limits)?;
+        calculate_heap_pages(functions.len(), &data_segments, &memory_limits, wasm_memory_base)?;
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
@@ -335,6 +340,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             stack_size: codegen::DEFAULT_STACK_SIZE,
             initial_memory_pages: memory_limits.initial_pages,
             max_memory_pages,
+            wasm_memory_base,
         };
 
         // Record function start offset BEFORE any start function prologue injection.
@@ -485,8 +491,8 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     //
     // rw_data_section byte 0 goes to PVM address 0x30000
     // rw_data_section byte N goes to PVM address 0x30000 + N
-    // WASM memory offset 0 should be at PVM address 0x50000 = 0x30000 + 0x20000
-    // So WASM data at offset X goes to rw_data_section byte (0x20000 + X)
+    // WASM memory offset 0 should be at PVM address wasm_memory_base
+    // So WASM data at offset X goes to rw_data_section byte (wasm_memory_base - 0x30000 + X)
     // (heap_pages and max_memory_pages were already calculated earlier)
     let _ = max_memory_pages; // silence unused variable warning
 
@@ -494,6 +500,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         &data_segments,
         &global_init_values,
         memory_limits.initial_pages,
+        wasm_memory_base,
     );
 
     Ok(SpiProgram::new(blob)
@@ -506,10 +513,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 ///
 /// The RW data segment in SPI is loaded at 0x30000. Layout:
 /// - 0x30000+ : Global variables (4 bytes each, including compiler-managed memory size)
-/// - 0x50000+ : WASM linear memory (data segments)
+/// - wasm_memory_base+ : WASM linear memory (data segments)
 ///
-/// WASM linear memory starts at `WASM_MEMORY_BASE` (0x50000).
-/// So WASM offset X maps to `rw_data` offset (0x20000 + X).
+/// WASM linear memory starts at `wasm_memory_base`.
+/// So WASM offset X maps to `rw_data` offset (wasm_memory_base - 0x30000 + X).
 ///
 /// The compiler-managed memory size global is stored at index `num_user_globals`,
 /// i.e., right after all user-defined globals.
@@ -517,13 +524,14 @@ fn build_rw_data(
     data_segments: &[DataSegment],
     global_init_values: &[i32],
     initial_memory_pages: u32,
+    wasm_memory_base: i32,
 ) -> Vec<u8> {
     // Calculate the minimum size needed for globals
     // +1 for the compiler-managed memory size global
     let globals_end = (global_init_values.len() + 1) * 4;
 
     // Calculate the size needed for data segments
-    let wasm_to_rw_offset = codegen::WASM_MEMORY_BASE as u32 - 0x30000;
+    let wasm_to_rw_offset = wasm_memory_base as u32 - 0x30000;
 
     let data_end = data_segments
         .iter()
@@ -572,12 +580,13 @@ fn calculate_heap_pages(
     num_functions: usize,
     data_segments: &[DataSegment],
     memory_limits: &MemoryLimits,
+    wasm_memory_base: i32,
 ) -> Result<(u16, u32)> {
     // Memory layout:
     // 0x30000-0x300FF: Globals (256 bytes)
     // 0x30100-0x3FFFF: User heap (~64KB)
     // 0x40000+: Spilled locals (512 bytes per function)
-    // 0x50000+: WASM linear memory (data segments + dynamic allocation)
+    // wasm_memory_base+: WASM linear memory (data segments + dynamic allocation)
     //
     // The heap segment starts at 0x30000 (GLOBAL_MEMORY_BASE).
     // We need to allocate enough pages to cover:
@@ -597,7 +606,7 @@ fn calculate_heap_pages(
     // WASM memory end based on max pages allocation
     // Each WASM page is 64KB (65536 bytes)
     let wasm_memory_end =
-        codegen::WASM_MEMORY_BASE as usize + (max_memory_pages as usize) * 64 * 1024;
+        wasm_memory_base as usize + (max_memory_pages as usize) * 64 * 1024;
 
     let end = spilled_locals_end.max(wasm_memory_end);
 

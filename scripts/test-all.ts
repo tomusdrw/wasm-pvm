@@ -32,8 +32,28 @@ function compileWatIfAvailable(testName: string, jamFile: string): void {
 }
 
 function compileAsIfAvailable(testName: string, jamFile: string): void {
+  // Check if it's a test from the new 'tests' directory
+  if (testName.startsWith('as-tests-')) {
+    const baseName = testName.slice(9); // remove 'as-tests-'
+    const wasmFile = path.join(projectRoot, 'tests', 'build', `${baseName}.wasm`);
+    
+    if (!fs.existsSync(wasmFile)) {
+      console.log(`  ⚠️  WASM file not found: ${wasmFile}`);
+      return;
+    }
+
+    const cmd = `cargo run -p wasm-pvm-cli --quiet -- compile ${wasmFile} -o ${jamFile}`;
+    execSync(cmd, {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    return;
+  }
+
   // AssemblyScript tests are prefixed with 'as-'
   if (!testName.startsWith('as-')) {
+
     return;
   }
   

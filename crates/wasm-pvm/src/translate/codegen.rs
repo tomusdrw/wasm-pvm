@@ -34,10 +34,18 @@ pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
 /// The caller writes here, and the callee's prologue copies to its spilled local addresses.
 /// Supports up to 8 overflow parameters (64 bytes).
 const PARAM_OVERFLOW_BASE: i32 = 0x3FF00;
-/// Base address for WASM linear memory in PVM address space.
+/// Compute the base address for WASM linear memory in PVM address space.
+/// This must be placed after the spilled locals region to avoid overlap.
 /// WASM memory address 0 maps to this PVM address.
 /// All i32.load/i32.store operations add this offset to the WASM address.
-pub const WASM_MEMORY_BASE: i32 = 0x50000;
+pub fn compute_wasm_memory_base(num_local_funcs: usize) -> i32 {
+    let spilled_locals_end =
+        SPILLED_LOCALS_BASE + (num_local_funcs as i32) * SPILLED_LOCALS_PER_FUNC;
+    // Align up to 64KB boundary (0x10000) for clean page alignment
+    let aligned = (spilled_locals_end + 0xFFFF) & !0xFFFF;
+    // Minimum of 0x50000 to maintain backward compatibility for small modules
+    aligned.max(0x50000)
+}
 
 /// Offset within `GLOBAL_MEMORY_BASE` for the compiler-managed memory size global.
 /// This is stored AFTER all user globals: address = 0x30000 + (`num_globals` * 4)
@@ -70,6 +78,8 @@ pub struct CompileContext {
     /// Maximum memory size in pages that can be allocated
     /// Calculated from `heap_pages` allocation or WASM max memory
     pub max_memory_pages: u32,
+    /// Base address for WASM linear memory (computed dynamically based on # of functions)
+    pub wasm_memory_base: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -389,40 +399,33 @@ impl CodeEmitter {
         let frame_size = operand_stack_start + (stack_depth_before_args * 8) as i32;
 
         // Stack overflow check: new_sp = sp - frame_size
-        // If new_sp < stack_limit, trap
-        //
-        // Challenge: PVM compares 64-bit registers, but our addresses are 32-bit.
-        // The immediate comparison instructions sign-extend the 32-bit immediate,
-        // which gives wrong results for addresses like 0xFEEE0000.
-        //
-        // Solution: Use two-register unsigned comparison (BranchGeU).
-        // Load the limit into a register first, then compare.
+        // If new_sp < stack_limit, trap.
+        // NOTE: This clobbers r7 (ARGS_PTR_REG) with the limit value.
+        // We must:
+        // 1. Flush any pending spill (r7 may hold a deferred spill value at depth >= 5)
+        // 2. Use LoadImm64 (not LoadImm) because the limit is in the 0xFExx_xxxx
+        //    range which is negative as i32. LoadImm sign-extends to i64, producing
+        //    0xFFFFFFFF_FExx_xxxx which breaks the unsigned comparison with the
+        //    zero-extended stack pointer (0x00000000_FExx_xxxx).
         let limit = stack_limit(stack_size);
         let continue_label = self.alloc_label();
 
-        // Compute new_sp in r8 (SPILL_ALT_REG)
+        self.flush_pending_spill();
+        self.emit(Instruction::LoadImm64 {
+            reg: ARGS_PTR_REG,
+            value: u64::from(limit as u32),
+        });
         self.emit(Instruction::AddImm64 {
             dst: SPILL_ALT_REG,
             src: STACK_PTR_REG,
             value: -frame_size,
         });
 
-        // Load stack limit into r7 (ARGS_PTR_REG - safe to clobber during call setup)
-        // Use LoadImm64 to avoid sign-extension issues with addresses like 0xFEEE0000
-        self.emit(Instruction::LoadImm64 {
-            reg: ARGS_PTR_REG,
-            value: u64::from(limit as u32),
-        });
-
-        // Check if new_sp >= stack_limit (no overflow) using unsigned comparison
-        // BranchGeU semantics: if reg2 >= reg1, branch
-        // We want: if new_sp >= limit, continue (no overflow)
-        // So: reg1 = limit (r7), reg2 = new_sp (r8)
         let fixup_idx = self.instructions.len();
         self.fixups.push((fixup_idx, continue_label));
         self.emit(Instruction::BranchGeU {
-            reg1: ARGS_PTR_REG,  // limit
-            reg2: SPILL_ALT_REG, // new_sp
+            reg1: ARGS_PTR_REG,
+            reg2: SPILL_ALT_REG,
             offset: 0,
         });
 
@@ -468,7 +471,7 @@ impl CodeEmitter {
                 value: mem_offset,
             });
             // Load spilled local value from global memory
-            self.emit(Instruction::LoadIndU32 {
+            self.emit(Instruction::LoadIndU64 {
                 dst: SPILL_ALT_REG,
                 base: SPILL_ALT_REG,
                 offset: 0,
@@ -517,7 +520,7 @@ impl CodeEmitter {
             let local_idx = num_args - 1 - i;
             if local_idx < MAX_LOCAL_REGS {
                 let dst = FIRST_LOCAL_REG + local_idx as u8;
-                self.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                self.emit(Instruction::AddImm64 { dst, src, value: 0 });
             } else {
                 // Write to parameter overflow area
                 let overflow_offset =
@@ -526,7 +529,7 @@ impl CodeEmitter {
                     reg: SPILL_ALT_REG,
                     value: overflow_offset,
                 });
-                self.emit(Instruction::StoreIndU32 {
+                self.emit(Instruction::StoreIndU64 {
                     base: SPILL_ALT_REG,
                     src,
                     offset: 0,
@@ -593,7 +596,7 @@ impl CodeEmitter {
                 value: mem_offset,
             });
             // Store value back to global memory
-            self.emit(Instruction::StoreIndU32 {
+            self.emit(Instruction::StoreIndU64 {
                 base: ARGS_PTR_REG,
                 src: SPILL_ALT_REG,
                 offset: 0,
@@ -645,7 +648,7 @@ impl CodeEmitter {
         // Now that caller's operand stack is restored, push the return value if any
         if return_in_r7 {
             let dst = self.spill_push();
-            self.emit(Instruction::AddImm32 {
+            self.emit(Instruction::AddImm64 {
                 dst,
                 src: RETURN_VALUE_REG,
                 value: 0,
@@ -670,6 +673,12 @@ impl CodeEmitter {
     ) {
         let table_idx_reg = self.spill_pop();
 
+        let stack_depth_before_args = self.stack.depth().saturating_sub(num_args);
+        let num_spilled_locals = total_locals.saturating_sub(MAX_LOCAL_REGS);
+        let spilled_frame_bytes = (num_spilled_locals * 8) as i32;
+        let operand_stack_start = 40 + spilled_frame_bytes;
+        let frame_size = operand_stack_start + (stack_depth_before_args * 8) as i32;
+
         // Save table index to r8 (SAVED_TABLE_IDX_REG)
         self.emit(Instruction::AddImm32 {
             dst: SAVED_TABLE_IDX_REG,
@@ -677,53 +686,40 @@ impl CodeEmitter {
             value: 0,
         });
 
-        let stack_depth_before_args = self.stack.depth().saturating_sub(num_args);
-        let num_spilled_locals = total_locals.saturating_sub(MAX_LOCAL_REGS);
-        let spilled_frame_bytes = (num_spilled_locals * 8) as i32;
-        let operand_stack_start = 40 + spilled_frame_bytes;
-        let frame_size = operand_stack_start + (stack_depth_before_args * 8) as i32;
+        // Save table index to [SP - frame_size - 8] immediately, BEFORE the
+        // stack overflow check which clobbers r8 (SPILL_ALT_REG = SAVED_TABLE_IDX_REG).
+        // After the prologue decrements SP by frame_size, this location
+        // becomes [new_SP - 8], safely below the frame.
+        self.emit(Instruction::StoreIndU64 {
+            base: STACK_PTR_REG,
+            src: SAVED_TABLE_IDX_REG,
+            offset: -frame_size - 8,
+        });
 
         // Stack overflow check: new_sp = sp - frame_size
-        // If new_sp < stack_limit, trap
-        //
-        // For call_indirect, we use r7 for new_sp since r8 has table index.
-        // We need another register for the limit. We can't use r2-r6 (operand stack
-        // may have arguments to pass). Instead, save r9 to memory first, use it for
-        // the limit, then restore it.
+        // If new_sp < stack_limit, trap.
         let limit = stack_limit(stack_size);
         let continue_label = self.alloc_label();
 
-        // Temporarily save r9 to memory at [SP - 8] (will be in the frame later)
-        // This is safe because even if we trap, we won't return to corrupt state.
-        self.emit(Instruction::StoreIndU64 {
-            base: STACK_PTR_REG,
-            src: FIRST_LOCAL_REG,
-            offset: -8,
+        // NOTE: This clobbers r7 (ARGS_PTR_REG) with the limit value.
+        // Flush any pending spill first (r7 may hold a deferred spill value).
+        // Must use LoadImm64 to avoid sign-extension of the negative i32 limit.
+        self.flush_pending_spill();
+        self.emit(Instruction::LoadImm64 {
+            reg: ARGS_PTR_REG,
+            value: u64::from(limit as u32),
         });
-
-        // Compute new_sp in r7 (ARGS_PTR_REG)
         self.emit(Instruction::AddImm64 {
-            dst: ARGS_PTR_REG,
+            dst: SPILL_ALT_REG,
             src: STACK_PTR_REG,
             value: -frame_size,
         });
 
-        // Load stack limit into r9 (temporarily clobbered, will be restored)
-        // Use LoadImm64 to avoid sign-extension issues with addresses like 0xFEEE0000
-        self.emit(Instruction::LoadImm64 {
-            reg: FIRST_LOCAL_REG,
-            value: u64::from(limit as u32),
-        });
-
-        // Check if new_sp >= stack_limit (no overflow) using unsigned comparison
-        // BranchGeU semantics: if reg2 >= reg1, branch
-        // We want: if new_sp >= limit, continue (no overflow)
-        // So: reg1 = limit (r9), reg2 = new_sp (r7)
         let fixup_idx = self.instructions.len();
         self.fixups.push((fixup_idx, continue_label));
         self.emit(Instruction::BranchGeU {
-            reg1: FIRST_LOCAL_REG, // limit
-            reg2: ARGS_PTR_REG,    // new_sp
+            reg1: ARGS_PTR_REG,
+            reg2: SPILL_ALT_REG,
             offset: 0,
         });
 
@@ -733,13 +729,6 @@ impl CodeEmitter {
         // Continue with normal call
         self.emit(Instruction::Fallthrough);
         self.define_label(continue_label);
-
-        // Restore r9 from temporary location
-        self.emit(Instruction::LoadIndU64 {
-            dst: FIRST_LOCAL_REG,
-            base: STACK_PTR_REG,
-            offset: -8,
-        });
 
         // Now actually decrement the stack pointer
         self.emit(Instruction::AddImm64 {
@@ -763,15 +752,6 @@ impl CodeEmitter {
             });
         }
 
-        // Save the table index (r8/SAVED_TABLE_IDX_REG) to [sp-8] before it gets
-        // clobbered by spilled local saves, operand stack saves, and argument pops
-        // which all use r8 (SPILL_ALT_REG) as a temp register.
-        self.emit(Instruction::StoreIndU64 {
-            base: STACK_PTR_REG,
-            src: SAVED_TABLE_IDX_REG,
-            offset: -8,
-        });
-
         // Save spilled locals (same as emit_call)
         for i in 0..num_spilled_locals {
             let mem_offset = spilled_local_offset(func_idx, MAX_LOCAL_REGS + i);
@@ -779,7 +759,7 @@ impl CodeEmitter {
                 reg: SPILL_ALT_REG,
                 value: mem_offset,
             });
-            self.emit(Instruction::LoadIndU32 {
+            self.emit(Instruction::LoadIndU64 {
                 dst: SPILL_ALT_REG,
                 base: SPILL_ALT_REG,
                 offset: 0,
@@ -824,7 +804,7 @@ impl CodeEmitter {
             let local_idx = num_args - 1 - i;
             if local_idx < MAX_LOCAL_REGS {
                 let dst = FIRST_LOCAL_REG + local_idx as u8;
-                self.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                self.emit(Instruction::AddImm64 { dst, src, value: 0 });
             } else {
                 // Write to parameter overflow area
                 let overflow_offset =
@@ -833,7 +813,7 @@ impl CodeEmitter {
                     reg: SPILL_ALT_REG,
                     value: overflow_offset,
                 });
-                self.emit(Instruction::StoreIndU32 {
+                self.emit(Instruction::StoreIndU64 {
                     base: SPILL_ALT_REG,
                     src,
                     offset: 0,
@@ -841,7 +821,9 @@ impl CodeEmitter {
             }
         }
 
-        // Restore the table index (r8) from [sp-8] before dispatch table lookup
+        // Restore the table index (r8) from [new_SP - 8].
+        // The table index was saved at [old_SP - frame_size - 8] before the prologue,
+        // which is [new_SP - 8] after SP was decremented by frame_size.
         self.emit(Instruction::LoadIndU64 {
             dst: SAVED_TABLE_IDX_REG,
             base: STACK_PTR_REG,
@@ -962,7 +944,7 @@ impl CodeEmitter {
                 reg: ARGS_PTR_REG,
                 value: mem_offset,
             });
-            self.emit(Instruction::StoreIndU32 {
+            self.emit(Instruction::StoreIndU64 {
                 base: ARGS_PTR_REG,
                 src: SPILL_ALT_REG,
                 offset: 0,
@@ -1008,7 +990,7 @@ impl CodeEmitter {
 
         if return_in_r7 {
             let dst = self.spill_push();
-            self.emit(Instruction::AddImm32 {
+            self.emit(Instruction::AddImm64 {
                 dst,
                 src: RETURN_VALUE_REG,
                 value: 0,
@@ -1083,7 +1065,7 @@ fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: 
         emitter.emit(Instruction::AddImm64 {
             dst: ARGS_PTR_REG,
             src: ARGS_PTR_REG,
-            value: -WASM_MEMORY_BASE,
+            value: -ctx.wasm_memory_base,
         });
 
         // Copy adjusted args_ptr to r9 (local 0)
@@ -1119,7 +1101,7 @@ fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: 
                 reg: SPILL_ALT_REG,
                 value: overflow_offset,
             });
-            emitter.emit(Instruction::LoadIndU32 {
+            emitter.emit(Instruction::LoadIndU64 {
                 dst: SPILL_ALT_REG,
                 base: SPILL_ALT_REG,
                 offset: 0,
@@ -1129,7 +1111,7 @@ fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: 
                 reg: ARGS_PTR_REG,
                 value: spilled_offset,
             });
-            emitter.emit(Instruction::StoreIndU32 {
+            emitter.emit(Instruction::StoreIndU64 {
                 base: ARGS_PTR_REG,
                 src: SPILL_ALT_REG,
                 offset: 0,
@@ -1173,7 +1155,7 @@ fn emit_prologue(emitter: &mut CodeEmitter, ctx: &CompileContext, total_locals: 
                     value: offset,
                 });
                 // Store 0 (from r8) to the spilled local address
-                emitter.emit(Instruction::StoreIndU32 {
+                emitter.emit(Instruction::StoreIndU64 {
                     base: ARGS_PTR_REG,
                     src: SPILL_ALT_REG,
                     offset: 0,
@@ -1202,7 +1184,7 @@ fn emit_epilogue(emitter: &mut CodeEmitter, ctx: &CompileContext, has_return: bo
             emitter.emit(Instruction::AddImm32 {
                 dst: ARGS_PTR_REG,
                 src: ARGS_PTR_REG,
-                value: WASM_MEMORY_BASE,
+                value: ctx.wasm_memory_base,
             });
         }
         if let Some(len_idx) = ctx.result_len_global {
@@ -1275,7 +1257,7 @@ fn translate_op(
             let idx = *local_index as usize;
             if let Some(reg) = local_reg(idx) {
                 let dst = emitter.spill_push();
-                emitter.emit(Instruction::AddImm32 {
+                emitter.emit(Instruction::AddImm64 {
                     dst,
                     src: reg,
                     value: 0,
@@ -1287,7 +1269,7 @@ fn translate_op(
                     reg: dst,
                     value: offset,
                 });
-                emitter.emit(Instruction::LoadIndU32 {
+                emitter.emit(Instruction::LoadIndU64 {
                     dst,
                     base: dst,
                     offset: 0,
@@ -1298,7 +1280,7 @@ fn translate_op(
             let idx = *local_index as usize;
             if let Some(reg) = local_reg(idx) {
                 let src = emitter.spill_pop();
-                emitter.emit(Instruction::AddImm32 {
+                emitter.emit(Instruction::AddImm64 {
                     dst: reg,
                     src,
                     value: 0,
@@ -1312,7 +1294,7 @@ fn translate_op(
                     reg: SPILL_ALT_REG,
                     value: offset,
                 });
-                emitter.emit(Instruction::StoreIndU32 {
+                emitter.emit(Instruction::StoreIndU64 {
                     base: SPILL_ALT_REG,
                     src,
                     offset: 0,
@@ -1348,7 +1330,7 @@ fn translate_op(
             };
 
             if let Some(reg) = local_reg(idx) {
-                emitter.emit(Instruction::AddImm32 {
+                emitter.emit(Instruction::AddImm64 {
                     dst: reg,
                     src,
                     value: 0,
@@ -1369,7 +1351,7 @@ fn translate_op(
                     reg: temp,
                     value: offset,
                 });
-                emitter.emit(Instruction::StoreIndU32 {
+                emitter.emit(Instruction::StoreIndU64 {
                     base: temp,
                     src,
                     offset: 0,
@@ -1411,7 +1393,7 @@ fn translate_op(
             emitter.emit(Instruction::LoadIndU32 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I32Store { memarg } | Operator::I64Store32 { memarg } => {
@@ -1421,7 +1403,7 @@ fn translate_op(
             emitter.emit(Instruction::StoreIndU32 {
                 base: addr,
                 src: value,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I64Load { memarg } => {
@@ -1431,7 +1413,7 @@ fn translate_op(
             emitter.emit(Instruction::LoadIndU64 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I64Store { memarg } => {
@@ -1441,7 +1423,7 @@ fn translate_op(
             emitter.emit(Instruction::StoreIndU64 {
                 base: addr,
                 src: value,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I32Const { value } => {
@@ -2043,9 +2025,12 @@ fn translate_op(
                 emitter.emit_jump_to_label(end_label);
                 emitter.emit(Instruction::Fallthrough);
                 emitter.define_label(else_label);
-                if has_result {
-                    emitter.stack.set_depth(stack_depth);
-                }
+                // Always reset depth: the true branch may have ended with br/return
+                // leaving the depth wrong. The else branch starts at the if's entry depth.
+                emitter.stack.set_depth(stack_depth);
+                // Clear stale spill state from unreachable code after br/return
+                emitter.pending_spill = None;
+                emitter.last_spill_pop_reg = None;
                 emitter.control_stack.push(ControlFrame::Block {
                     end_label,
                     stack_depth,
@@ -2061,9 +2046,14 @@ fn translate_op(
             }) => {
                 emitter.emit(Instruction::Fallthrough);
                 emitter.define_label(end_label);
-                if has_result {
-                    emitter.stack.set_depth(stack_depth + 1);
-                }
+                // Always reset depth: branches (br/return) inside the block may have
+                // left the depth wrong. At the merge point, depth must match the
+                // block's entry depth (+ 1 if the block produces a result).
+                let target_depth = if has_result { stack_depth + 1 } else { stack_depth };
+                emitter.stack.set_depth(target_depth);
+                // Clear stale spill state from unreachable code after br/return
+                emitter.pending_spill = None;
+                emitter.last_spill_pop_reg = None;
             }
             Some(ControlFrame::If {
                 else_label,
@@ -2074,9 +2064,12 @@ fn translate_op(
                 emitter.emit(Instruction::Fallthrough);
                 emitter.define_label(else_label);
                 emitter.define_label(end_label);
-                if has_result {
-                    emitter.stack.set_depth(stack_depth + 1);
-                }
+                // Always reset depth (same reasoning as Block above).
+                let target_depth = if has_result { stack_depth + 1 } else { stack_depth };
+                emitter.stack.set_depth(target_depth);
+                // Clear stale spill state from unreachable code after br/return
+                emitter.pending_spill = None;
+                emitter.last_spill_pop_reg = None;
             }
             Some(ControlFrame::Loop { .. }) => {
                 emitter.emit(Instruction::Fallthrough);
@@ -2091,7 +2084,7 @@ fn translate_op(
                     let src = StackMachine::reg_at_depth(emitter.stack.depth() - 1);
                     let dst = StackMachine::reg_at_depth(target_depth);
                     if src != dst {
-                        emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                        emitter.emit(Instruction::AddImm64 { dst, src, value: 0 });
                     }
                 }
                 emitter.emit_jump_to_label(target);
@@ -2108,7 +2101,7 @@ fn translate_op(
                     let src = StackMachine::reg_at_depth(emitter.stack.depth() - 1);
                     let dst = StackMachine::reg_at_depth(target_depth);
                     if src != dst {
-                        emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                        emitter.emit(Instruction::AddImm64 { dst, src, value: 0 });
                     }
                     emitter.emit_jump_to_label(target);
                     emitter.emit(Instruction::Fallthrough);
@@ -2131,7 +2124,7 @@ fn translate_op(
                         let src = StackMachine::reg_at_depth(emitter.stack.depth() - 1);
                         let dst = StackMachine::reg_at_depth(target_depth);
                         if src != dst {
-                            emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                            emitter.emit(Instruction::AddImm64 { dst, src, value: 0 });
                         }
                     }
                     emitter.emit_jump_to_label(target);
@@ -2146,7 +2139,7 @@ fn translate_op(
                     let src = StackMachine::reg_at_depth(emitter.stack.depth() - 1);
                     let dst = StackMachine::reg_at_depth(target_depth);
                     if src != dst {
-                        emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
+                        emitter.emit(Instruction::AddImm64 { dst, src, value: 0 });
                     }
                 }
                 emitter.emit_jump_to_label(target);
@@ -2171,7 +2164,7 @@ fn translate_op(
                     emitter.emit(Instruction::AddImm32 {
                         dst: ARGS_PTR_REG,
                         src: ARGS_PTR_REG,
-                        value: WASM_MEMORY_BASE,
+                        value: ctx.wasm_memory_base,
                     });
                 }
                 if let Some(len_idx) = ctx.result_len_global {
@@ -2448,7 +2441,7 @@ fn translate_op(
             emitter.emit(Instruction::AddImm32 {
                 dst: dest,
                 src: dest,
-                value: WASM_MEMORY_BASE,
+                value: ctx.wasm_memory_base,
             });
 
             // loop_start:
@@ -2489,80 +2482,124 @@ fn translate_op(
             dst_mem: 0,
             src_mem: 0,
         } => {
-            // memory.copy(dest, src, size) - copies size bytes from src to dest
+            // memory.copy(dest, src, size) - like memmove, handles overlapping regions
+            // When dest > src, we must copy backward to avoid overwriting source data
             let size = emitter.spill_pop();
             let src = emitter.spill_pop();
             let dest = emitter.spill_pop();
 
-            // Use a loop to copy memory byte by byte
-            // while (size > 0) { mem[dest] = mem[src]; dest++; src++; size--; }
-            let loop_start = emitter.alloc_label();
-            let loop_end = emitter.alloc_label();
+            let temp = ARGS_PTR_REG;
 
-            // Add WASM_MEMORY_BASE to dest for PVM address translation
+            let backward_setup = emitter.alloc_label();
+            let forward_loop = emitter.alloc_label();
+            let backward_loop = emitter.alloc_label();
+            let end = emitter.alloc_label();
+
+            // If dest > src (unsigned), use backward copy to handle overlap
+            emitter.emit_branch_gtu(dest, src, backward_setup);
+
+            // === FORWARD COPY (dest <= src) ===
             emitter.emit(Instruction::AddImm32 {
                 dst: dest,
                 src: dest,
-                value: WASM_MEMORY_BASE,
+                value: ctx.wasm_memory_base,
             });
-
-            // Add WASM_MEMORY_BASE to src for PVM address translation
             emitter.emit(Instruction::AddImm32 {
                 dst: src,
                 src,
-                value: WASM_MEMORY_BASE,
+                value: ctx.wasm_memory_base,
             });
 
-            // We need a temp register for loading. Use r7 (ARGS_PTR_REG) as scratch
-            let temp = ARGS_PTR_REG;
-
-            // loop_start:
-            emitter.define_label(loop_start);
-
-            // if (size == 0) goto loop_end
-            emitter.emit_branch_eq_imm_to_label(size, 0, loop_end);
-
-            // temp = mem[src] (load byte)
+            // forward_loop:
+            emitter.define_label(forward_loop);
+            emitter.emit_branch_eq_imm_to_label(size, 0, end);
             emitter.emit(Instruction::LoadIndU8 {
                 dst: temp,
                 base: src,
                 offset: 0,
             });
-
-            // mem[dest] = temp (store byte)
             emitter.emit(Instruction::StoreIndU8 {
                 base: dest,
                 src: temp,
                 offset: 0,
             });
-
-            // dest++
             emitter.emit(Instruction::AddImm32 {
                 dst: dest,
                 src: dest,
                 value: 1,
             });
-
-            // src++
             emitter.emit(Instruction::AddImm32 {
                 dst: src,
                 src,
                 value: 1,
             });
-
-            // size--
             emitter.emit(Instruction::AddImm32 {
                 dst: size,
                 src: size,
                 value: -1,
             });
+            emitter.emit_jump_to_label(forward_loop);
 
-            // goto loop_start
-            emitter.emit_jump_to_label(loop_start);
-
-            // loop_end:
+            // === BACKWARD COPY (dest > src) ===
+            // backward_setup:
             emitter.emit(Instruction::Fallthrough);
-            emitter.define_label(loop_end);
+            emitter.define_label(backward_setup);
+            emitter.emit(Instruction::AddImm32 {
+                dst: dest,
+                src: dest,
+                value: ctx.wasm_memory_base,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: src,
+                src,
+                value: ctx.wasm_memory_base,
+            });
+            // Start from the end: dest += size, src += size
+            emitter.emit(Instruction::Add32 {
+                dst: dest,
+                src1: dest,
+                src2: size,
+            });
+            emitter.emit(Instruction::Add32 {
+                dst: src,
+                src1: src,
+                src2: size,
+            });
+
+            // backward_loop:
+            emitter.define_label(backward_loop);
+            emitter.emit_branch_eq_imm_to_label(size, 0, end);
+            // Pre-decrement (pointers start past the end)
+            emitter.emit(Instruction::AddImm32 {
+                dst: dest,
+                src: dest,
+                value: -1,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: src,
+                src,
+                value: -1,
+            });
+            emitter.emit(Instruction::LoadIndU8 {
+                dst: temp,
+                base: src,
+                offset: 0,
+            });
+            emitter.emit(Instruction::StoreIndU8 {
+                base: dest,
+                src: temp,
+                offset: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: size,
+                src: size,
+                value: -1,
+            });
+            emitter.emit_jump_to_label(backward_loop);
+
+            // end:
+            emitter.emit(Instruction::Fallthrough);
+            emitter.define_label(end);
         }
         Operator::Select => {
             let cond = emitter.spill_pop();
@@ -2572,7 +2609,7 @@ fn translate_op(
             let else_label = emitter.alloc_label();
             let end_label = emitter.alloc_label();
             emitter.emit_branch_eq_imm_to_label(cond, 0, else_label);
-            emitter.emit(Instruction::AddImm32 {
+            emitter.emit(Instruction::AddImm64 {
                 dst,
                 src: val1,
                 value: 0,
@@ -2580,7 +2617,7 @@ fn translate_op(
             emitter.emit_jump_to_label(end_label);
             emitter.emit(Instruction::Fallthrough);
             emitter.define_label(else_label);
-            emitter.emit(Instruction::AddImm32 {
+            emitter.emit(Instruction::AddImm64 {
                 dst,
                 src: val2,
                 value: 0,
@@ -2624,10 +2661,11 @@ fn translate_op(
             emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
         Operator::I64ExtendI32S => {
+            // Sign-extend from bit 31 to 64 bits.
+            // AddImm32 { value: 0 } takes the lower 32 bits and sign-extends to 64.
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
-            emitter.emit(Instruction::SignExtend16 { dst, src });
-            emitter.emit(Instruction::SignExtend16 { dst, src: dst });
+            emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
         Operator::I32Extend8S => {
             // Sign-extend the lowest 8 bits of i32 to full i32
@@ -2654,19 +2692,31 @@ fn translate_op(
             emitter.emit(Instruction::SignExtend16 { dst, src });
         }
         Operator::I64Extend32S => {
-            // Sign-extend the lowest 32 bits of i64 to full i64
-            // Use SignExtend16 twice (16 + 16 = 32 bits)
+            // Sign-extend the lowest 32 bits of i64 to full i64.
+            // AddImm32 { value: 0 } takes the lower 32 bits and sign-extends to 64.
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
-            emitter.emit(Instruction::SignExtend16 { dst, src });
-            emitter.emit(Instruction::SignExtend16 { dst, src: dst });
+            emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
         Operator::I64ExtendI32U => {
+            // Zero-extend from 32 bits to 64 bits: clear upper 32 bits.
+            // Shift left 32 then logical shift right 32.
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
-            if src != dst {
-                emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
-            }
+            emitter.emit(Instruction::LoadImm {
+                reg: SPILL_ALT_REG,
+                value: 32,
+            });
+            emitter.emit(Instruction::ShloL64 {
+                dst,
+                src1: SPILL_ALT_REG,
+                src2: src,
+            });
+            emitter.emit(Instruction::ShloR64 {
+                dst,
+                src1: SPILL_ALT_REG,
+                src2: dst,
+            });
         }
         // Float truncation stubs - PVM doesn't support floats, but these may appear
         // in dead code from AssemblyScript stdlib. We stub them to allow compilation.
@@ -2704,7 +2754,7 @@ fn translate_op(
             emitter.emit(Instruction::LoadIndU8 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I32Load8S { memarg } | Operator::I64Load8S { memarg } => {
@@ -2714,7 +2764,7 @@ fn translate_op(
             emitter.emit(Instruction::LoadIndI8 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I32Load16U { memarg } | Operator::I64Load16U { memarg } => {
@@ -2724,7 +2774,7 @@ fn translate_op(
             emitter.emit(Instruction::LoadIndU16 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I32Load16S { memarg } | Operator::I64Load16S { memarg } => {
@@ -2734,20 +2784,20 @@ fn translate_op(
             emitter.emit(Instruction::LoadIndI16 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I64Load32S { memarg } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
+            // LoadIndU32 zero-extends, then AddImm32 sign-extends from bit 31.
             emitter.emit(Instruction::LoadIndU32 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
-            emitter.emit(Instruction::SignExtend16 { dst, src: dst });
-            emitter.emit(Instruction::SignExtend16 { dst, src: dst });
+            emitter.emit(Instruction::AddImm32 { dst, src: dst, value: 0 });
         }
         Operator::I32Store8 { memarg } | Operator::I64Store8 { memarg } => {
             let val = emitter.spill_pop();
@@ -2756,7 +2806,7 @@ fn translate_op(
             emitter.emit(Instruction::StoreIndU8 {
                 base: addr,
                 src: val,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I32Store16 { memarg } | Operator::I64Store16 { memarg } => {
@@ -2766,7 +2816,7 @@ fn translate_op(
             emitter.emit(Instruction::StoreIndU16 {
                 base: addr,
                 src: val,
-                offset: memarg.offset as i32 + WASM_MEMORY_BASE,
+                offset: memarg.offset as i32 + ctx.wasm_memory_base,
             });
         }
         Operator::I32Rotl => {

@@ -49,10 +49,10 @@ fn test_pattern_finding() {
     let program = compile_wat(wat).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
-    // Look for a pattern: AddImm followed by Mul32 anywhere in the code
-    // (the compiler uses AddImm to set up local variable registers, then Mul32)
+    // Look for a pattern: AddImm64 (used as move for locals) followed by Mul32 anywhere in the code
+    // (the compiler uses AddImm64 { value: 0 } to set up local variable registers, then Mul32)
     let pattern = vec![
-        InstructionPattern::AddImm32 {
+        InstructionPattern::AddImm64 {
             dst: Pat::Any,
             src: Pat::Any,
             value: Pat::Any,

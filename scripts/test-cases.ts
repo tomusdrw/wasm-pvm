@@ -769,6 +769,27 @@ export const testCases: TestCase[] = [
     ],
   },
   {
+    name: 'many-locals-call-test',
+    tests: [
+      { args: '00000000', expected: 4, description: 'single call, pc=4' },
+      { args: '01000000', expected: 20995, description: 'loop 5x call_indirect + gas, pc=20 gas=995' },
+      { args: '02000000', expected: 78, description: 'local preservation after call' },
+      { args: '0300000001000000', expected: 42, description: 'dynamic table idx=1, 3*(1+13)=42' },
+    ],
+  },
+  {
+    name: 'loop-offset-store-test',
+    tests: [
+      { args: '00000000', expected: 20995, description: 'loop no call_indirect, pc=20 gas=995' },
+      { args: '01000000', expected: 20995, description: 'loop with call_indirect, pc=20 gas=995' },
+      { args: '02000000', expected: 4, description: 'single call + offset store, pc=4' },
+      { args: '03000000', expected: 8, description: 'two calls + offset store, pc=8' },
+      { args: '04000000', expected: 995, description: 'loop gas only, gas=995' },
+      { args: '05000000', expected: 20, description: 'loop pc only with call_indirect' },
+      { args: '06000000', expected: 20, description: 'loop pc only no call_indirect' },
+    ],
+  },
+  {
     name: 'as-u8-two-elem-test',
     tests: [
       { args: '00', expected: 30, description: 'AS: 10+20 (both<128)' },
@@ -781,6 +802,61 @@ export const testCases: TestCase[] = [
       { args: '07', expected: 32927, description: 'AS: arr[0]<<8|arr[1]' },
       { args: '08', expected: 487, description: 'AS: 3-elem sum' },
       { args: '09', expected: 287, description: 'AS: reverse store order' },
+    ],
+  },
+  {
+    name: 'as-tests-arithmetic',
+    tests: [
+      { args: '050000000700000002000000', expected: 25, description: '((5+7)*2) | 1 >> 1 = 25' },
+    ],
+  },
+  {
+    name: 'as-tests-control-flow',
+    tests: [
+      { args: '05000000', expected: 2 + 5 + 3*5, description: 'input=5 -> 2 (else) + 5 (while) + 15 (nested) = 22' },
+      { args: '0B000000', expected: 1 + 11 + 3*5, description: 'input=11 -> 1 (if) + 11 (while) + 15 (nested) = 27' },
+    ],
+  },
+  {
+    name: 'as-tests-functions',
+    tests: [
+      { args: '05000000', expected: 10 + 120 + 5, description: 'add3(5,2,3) + fact(5) + sumSq(3) = 135' },
+    ],
+  },
+  {
+    name: 'as-tests-memory',
+    tests: [
+      { args: '00000000', expected: 850, description: 'Byte manipulation check' },
+    ],
+  },
+  {
+    name: 'as-tests-structs',
+    tests: [
+      { args: '00000000', expected: 32, description: 'Struct emulation (Dot Product)' },
+    ],
+  },
+  {
+    name: 'as-tests-arrays',
+    tests: [
+      { args: '00000000', expected: 100, description: 'Manual array implementation (Sum)' },
+    ],
+  },
+  {
+    name: 'as-tests-globals',
+    tests: [
+      { args: '00000000', expected: 17, description: 'Global variable manipulation' },
+    ],
+  },
+  {
+    name: 'as-tests-linked-list',
+    tests: [
+      { args: '00000000', expected: 60, description: 'Linked list sum (recursive)' },
+    ],
+  },
+  {
+    name: 'as-tests-fun-ptr',
+    tests: [
+      { args: '00000000', expected: 50, description: 'Function pointers / Indirect calls' },
     ],
   },
 ];

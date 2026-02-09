@@ -1,0 +1,14 @@
+{
+  "name": "wasm-pvm-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Comprehensive AssemblyScript test suite for WASM-PVM",
+  "type": "module",
+  "scripts": {
+    "build": "asc assembly/*.ts --target release --runtime stub --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort= --binaryFile build/test.wasm --textFile build/test.wat",
+    "build:all": "for f in assembly/*.ts; do name=$(basename $f .ts); asc $f -o build/$name.wasm -t build/$name.wat --runtime stub --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=; done"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.32"
+  }
+}
