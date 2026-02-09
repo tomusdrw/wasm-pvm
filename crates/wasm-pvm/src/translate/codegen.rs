@@ -193,6 +193,10 @@ impl CodeEmitter {
         self.last_spill_pop_reg = None; // Clear spill tracking on push
         let depth = self.stack.depth();
         let reg = self.stack.push();
+        debug_assert!(
+            (2..=7).contains(&reg),
+            "spill_push: unexpected register {reg} at depth {depth}",
+        );
         if StackMachine::needs_spill(depth) {
             // Mark this depth for spilling - the actual spill happens
             // after the caller writes the value to the register
@@ -209,6 +213,7 @@ impl CodeEmitter {
     fn spill_pop(&mut self) -> u8 {
         self.flush_pending_spill();
         let depth = self.stack.depth();
+        debug_assert!(depth > 0, "spill_pop: stack is empty");
         if depth > 0 && StackMachine::needs_spill(depth - 1) {
             let offset = OPERAND_SPILL_BASE + StackMachine::spill_offset(depth - 1);
             // Use alternate register if we just popped another spilled value into the default register
@@ -218,6 +223,10 @@ impl CodeEmitter {
             } else {
                 default_reg
             };
+            debug_assert!(
+                (2..=SPILL_ALT_REG).contains(&dst),
+                "spill_pop: unexpected register {dst} at depth {depth}",
+            );
             self.emit(Instruction::LoadIndU64 {
                 dst,
                 base: STACK_PTR_REG,
