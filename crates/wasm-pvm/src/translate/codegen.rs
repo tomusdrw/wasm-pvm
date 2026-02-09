@@ -30,7 +30,7 @@ fn stack_limit(stack_size: u32) -> i32 {
 pub const SPILLED_LOCALS_BASE: i32 = 0x40000;
 /// Bytes allocated per function for spilled locals (64 locals * 8 bytes)
 pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
-/// Temporary area for passing overflow parameters (5th+ args) during call_indirect.
+/// Temporary area for passing overflow parameters (5th+ args) during `call_indirect`.
 /// The caller writes here, and the callee's prologue copies to its spilled local addresses.
 /// Supports up to 8 overflow parameters (64 bytes).
 const PARAM_OVERFLOW_BASE: i32 = 0x3FF00;
@@ -285,8 +285,8 @@ impl CodeEmitter {
         self.define_label(ok_label);
     }
 
-    /// Emit a trap if dividend == i32::MIN and divisor == -1 (signed overflow).
-    /// WASM spec requires trap for i32.div_s when result would be 2^31.
+    /// Emit a trap if dividend == `i32::MIN` and divisor == -1 (signed overflow).
+    /// WASM spec requires trap for `i32.div_s` when result would be 2^31.
     fn emit_i32_signed_div_overflow_check(&mut self, dividend_reg: u8, divisor_reg: u8) {
         let no_overflow = self.alloc_label();
         self.emit_branch_ne_imm_to_label(dividend_reg, i32::MIN, no_overflow);
@@ -295,8 +295,8 @@ impl CodeEmitter {
         self.define_label(no_overflow);
     }
 
-    /// Emit a trap if dividend == i64::MIN and divisor == -1 (signed overflow).
-    /// WASM spec requires trap for i64.div_s when result would be 2^63.
+    /// Emit a trap if dividend == `i64::MIN` and divisor == -1 (signed overflow).
+    /// WASM spec requires trap for `i64.div_s` when result would be 2^63.
     /// Note: this clobbers `divisor_reg` on the slow path but reloads it with -1.
     fn emit_i64_signed_div_overflow_check(&mut self, dividend_reg: u8, divisor_reg: u8) {
         let no_overflow = self.alloc_label();

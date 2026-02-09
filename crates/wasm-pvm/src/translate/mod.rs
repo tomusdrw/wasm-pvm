@@ -3,7 +3,7 @@ mod stack;
 
 use crate::pvm::Instruction;
 use crate::{Error, Result, SpiProgram};
-use wasmparser::{FunctionBody, GlobalType, Parser, Payload};
+use wasmparser::{GlobalType, Parser, Payload};
 
 pub use codegen::CompileContext;
 
@@ -513,10 +513,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 ///
 /// The RW data segment in SPI is loaded at 0x30000. Layout:
 /// - 0x30000+ : Global variables (4 bytes each, including compiler-managed memory size)
-/// - wasm_memory_base+ : WASM linear memory (data segments)
+/// - `wasm_memory_base`+ : WASM linear memory (data segments)
 ///
 /// WASM linear memory starts at `wasm_memory_base`.
-/// So WASM offset X maps to `rw_data` offset (wasm_memory_base - 0x30000 + X).
+/// So WASM offset X maps to `rw_data` offset (`wasm_memory_base` - 0x30000 + X).
 ///
 /// The compiler-managed memory size global is stored at index `num_user_globals`,
 /// i.e., right after all user-defined globals.
@@ -693,78 +693,6 @@ fn resolve_call_fixups(
     }
 
     Ok((jump_table, func_entry_base))
-}
-
-#[allow(dead_code)]
-fn check_for_floats(body: &FunctionBody) -> Result<()> {
-    let mut reader = body.get_operators_reader()?;
-    while !reader.eof() {
-        let op = reader.read()?;
-        if is_float_op(&op) {
-            return Err(Error::FloatNotSupported);
-        }
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn is_float_op(op: &wasmparser::Operator) -> bool {
-    use wasmparser::Operator::{
-        F32Abs, F32Add, F32Ceil, F32Const, F32Copysign, F32Div, F32Eq, F32Floor, F32Ge, F32Gt,
-        F32Le, F32Load, F32Lt, F32Max, F32Min, F32Mul, F32Ne, F32Nearest, F32Neg, F32Sqrt,
-        F32Store, F32Sub, F32Trunc, F64Abs, F64Add, F64Ceil, F64Const, F64Copysign, F64Div, F64Eq,
-        F64Floor, F64Ge, F64Gt, F64Le, F64Load, F64Lt, F64Max, F64Min, F64Mul, F64Ne, F64Nearest,
-        F64Neg, F64Sqrt, F64Store, F64Sub, F64Trunc,
-    };
-    matches!(
-        op,
-        F32Load { .. }
-            | F64Load { .. }
-            | F32Store { .. }
-            | F64Store { .. }
-            | F32Const { .. }
-            | F64Const { .. }
-            | F32Eq
-            | F32Ne
-            | F32Lt
-            | F32Gt
-            | F32Le
-            | F32Ge
-            | F64Eq
-            | F64Ne
-            | F64Lt
-            | F64Gt
-            | F64Le
-            | F64Ge
-            | F32Abs
-            | F32Neg
-            | F32Ceil
-            | F32Floor
-            | F32Trunc
-            | F32Nearest
-            | F32Sqrt
-            | F32Add
-            | F32Sub
-            | F32Mul
-            | F32Div
-            | F32Min
-            | F32Max
-            | F32Copysign
-            | F64Abs
-            | F64Neg
-            | F64Ceil
-            | F64Floor
-            | F64Trunc
-            | F64Nearest
-            | F64Sqrt
-            | F64Add
-            | F64Sub
-            | F64Mul
-            | F64Div
-            | F64Min
-            | F64Max
-            | F64Copysign
-    )
 }
 
 fn eval_const_i32(expr: &wasmparser::ConstExpr) -> Result<i32> {
