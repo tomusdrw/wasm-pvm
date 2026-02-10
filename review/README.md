@@ -15,13 +15,13 @@ This review presents a critical analysis of the WASM→PVM compiler architecture
 
 ### Key Findings at a Glance
 
-| Category | Issues Found | Severity |
-|----------|--------------|----------|
-| **Architecture** | 8 critical design flaws | 🔴 Critical |
-| **Correctness** | 3 known bugs + 5 potential issues | 🔴 High |
-| **Completeness** | 4 missing features | 🟡 Medium |
-| **Code Quality** | 12 code smells | 🟡 Medium |
-| **Performance** | 5 inefficiencies | 🟢 Low |
+| Category         | Issues Found                      | Severity    |
+| ---------------- | --------------------------------- | ----------- |
+| **Architecture** | 8 critical design flaws           | 🔴 Critical |
+| **Correctness**  | 3 known bugs + 5 potential issues | 🔴 High     |
+| **Completeness** | 4 missing features                | 🟡 Medium   |
+| **Code Quality** | 12 code smells                    | 🟡 Medium   |
+| **Performance**  | 5 inefficiencies                  | 🟢 Low      |
 
 ### Recommendation: Incremental Redesign Required
 
@@ -51,12 +51,12 @@ The current architecture is a **direct translator** that lacks:
 
 ## Quick Reference: Critical Files
 
-| File | Lines | Responsibility | Risk Level |
-|------|-------|----------------|------------|
-| `translate/codegen.rs` | 2,400 | Core translation logic | 🔴 Critical |
-| `translate/mod.rs` | 800 | Compilation orchestration | 🟡 High |
-| `pvm/instruction.rs` | 335 | PVM instruction encoding | 🟢 Low |
-| `translate/stack.rs` | 150 | Operand stack management | 🟡 Medium |
+| File                   | Lines | Responsibility            | Risk Level  |
+| ---------------------- | ----- | ------------------------- | ----------- |
+| `translate/codegen.rs` | 2,400 | Core translation logic    | 🔴 Critical |
+| `translate/mod.rs`     | 800   | Compilation orchestration | 🟡 High     |
+| `pvm/instruction.rs`   | 335   | PVM instruction encoding  | 🟢 Low      |
+| `translate/stack.rs`   | 150   | Operand stack management  | 🟡 Medium   |
 
 ---
 
