@@ -36,6 +36,7 @@
           (block (result i32)
             (i32.const 20)  ;; This is the result when we branch
             (br_if 0 (i32.const 1))  ;; Branch (condition is true)
+            (drop)          ;; Drop the 20 if we fall through
             (i32.const 999) ;; This won't execute
           )
         )
@@ -51,6 +52,7 @@
             (block (result i32)  ;; Inner block
               (i32.const 40)
               (br_if 0 (i32.const 1))  ;; Branch out of inner block with value 40
+              (drop)          ;; Drop the 40 if we fall through
               (i32.const 50)  ;; Won't execute
             )
             (drop)  ;; Drop the 40 from inner block
