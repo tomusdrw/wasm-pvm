@@ -1,6 +1,7 @@
+use crate::ir::IrInstruction;
 use crate::pvm::Instruction;
 use crate::{Error, Result};
-use wasmparser::{FunctionBody, Operator};
+use wasmparser::FunctionBody;
 
 use super::memory_layout::{
     self, EXIT_ADDRESS, GLOBAL_MEMORY_BASE, OPERAND_SPILL_BASE, PARAM_OVERFLOW_BASE, RO_DATA_BASE,
@@ -1033,24 +1034,23 @@ pub fn translate_function(
     body: &FunctionBody,
     ctx: &CompileContext,
 ) -> Result<FunctionTranslation> {
+    let (func_locals, ir) = crate::ir::build_ir(body)?;
+    translate_function_ir(&ir, func_locals, ctx)
+}
+
+pub fn translate_function_ir(
+    ir: &[IrInstruction],
+    func_locals: usize,
+    ctx: &CompileContext,
+) -> Result<FunctionTranslation> {
     let mut emitter = CodeEmitter::new();
 
-    let mut total_locals = ctx.num_params;
-    let locals_reader = body.get_locals_reader()?;
-    for local in locals_reader {
-        let (count, _ty) = local?;
-        total_locals += count as usize;
-    }
+    let total_locals = ctx.num_params + func_locals;
 
     emit_prologue(&mut emitter, ctx, total_locals);
 
-    let ops: Vec<Operator> = body
-        .get_operators_reader()?
-        .into_iter()
-        .collect::<std::result::Result<_, _>>()?;
-
-    for op in &ops {
-        translate_op(op, &mut emitter, ctx, total_locals)?;
+    for instr in ir {
+        translate_ir_op(instr, &mut emitter, ctx, total_locals)?;
     }
 
     emit_epilogue(&mut emitter, ctx, ctx.has_return);
@@ -1290,14 +1290,14 @@ fn global_offset(idx: u32) -> i32 {
     memory_layout::global_addr(idx)
 }
 
-fn translate_op(
-    op: &Operator,
+fn translate_ir_op(
+    op: &IrInstruction,
     emitter: &mut CodeEmitter,
     ctx: &CompileContext,
     total_locals: usize,
 ) -> Result<()> {
     match op {
-        Operator::LocalGet { local_index } => {
+        IrInstruction::LocalGet(local_index) => {
             let idx = *local_index as usize;
             if let Some(reg) = local_reg(idx) {
                 let dst = emitter.spill_push();
@@ -1320,7 +1320,7 @@ fn translate_op(
                 });
             }
         }
-        Operator::LocalSet { local_index } => {
+        IrInstruction::LocalSet(local_index) => {
             let idx = *local_index as usize;
             if let Some(reg) = local_reg(idx) {
                 let src = emitter.spill_pop();
@@ -1345,7 +1345,7 @@ fn translate_op(
                 });
             }
         }
-        Operator::LocalTee { local_index } => {
+        IrInstruction::LocalTee(local_index) => {
             let idx = *local_index as usize;
             let stack_depth = emitter.stack.depth();
 
@@ -1402,7 +1402,7 @@ fn translate_op(
                 });
             }
         }
-        Operator::GlobalGet { global_index } => {
+        IrInstruction::GlobalGet(global_index) => {
             let offset = global_offset(*global_index);
             let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadImm {
@@ -1415,7 +1415,7 @@ fn translate_op(
                 offset: 0,
             });
         }
-        Operator::GlobalSet { global_index } => {
+        IrInstruction::GlobalSet(global_index) => {
             let offset = global_offset(*global_index);
             let src = emitter.spill_pop();
             // Use SPILL_ALT_REG (r8) as temp to avoid clobbering operand stack registers (r2-r6).
@@ -1430,64 +1430,64 @@ fn translate_op(
                 offset: 0,
             });
         }
-        Operator::I32Load { memarg } | Operator::I64Load32U { memarg } => {
+        IrInstruction::I32Load { offset } | IrInstruction::I64Load32U { offset } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU32 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I32Store { memarg } | Operator::I64Store32 { memarg } => {
+        IrInstruction::I32Store { offset } | IrInstruction::I64Store32 { offset } => {
             let value = emitter.spill_pop();
             let addr = emitter.spill_pop();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::StoreIndU32 {
                 base: addr,
                 src: value,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I64Load { memarg } => {
+        IrInstruction::I64Load { offset } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU64 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I64Store { memarg } => {
+        IrInstruction::I64Store { offset } => {
             let value = emitter.spill_pop();
             let addr = emitter.spill_pop();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::StoreIndU64 {
                 base: addr,
                 src: value,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I32Const { value } => {
+        IrInstruction::I32Const(value) => {
             let reg = emitter.spill_push();
             emitter.emit(Instruction::LoadImm { reg, value: *value });
         }
-        Operator::I64Const { value } => {
+        IrInstruction::I64Const(value) => {
             let reg = emitter.spill_push();
             emitter.emit(Instruction::LoadImm64 {
                 reg,
                 value: *value as u64,
             });
         }
-        Operator::I32Add => {
+        IrInstruction::I32Add => {
             let src2 = emitter.spill_pop();
             let src1 = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::Add32 { dst, src1, src2 });
         }
-        Operator::I32Sub => {
+        IrInstruction::I32Sub => {
             let src2 = emitter.spill_pop();
             let src1 = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1497,13 +1497,13 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I32Mul => {
+        IrInstruction::I32Mul => {
             let src2 = emitter.spill_pop();
             let src1 = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::Mul32 { dst, src1, src2 });
         }
-        Operator::I32DivU => {
+        IrInstruction::I32DivU => {
             let src2 = emitter.spill_pop(); // divisor
             let src1 = emitter.spill_pop(); // dividend
             emitter.emit_div_by_zero_check(src2);
@@ -1514,7 +1514,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I32DivS => {
+        IrInstruction::I32DivS => {
             let src2 = emitter.spill_pop(); // divisor
             let src1 = emitter.spill_pop(); // dividend
             emitter.emit_div_by_zero_check(src2);
@@ -1526,7 +1526,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I32RemU => {
+        IrInstruction::I32RemU => {
             let src2 = emitter.spill_pop(); // divisor
             let src1 = emitter.spill_pop(); // dividend
             emitter.emit_div_by_zero_check(src2);
@@ -1537,7 +1537,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I32RemS => {
+        IrInstruction::I32RemS => {
             let src2 = emitter.spill_pop(); // divisor
             let src1 = emitter.spill_pop(); // dividend
             emitter.emit_div_by_zero_check(src2);
@@ -1548,7 +1548,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I64Eq => {
+        IrInstruction::I64Eq => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1563,7 +1563,7 @@ fn translate_op(
                 value: 1,
             });
         }
-        Operator::I32Eq => {
+        IrInstruction::I32Eq => {
             // i32.eq must only compare the lower 32 bits.
             // i32.const sign-extends (LoadImm) while i32.load zero-extends (LoadIndU32),
             // so the upper 32 bits may differ. Truncate XOR result to 32 bits via AddImm32.
@@ -1586,7 +1586,7 @@ fn translate_op(
                 value: 1,
             });
         }
-        Operator::I64Ne => {
+        IrInstruction::I64Ne => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1607,7 +1607,7 @@ fn translate_op(
                 src2: zero,
             });
         }
-        Operator::I32Ne => {
+        IrInstruction::I32Ne => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1633,7 +1633,7 @@ fn translate_op(
                 src2: zero,
             });
         }
-        Operator::I32And | Operator::I64And => {
+        IrInstruction::I32And | IrInstruction::I64And => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1643,7 +1643,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32Or | Operator::I64Or => {
+        IrInstruction::I32Or | IrInstruction::I64Or => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1653,7 +1653,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32Xor | Operator::I64Xor => {
+        IrInstruction::I32Xor | IrInstruction::I64Xor => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1663,7 +1663,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32Shl => {
+        IrInstruction::I32Shl => {
             let shift = emitter.spill_pop();
             let value = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1673,7 +1673,7 @@ fn translate_op(
                 src2: value,
             });
         }
-        Operator::I32ShrU => {
+        IrInstruction::I32ShrU => {
             let shift = emitter.spill_pop();
             let value = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1683,7 +1683,7 @@ fn translate_op(
                 src2: value,
             });
         }
-        Operator::I32ShrS => {
+        IrInstruction::I32ShrS => {
             let shift = emitter.spill_pop();
             let value = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1693,7 +1693,7 @@ fn translate_op(
                 src2: value,
             });
         }
-        Operator::I64Shl => {
+        IrInstruction::I64Shl => {
             let shift = emitter.spill_pop();
             let value = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1703,7 +1703,7 @@ fn translate_op(
                 src2: value,
             });
         }
-        Operator::I64ShrU => {
+        IrInstruction::I64ShrU => {
             let shift = emitter.spill_pop();
             let value = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1713,7 +1713,7 @@ fn translate_op(
                 src2: value,
             });
         }
-        Operator::I64ShrS => {
+        IrInstruction::I64ShrS => {
             let shift = emitter.spill_pop();
             let value = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1723,20 +1723,20 @@ fn translate_op(
                 src2: value,
             });
         }
-        Operator::Nop => {}
-        Operator::Unreachable => {
+        IrInstruction::Nop => {}
+        IrInstruction::Unreachable => {
             emitter.emit(Instruction::Trap);
         }
-        Operator::Drop => {
+        IrInstruction::Drop => {
             let _ = emitter.spill_pop();
         }
-        Operator::I64Add => {
+        IrInstruction::I64Add => {
             let src2 = emitter.spill_pop();
             let src1 = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::Add64 { dst, src1, src2 });
         }
-        Operator::I64Sub => {
+        IrInstruction::I64Sub => {
             let src2 = emitter.spill_pop();
             let src1 = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1746,13 +1746,13 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I64Mul => {
+        IrInstruction::I64Mul => {
             let src2 = emitter.spill_pop();
             let src1 = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::Mul64 { dst, src1, src2 });
         }
-        Operator::I64DivU => {
+        IrInstruction::I64DivU => {
             let src2 = emitter.spill_pop(); // divisor
             let src1 = emitter.spill_pop(); // dividend
             emitter.emit_div_by_zero_check(src2);
@@ -1763,7 +1763,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I64DivS => {
+        IrInstruction::I64DivS => {
             let src2 = emitter.spill_pop(); // divisor
             let src1 = emitter.spill_pop(); // dividend
             emitter.emit_div_by_zero_check(src2);
@@ -1775,7 +1775,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I64RemU => {
+        IrInstruction::I64RemU => {
             let src2 = emitter.spill_pop(); // divisor
             let src1 = emitter.spill_pop(); // dividend
             emitter.emit_div_by_zero_check(src2);
@@ -1786,7 +1786,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I64RemS => {
+        IrInstruction::I64RemS => {
             let src2 = emitter.spill_pop(); // divisor
             let src1 = emitter.spill_pop(); // dividend
             emitter.emit_div_by_zero_check(src2);
@@ -1797,7 +1797,7 @@ fn translate_op(
                 src2: src1,
             });
         }
-        Operator::I64GtU => {
+        IrInstruction::I64GtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1807,7 +1807,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32GtU => {
+        IrInstruction::I32GtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             // Normalize both operands to sign-extended 32-bit for correct 64-bit comparison.
@@ -1829,7 +1829,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I64GtS => {
+        IrInstruction::I64GtS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1839,7 +1839,7 @@ fn translate_op(
                 src2: b,
             });
         }
-        Operator::I32GtS => {
+        IrInstruction::I32GtS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             emitter.emit(Instruction::AddImm32 {
@@ -1863,7 +1863,7 @@ fn translate_op(
         // Pop b (top), pop a (second)
         // PVM SetLt semantics: dst = src2 < src1 (verified in anan-as: reg[b] < reg[a])
         // For a < b, we need SetLt { src1: b, src2: a } so it computes a < b
-        Operator::I64LtU => {
+        IrInstruction::I64LtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1873,7 +1873,7 @@ fn translate_op(
                 src2: a,
             });
         }
-        Operator::I32LtU => {
+        IrInstruction::I32LtU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             emitter.emit(Instruction::AddImm32 {
@@ -1893,7 +1893,7 @@ fn translate_op(
                 src2: a,
             });
         }
-        Operator::I64LtS => {
+        IrInstruction::I64LtS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -1903,91 +1903,7 @@ fn translate_op(
                 src2: a,
             });
         }
-        Operator::I32LtS => {
-            let b = emitter.spill_pop();
-            let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 {
-                dst: a,
-                src: a,
-                value: 0,
-            });
-            emitter.emit(Instruction::AddImm32 {
-                dst: b,
-                src: b,
-                value: 0,
-            });
-            let dst = emitter.spill_push();
-            emitter.emit(Instruction::SetLtS {
-                dst,
-                src1: b,
-                src2: a,
-            });
-        }
-        Operator::I64GeU => {
-            let b = emitter.spill_pop();
-            let a = emitter.spill_pop();
-            let dst = emitter.spill_push();
-            emitter.emit(Instruction::SetLtU {
-                dst,
-                src1: b,
-                src2: a,
-            });
-            let one = emitter.spill_push();
-            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-            let _ = emitter.spill_pop();
-            emitter.emit(Instruction::Xor {
-                dst,
-                src1: dst,
-                src2: one,
-            });
-        }
-        Operator::I32GeU => {
-            let b = emitter.spill_pop();
-            let a = emitter.spill_pop();
-            emitter.emit(Instruction::AddImm32 {
-                dst: a,
-                src: a,
-                value: 0,
-            });
-            emitter.emit(Instruction::AddImm32 {
-                dst: b,
-                src: b,
-                value: 0,
-            });
-            let dst = emitter.spill_push();
-            emitter.emit(Instruction::SetLtU {
-                dst,
-                src1: b,
-                src2: a,
-            });
-            let one = emitter.spill_push();
-            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-            let _ = emitter.spill_pop();
-            emitter.emit(Instruction::Xor {
-                dst,
-                src1: dst,
-                src2: one,
-            });
-        }
-        Operator::I64GeS => {
-            let b = emitter.spill_pop();
-            let a = emitter.spill_pop();
-            let dst = emitter.spill_push();
-            emitter.emit(Instruction::SetLtS {
-                dst,
-                src1: b,
-                src2: a,
-            });
-            let one = emitter.spill_push();
-            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-            let _ = emitter.spill_pop();
-            emitter.emit(Instruction::Xor {
-                dst,
-                src1: dst,
-                src2: one,
-            });
-        }
-        Operator::I32GeS => {
+        IrInstruction::I32LtS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             emitter.emit(Instruction::AddImm32 {
@@ -2006,23 +1922,15 @@ fn translate_op(
                 src1: b,
                 src2: a,
             });
-            let one = emitter.spill_push();
-            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-            let _ = emitter.spill_pop();
-            emitter.emit(Instruction::Xor {
-                dst,
-                src1: dst,
-                src2: one,
-            });
         }
-        Operator::I64LeU => {
+        IrInstruction::I64GeU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
-                src1: a,
-                src2: b,
+                src1: b,
+                src2: a,
             });
             let one = emitter.spill_push();
             emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
@@ -2033,7 +1941,7 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32LeU => {
+        IrInstruction::I32GeU => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             emitter.emit(Instruction::AddImm32 {
@@ -2046,6 +1954,70 @@ fn translate_op(
                 src: b,
                 value: 0,
             });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: b,
+                src2: a,
+            });
+            let one = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        IrInstruction::I64GeS => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtS {
+                dst,
+                src1: b,
+                src2: a,
+            });
+            let one = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        IrInstruction::I32GeS => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtS {
+                dst,
+                src1: b,
+                src2: a,
+            });
+            let one = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        IrInstruction::I64LeU => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtU {
                 dst,
@@ -2061,7 +2033,35 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I64LeS => {
+        IrInstruction::I32LeU => {
+            let b = emitter.spill_pop();
+            let a = emitter.spill_pop();
+            emitter.emit(Instruction::AddImm32 {
+                dst: a,
+                src: a,
+                value: 0,
+            });
+            emitter.emit(Instruction::AddImm32 {
+                dst: b,
+                src: b,
+                value: 0,
+            });
+            let dst = emitter.spill_push();
+            emitter.emit(Instruction::SetLtU {
+                dst,
+                src1: a,
+                src2: b,
+            });
+            let one = emitter.spill_push();
+            emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
+            let _ = emitter.spill_pop();
+            emitter.emit(Instruction::Xor {
+                dst,
+                src1: dst,
+                src2: one,
+            });
+        }
+        IrInstruction::I64LeS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             let dst = emitter.spill_push();
@@ -2079,7 +2079,7 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I32LeS => {
+        IrInstruction::I32LeS => {
             let b = emitter.spill_pop();
             let a = emitter.spill_pop();
             emitter.emit(Instruction::AddImm32 {
@@ -2107,12 +2107,12 @@ fn translate_op(
                 src2: one,
             });
         }
-        Operator::I64Eqz => {
+        IrInstruction::I64Eqz => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SetLtUImm { dst, src, value: 1 });
         }
-        Operator::I32Eqz => {
+        IrInstruction::I32Eqz => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Normalize to 32-bit: upper bits may be garbage from mixed i32 sources
@@ -2123,20 +2123,18 @@ fn translate_op(
                 value: 1,
             });
         }
-        Operator::Block { blockty } => {
-            let has_result = !matches!(blockty, wasmparser::BlockType::Empty);
-            emitter.push_block(has_result);
+        IrInstruction::Block { has_result } => {
+            emitter.push_block(*has_result);
         }
-        Operator::Loop { blockty: _ } => {
+        IrInstruction::Loop => {
             emitter.emit(Instruction::Fallthrough);
             emitter.push_loop();
         }
-        Operator::If { blockty } => {
-            let has_result = !matches!(blockty, wasmparser::BlockType::Empty);
+        IrInstruction::If { has_result } => {
             let cond = emitter.spill_pop();
-            emitter.push_if(cond, has_result);
+            emitter.push_if(cond, *has_result);
         }
-        Operator::Else => {
+        IrInstruction::Else => {
             if let Some(ControlFrame::If {
                 else_label,
                 end_label,
@@ -2160,7 +2158,7 @@ fn translate_op(
                 });
             }
         }
-        Operator::End => match emitter.pop_control() {
+        IrInstruction::End => match emitter.pop_control() {
             Some(ControlFrame::Block {
                 end_label,
                 stack_depth,
@@ -2206,7 +2204,7 @@ fn translate_op(
             }
             None => {}
         },
-        Operator::Br { relative_depth } => {
+        IrInstruction::Br(relative_depth) => {
             if let Some((target, target_depth, has_result)) =
                 emitter.get_branch_info(*relative_depth)
             {
@@ -2220,7 +2218,7 @@ fn translate_op(
                 emitter.emit_jump_to_label(target);
             }
         }
-        Operator::BrIf { relative_depth } => {
+        IrInstruction::BrIf(relative_depth) => {
             let cond = emitter.spill_pop();
             if let Some((target, target_depth, has_result)) =
                 emitter.get_branch_info(*relative_depth)
@@ -2241,10 +2239,10 @@ fn translate_op(
                 }
             }
         }
-        Operator::BrTable { targets } => {
+        IrInstruction::BrTable { targets, default } => {
             let index_reg = emitter.spill_pop();
-            let target_depths: Vec<u32> = targets.targets().map(|t| t.unwrap()).collect();
-            let default_depth = targets.default();
+            let target_depths = targets;
+            let default_depth = *default;
 
             for (i, &depth) in target_depths.iter().enumerate() {
                 if let Some((target, target_depth, has_result)) = emitter.get_branch_info(depth) {
@@ -2275,7 +2273,7 @@ fn translate_op(
                 emitter.emit_jump_to_label(target);
             }
         }
-        Operator::Return => {
+        IrInstruction::Return => {
             // For the main entry function, return means exit the program
             // For other functions, return to caller via jump table
             if ctx.is_main {
@@ -2297,7 +2295,7 @@ fn translate_op(
                 });
             }
         }
-        Operator::Call { function_index } => {
+        IrInstruction::Call(function_index) => {
             let (num_args, has_return) = ctx
                 .function_signatures
                 .get(*function_index as usize)
@@ -2341,18 +2339,18 @@ fn translate_op(
                 );
             }
         }
-        Operator::CallIndirect {
-            type_index,
-            table_index,
+        IrInstruction::CallIndirect {
+            type_idx,
+            table_idx,
         } => {
-            if *table_index != 0 {
+            if *table_idx != 0 {
                 return Err(Error::Unsupported(format!(
-                    "call_indirect with table index {table_index}"
+                    "call_indirect with table index {table_idx}"
                 )));
             }
             let (num_args, num_results) = ctx
                 .type_signatures
-                .get(*type_index as usize)
+                .get(*type_idx as usize)
                 .copied()
                 .unwrap_or((0, 0));
             let has_return = num_results > 0;
@@ -2360,12 +2358,12 @@ fn translate_op(
                 num_args,
                 has_return,
                 ctx.stack_size,
-                *type_index,
+                *type_idx,
                 ctx.func_idx,
                 total_locals,
             );
         }
-        Operator::MemorySize { mem: 0, .. } => {
+        IrInstruction::MemorySize => {
             // Load current memory size from compiler-managed global
             let dst = emitter.spill_push();
             let global_addr = memory_layout::memory_size_global_offset(ctx.num_globals);
@@ -2379,7 +2377,7 @@ fn translate_op(
                 offset: 0,
             });
         }
-        Operator::MemoryGrow { mem: 0, .. } => {
+        IrInstruction::MemoryGrow => {
             // memory.grow(delta) - tries to grow memory by `delta` pages
             // Return: previous size in pages if success, -1 if failure
             //
@@ -2535,7 +2533,7 @@ fn translate_op(
             let _ = stack_depth_before;
             // Result is in dst (either old size on success, or -1 on failure)
         }
-        Operator::MemoryFill { mem: 0 } => {
+        IrInstruction::MemoryFill => {
             // memory.fill(dest, value, size) - fills size bytes at dest with value
             let size = emitter.spill_pop();
             let value = emitter.spill_pop();
@@ -2587,10 +2585,7 @@ fn translate_op(
             emitter.emit(Instruction::Fallthrough);
             emitter.define_label(loop_end);
         }
-        Operator::MemoryCopy {
-            dst_mem: 0,
-            src_mem: 0,
-        } => {
+        IrInstruction::MemoryCopy => {
             // memory.copy(dest, src, size) - like memmove, handles overlapping regions
             // When dest > src, we must copy backward to avoid overwriting source data
             let size = emitter.spill_pop();
@@ -2710,7 +2705,7 @@ fn translate_op(
             emitter.emit(Instruction::Fallthrough);
             emitter.define_label(end);
         }
-        Operator::Select => {
+        IrInstruction::Select => {
             let cond = emitter.spill_pop();
             let val2 = emitter.spill_pop();
             let val1 = emitter.spill_pop();
@@ -2734,80 +2729,80 @@ fn translate_op(
             emitter.emit(Instruction::Fallthrough);
             emitter.define_label(end_label);
         }
-        Operator::I32Clz => {
+        IrInstruction::I32Clz => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::LeadingZeroBits32 { dst, src });
         }
-        Operator::I64Clz => {
+        IrInstruction::I64Clz => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::LeadingZeroBits64 { dst, src });
         }
-        Operator::I32Ctz => {
+        IrInstruction::I32Ctz => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::TrailingZeroBits32 { dst, src });
         }
-        Operator::I64Ctz => {
+        IrInstruction::I64Ctz => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::TrailingZeroBits64 { dst, src });
         }
-        Operator::I32Popcnt => {
+        IrInstruction::I32Popcnt => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::CountSetBits32 { dst, src });
         }
-        Operator::I64Popcnt => {
+        IrInstruction::I64Popcnt => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::CountSetBits64 { dst, src });
         }
-        Operator::I32WrapI64 => {
+        IrInstruction::I32WrapI64 => {
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
-        Operator::I64ExtendI32S => {
+        IrInstruction::I64ExtendI32S => {
             // Sign-extend from bit 31 to 64 bits.
             // AddImm32 { value: 0 } takes the lower 32 bits and sign-extends to 64.
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
-        Operator::I32Extend8S => {
+        IrInstruction::I32Extend8S => {
             // Sign-extend the lowest 8 bits of i32 to full i32
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SignExtend8 { dst, src });
         }
-        Operator::I32Extend16S => {
+        IrInstruction::I32Extend16S => {
             // Sign-extend the lowest 16 bits of i32 to full i32
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SignExtend16 { dst, src });
         }
-        Operator::I64Extend8S => {
+        IrInstruction::I64Extend8S => {
             // Sign-extend the lowest 8 bits of i64 to full i64
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SignExtend8 { dst, src });
         }
-        Operator::I64Extend16S => {
+        IrInstruction::I64Extend16S => {
             // Sign-extend the lowest 16 bits of i64 to full i64
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::SignExtend16 { dst, src });
         }
-        Operator::I64Extend32S => {
+        IrInstruction::I64Extend32S => {
             // Sign-extend the lowest 32 bits of i64 to full i64.
             // AddImm32 { value: 0 } takes the lower 32 bits and sign-extends to 64.
             let src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::AddImm32 { dst, src, value: 0 });
         }
-        Operator::I64ExtendI32U => {
+        IrInstruction::I64ExtendI32U => {
             // Zero-extend from 32 bits to 64 bits: clear upper 32 bits.
             // Shift left 32 then logical shift right 32.
             let src = emitter.spill_pop();
@@ -2830,7 +2825,7 @@ fn translate_op(
         // Float truncation stubs - PVM doesn't support floats, but these may appear
         // in dead code from AssemblyScript stdlib. We stub them to allow compilation.
         // If actually called, the result will be incorrect (returns 0).
-        Operator::I32TruncSatF64U | Operator::I32TruncSatF64S => {
+        IrInstruction::I32TruncSatF64U | IrInstruction::I32TruncSatF64S => {
             // f64 -> i32 truncation (saturating)
             // Pop the f64 input (treated as i64 in our integer-only world)
             let _src = emitter.spill_pop();
@@ -2838,65 +2833,65 @@ fn translate_op(
             let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadImm64 { reg: dst, value: 0 });
         }
-        Operator::I32TruncSatF32U | Operator::I32TruncSatF32S => {
+        IrInstruction::I32TruncSatF32U | IrInstruction::I32TruncSatF32S => {
             // f32 -> i32 truncation (saturating)
             let _src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadImm64 { reg: dst, value: 0 });
         }
-        Operator::I64TruncSatF64U | Operator::I64TruncSatF64S => {
+        IrInstruction::I64TruncSatF64U | IrInstruction::I64TruncSatF64S => {
             // f64 -> i64 truncation (saturating)
             let _src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadImm64 { reg: dst, value: 0 });
         }
-        Operator::I64TruncSatF32U | Operator::I64TruncSatF32S => {
+        IrInstruction::I64TruncSatF32U | IrInstruction::I64TruncSatF32S => {
             // f32 -> i64 truncation (saturating)
             let _src = emitter.spill_pop();
             let dst = emitter.spill_push();
             emitter.emit(Instruction::LoadImm64 { reg: dst, value: 0 });
         }
-        Operator::I32Load8U { memarg } | Operator::I64Load8U { memarg } => {
+        IrInstruction::I32Load8U { offset } | IrInstruction::I64Load8U { offset } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU8 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I32Load8S { memarg } | Operator::I64Load8S { memarg } => {
+        IrInstruction::I32Load8S { offset } | IrInstruction::I64Load8S { offset } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndI8 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I32Load16U { memarg } | Operator::I64Load16U { memarg } => {
+        IrInstruction::I32Load16U { offset } | IrInstruction::I64Load16U { offset } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndU16 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I32Load16S { memarg } | Operator::I64Load16S { memarg } => {
+        IrInstruction::I32Load16S { offset } | IrInstruction::I64Load16S { offset } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::LoadIndI16 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I64Load32S { memarg } => {
+        IrInstruction::I64Load32S { offset } => {
             let addr = emitter.spill_pop();
             let dst = emitter.spill_push();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
@@ -2904,7 +2899,7 @@ fn translate_op(
             emitter.emit(Instruction::LoadIndU32 {
                 dst,
                 base: addr,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
             emitter.emit(Instruction::AddImm32 {
                 dst,
@@ -2912,27 +2907,27 @@ fn translate_op(
                 value: 0,
             });
         }
-        Operator::I32Store8 { memarg } | Operator::I64Store8 { memarg } => {
+        IrInstruction::I32Store8 { offset } | IrInstruction::I64Store8 { offset } => {
             let val = emitter.spill_pop();
             let addr = emitter.spill_pop();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::StoreIndU8 {
                 base: addr,
                 src: val,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I32Store16 { memarg } | Operator::I64Store16 { memarg } => {
+        IrInstruction::I32Store16 { offset } | IrInstruction::I64Store16 { offset } => {
             let val = emitter.spill_pop();
             let addr = emitter.spill_pop();
             // Add WASM_MEMORY_BASE to translate WASM address to PVM address
             emitter.emit(Instruction::StoreIndU16 {
                 base: addr,
                 src: val,
-                offset: memarg.offset as i32 + ctx.wasm_memory_base,
+                offset: *offset as i32 + ctx.wasm_memory_base,
             });
         }
-        Operator::I32Rotl => {
+        IrInstruction::I32Rotl => {
             let n = emitter.spill_pop();
             let value = emitter.spill_pop();
             let result = emitter.spill_push();
@@ -2980,7 +2975,7 @@ fn translate_op(
                 src2: mask,
             });
         }
-        Operator::I32Rotr => {
+        IrInstruction::I32Rotr => {
             let n = emitter.spill_pop();
             let value = emitter.spill_pop();
             let result = emitter.spill_push();
@@ -3028,7 +3023,7 @@ fn translate_op(
                 src2: mask,
             });
         }
-        Operator::I64Rotl => {
+        IrInstruction::I64Rotl => {
             let n = emitter.spill_pop();
             let value = emitter.spill_pop();
             let result = emitter.spill_push();
@@ -3064,7 +3059,7 @@ fn translate_op(
                 src2: 7,
             });
         }
-        Operator::I64Rotr => {
+        IrInstruction::I64Rotr => {
             let n = emitter.spill_pop();
             let value = emitter.spill_pop();
             let result = emitter.spill_push();
@@ -3099,9 +3094,6 @@ fn translate_op(
                 src1: result,
                 src2: 7,
             });
-        }
-        _ => {
-            return Err(Error::Unsupported(format!("{op:?}")));
         }
     }
     Ok(())

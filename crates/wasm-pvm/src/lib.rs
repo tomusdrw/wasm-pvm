@@ -7,6 +7,7 @@
 )]
 
 pub mod error;
+pub mod ir;
 pub mod pvm;
 pub mod spi;
 pub mod translate;
