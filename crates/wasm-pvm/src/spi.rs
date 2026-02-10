@@ -50,6 +50,21 @@ impl SpiProgram {
     }
 
     #[must_use]
+    pub fn ro_data(&self) -> &[u8] {
+        &self.ro_data
+    }
+
+    #[must_use]
+    pub fn rw_data(&self) -> &[u8] {
+        &self.rw_data
+    }
+
+    #[must_use]
+    pub fn heap_pages(&self) -> u16 {
+        self.heap_pages
+    }
+
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let code_blob = self.code.encode();
 

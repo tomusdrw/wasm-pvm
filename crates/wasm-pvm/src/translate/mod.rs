@@ -22,7 +22,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 }
 
 #[cfg(feature = "llvm-backend")]
-fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
+pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
     use crate::llvm_backend::{self, LoweringContext};
     use crate::llvm_frontend;
     use inkwell::context::Context;
@@ -244,7 +244,7 @@ fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         .with_rw_data(rw_data_section))
 }
 
-fn compile_legacy(module: &WasmModule) -> Result<SpiProgram> {
+pub fn compile_legacy(module: &WasmModule) -> Result<SpiProgram> {
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
