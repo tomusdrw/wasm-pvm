@@ -2,77 +2,55 @@
 
 A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) bytecode for execution on the JAM (Join-Accumulate Machine) protocol.
 
-## Status: Active Development (62 tests passing, critical bugs fixed)
+## Status: Active Development (360 integration tests passing)
 
 **Project Goal**: Enable writing JAM programs in AssemblyScript (TypeScript-like) or hand-written WAT, compiled to PVM bytecode.
 
-**V1 Milestone**: Compile [anan-as](https://github.com/polkavm/anan-as) (PVM interpreter in AssemblyScript) to WASM -> PVM, achieving PVM-in-PVM execution.
+**Architecture**: `WASM → [inkwell] → LLVM IR → [mem2reg] → [Rust PVM backend] → PVM bytecode`
+
+The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with a custom Rust-based PVM backend that reads LLVM IR and emits PVM bytecode. This gives us LLVM's SSA/CFG representation and optimization passes without requiring a native LLVM C++ target backend.
 
 **Current State**:
-- anan-as successfully compiles to a 423KB JAM file
-- 62 integration tests pass in direct execution
-- Critical bugs fixed: division overflow checks, import return values, memory.copy overlapping regions, WASM validation
-- Code quality: memory layout constants extracted, debug assertions added, zero clippy warnings
-- **Remaining blocker**: PVM-in-PVM inner interpreter PANICs (BUG-4 under investigation)
+- LLVM backend passes all 360 TypeScript integration tests and all Rust unit tests
+- Legacy direct-translation backend still available as fallback
+- 43 differential tests verify both backends produce structurally identical output
+- anan-as (PVM interpreter in AssemblyScript) compiles to a 423KB JAM file
+- `unsafe_code = "deny"` enforced at workspace level
 
 ### Working Features
 
-**Arithmetic (i32 & i64)**:
-- `add`, `sub`, `mul`, `div_u`, `div_s`, `rem_u`, `rem_s`
-- All comparison operations (`eq`, `ne`, `lt_u/s`, `gt_u/s`, `le_u/s`, `ge_u/s`, `eqz`)
-- Division overflow checks (div-by-zero, INT_MIN/-1 -> trap)
+**Arithmetic (i32 & i64)**: add, sub, mul, div_u, div_s, rem_u, rem_s, all comparisons (eq, ne, lt_u/s, gt_u/s, le_u/s, ge_u/s, eqz), clz, ctz, popcnt, rotl, rotr, bitwise (and, or, xor, shl, shr_u, shr_s)
 
-**Bitwise & Shift (i32 & i64)**:
-- `and`, `or`, `xor`
-- `shl`, `shr_u`, `shr_s`
-- `rotl`, `rotr`
-- `clz`, `ctz`, `popcnt`
+**Control Flow**: block, loop, if/else/end, br, br_if, br_table, return, unreachable, block result values
 
-**Control Flow**:
-- `block`, `loop`, `if/else/end`
-- `br`, `br_if`, `br_table`
-- `return`, `unreachable`
-- Block result values
+**Memory**: i32/i64 load/store, sub-word variants (load8_u/s, load16_u/s, load32_u/s, store8, store16, store32), memory.size, memory.grow, memory.fill, memory.copy, global.get/set, data section initialization
 
-**Memory Operations**:
-- `i32.load/store`, `i64.load/store`
-- Sub-word variants: `load8_u/s`, `load16_u/s`, `load32_u/s`, `store8`, `store16`, `store32`
-- `memory.size`, `memory.grow` (returns -1)
-- `memory.fill`, `memory.copy` (with memmove-correct overlapping region support)
-- `global.get`, `global.set`
-- WASM data section initialization
-- WASM module validation via `wasmparser::validate()`
+**Functions**: call, call_indirect (with signature validation), recursion, stack overflow detection (64KB default), local variables with spilling, local.get/set/tee, drop, select
 
-**Functions**:
-- `call` with proper return value handling
-- `call_indirect` (indirect function calls via table with signature validation)
-- Recursion support with proper call stack
-- Stack overflow detection (configurable 64KB default limit)
-- Local variables with spilling for functions with many locals
-- `local.get`, `local.set`, `local.tee`
-- `drop`, `select`
+**Type Conversions**: i32.wrap_i64, i64.extend_i32_s/u, sign extensions (i32.extend8_s, i32.extend16_s, i64.extend8_s/16_s/32_s)
 
-**Type Conversions**:
-- `i32.wrap_i64`
-- `i64.extend_i32_s`, `i64.extend_i32_u`
-- `i32.extend8_s`, `i32.extend16_s` (sign extension)
-- `i64.extend8_s`, `i64.extend16_s`, `i64.extend32_s` (sign extension)
-
-**Import Handling**:
-- Imported functions are stubbed (`abort` -> TRAP, others -> no-op with return value)
+**Import Handling**: Imported functions are stubbed (abort → TRAP, others → no-op with return value)
 
 ### Not Yet Implemented
-- Floating point (rejected by design - PVM has no FP; stubs exist for dead code)
-- Dynamic memory growth (`memory.grow` returns -1)
-- Host calls via `ecalli` (planned)
+- Division-by-zero and signed overflow trap sequences in LLVM backend
+- Multi-value returns (`entry_returns_ptr_len` convention) in LLVM backend
+- Host calls via `ecalli` instruction
+- Floating point (rejected by design — PVM has no FP)
+- Register allocator (currently uses stack-slot approach)
 
 ## Quick Start
 
 ### Build
 
 ```bash
+# Default (legacy backend)
 cargo build --release
+
+# With LLVM backend (requires LLVM 18)
+cargo build --release --features llvm-backend
 ```
+
+**LLVM 18 setup** (macOS): `brew install llvm@18` and set `LLVM_SYS_181_PREFIX=/opt/homebrew/opt/llvm@18`
 
 ### Compile WASM to JAM
 
@@ -86,7 +64,7 @@ cargo run -p wasm-pvm-cli -- compile input.wasm -o output.jam
 
 ### Run on PVM Interpreter
 
-Requires Node.js and the anan-as PVM implementation (included as submodule):
+Requires Bun and the anan-as PVM implementation (included as submodule):
 
 ```bash
 # Setup (first time only)
@@ -96,45 +74,30 @@ cd vendor/anan-as && npm ci && npm run build && cd ../..
 cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
 
 # Example: add.jam.wat with args 5 and 7 -> returns 12
-cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
-# Output shows: As U32: 12
-```
-
-
-### Run on PVM Interpreter
-
-Requires Node.js and the anan-as PVM implementation (included as submodule):
-
-```bash
-# Setup (first time only)
-cd vendor/anan-as && npm ci && npm run build && cd ../..
-
-# Run with arguments (little-endian u32s)
-cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
-
-# Example: add.jam.wat with args 5 and 7 -> returns 12
-cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
-# Output shows: As U32: 12
 ```
 
 ## WASM Program Convention
 
-WASM programs must follow the SPI entrypoint convention:
+WASM programs follow the SPI entrypoint convention. Two styles are supported:
 
+**New convention** (recommended) — return `(i32, i32)` for `(ptr, len)`:
 ```wat
 (module
   (memory 1)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+    (i32.const 0x30100)  ;; result pointer
+    (i32.const 4)        ;; result length
+  )
+)
+```
 
-  ;; Required globals for return value
+**Legacy convention** — set globals:
+```wat
+(module
+  (memory 1)
   (global $result_ptr (mut i32) (i32.const 0))
   (global $result_len (mut i32) (i32.const 0))
-
-  ;; Entry point - receives args pointer and length
   (func (export "main") (param $args_ptr i32) (param $args_len i32)
-    ;; Read input from args_ptr (PVM address 0xFEFF0000)
-    ;; Write output to heap (0x30100+)
-    ;; Set result_ptr and result_len globals
-
     (global.set $result_ptr (i32.const 0x30100))
     (global.set $result_len (i32.const 4))
   )
@@ -145,107 +108,79 @@ WASM programs must follow the SPI entrypoint convention:
 
 | Address | Region |
 |---------|--------|
-| `0x00010000` | Read-only data (dispatch table for call_indirect) |
+| `0x00010000` | Read-only data (dispatch table for `call_indirect`) |
 | `0x00030000` | Globals storage (compiler-managed) |
-| `0x00030100` | User heap (~64KB available until 0x3FFFF) |
+| `0x00030100` | User heap |
 | `0x00040000` | Spilled locals (512 bytes per function) |
-| `0x00050000` | WASM linear memory base (data sections placed here) |
+| `0x00050000+` | WASM linear memory base (data sections placed here) |
 | `0xFEFE0000` | Stack segment end |
 | `0xFEFF0000` | Arguments (input data) |
 | `0xFFFF0000` | EXIT address (HALT) |
 
 See `crates/wasm-pvm/src/translate/memory_layout.rs` for the full layout with ASCII art diagram.
 
-## Examples
-
-Working examples in `tests/fixtures/wat/`:
-
-| File | Description | Verified |
-|------|-------------|----------|
-| `add.jam.wat` | Add two u32 arguments | 5+7=12 |
-| `factorial.jam.wat` | Compute n! using loop | 5!=120 |
-| `fibonacci.jam.wat` | Fibonacci sequence | fib(10)=55 |
-| `gcd.jam.wat` | GCD (Euclidean algorithm) | gcd(48,18)=6 |
-| `is-prime.jam.wat` | Primality test | is_prime(97)=1 |
-| `div.jam.wat` | Integer division | 20/5=4 |
-| `call.jam.wat` | Function calls | double(5)=10 |
-| `br-table.jam.wat` | Switch/jump table | br_table tests |
-| `bit-ops.jam.wat` | clz, ctz, popcnt | bit operation tests |
-| `rotate.jam.wat` | rotl, rotr | rotation tests |
-| `entry-points.jam.wat` | Multiple entry points (main/main2) | PC=0 and PC=5 |
-| `recursive.jam.wat` | Recursive factorial | tests call stack |
-| `nested-calls.jam.wat` | Nested function calls | multi-level calls |
-| `call-indirect.jam.wat` | Indirect function calls via table | dispatch tests |
-| `i64-ops.jam.wat` | 64-bit integer operations | div, rem, shifts |
-| `many-locals.jam.wat` | Functions with >4 local variables | spilling tests |
-| `block-result.jam.wat` | Block result values | control flow |
-| `block-br-test.jam.wat` | Block branch tests | br/br_if |
-| `stack-test.jam.wat` | Operand stack tests | stack depth |
-
-AssemblyScript examples in `tests/fixtures/assembly/`:
-
-| File | Description | Verified |
-|------|-------------|----------|
-| `add.ts` | Add two u32 arguments | 5+7=12 |
-| `factorial.ts` | Compute n! using loop | 5!=120 |
-| `fibonacci.ts` | Fibonacci sequence | fib(10)=55 |
-| `gcd.ts` | GCD (Euclidean algorithm) | gcd(48,18)=6 |
-| `life.ts` | Conway's Game of Life | 16x16 grid, glider + oscillators |
-
 ## Project Structure
 
 ```
 crates/
-  wasm-pvm/           # Core library
+  wasm-pvm/              # Core library
     src/
-      pvm/            # PVM instruction definitions
-      translate/      # WASM -> PVM translation
-        codegen.rs    # Main compiler (2,400 lines)
-        memory_layout.rs  # PVM memory address constants
-        stack.rs      # Operand stack management
-      spi.rs          # JAM format encoder
-  wasm-pvm-cli/       # Command-line tool
-tests/                # Integration tests & tooling
+      llvm_frontend/     # WASM -> LLVM IR translation
+        function_builder.rs  # Core translator (~1350 lines)
+      llvm_backend/      # LLVM IR -> PVM bytecode lowering
+        lowering.rs      # Core lowering (~1900 lines)
+      translate/         # Compilation orchestration
+        mod.rs           # Pipeline dispatch + SPI assembly
+        wasm_module.rs   # Shared WASM section parsing
+        memory_layout.rs # PVM memory address constants
+        codegen.rs       # Legacy backend (direct translation)
+        stack.rs         # Legacy operand stack management
+      pvm/               # PVM instruction definitions
+      ir/                # Legacy IR (to be removed)
+      spi.rs             # JAM format encoder
+  wasm-pvm-cli/          # Command-line tool
+tests/                   # Integration tests & tooling
   fixtures/
-    wat/              # Example WASM programs (*.jam.wat)
-    assembly/         # AssemblyScript examples
-  utils/              # Utility scripts (run-jam, verify-jam)
-  helpers/            # Test helpers
-  data/               # Test definitions
+    wat/                 # WAT test programs (43 fixtures)
+    assembly/            # AssemblyScript examples
+  utils/                 # Utility scripts (run-jam, verify-jam)
+  helpers/               # Test helpers
+  data/                  # Test definitions
+  differential.rs        # 43 differential tests (both backends)
 vendor/
-  anan-as/            # PVM reference interpreter (submodule)
-review/               # Architecture review (2026-02-09)
-
+  anan-as/               # PVM reference interpreter (submodule)
 ```
 
 ## Documentation
 
-- [PLAN.md](./PLAN.md) - Project roadmap and current progress
-- [LEARNINGS.md](./LEARNINGS.md) - Technical discoveries, PVM instruction reference, and architecture insights
-- [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) - Known bugs and improvements to address
-- [V1-COMPLETION-PLAN.md](./V1-COMPLETION-PLAN.md) - Detailed V1 completion steps
+- [PLAN.md](./PLAN.md) - Project roadmap and remaining work
+- [ir.md](./ir.md) - LLVM IR backend design and migration history
+- [LEARNINGS.md](./LEARNINGS.md) - Technical reference (PVM architecture, conventions)
 - [AGENTS.md](./AGENTS.md) - Guidelines for AI agents working on this project
 - [gp-0.7.2.md](./gp-0.7.2.md) - Gray Paper (JAM/PVM specification)
-- [review/](./review/) - Architecture review findings and proposals
+- [review/](./review/) - Architecture review (2026-02-09)
 
 ## Testing
 
 ```bash
-# Run unit tests
+# Run Rust unit tests
 cargo test
+
+# Run with LLVM backend
+cargo test --features llvm-backend
+
+# Run differential tests (both backends)
+cargo test --features llvm-backend --test differential
 
 # Run clippy
 cargo clippy -- -D warnings
 
-# Run full integration test suite (62 tests)
+# Run full integration test suite (360 tests)
 cd tests && bun test
 
 # Test a single example
 cargo run -p wasm-pvm-cli --quiet -- compile tests/fixtures/wat/factorial.jam.wat -o /tmp/test.jam
 cd tests && bun utils/run-jam.ts /tmp/test.jam --args=05000000
-
-# Verify a JAM file structure
-cd tests && bun utils/verify-jam.ts /tmp/test.jam
 ```
 
 ## License

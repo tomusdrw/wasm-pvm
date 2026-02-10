@@ -1,8 +1,9 @@
 # WASM-PVM Project - AI Agent Knowledge Base
 
-**Project**: WebAssembly to PolkaVM (PVM) bytecode recompiler  
-**Stack**: Rust (core) + TypeScript (tests) + AssemblyScript (examples)  
-**Docs**: `PLAN.md` (roadmap), `LEARNINGS.md` (tech discoveries), `gp-0.7.2.md` (PVM spec)
+**Project**: WebAssembly to PolkaVM (PVM) bytecode recompiler
+**Stack**: Rust (core) + TypeScript (tests) + AssemblyScript (examples)
+**Architecture**: `WASM → [inkwell] → LLVM IR → [mem2reg] → [Rust PVM backend] → PVM bytecode`
+**Docs**: `PLAN.md` (roadmap), `LEARNINGS.md` (tech reference), `gp-0.7.2.md` (PVM spec)
 
 ---
 
@@ -12,9 +13,14 @@
 # Build
 cargo build --release
 
+# Build with LLVM backend
+LLVM_SYS_181_PREFIX=/opt/homebrew/opt/llvm@18 cargo build --release --features llvm-backend
+
 # Test
-cargo test                    # Unit tests (Rust)
-cd tests && bun test          # Integration tests (62 tests)
+cargo test                                    # Unit tests (Rust)
+cargo test --features llvm-backend            # Unit tests with LLVM backend
+cargo test --features llvm-backend --test differential  # Differential tests
+cd tests && bun test                          # Integration tests (360 tests)
 
 # Compile WASM → JAM
 cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o dist/add.jam
@@ -31,10 +37,19 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 crates/
 ├── wasm-pvm/              # Core library
 │   └── src/
-│       ├── translate/     # WASM→PVM translation [COMPLEX - see AGENTS.md]
-│       │   ├── codegen.rs (2402 lines - main logic)
-│       │   ├── mod.rs     (683 lines - orchestration)
-│       │   └── stack.rs   (152 lines - operand stack)
+│       ├── llvm_frontend/ # WASM → LLVM IR [LLVM backend]
+│       │   ├── function_builder.rs (~1350 lines - core translator)
+│       │   └── mod.rs
+│       ├── llvm_backend/  # LLVM IR → PVM bytecode [LLVM backend]
+│       │   ├── lowering.rs (~1900 lines - core lowering)
+│       │   └── mod.rs
+│       ├── translate/     # Compilation orchestration
+│       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
+│       │   ├── wasm_module.rs (shared WASM section parsing)
+│       │   ├── memory_layout.rs (PVM memory address constants)
+│       │   ├── codegen.rs (legacy backend - direct translation)
+│       │   └── stack.rs   (legacy operand stack)
+│       ├── ir/            # Legacy IR (to be removed)
 │       ├── pvm/           # PVM instruction definitions
 │       │   ├── instruction.rs  # Instruction enum + encoding
 │       │   ├── opcode.rs       # Opcode constants
@@ -42,13 +57,14 @@ crates/
 │       ├── spi.rs         # JAM/SPI format encoder
 │       └── error.rs       # Error types (thiserror)
 └── wasm-pvm-cli/          # CLI binary
-    └── src/main.rs        # Single-file CLI (62 lines)
+    └── src/main.rs
 
 tests/                     # Integration tests & tooling
 ├── build.ts               # Test build orchestrator
-├── utils/                 # Utility scripts (run-jam, verify-jam)
+├── differential.rs        # 43 differential tests (both backends)
+├── utils/                 # Utility scripts (run-jam, verify-jam, trace)
 ├── fixtures/              # Test cases
-│   ├── wat/               # WAT test programs
+│   ├── wat/               # WAT test programs (43 fixtures)
 │   └── assembly/          # AssemblyScript examples
 ├── helpers/               # Test helpers
 └── data/                  # Test definitions (test-cases.ts)
@@ -60,21 +76,24 @@ vendor/                    # Git submodules (anan-as)
 
 ## Domain Knowledge
 
-### WASM (Source)
-- Stack-based bytecode
-- Structured control flow (blocks, loops, if/else)
-- Linear memory (0-indexed, 64KB pages)
+### Compiler Pipeline (LLVM backend)
+1. **WASM parsing**: `wasm_module.rs` parses all WASM sections into `WasmModule` struct
+2. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell
+3. **mem2reg pass**: LLVM's `mem2reg` promotes alloca'd locals to SSA registers
+4. **PVM lowering**: `llvm_backend/lowering.rs` reads LLVM IR and emits PVM bytecode
+5. **SPI assembly**: `translate/mod.rs` builds entry header, dispatch tables, ro_data/rw_data
 
 ### PVM (Target)
-- Register-based (13 x 64-bit registers)
+- Register-based (13 × 64-bit registers)
 - Flat control flow with jumps/branches
 - Gas metering on all instructions
 - Memory: addresses < 2^16 panic
 
-### Translation Challenges
-1. Stack→Registers: Map WASM operand stack to r2-r6
-2. Structured→Flat: Convert WASM blocks to PVM jumps
-3. Address translation: WASM 0-based → PVM 0x50000-based
+### Key Design Decisions
+- **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
+- **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first, register allocator is future work)
+- **All values as i64**: PVM registers are 64-bit; simplifies translation
+- **Feature flags**: `llvm-backend` enables LLVM pipeline, default uses legacy direct translation
 
 ---
 
@@ -92,10 +111,10 @@ vendor/                    # Git submodules (anan-as)
 - Indicate WASM vs PVM context in names
 
 ### Project-Specific
-- No `lib/` folder in crates - flat src structure
-- Integration tests in TypeScript (not `tests/*.rs`)
-- Memory addresses hardcoded as magic constants
-- 4 local variables max without spilling
+- No `lib/` folder in crates — flat src structure
+- Integration tests in TypeScript (`tests/`)
+- Rust differential tests in `tests/differential.rs`
+- LLVM backend gated behind `#[cfg(feature = "llvm-backend")]`
 
 ---
 
@@ -103,28 +122,25 @@ vendor/                    # Git submodules (anan-as)
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Add WASM operator | `translate/codegen.rs` | `translate_op()` match arm |
+| Add WASM operator (LLVM) | `llvm_frontend/function_builder.rs` | Add to operator match |
+| Add PVM lowering (LLVM) | `llvm_backend/lowering.rs` | Add instruction lowering |
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
-| Fix translation bug | `translate/codegen.rs` | Check `emit_*` functions |
+| Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
+| Fix compilation pipeline | `translate/mod.rs` | `compile_via_llvm()` / `compile_legacy()` |
 | Add test case | `tests/data/test-cases.ts` | Hex args, little-endian |
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` |
-| Fix result parsing | `tests/helpers/run.ts` | Memory chunk reconstruction |
-| Debug execution step-by-step | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
-| Quick trace (simple programs) | `tests/utils/trace-jam.ts` | 50 steps default, minimal output |
-| Verify JAM file structure | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
-| Add global handling | `translate/mod.rs` | `compile()` globals section |
-| Update PVM spec | `gp-0.7.2.md` | Appendix A is key |
+| Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
+| Verify JAM file | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
 
 ---
 
 ## Anti-Patterns (Forbidden)
 
-1. **No `unsafe` code** - Strictly forbidden by workspace lint
-2. **No panics in library code** - Use `Result<>` with `Error::Internal`
-3. **No floating point** - PVM lacks FP support; reject WASM floats
-4. **Don't break register conventions** - Hardcoded in multiple files
-5. **No standard Rust test dir** - Use `tests/` (TypeScript) for integration tests
-6. **NEVER use --no-verify on git push** - Always ensure tests and linters pass before pushing
+1. **No `unsafe` code** — Strictly forbidden by workspace lint
+2. **No panics in library code** — Use `Result<>` with `Error::Internal`
+3. **No floating point** — PVM lacks FP support; reject WASM floats
+4. **Don't break register conventions** — Hardcoded in multiple files
+5. **NEVER use --no-verify on git push** — Always ensure tests and linters pass
 
 ---
 
@@ -132,11 +148,12 @@ vendor/                    # Git submodules (anan-as)
 
 | Address | Purpose |
 |---------|---------|
+| `0x10000` | Read-only data (dispatch table) |
 | `0x30000` | Globals storage |
 | `0x30100` | User heap (results) |
 | `0x40000` | Spilled locals |
-| `0x50000` | WASM linear memory base |
-| `0xFEFF0000` | Arguments (args_ptr) |
+| `0x50000+` | WASM linear memory base |
+| `0xFEFF0000` | Arguments (`args_ptr`) |
 | `0xFFFF0000` | EXIT address (HALT) |
 
 ---
@@ -146,55 +163,22 @@ vendor/                    # Git submodules (anan-as)
 | Register | Usage |
 |----------|-------|
 | r0 | Return address (jump table index) |
-| r1 | Stack pointer / Return value |
-| r2-r6 | Operand stack (5 slots) |
-| r7 | SPI args pointer / scratch |
-| r8 | SPI args length / saved table idx |
-| r9-r12 | Local variables (first 4) |
-
-Spilled locals: `0x30200 + (func_idx * 512) + ((local_idx - 4) * 8)`
+| r1 | Stack pointer |
+| r2-r6 | Scratch registers (LLVM backend) / Operand stack (legacy) |
+| r7 | Return value from calls / SPI args pointer |
+| r8 | SPI args length |
+| r9-r12 | Local variables (first 4) / callee-saved |
 
 ---
 
 ## Subdirectory Docs
 
-- **`crates/wasm-pvm/src/translate/AGENTS.md`** - Translation module details, codegen patterns
-- **`crates/wasm-pvm/src/pvm/AGENTS.md`** - PVM instruction encoding
-- **`scripts/AGENTS.md`** - TypeScript test tooling
-
----
-
-## Common Tasks
-
-### Add WASM Instruction
-1. Find in WASM spec → determine PVM sequence
-2. Add to `translate/codegen.rs:translate_op()`
-3. Add test case to `tests/data/test-cases.ts`
-4. Update `LEARNINGS.md` if non-obvious
-
-### Debug Translation Issue
-1. Execute and inspect result: `bun scripts/run-jam.ts <file> --args=...`
-2. Step-by-step trace: `bun scripts/trace-steps.ts <file> <args> <steps>`
-3. Verify JAM structure: `bun scripts/verify-jam.ts <file>`
-4. Compare expected vs actual instruction sequence
-5. Check register allocation in `codegen.rs`
-6. Verify control flow graph
-
-### Add Test Case
-```typescript
-// In scripts/test-cases.ts
-{ 
-  name: 'mytest',
-  tests: [
-    { args: '05000000', expected: 5, description: 'Test 5' }
-  ]
-}
-```
-Args are hex little-endian u32s.
+- **`crates/wasm-pvm/src/translate/AGENTS.md`** — Translation module details
+- **`crates/wasm-pvm/src/pvm/AGENTS.md`** — PVM instruction encoding
 
 ---
 
 ## Contact
 
-Maintainer: @tomusdrw  
+Maintainer: @tomusdrw
 PVM questions: Gray Paper or PolkaVM repo
