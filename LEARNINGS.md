@@ -32,7 +32,7 @@ Technical learnings, PVM architecture details, and conventions used in the compi
 |----------|-------|
 | r0 | Return address (jump table index) |
 | r1 | Stack pointer |
-| r2-r6 | Scratch registers (LLVM backend) / Operand stack (legacy) |
+| r2-r6 | Scratch registers |
 | r7 | Return value from calls / SPI args pointer (in main) |
 | r8 | SPI args length (in main) |
 | r9-r12 | Local variables (first 4) / callee-saved across calls |
@@ -204,7 +204,7 @@ PVM follows RISC-V semantics for division (returns specific values instead of tr
 - **Division by zero**: All div/rem operations
 - **Signed overflow**: `INT_MIN / -1` for `i32.div_s`
 
-The legacy backend emits inline checks before each division. The LLVM backend currently relies on PVM hardware behavior (trap sequences planned).
+The compiler currently relies on PVM hardware behavior for these edge cases (trap sequences planned).
 
 For i64 signed overflow: `i64::MIN` doesn't fit in a 32-bit immediate, so use `LoadImm64 + Xor` approach with fast path.
 

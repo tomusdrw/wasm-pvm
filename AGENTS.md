@@ -13,13 +13,8 @@
 # Build
 cargo build --release
 
-# Build with LLVM backend
-LLVM_SYS_181_PREFIX=/opt/homebrew/opt/llvm@18 cargo build --release --features llvm-backend
-
 # Test
 cargo test                                    # Unit tests (Rust)
-cargo test --features llvm-backend            # Unit tests with LLVM backend
-cargo test --features llvm-backend --test differential  # Differential tests
 cd tests && bun test                          # Integration tests (360 tests)
 
 # Compile WASM → JAM
@@ -37,19 +32,16 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 crates/
 ├── wasm-pvm/              # Core library
 │   └── src/
-│       ├── llvm_frontend/ # WASM → LLVM IR [LLVM backend]
+│       ├── llvm_frontend/ # WASM → LLVM IR
 │       │   ├── function_builder.rs (~1350 lines - core translator)
 │       │   └── mod.rs
-│       ├── llvm_backend/  # LLVM IR → PVM bytecode [LLVM backend]
+│       ├── llvm_backend/  # LLVM IR → PVM bytecode
 │       │   ├── lowering.rs (~1900 lines - core lowering)
 │       │   └── mod.rs
 │       ├── translate/     # Compilation orchestration
 │       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
-│       │   ├── wasm_module.rs (shared WASM section parsing)
-│       │   ├── memory_layout.rs (PVM memory address constants)
-│       │   ├── codegen.rs (legacy backend - direct translation)
-│       │   └── stack.rs   (legacy operand stack)
-│       ├── ir/            # Legacy IR (to be removed)
+│       │   ├── wasm_module.rs (WASM section parsing)
+│       │   └── memory_layout.rs (PVM memory address constants)
 │       ├── pvm/           # PVM instruction definitions
 │       │   ├── instruction.rs  # Instruction enum + encoding
 │       │   ├── opcode.rs       # Opcode constants
@@ -61,7 +53,7 @@ crates/
 
 tests/                     # Integration tests & tooling
 ├── build.ts               # Test build orchestrator
-├── differential.rs        # 43 differential tests (both backends)
+├── differential.rs        # 43 differential tests
 ├── utils/                 # Utility scripts (run-jam, verify-jam, trace)
 ├── fixtures/              # Test cases
 │   ├── wat/               # WAT test programs (43 fixtures)
@@ -76,7 +68,7 @@ vendor/                    # Git submodules (anan-as)
 
 ## Domain Knowledge
 
-### Compiler Pipeline (LLVM backend)
+### Compiler Pipeline
 1. **WASM parsing**: `wasm_module.rs` parses all WASM sections into `WasmModule` struct
 2. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell
 3. **mem2reg pass**: LLVM's `mem2reg` promotes alloca'd locals to SSA registers
@@ -93,7 +85,7 @@ vendor/                    # Git submodules (anan-as)
 - **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
 - **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first, register allocator is future work)
 - **All values as i64**: PVM registers are 64-bit; simplifies translation
-- **Feature flags**: `llvm-backend` enables LLVM pipeline, default uses legacy direct translation
+- **Feature flags**: `llvm-backend` feature flag (to be removed once LLVM is sole backend)
 
 ---
 
@@ -114,7 +106,6 @@ vendor/                    # Git submodules (anan-as)
 - No `lib/` folder in crates — flat src structure
 - Integration tests in TypeScript (`tests/`)
 - Rust differential tests in `tests/differential.rs`
-- LLVM backend gated behind `#[cfg(feature = "llvm-backend")]`
 
 ---
 
@@ -122,11 +113,11 @@ vendor/                    # Git submodules (anan-as)
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Add WASM operator (LLVM) | `llvm_frontend/function_builder.rs` | Add to operator match |
-| Add PVM lowering (LLVM) | `llvm_backend/lowering.rs` | Add instruction lowering |
+| Add WASM operator | `llvm_frontend/function_builder.rs` | Add to operator match |
+| Add PVM lowering | `llvm_backend/lowering.rs` | Add instruction lowering |
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
-| Fix compilation pipeline | `translate/mod.rs` | `compile_via_llvm()` / `compile_legacy()` |
+| Fix compilation pipeline | `translate/mod.rs` | `compile()` |
 | Add test case | `tests/data/test-cases.ts` | Hex args, little-endian |
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
@@ -164,7 +155,7 @@ vendor/                    # Git submodules (anan-as)
 |----------|-------|
 | r0 | Return address (jump table index) |
 | r1 | Stack pointer |
-| r2-r6 | Scratch registers (LLVM backend) / Operand stack (legacy) |
+| r2-r6 | Scratch registers |
 | r7 | Return value from calls / SPI args pointer |
 | r8 | SPI args length |
 | r9-r12 | Local variables (first 4) / callee-saved |

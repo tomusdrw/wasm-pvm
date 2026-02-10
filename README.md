@@ -11,9 +11,7 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with a custom Rust-based PVM backend that reads LLVM IR and emits PVM bytecode. This gives us LLVM's SSA/CFG representation and optimization passes without requiring a native LLVM C++ target backend. PVM-specific intrinsic functions (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) are used for memory operations to avoid `unsafe` code.
 
 **Current State**:
-- LLVM backend passes all 360 TypeScript integration tests and all Rust unit tests
-- Legacy direct-translation backend still available as fallback
-- 43 differential tests verify both backends produce structurally identical output
+- All 360 TypeScript integration tests and all Rust unit tests pass
 - anan-as (PVM interpreter in AssemblyScript) compiles to a 423KB JAM file
 - `unsafe_code = "deny"` enforced at workspace level
 
@@ -32,8 +30,8 @@ The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with
 **Import Handling**: Imported functions are stubbed (abort → TRAP, others → no-op with return value)
 
 ### Not Yet Implemented
-- Division-by-zero and signed overflow trap sequences in LLVM backend
-- Multi-value returns (`entry_returns_ptr_len` convention) in LLVM backend
+- Division-by-zero and signed overflow trap sequences
+- Multi-value returns (`entry_returns_ptr_len` convention)
 - Host calls via `ecalli` instruction
 - Floating point (rejected by design — PVM has no FP)
 - Register allocator (currently uses stack-slot approach)
@@ -42,15 +40,11 @@ The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with
 
 ### Build
 
+Requires LLVM 18. On macOS: `brew install llvm@18` and set `LLVM_SYS_181_PREFIX=/opt/homebrew/opt/llvm@18`
+
 ```bash
-# Default (legacy backend)
 cargo build --release
-
-# With LLVM backend (requires LLVM 18)
-cargo build --release --features llvm-backend
 ```
-
-**LLVM 18 setup** (macOS): `brew install llvm@18` and set `LLVM_SYS_181_PREFIX=/opt/homebrew/opt/llvm@18`
 
 ### Compile WASM to JAM
 
@@ -78,28 +72,14 @@ cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
 
 ## WASM Program Convention
 
-WASM programs follow the SPI entrypoint convention. Two styles are supported:
+WASM programs follow the SPI entrypoint convention. The entry function returns `(i32, i32)` for `(ptr, len)`:
 
-**New convention** (recommended) — return `(i32, i32)` for `(ptr, len)`:
 ```wat
 (module
   (memory 1)
   (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (i32.const 0x30100)  ;; result pointer
     (i32.const 4)        ;; result length
-  )
-)
-```
-
-**Legacy convention** — set globals:
-```wat
-(module
-  (memory 1)
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
-    (global.set $result_ptr (i32.const 0x30100))
-    (global.set $result_len (i32.const 4))
   )
 )
 ```
@@ -131,12 +111,9 @@ crates/
         lowering.rs      # Core lowering (~1900 lines)
       translate/         # Compilation orchestration
         mod.rs           # Pipeline dispatch + SPI assembly
-        wasm_module.rs   # Shared WASM section parsing
+        wasm_module.rs   # WASM section parsing
         memory_layout.rs # PVM memory address constants
-        codegen.rs       # Legacy backend (direct translation)
-        stack.rs         # Legacy operand stack management
       pvm/               # PVM instruction definitions
-      ir/                # Legacy IR (to be removed)
       spi.rs             # JAM format encoder
   wasm-pvm-cli/          # Command-line tool
 tests/                   # Integration tests & tooling
@@ -146,7 +123,7 @@ tests/                   # Integration tests & tooling
   utils/                 # Utility scripts (run-jam, verify-jam)
   helpers/               # Test helpers
   data/                  # Test definitions
-  differential.rs        # 43 differential tests (both backends)
+  differential.rs        # 43 differential tests
 vendor/
   anan-as/               # PVM reference interpreter (submodule)
 ```
@@ -164,12 +141,6 @@ vendor/
 ```bash
 # Run Rust unit tests
 cargo test
-
-# Run with LLVM backend
-cargo test --features llvm-backend
-
-# Run differential tests (both backends)
-cargo test --features llvm-backend --test differential
 
 # Run clippy
 cargo clippy -- -D warnings
