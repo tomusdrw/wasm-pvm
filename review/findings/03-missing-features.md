@@ -1,13 +1,31 @@
-# 03 - Missing Features and Incomplete Implementations
+# 03 - Missing Features and Incomplete Implementations (Updated 2026-02-10)
 
 **Category**: Feature Gaps  
-**Impact**: Limits WASM compatibility, prevents certain programs from running
+**Impact**: WASM spec compliance, compatibility with existing code  
+**Status**: Significant feature completeness in LLVM backend
 
 ---
 
 ## Summary
 
-While the compiler implements most WASM MVP features, there are gaps that prevent some valid WASM programs from compiling or running correctly.
+Since the original review, the compiler has achieved **360 integration tests passing** with the LLVM backend. This indicates substantial feature completeness. However, some features remain missing or incomplete.
+
+**Feature Completeness**:
+
+| Feature Category | Status | Notes |
+|-----------------|--------|-------|
+| i32/i64 arithmetic | ✅ Complete | Full support |
+| Control flow (block/if/loop/br) | ✅ Complete | All structures |
+| Function calls (direct/indirect) | ✅ Complete | Full support |
+| Memory operations (load/store) | ✅ Complete | All variants |
+| Bulk memory (fill/copy/grow) | ✅ Complete | Full support |
+| Local variables | ✅ Complete | Full support |
+| Globals | ✅ Complete | Full support |
+| Type conversions | ✅ Complete | All conversions |
+| Floating point | ❌ Rejected | PVM limitation |
+| Passive data segments | ⚠️ Partial | Not implemented |
+| Host calls (ecalli) | ❌ Missing | Not implemented |
+| Multi-value returns | ⚠️ Partial | Globals-based workaround |
 
 ---
 
@@ -15,32 +33,30 @@ While the compiler implements most WASM MVP features, there are gaps that preven
 
 ### Feature 1: Passive Data Segments (`memory.init`) 🔵
 
-**Status**: Known Limitation  
+**Status**: Known Limitation   
 **Severity**: Low  
 **WASM Spec**: MVP feature for data segment initialization
 
 #### Description
 
-Only active data segments (initialized at instantiation) are supported. Passive segments and the `memory.init` instruction are not implemented.
+Only active data segments (initialized at module load time) are supported. Passive segments and the `memory.init` instruction are not implemented.
 
 #### Evidence
 
-From `mod.rs:177`:
 ```rust
+// translate/mod.rs
 // Passive data segments are ignored for now (used with memory.init)
 ```
 
 #### Impact
 
 - Cannot use `memory.init` to initialize memory at runtime
-- Some WASM toolchains generate passive segments
+- Some WASM toolchains may generate passive segments
 - Workaround: Use active segments only
 
-#### When Needed
+#### Relevance
 
-- Programs using bulk memory operations
-- Dynamic initialization patterns
-- Certain AssemblyScript runtime configurations
+The AssemblyScript compiler used for testing appears to only use active segments, so this limitation doesn't block the primary use case.
 
 ---
 
@@ -52,30 +68,18 @@ From `mod.rs:177`:
 
 #### Description
 
-PVM has no floating-point instructions. The compiler rejects WASM modules with float operations.
+PVM has no floating-point instructions. The compiler cannot support f32/f64 operations.
 
 #### Current Handling
 
-```rust
-// From error.rs
-#[error("Float operations are not supported by PVM")]
-FloatNotSupported,
-
-// From mod.rs (check_for_floats - currently #[allow(dead_code)])
-fn check_for_floats(body: &FunctionBody) -> Result<()> {
-    // ... checks for float operators ...
-}
-```
-
-The float check function exists but is not called because it's hard to detect floats in all cases (e.g., through indirect calls).
-
-#### Stubbed Operations
-
-Some float truncation operations are stubbed to return 0 for dead code paths:
+- WASM modules with float operations are rejected
+- Some float truncation operations are stubbed to return 0 for dead code elimination paths
 
 ```rust
-// From codegen.rs (presumably, based on KNOWN_ISSUES.md)
-// i32.trunc_sat_f64_u, etc. return 0
+// ir/instruction.rs
+I32TruncSatF64U,  // Stub - returns 0
+I32TruncSatF64S,  // Stub - returns 0
+// ... more truncation stubs
 ```
 
 #### Impact
@@ -94,360 +98,288 @@ Some float truncation operations are stubbed to return 0 for dead code paths:
 
 ---
 
-### Feature 3: Imported Function Calls (with return values) 🔴
+### Feature 3: Host Calls via `ecalli` 🔵
 
-**Status**: Partially Implemented  
-**Severity**: Medium  
-**WASM Spec**: MVP feature for imports
+**Status**: Not Implemented   
+**Severity**: Medium (for WASI support)  
+**WASM Spec**: Host function call mechanism
 
 #### Description
 
-Imported functions are stubbed but don't handle return values correctly.
+The PVM has an `ecalli` instruction for calling host-provided functions. The compiler doesn't support generating it.
 
-#### Current Implementation
+#### Current Import Handling
 
-From `codegen.rs:2210-2241`:
+Imported functions are stubbed:
+- `abort` → TRAP
+- Others → no-op with dummy return value (0)
+
 ```rust
-if (*function_index as usize) < ctx.num_imported_funcs {
-    let import_name = ctx.imported_func_names.get(*function_index as usize)
-        .map_or("unknown", String::as_str);
-    
-    // Pop arguments (they're on the stack)
-    for _ in 0..num_args {
-        emitter.spill_pop();
-    }
-    
-    // Handle specific imports:
-    if import_name == "abort" {
-        emitter.emit(Instruction::Trap);
-    }
-    // For has_return, we'd need to push a dummy value, but abort/console.log don't return
+// translate/codegen.rs (legacy)
+if import_name == "abort" {
+    emitter.emit(Instruction::Trap);
 }
+// For has_return, push dummy value
 ```
-
-#### Gap
-
-When `has_return` is true, no value is pushed to the stack. This violates the calling convention.
 
 #### Impact
 
-- Cannot use imports that return values
-- WASI functions unavailable
-- Custom host functions limited
+- Cannot use WASI (WebAssembly System Interface)
+- No file I/O, clock, random, etc.
+- Cannot call host-provided functions
 
 #### When Needed
 
-- WASI support (file I/O, etc.)
-- Host-provided functions
-- External libraries
+- WASI support for standard library functions
+- Host-defined functionality
+- System services access
+
+**Recommendation**: Document as known limitation for V1. Implement in V2 if WASI support is required.
 
 ---
 
-### Feature 4: Runtime Memory Bounds Checking 🟡
+### Feature 4: True Multi-Value Returns 🟡
 
-**Status**: Partial  
-**Severity**: Medium  
-**WASM Spec**: Required for security
+**Status**: Partial   
+**Severity**: Low  
+**WASM Spec**: Post-MVP proposal (now standard)
 
 #### Description
 
-WASM memory operations are bounds-checked at runtime in proper engines. The current compiler relies on PVM's memory protection but doesn't explicitly check WASM bounds.
+WASM supports functions returning multiple values (e.g., `(result i32 i32)`). The compiler has partial support via a workaround.
 
-#### Current Approach
+#### Current Implementation
 
-1. WASM addresses are translated to PVM addresses by adding `wasm_memory_base`
-2. PVM will trap on out-of-bounds access
-3. But WASM-specific bounds (memory size) are not checked
-
-#### Gap
+**Workaround**: Entry functions return `(ptr, len)` via globals or registers:
 
 ```rust
-// From codegen.rs
-Operator::I32Load { memarg } => {
-    let addr = emitter.spill_pop();
-    let dst = emitter.spill_push();
-    // Add WASM_MEMORY_BASE to translate WASM address to PVM address
-    emitter.emit(Instruction::LoadIndU32 {
-        dst,
-        base: addr,
-        offset: memarg.offset as i32 + ctx.wasm_memory_base,
-        // No check that addr + offset < memory_size!
-    });
-}
+// Globals-based (legacy convention)
+(global $result_ptr (mut i32) (i32.const 0))
+(global $result_len (mut i32) (i32.const 0))
+
+// Register-based (SPI convention)
+// Entry returns ptr in r7, len in r8
 ```
 
-#### Impact
+#### Evidence
 
-- Programs can read/write beyond WASM memory bounds
-- Security issue: may access PVM runtime memory
-- WASM sandboxing violated
+```rust
+// translate/mod.rs
+let entry_returns_ptr_len = if is_main {
+    module.main_returns_ptr_len
+} else { ... };
 
-#### When Needed
+// Entry functions write to result globals or use r7/r8
+```
 
-- Running untrusted code
-- Security-sensitive environments
-- Standards compliance
+#### Limitations
+
+- Only entry functions (main/secondary) can effectively return multiple values
+- Regular functions with multi-value returns may not work correctly
+- The `entry_returns_ptr_len` flag controls this behavior
 
 ---
 
 ## Implementation Gaps
 
-### Gap 1: Dynamic Memory Growth (`memory.grow`) 🟡
+### Gap 1: Division Overflow Checking 🔴
 
-**Status**: Returns -1 (failure)  
-**Severity**: Low  
-**WASM Spec**: Returns old size or -1 on failure
+**Status**: Needs Verification  
+**Location**: `llvm_frontend/function_builder.rs`
 
-#### Description
+**Concern**: LLVM's division instructions produce `poison` on overflow, not traps. WASM requires traps.
 
-The `memory.grow` implementation updates the compiler-managed global but doesn't actually grow PVM memory (which requires `sbrk`).
+**WASM Required Behavior**:
+- `i32.div_s` with divisor 0 → trap
+- `i32.div_s` with `INT_MIN / -1` → trap
 
-From `codegen.rs:2273-2428`:
-```rust
-Operator::MemoryGrow { mem: 0, .. } => {
-    // ... checks new_size > max_pages ...
-    
-    // Store new_size to compiler global
-    emitter.emit(Instruction::StoreIndU32 { base: max_reg, src: new_size_reg, offset: 0 });
-    
-    // Actually grow PVM memory via SBRK instruction
-    // ... SBRK call ...
-    
-    // dst already has old size, jump to end
-    emitter.emit_jump(end_label);
-    
-    // Failure path: return -1
-    emitter.define_label(fail_label);
-    emitter.emit(Instruction::LoadImm { reg: dst, value: -1 });
-}
-```
+**LLVM Behavior**:
+- `sdiv` with divisor 0 → undefined behavior (not trap)
+- `sdiv` with `INT_MIN / -1` → poison value
 
-**Wait**, looking at the code, there IS an SBRK call! Let me re-read...
-
-Yes, lines 2387-2412 show:
-```rust
-// Actually grow PVM memory via SBRK instruction.
-// Compute delta_bytes = (new_size - old_size) * 65536
-emitter.emit(Instruction::Sub32 { ... });
-emitter.emit(Instruction::ShloL32 { ... });
-emitter.emit(Instruction::Sbrk { dst: max_reg, src: max_reg });
-```
-
-So SBRK IS called. But does it work correctly? The SBRK instruction in PVM:
-- Takes bytes to allocate in `src`
-- Returns old break in `dst`
-
-This seems correct. But the bug report might be outdated or there's a subtle issue.
-
-**Current Status**: The code exists but may not be fully tested.
+**Action Required**: Verify the LLVM frontend emits explicit checks before division operations.
 
 ---
 
-### Gap 2: No Host Call Support (`ecalli`) 🔵
+### Gap 2: Import Stub Completeness 🔴
 
-**Status**: Not Implemented  
-**Severity**: Low (for current use case)  
-**WASM Spec**: Not in MVP (proposed feature)
+**Status**: Needs Verification  
+**Location**: `llvm_backend/lowering.rs`
 
-#### Description
+**Concern**: The import handling may not be complete for all scenarios.
 
-The PVM has an `ecalli` instruction for host calls. The compiler doesn't support generating it.
+**Required Behavior**:
+- Pop arguments from stack
+- Push dummy return value (0) if `has_return`
+- `abort` → TRAP
 
-#### PLAN.md Reference
-
-From PLAN.md:
-```markdown
-### Phase 17: Host Calls / ecalli Support (PLANNED - Phase 17)
-**Goal**: Support generic external function calls via PVM `ecalli`.
-
-**Design**:
-- **Import Mapping**: Treat imports from specific modules as host calls
-- **ABI**: Args 0-4 -> Registers r2-r6, Return value -> Register r7
-- **Instruction**: `ecalli ID` where ID is derived from the import
-```
-
-#### Impact
-
-- Cannot call host-provided functions
-- Cannot do I/O (without workaround)
-- Cannot access system services
-
-#### When Needed
-
-- WASI support
-- I/O operations
-- System interface
+**Status**: Needs verification:
+1. Does it recognize indirect calls to imports?
+2. Does it push dummy return values?
+3. How does it handle `call_indirect` to imported functions?
 
 ---
 
-### Gap 3: Start Section Handling is Ad-Hoc 🟡
+### Gap 3: Memory Bounds Checking 🟡
 
-**Status**: Implemented but fragile  
-**Severity**: Low  
-**WASM Spec**: MVP feature
+**Status**: Relies on PVM Hardware  
+**Location**: `llvm_backend/lowering.rs`
 
-#### Description
+**Current Approach**:
+- WASM addresses are translated by adding `wasm_memory_base`
+- PVM will trap on out-of-bounds access (address < 0x10000)
+- No explicit WASM bounds checking (e.g., `addr + offset < memory_size`)
 
-The WASM start section is handled by injecting calls before the main function, but this is done manually in the orchestration code.
+**Security Implication**:
+- This is the standard approach for WASM-to-native compilation
+- PVM's memory protection provides sandboxing
+- Could potentially read/write beyond WASM memory into PVM runtime memory
 
-From `mod.rs:355-421`:
-```rust
-// If this is an entry function and we have a start function, execute the start function first.
-if let Some(start_local_idx) = start_func_idx_resolved.filter(|_| is_entry_func) {
-    // Save r7 and r8 to stack
-    // ... explicit instruction emission ...
-    
-    // Call start function
-    // ... manual jump emission ...
-    
-    // Restore r7 and r8
-    // ... explicit instruction emission ...
-}
-```
-
-#### Issues
-
-1. Manual register save/restore is error-prone
-2. Hardcoded to save only r7 and r8
-3. Doesn't handle other caller-saved registers
-4. Injected at wrong level (should be in prologue)
-
-#### When Problematic
-
-- Complex programs with start sections
-- Programs needing more preserved state
-- Nested start sections (if allowed)
+**Comparison**: Similar to how wasmtime/wasm3 work - rely on hardware memory protection.
 
 ---
 
-### Gap 4: No Validation Phase 🔴
+## Post-MVP Proposal Support
 
-**Status**: Not Implemented  
-**Severity**: High  
-**WASM Spec**: Requires validation
-
-#### Description
-
-The compiler assumes input WASM is valid. There's no validation phase before translation.
-
-#### Evidence
-
-From `mod.rs:39-186`:
-```rust
-pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
-    // Direct parsing without validation
-    for payload in Parser::new(0).parse_all(wasm) {
-        // ... pattern matching on sections ...
-    }
-}
-```
-
-#### Missing Validations
-
-1. Type checking (operand stack consistency)
-2. Label validity (branch targets exist)
-3. Local index bounds
-4. Function index bounds
-5. Memory alignment requirements
-6. Data segment bounds
-
-#### Impact
-
-- Invalid WASM may produce wrong code instead of error
-- Security vulnerabilities from malformed input
-- Hard to debug user errors
+| Proposal | Status | Notes |
+|----------|--------|-------|
+| **Sign-extension ops** | ✅ Supported | `i32.extend8_s`, `i32.extend16_s`, etc. |
+| **Non-trapping FP-to-int** | ⚠️ Stubbed | Returns 0 (for dead code) |
+| **Multi-value** | 🟡 Partial | Entry functions only |
+| **Bulk memory** | ✅ Supported | `memory.fill`, `memory.copy`, `memory.grow` |
+| **Reference types** | ❌ Not implemented | `externref`, `funcref` |
+| **SIMD** | ❌ Not implemented | Would require PVM support |
+| **Threads** | ❌ Not implemented | Atomic operations, shared memory |
+| **Fixed-width SIMD** | ❌ Not implemented | `v128` type |
 
 ---
 
-## Feature Completeness Matrix
+## Feature Completeness Matrix (Detailed)
 
-| WASM Feature | Status | Notes |
-|--------------|--------|-------|
-| **Core Operations** |
-| i32 arithmetic | ✅ | All ops implemented |
-| i64 arithmetic | ✅ | All ops implemented |
-| i32 bitwise | ✅ | All ops implemented |
-| i64 bitwise | ✅ | All ops implemented |
-| i32 comparisons | ✅ | All ops implemented |
-| i64 comparisons | ✅ | All ops implemented |
-| f32 arithmetic | ❌ | Rejected - PVM has no FP |
-| f64 arithmetic | ❌ | Rejected - PVM has no FP |
-| **Control Flow** |
-| block/end | ✅ | Implemented |
-| if/else | ✅ | Implemented |
-| loop | ✅ | Implemented |
-| br | ✅ | Implemented |
-| br_if | ✅ | Implemented |
-| br_table | ✅ | Implemented |
-| return | ✅ | Implemented |
-| unreachable | ✅ | Maps to TRAP |
-| **Memory** |
-| i32.load/store | ✅ | Implemented |
-| i64.load/store | ✅ | Implemented |
-| load8_u, load8_s | ✅ | Implemented |
-| load16_u, load16_s | ✅ | Implemented |
-| load32_u, load32_s | ✅ | Implemented |
-| store8, store16, store32 | ✅ | Implemented |
-| memory.size | ✅ | Implemented |
-| memory.grow | 🟡 | Implemented but may have issues |
-| memory.init | ❌ | Not implemented |
-| memory.fill | ✅ | Implemented (loop-based) |
-| memory.copy | 🟡 | Implemented but overlap handling needs verification |
-| **Data Segments** |
-| Active segments | ✅ | Implemented |
-| Passive segments | ❌ | Ignored |
-| **Functions** |
-| local.get/set/tee | ✅ | Implemented |
-| drop | ✅ | Implemented |
-| select | ✅ | Implemented |
-| call | ✅ | Implemented |
-| call_indirect | ✅ | Implemented with signature check |
-| return | ✅ | Implemented |
-| **Variables** |
-| local.get/set/tee | ✅ | Implemented |
-| global.get/set | ✅ | Implemented |
-| **Conversions** |
-| i32.wrap_i64 | ✅ | Implemented |
-| i64.extend_i32_s/u | ✅ | Implemented |
-| i32.extend8_s, i32.extend16_s | ✅ | Implemented |
-| i64.extend8/16/32_s | ✅ | Implemented |
-| trunc_sat_f32/64 | 🟡 | Stubbed to return 0 |
-| **Misc** |
-| nop | ✅ | No-op |
-| unreachable | ✅ | TRAP |
-| Imports | 🟡 | Stubbed, return values ignored |
-| Exports | ✅ | Handled |
-| Start section | 🟡 | Implemented but fragile |
-| **Post-MVP Proposals** |
-| Sign-extension ops | ✅ | Implemented |
-| Non-trapping FP-to-int | ❌ | Stubbed |
-| Multi-value | ❌ | Not implemented |
-| Bulk memory | 🟡 | Partial (fill/copy implemented, init not) |
-| Reference types | ❌ | Not implemented |
-| SIMD | ❌ | Not implemented |
-| Threads | ❌ | Not implemented |
+### Core Operations
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `i32.add/sub/mul` | ✅ | Full support |
+| `i32.div_u/div_s` | ⚠️ | Need overflow check verification |
+| `i32.rem_u/rem_s` | ✅ | Full support |
+| `i64.add/sub/mul` | ✅ | Full support |
+| `i64.div_u/div_s` | ⚠️ | Need overflow check verification |
+| `i64.rem_u/rem_s` | ✅ | Full support |
+| `i32.and/or/xor/shl/shr` | ✅ | Full support |
+| `i64.and/or/xor/shl/shr` | ✅ | Full support |
+| `i32.clz/ctz/popcnt` | ✅ | Full support |
+| `i64.clz/ctz/popcnt` | ✅ | Full support |
+| `i32.rotl/rotr` | ✅ | Full support |
+| `i64.rotl/rotr` | ✅ | Full support |
+| `f32`/`f64` arithmetic | ❌ | PVM limitation (rejected) |
+
+### Comparisons
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `i32.eq/ne/lt/gt/le/ge` | ✅ | Full support |
+| `i64.eq/ne/lt/gt/le/ge` | ✅ | Full support |
+| `i32.eqz` | ✅ | Full support |
+| `i64.eqz` | ✅ | Full support |
+
+### Memory Operations
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `i32.load/store` | ✅ | Full support |
+| `i64.load/store` | ✅ | Full support |
+| `i32.load8_u/s` | ✅ | Full support |
+| `i32.load16_u/s` | ✅ | Full support |
+| `i64.load8_u/s` | ✅ | Full support |
+| `i64.load16_u/s` | ✅ | Full support |
+| `i64.load32_u/s` | ✅ | Full support |
+| `i32.store8/16` | ✅ | Full support |
+| `i64.store8/16/32` | ✅ | Full support |
+| `memory.size` | ✅ | Full support |
+| `memory.grow` | ✅ | SBRK-based |
+| `memory.fill` | ✅ | Loop-based |
+| `memory.copy` | ✅ | Forward+backward paths |
+| `memory.init` | ❌ | Passive segments not supported |
+
+### Control Flow
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `block`/`end` | ✅ | Full support |
+| `if`/`else` | ✅ | Full support |
+| `loop` | ✅ | Full support |
+| `br` | ✅ | Full support |
+| `br_if` | ✅ | Full support |
+| `br_table` | ✅ | Linear search implementation |
+| `return` | ✅ | Full support |
+| `unreachable` | ✅ | Maps to TRAP |
+
+### Function Operations
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `call` (direct) | ✅ | Full support |
+| `call_indirect` | ✅ | Signature check + dispatch table |
+| `return_call` (tail call) | ❌ | Not in MVP |
+| Multi-value return | ⚠️ | Entry functions only |
+
+### Variable Access
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `local.get/set/tee` | ✅ | Full support |
+| `global.get/set` | ✅ | Full support |
+| `drop` | ✅ | Full support |
+| `select` | ✅ | Full support |
+
+### Conversions
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| `i32.wrap_i64` | ✅ | Full support |
+| `i64.extend_i32_u/s` | ✅ | Full support |
+| `i32.extend8_s` | ✅ | Sign-extension ops |
+| `i32.extend16_s` | ✅ | Sign-extension ops |
+| `i64.extend8/16/32_s` | ✅ | Sign-extension ops |
+| `i32.trunc_sat_f32_u` | ⚠️ | Stubbed (returns 0) |
+| `i32.trunc_sat_f64_u` | ⚠️ | Stubbed (returns 0) |
 
 ---
 
 ## Recommendations
 
-### Priority 1: Safety Features
+### Priority 1: Verify Critical Gaps
 
-1. **Add WASM validation phase** - Use `wasmparser`'s validator
-2. **Fix memory bounds checking** - Check `addr + offset < memory_size`
-3. **Fix import return values** - Push dummy value on stack
+1. **Division overflow checks in LLVM** - Add explicit trap generation
+2. **Import return values in LLVM** - Ensure dummy values are pushed
+3. **Memory.copy overlap in LLVM** - Verify both paths work
 
-### Priority 2: Completeness
+### Priority 2: Nice to Have
 
-4. **Verify memory.copy overlap** - Test and fix if needed
-5. **Add division overflow checks** - Required by WASM spec
-6. **Implement passive data segments** - For completeness
+4. **Passive data segments** - For completeness
+5. **True multi-value returns** - Remove globals-based workaround
+6. **ecalli support** - For WASI compatibility
 
-### Priority 3: Advanced Features
+### Priority 3: Future (V2+)
 
-7. **Host call support** - For WASI compatibility
-8. **Better start section handling** - More robust implementation
+7. Reference types
+8. Exception handling
+9. Tail calls
 
 ---
 
-*Next: [04-code-quality.md](./04-code-quality.md)*
+## Conclusion
+
+The compiler has achieved **impressive feature completeness** with 360 integration tests passing. The vast majority of WASM MVP features are supported.
+
+**Key Gaps Remaining**:
+- Division overflow traps (needs verification)
+- Import handling completeness (needs verification)
+- Passive data segments (low priority)
+- Floating point (PVM limitation, by design)
+
+**Verdict**: Feature-complete for the intended use case (AssemblyScript → PVM). Minor gaps remain for full WASM spec compliance.
+
+---
+

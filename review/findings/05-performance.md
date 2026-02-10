@@ -1,383 +1,212 @@
 # 05 - Performance Inefficiencies
 
 **Category**: Performance  
-**Impact**: Generated code size, execution speed, memory usage
+**Impact**: Generated code size, execution speed, memory usage  
+**Status**: Known V1 tradeoffs, optimization opportunities identified
 
 ---
 
 ## Summary
 
-While performance is not the primary goal for V1, several inefficiencies in the compiler and generated code should be noted for future optimization work.
+Performance was deprioritized for V1 in favor of correctness. The LLVM-based compiler makes intentional correctness-over-performance tradeoffs, primarily using a conservative stack-slot allocation strategy.
+
+**Performance Profile**:
+
+| Aspect | Current State | Priority |
+|--------|--------------|----------|
+| **Compilation time** | Moderate (LLVM passes) | Medium |
+| **Generated code size** | Baseline | Low |
+| **Execution speed** | Limited by stack slots | High for V2 |
+| **Memory usage** | Larger stack frames | Medium |
 
 ---
 
-## Compiler Performance Issues
+## LLVM Optimizations (Working)
 
-### Issue 1: Single-Pass Translation Without Caching
+### ✅ mem2reg Pass
 
-**Severity**: Low  
-**Impact**: Compilation time for large modules
+**Status**: Active via LLVM
 
-#### Description
+**Benefit**: Promotes alloca-based locals to SSA registers, eliminating some redundant stack operations.
 
-The compiler processes each WASM operator exactly once and emits PVM code immediately. There's no intermediate representation to enable:
-- Constant folding
-- Dead code elimination
-- Common subexpression elimination
+**Example**:
+```llvm
+; Before mem2reg
+%local = alloca i32
+store i32 42, %local
+%val = load i32, %local
 
-#### Example of Missed Optimization
-
-```wasm
-;; WASM input
-i32.const 5
-i32.const 3
-i32.add
-i32.const 10
-i32.mul
+; After mem2reg
+%val = i32 42  ; Direct SSA value
 ```
 
-**Current output**: 
-- LoadImm r2, 5
-- LoadImm r3, 3
-- Add32 r4, r2, r3
-- LoadImm r2, 10
-- Mul32 r3, r4, r2
+---
 
-**Optimized output**:
-- LoadImm r2, 80  ; (5+3)*10 computed at compile time
+### ✅ LLVM InstCombine
 
-#### Recommendation
+**Status**: Active via LLVM
 
-Add a constant folding pass after IR generation but before code generation.
+**Benefit**: Combines redundant instructions, simplifies expressions.
 
 ---
 
-### Issue 2: Redundant Register Moves
+## Performance Issues
 
-**Severity**: Medium  
-**Impact**: Code size, execution speed
+### Issue 1: Stack-Slot Allocation (V1 Tradeoff) 🔴
 
-#### Description
+**Severity**: High  
+**Location**: `llvm_backend/lowering.rs`
 
-The compiler emits unnecessary register-to-register moves.
-
-#### Example
+**Current Strategy**: Every SSA value gets a dedicated memory slot
 
 ```rust
-// From codegen.rs (I32Add)
-let src2 = emitter.spill_pop();  // Pops to r3
-let src1 = emitter.spill_pop();  // Pops to r2
-let dst = emitter.spill_push();  // Pushes to r2
-emitter.emit(Instruction::Add32 { dst, src1, src2 });  // Add32 r2, r2, r3
-```
-
-If the stack was [a, b] with a in r2 and b in r3:
-- After pop: b in r3
-- After pop: a in r2
-- Push returns r2
-- Add32 r2, r2, r3 produces result in r2
-
-This is actually correct for the stack model. But consider:
-
-```wasm
-;; WASM
-local.get 0
-local.get 1
-i32.add
-local.set 2
-```
-
-**Current**: r9 → r2, r10 → r3, add → r2, r2 → r11
-**Optimized**: r9 + r10 → r11 directly (no intermediate stack)
-
-#### Recommendation
-
-Track value locations and emit operations directly to destination registers when possible.
-
----
-
-### Issue 3: Inefficient Spilling Strategy
-
-**Severity**: Medium  
-**Impact**: Memory traffic, code size
-
-#### Description
-
-Values are spilled based on stack depth, not liveness.
-
-```rust
-// From stack.rs
-pub const fn needs_spill(depth: usize) -> bool {
-    depth >= STACK_REG_COUNT  // Spill when depth >= 5
+fn alloc_slot_for_key(&mut self, key: ValKey) -> i32 {
+    let offset = self.next_slot_offset;
+    self.value_slots.insert(key, offset);
+    self.next_slot_offset += 8;  // All slots 8 bytes
+    offset
 }
 ```
 
-#### Problem Scenario
+**Problems**:
+1. **All values to memory**: No values kept in registers
+2. **8-byte slots for all**: i32 values waste 4 bytes
+3. **No slot reuse**: Slots never freed
+4. **Memory traffic**: Every operation loads/stores
 
-```wasm
-;; WASM - deep expression
-i32.const 1
-i32.const 2
-i32.const 3
-i32.const 4
-i32.const 5
-i32.const 6
-drop
-drop
-drop
-drop
-drop
-```
+**Impact**:
+- Larger stack frames (could be 2-5x with registers)
+- Slower execution (memory vs register operations)
+- More cache pressure
 
-**Current behavior**:
-- Push 1, 2, 3, 4, 5 (fit in r2-r6)
-- Push 6 (spills 1 to memory)
-- Drop 6 (loads 1 back from memory)
-- etc.
+**Rationale**: "Correctness-first, no register allocation" - intentional V1 simplification
 
-**Optimal behavior**:
-- Recognize that intermediate values are short-lived
-- Keep hot values in registers
-- Spill cold values
-
-#### Recommendation
-
-Implement liveness analysis and spill the value with the longest remaining lifetime.
+**Recommendation**: Implement register allocation in V2 (linear scan or graph coloring).
 
 ---
 
-### Issue 4: BrTable is Linear Search
+### Issue 2: Redundant Load/Store Pattern 🔴
 
-**Severity**: Medium  
-**Impact**: O(n) branch dispatch for n cases
+**Severity**: Medium-High  
+**Location**: `llvm_backend/lowering.rs`
 
-#### Description
-
-`br_table` uses a chain of comparisons:
+**Pattern**: Every operation follows load-compute-store:
 
 ```rust
-// From codegen.rs:2114-2147
+// Load from slot to temp
+emit(Instruction::LoadIndU64 { dst: TEMP1, base: SP, offset: slot1 });
+emit(Instruction::LoadIndU64 { dst: TEMP2, base: SP, offset: slot2 });
+
+// Compute
+emit(Instruction::Add32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }));
+
+// Store back to slot
+emit(Instruction::StoreIndU64 { base: SP, src: TEMP_RESULT, offset: dst_slot });
+```
+
+**Problem**: Values used immediately in next instruction still get stored/reloaded.
+
+**Example**:
+```wasm
+local.get 0
+local.get 1
+i32.add
+local.get 2
+i32.add
+```
+
+**Current** (inefficient):
+```asm
+LoadIndU64 r2, sp, slot0  ; load local 0
+StoreIndU64 sp, r2, temp_slot
+LoadIndU64 r3, sp, slot1  ; load local 1
+Add32 r4, r2, r3
+StoreIndU64 sp, r4, temp1
+LoadIndU64 r5, sp, temp1  ; reload just stored!
+LoadIndU64 r6, sp, slot2
+Add32 r7, r5, r6
+```
+
+**Optimal** (with registers):
+```asm
+LoadIndU64 r2, sp, slot0
+LoadIndU64 r3, sp, slot1
+Add32 r2, r2, r3     ; keep in r2
+LoadIndU64 r3, sp, slot2
+Add32 r2, r2, r3     ; result in r2
+```
+
+**Recommendation**: Track which values are in registers and avoid redundant stores.
+
+---
+
+### Issue 3: BrTable Linear Search 🔴
+
+**Severity**: Medium  
+**Status**: O(n) comparisons for n targets
+
+**Code**:
+```rust
+// Linear search through targets
 for (i, &depth) in target_depths.iter().enumerate() {
     let next_label = emitter.alloc_label();
     emitter.emit_branch_ne_imm_to_label(index_reg, i as i32, next_label);
     // ... branch to target ...
-    emitter.emit(Instruction::Fallthrough);
-    emitter.define_label(next_label);
 }
 ```
 
-For a table with 100 entries, this does up to 100 comparisons!
+**Problem**: 100-entry table does 100 comparisons.
 
-#### Better Approaches
+**Better Approaches**:
+1. **Binary search**: O(log n)
+2. **Jump table**: O(1) if PVM had better indirect jump support
+3. **Range check**: For dense tables
 
-1. **Binary search**: O(log n) comparisons
-2. **Jump table**: O(1) with indirect jump (if PVM supports it)
-3. **Range check + offset**: For dense tables
+**Mitigation**: BrTable is rare in typical code. Impact limited.
 
-#### Recommendation
-
-For now, document the limitation. For production, implement jump tables or binary search.
+**Recommendation**: Implement binary search for large tables in V2.
 
 ---
 
-### Issue 5: Unnecessary Fallthrough Instructions
+### Issue 4: Frame Size Calculation 🟡
+
+**Severity**: Medium  
+**Location**: `llvm_backend/lowering.rs`
+
+**Issue**: Pre-scan required to count values before allocation
+
+**Code**:
+```rust
+struct PvmEmitter<'ctx> {
+    next_slot_offset: i32,  // Bump allocator
+    frame_size: i32,        // Set after pre-scan
+}
+```
+
+**Problems**:
+- Two-pass lowering (count then allocate)
+- No slot reuse within function
+- Could overflow for large functions
+
+**Recommendation**: Consider streaming allocation or slot reuse.
+
+---
+
+### Issue 5: Unnecessary Fallthrough 🟢
 
 **Severity**: Low  
-**Impact**: Code size
+**Impact**: Minimal code bloat (~1 byte per basic block)
 
-#### Description
-
-`Fallthrough` instructions are emitted when not strictly necessary.
-
+**Current**:
 ```rust
-// From codegen.rs
 fn define_label(&mut self, label: usize) {
-    if self.instructions.last()
-        .is_some_and(|last| !last.is_terminating()) {
+    if !last_instruction_is_terminator() {
         self.emit(Instruction::Fallthrough);
     }
-    self.labels[label] = Some(self.current_offset());
 }
 ```
 
-#### Problem
-
-Fallthrough takes 1 byte. For sequential code without branches, these add up.
-
-#### Better Approach
-
-Only emit Fallthrough at actual basic block boundaries required by PVM semantics.
-
----
-
-### Issue 6: Memory Operations Use 64-bit When 32-bit Sufficient
-
-**Severity**: Low  
-**Impact**: Code size, potentially performance
-
-#### Description
-
-Some operations use 64-bit instructions when 32-bit would suffice.
-
-```rust
-// LocalGet for register-based local uses AddImm64
-if let Some(reg) = local_reg(idx) {
-    let dst = emitter.spill_push();
-    emitter.emit(Instruction::AddImm64 { dst, src: reg, value: 0 });
-}
-```
-
-`AddImm64` with 0 is effectively a move. On PVM, this might be:
-- 4 bytes: opcode + reg encoding + 0 (varint)
-
-A hypothetical `Move` instruction might be:
-- 2 bytes: opcode + regs
-
-#### Recommendation
-
-Consider adding a `Move` pseudo-instruction or use `AddImm32` when values are known to be 32-bit.
-
----
-
-## Generated Code Performance Issues
-
-### Issue 1: No Constant Propagation
-
-**Severity**: Medium  
-**Impact**: Runtime computation of known values
-
-#### Example
-
-```wasm
-;; AssemblyScript-like pattern
-i32.const 100  ;; loop limit
-local.set $limit
-loop
-  local.get $i
-  local.get $limit  ;; Loaded from memory every iteration!
-  i32.lt_u
-  if
-    ;; loop body
-    local.get $i
-    i32.const 1
-    i32.add
-    local.set $i
-    br 0
-  end
-end
-```
-
-**Current**: `$limit` is loaded from local memory every iteration.
-**Optimized**: Keep `$limit` in a register throughout the loop.
-
-#### Recommendation
-
-Implement a simple register allocation that keeps loop-invariant values in registers.
-
----
-
-### Issue 2: Comparison Operations are Verbose
-
-**Severity**: Low  
-**Impact**: Code size for comparisons
-
-#### Example
-
-I32GeU (greater than or equal unsigned) is implemented as:
-
-```rust
-// From codegen.rs:1858-1876
-let b = emitter.spill_pop();
-let a = emitter.spill_pop();
-emitter.emit(Instruction::AddImm32 { dst: a, src: a, value: 0 });
-emitter.emit(Instruction::AddImm32 { dst: b, src: b, value: 0 });
-let dst = emitter.spill_push();
-emitter.emit(Instruction::SetLtU { dst, src1: b, src2: a });  // b < a ?
-let one = emitter.spill_push();
-emitter.emit(Instruction::LoadImm { reg: one, value: 1 });
-let _ = emitter.spill_pop();
-emitter.emit(Instruction::Xor { dst, src1: dst, src2: one });  // not (b < a) = a >= b
-```
-
-That's 9 instructions for one comparison!
-
-#### Better Approach
-
-If PVM had a `SetGeU` instruction, this would be 1 instruction.
-
-#### Recommendation
-
-Document as known limitation. Could add synthetic instructions that expand to efficient sequences.
-
----
-
-### Issue 3: Memory.fill Uses Byte-by-Byte Loop
-
-**Severity**: Medium  
-**Impact**: Slow for large fills
-
-#### Description
-
-```rust
-// From codegen.rs:2429-2479
-// Use a loop to fill memory byte by byte
-// while (size > 0) { mem[dest] = value; dest++; size--; }
-```
-
-#### Problem
-
-For a 1KB fill, this does 1024 iterations.
-
-#### Better Approaches
-
-1. **Word-sized writes**: Fill 8 bytes at a time when aligned
-2. **Block copy**: Use PVM's memory block operations if available
-3. **Unroll loops**: For small fixed sizes
-
-#### Recommendation
-
-Optimize for common cases:
-- Small fills (< 32 bytes): Unrolled
-- Large fills: Word-sized
-- Aligned fills: Use larger operations
-
----
-
-### Issue 4: Frame Size Always Includes Spill Space
-
-**Severity**: Low  
-**Impact**: Stack usage
-
-#### Description
-
-From `emit_call`:
-```rust
-let spilled_frame_bytes = (num_spilled_locals * 8) as i32;
-let operand_stack_start = 40 + spilled_frame_bytes;
-let frame_size = operand_stack_start + (stack_depth_before_args * 8) as i32;
-```
-
-Even if no spilled locals are live across the call, space is still reserved.
-
-#### Recommendation
-
-Track liveness of spilled locals and only save those that are actually live across the call.
-
----
-
-## Resource Usage
-
-### Memory Layout Inefficiency
-
-**Current layout** (per function):
-- Spilled locals: 512 bytes (64 locals * 8 bytes)
-
-**If a function has only 5 locals**:
-- 4 in registers (r9-r12)
-- 1 spilled
-- Still reserves 512 bytes
-
-**Better**: Variable-size allocation based on actual spilled local count.
+**Mitigation**: Required for PVM basic block semantics. Acceptable overhead.
 
 ---
 
@@ -385,63 +214,101 @@ Track liveness of spilled locals and only save those that are actually live acro
 
 ### Current State
 
-- No performance benchmarks exist
-- 62 integration tests verify correctness only
-- No measurement of:
-  - Compilation time
-  - Generated code size
-  - Execution speed
-  - Memory usage
+**Missing**:
+- No dedicated performance benchmarks
+- No code size measurements
+- No execution speed comparisons
 
-### Recommended Benchmarks
+**Needed Benchmarks**:
 
-| Benchmark | Purpose |
-|-----------|---------|
-| Fibonacci(100) | Function call overhead |
-| Matrix multiply | Memory access patterns |
-| Bubble sort (large array) | Loop and comparison performance |
-| Recursion depth test | Call stack efficiency |
-| Compilation time | Measure compiler performance |
+| Benchmark | Purpose | Priority |
+|-----------|---------|----------|
+| Fibonacci(100) | Function call overhead | High |
+| Matrix multiply | Memory access patterns | Medium |
+| Bubble sort | Loop and comparison | Medium |
+| Recursion depth | Call stack efficiency | Medium |
+| anan-as compile | Real-world compilation | High |
 
 ---
 
-## Summary Table
+## Optimization Opportunities (Ranked)
 
-| Issue | Severity | Effort to Fix | Priority |
-|-------|----------|---------------|----------|
-| No constant folding | Medium | Medium | 3 |
-| Redundant moves | Medium | Medium | 4 |
-| Inefficient spilling | Medium | High | 5 |
-| Linear br_table | Medium | Medium | 6 |
-| Unnecessary fallthrough | Low | Low | 8 |
-| 64-bit for 32-bit ops | Low | Low | 9 |
-| Verbose comparisons | Low | Low | 10 |
-| Byte-by-byte fill | Medium | Medium | 7 |
-| Frame size overhead | Low | Low | 11 |
+### High Impact, Low Effort
+
+1. **Type-aware slot sizes**
+   - i32 → 4-byte slots
+   - i64 → 8-byte slots
+   - ~20% stack space reduction
+
+2. **Remove redundant stores**
+   - Track live values in registers
+   - ~10-30% memory operation reduction
+
+### High Impact, High Effort
+
+3. **Implement register allocation**
+   - Linear scan or graph coloring
+   - 2-5x execution speedup potential
+   - Major V2 goal
+
+4. **Optimize br_table**
+   - Binary search implementation
+   - Significant for switch-heavy code
+
+### Low Impact
+
+5. **Remove unnecessary Fallthrough**
+   - Minimal code size savings
+   - Low priority
 
 ---
 
 ## Recommendations
 
-### Phase 1: Measure (Immediate)
+### Immediate
 
-1. Add benchmarks for common operations
-2. Measure current performance baseline
-3. Identify actual bottlenecks
+1. **Add performance benchmarks**
+   - Establish baseline measurements
+   - Track regression/improvement
 
-### Phase 2: Low-Hanging Fruit (Short Term)
+2. **Profile anan-as compilation**
+   - Real-world performance data
+   - Identify hotspots
 
-4. Remove unnecessary Fallthrough instructions
-5. Optimize memory.fill for word-sized operations
-6. Use AddImm32 instead of AddImm64 where safe
+### Short Term
 
-### Phase 3: IR-Based Optimizations (Long Term)
+3. **Implement type-aware slots**
+   - Variable slot sizes (4/8 bytes)
+   - Reduce stack frame size
 
-7. Implement constant folding
-8. Add dead code elimination
-9. Improve register allocation with liveness analysis
-10. Optimize br_table with jump tables
+4. **Explore LLVM optimization passes**
+   - Enable more aggressive optimizations
+   - Profile-guided optimization
+
+### Long Term (V2)
+
+5. **True register allocation**
+   - Replace stack-slot approach
+   - Graph coloring or linear scan
+
+6. **Custom peephole optimizations**
+   - Pattern matching in backend
+   - Strength reduction
 
 ---
 
-*Next: [06-proposed-architecture.md](./06-proposed-architecture.md)*
+## Summary
+
+| Issue | Severity | V1 Status | V2 Priority |
+|-------|----------|-----------|-------------|
+| Stack-slot allocation | High | Intentional tradeoff | 1 |
+| Redundant load/store | Medium | Acceptable | 2 |
+| Linear br_table | Medium | Rare operation | 3 |
+| Frame size calc | Medium | Working | 4 |
+| Unnecessary Fallthrough | Low | Minimal impact | 5 |
+
+**Verdict**: Performance tradeoffs are **intentional and documented** for V1. The architecture supports future optimizations through LLVM's pass system. The primary opportunity is implementing register allocation in V2.
+
+---
+
+*Review conducted 2026-02-10*
