@@ -8,7 +8,7 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 
 **Architecture**: `WASM → [inkwell] → LLVM IR → [mem2reg] → [Rust PVM backend] → PVM bytecode`
 
-The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with a custom Rust-based PVM backend that reads LLVM IR and emits PVM bytecode. This gives us LLVM's SSA/CFG representation and optimization passes without requiring a native LLVM C++ target backend.
+The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with a custom Rust-based PVM backend that reads LLVM IR and emits PVM bytecode. This gives us LLVM's SSA/CFG representation and optimization passes without requiring a native LLVM C++ target backend. PVM-specific intrinsic functions (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) are used for memory operations to avoid `unsafe` code.
 
 **Current State**:
 - LLVM backend passes all 360 TypeScript integration tests and all Rust unit tests
@@ -154,7 +154,6 @@ vendor/
 ## Documentation
 
 - [PLAN.md](./PLAN.md) - Project roadmap and remaining work
-- [ir.md](./ir.md) - LLVM IR backend design and migration history
 - [LEARNINGS.md](./LEARNINGS.md) - Technical reference (PVM architecture, conventions)
 - [AGENTS.md](./AGENTS.md) - Guidelines for AI agents working on this project
 - [gp-0.7.2.md](./gp-0.7.2.md) - Gray Paper (JAM/PVM specification)

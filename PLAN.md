@@ -8,7 +8,7 @@
 
 The compiler has two backends gated by feature flags:
 
-- **LLVM backend** (`--features llvm-backend`): `WASM -> LLVM IR -> mem2reg -> PVM bytecode`. Uses inkwell/LLVM 18. See [ir.md](./ir.md) for the migration plan.
+- **LLVM backend** (`--features llvm-backend`): `WASM -> LLVM IR -> mem2reg -> PVM bytecode`. Uses inkwell/LLVM 18.
 - **Legacy backend** (default): Direct `WASM -> IR -> PVM bytecode` translation.
 
 Both backends pass all 360 TypeScript integration tests and all Rust tests. 43 differential tests verify both produce structurally identical output (same rw_data, ro_data structure, heap_pages).
@@ -66,7 +66,6 @@ Both backends pass all 360 TypeScript integration tests and all Rust tests. 43 d
 
 ## Resources
 
-- [ir.md](./ir.md) - LLVM IR migration plan (Phases 1-8)
 - [LEARNINGS.md](./LEARNINGS.md) - Technical reference (PVM architecture, conventions)
 - [AGENTS.md](./AGENTS.md) - Developer guidelines
 - [gp-0.7.2.md](./gp-0.7.2.md) - Gray Paper (PVM specification)
