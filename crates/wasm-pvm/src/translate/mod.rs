@@ -1,9 +1,10 @@
 mod codegen;
+pub mod memory_layout;
 mod stack;
 
 use crate::pvm::Instruction;
 use crate::{Error, Result, SpiProgram};
-use wasmparser::{FunctionBody, GlobalType, Parser, Payload};
+use wasmparser::{GlobalType, Parser, Payload};
 
 pub use codegen::CompileContext;
 
@@ -37,6 +38,11 @@ struct DataSegment {
 }
 
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
+    // Validate WASM module before attempting translation.
+    // This catches malformed/invalid modules early with clear error messages.
+    wasmparser::validate(wasm)
+        .map_err(|e| Error::Internal(format!("WASM validation error: {e}")))?;
+
     let mut functions = Vec::new();
     let mut func_types: Vec<wasmparser::FuncType> = Vec::new();
     let mut function_type_indices = Vec::new();
@@ -246,10 +252,19 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         }
     }
 
+    // Compute WASM memory base dynamically to avoid overlap with spilled locals.
+    // With many functions, the spilled locals region (0x40000 + N*512) can overlap
+    // with the WASM memory region if it's at a fixed 0x50000.
+    let wasm_memory_base = memory_layout::compute_wasm_memory_base(functions.len());
+
     // Calculate heap/memory info early since we need max_memory_pages for codegen.
     // The min floor of 1024 WASM pages is applied inside when no explicit max is declared.
-    let (heap_pages, max_memory_pages) =
-        calculate_heap_pages(functions.len(), &data_segments, &memory_limits)?;
+    let (heap_pages, max_memory_pages) = calculate_heap_pages(
+        functions.len(),
+        &data_segments,
+        &memory_limits,
+        wasm_memory_base,
+    )?;
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, codegen::CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, codegen::IndirectCallFixup)> = Vec::new();
@@ -332,9 +347,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
             type_signatures: type_signatures.clone(),
             num_imported_funcs: num_imported_funcs as usize,
             imported_func_names: imported_func_names.clone(),
-            stack_size: codegen::DEFAULT_STACK_SIZE,
+            stack_size: memory_layout::DEFAULT_STACK_SIZE,
             initial_memory_pages: memory_limits.initial_pages,
             max_memory_pages,
+            wasm_memory_base,
         };
 
         // Record function start offset BEFORE any start function prologue injection.
@@ -456,26 +472,24 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
                 // Invalid entry - store u32::MAX for both jump address and type index
                 ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // jump address
                 ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // type index
+            } else if (func_idx as usize) < num_imported_funcs as usize {
+                // Imported function - can't be called via call_indirect in PVM
+                ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // jump address
+                ro_data.extend_from_slice(&u32::MAX.to_le_bytes()); // type index
             } else {
-                // Valid entry - store jump address and type index
-                let jump_ref = 2 * (func_entry_jump_table_base + func_idx as usize + 1) as u32;
+                // Valid local entry - convert WASM func_idx to local function index
+                let local_func_idx = func_idx as usize - num_imported_funcs as usize;
+                // Jump ref uses local_func_idx to index into jump table function entries
+                let jump_ref = 2 * (func_entry_jump_table_base + local_func_idx + 1) as u32;
                 ro_data.extend_from_slice(&jump_ref.to_le_bytes());
-                // Get the type index for this function
-                let type_idx = if (func_idx as usize) < num_imported_funcs as usize {
-                    // Imported function - use imported_func_type_indices
-                    *imported_func_type_indices
-                        .get(func_idx as usize)
-                        .unwrap_or(&u32::MAX)
-                } else {
-                    // Local function - use function_type_indices
-                    let local_idx = func_idx as usize - num_imported_funcs as usize;
-                    *function_type_indices.get(local_idx).unwrap_or(&u32::MAX)
-                };
+                // Get the type index for this local function
+                let type_idx = *function_type_indices
+                    .get(local_func_idx)
+                    .unwrap_or(&u32::MAX);
                 ro_data.extend_from_slice(&type_idx.to_le_bytes());
             }
         }
     }
-
     let blob = crate::pvm::ProgramBlob::new(all_instructions).with_jump_table(jump_table);
 
     // Build rw_data from WASM data segments
@@ -489,8 +503,8 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     //
     // rw_data_section byte 0 goes to PVM address 0x30000
     // rw_data_section byte N goes to PVM address 0x30000 + N
-    // WASM memory offset 0 should be at PVM address 0x50000 = 0x30000 + 0x20000
-    // So WASM data at offset X goes to rw_data_section byte (0x20000 + X)
+    // WASM memory offset 0 should be at PVM address wasm_memory_base
+    // So WASM data at offset X goes to rw_data_section byte (wasm_memory_base - 0x30000 + X)
     // (heap_pages and max_memory_pages were already calculated earlier)
     let _ = max_memory_pages; // silence unused variable warning
 
@@ -498,6 +512,7 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
         &data_segments,
         &global_init_values,
         memory_limits.initial_pages,
+        wasm_memory_base,
     );
 
     Ok(SpiProgram::new(blob)
@@ -510,10 +525,10 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 ///
 /// The RW data segment in SPI is loaded at 0x30000. Layout:
 /// - 0x30000+ : Global variables (4 bytes each, including compiler-managed memory size)
-/// - 0x50000+ : WASM linear memory (data segments)
+/// - `wasm_memory_base`+ : WASM linear memory (data segments)
 ///
-/// WASM linear memory starts at `WASM_MEMORY_BASE` (0x50000).
-/// So WASM offset X maps to `rw_data` offset (0x20000 + X).
+/// WASM linear memory starts at `wasm_memory_base`.
+/// So WASM offset X maps to `rw_data` offset (`wasm_memory_base` - 0x30000 + X).
 ///
 /// The compiler-managed memory size global is stored at index `num_user_globals`,
 /// i.e., right after all user-defined globals.
@@ -521,13 +536,14 @@ fn build_rw_data(
     data_segments: &[DataSegment],
     global_init_values: &[i32],
     initial_memory_pages: u32,
+    wasm_memory_base: i32,
 ) -> Vec<u8> {
     // Calculate the minimum size needed for globals
     // +1 for the compiler-managed memory size global
     let globals_end = (global_init_values.len() + 1) * 4;
 
     // Calculate the size needed for data segments
-    let wasm_to_rw_offset = codegen::WASM_MEMORY_BASE as u32 - 0x30000;
+    let wasm_to_rw_offset = wasm_memory_base as u32 - 0x30000;
 
     let data_end = data_segments
         .iter()
@@ -576,19 +592,20 @@ fn calculate_heap_pages(
     num_functions: usize,
     data_segments: &[DataSegment],
     memory_limits: &MemoryLimits,
+    wasm_memory_base: i32,
 ) -> Result<(u16, u32)> {
     // Memory layout:
     // 0x30000-0x300FF: Globals (256 bytes)
     // 0x30100-0x3FFFF: User heap (~64KB)
     // 0x40000+: Spilled locals (512 bytes per function)
-    // 0x50000+: WASM linear memory (data segments + dynamic allocation)
+    // wasm_memory_base+: WASM linear memory (data segments + dynamic allocation)
     //
     // The heap segment starts at 0x30000 (GLOBAL_MEMORY_BASE).
     // We need to allocate enough pages to cover:
     // 1. Spilled locals
     // 2. WASM linear memory (including data segments)
-    let spilled_locals_end = codegen::SPILLED_LOCALS_BASE as usize
-        + num_functions * codegen::SPILLED_LOCALS_PER_FUNC as usize;
+    let spilled_locals_end = memory_layout::SPILLED_LOCALS_BASE as usize
+        + num_functions * memory_layout::SPILLED_LOCALS_PER_FUNC as usize;
 
     // Determine the maximum WASM memory pages we'll allow.
     // Respect the module's explicit max; only apply a floor when no max is declared.
@@ -600,8 +617,7 @@ fn calculate_heap_pages(
 
     // WASM memory end based on max pages allocation
     // Each WASM page is 64KB (65536 bytes)
-    let wasm_memory_end =
-        codegen::WASM_MEMORY_BASE as usize + (max_memory_pages as usize) * 64 * 1024;
+    let wasm_memory_end = wasm_memory_base as usize + (max_memory_pages as usize) * 64 * 1024;
 
     let end = spilled_locals_end.max(wasm_memory_end);
 
@@ -688,78 +704,6 @@ fn resolve_call_fixups(
     }
 
     Ok((jump_table, func_entry_base))
-}
-
-#[allow(dead_code)]
-fn check_for_floats(body: &FunctionBody) -> Result<()> {
-    let mut reader = body.get_operators_reader()?;
-    while !reader.eof() {
-        let op = reader.read()?;
-        if is_float_op(&op) {
-            return Err(Error::FloatNotSupported);
-        }
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn is_float_op(op: &wasmparser::Operator) -> bool {
-    use wasmparser::Operator::{
-        F32Abs, F32Add, F32Ceil, F32Const, F32Copysign, F32Div, F32Eq, F32Floor, F32Ge, F32Gt,
-        F32Le, F32Load, F32Lt, F32Max, F32Min, F32Mul, F32Ne, F32Nearest, F32Neg, F32Sqrt,
-        F32Store, F32Sub, F32Trunc, F64Abs, F64Add, F64Ceil, F64Const, F64Copysign, F64Div, F64Eq,
-        F64Floor, F64Ge, F64Gt, F64Le, F64Load, F64Lt, F64Max, F64Min, F64Mul, F64Ne, F64Nearest,
-        F64Neg, F64Sqrt, F64Store, F64Sub, F64Trunc,
-    };
-    matches!(
-        op,
-        F32Load { .. }
-            | F64Load { .. }
-            | F32Store { .. }
-            | F64Store { .. }
-            | F32Const { .. }
-            | F64Const { .. }
-            | F32Eq
-            | F32Ne
-            | F32Lt
-            | F32Gt
-            | F32Le
-            | F32Ge
-            | F64Eq
-            | F64Ne
-            | F64Lt
-            | F64Gt
-            | F64Le
-            | F64Ge
-            | F32Abs
-            | F32Neg
-            | F32Ceil
-            | F32Floor
-            | F32Trunc
-            | F32Nearest
-            | F32Sqrt
-            | F32Add
-            | F32Sub
-            | F32Mul
-            | F32Div
-            | F32Min
-            | F32Max
-            | F32Copysign
-            | F64Abs
-            | F64Neg
-            | F64Ceil
-            | F64Floor
-            | F64Trunc
-            | F64Nearest
-            | F64Sqrt
-            | F64Add
-            | F64Sub
-            | F64Mul
-            | F64Div
-            | F64Min
-            | F64Max
-            | F64Copysign
-    )
 }
 
 fn eval_const_i32(expr: &wasmparser::ConstExpr) -> Result<i32> {

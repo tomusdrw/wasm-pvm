@@ -3,6 +3,8 @@ const LAST_STACK_REG: u8 = 6;
 const STACK_REG_COUNT: usize = (LAST_STACK_REG - FIRST_STACK_REG + 1) as usize;
 /// Register used as temporary for spilled stack values (not part of operand stack r2-r6)
 const SPILL_TEMP_REG: u8 = 7;
+/// Maximum operand stack depth (register slots + reasonable spill depth)
+const MAX_STACK_DEPTH: usize = 128;
 
 #[derive(Debug)]
 pub struct StackMachine {
@@ -19,6 +21,11 @@ impl StackMachine {
     }
 
     pub fn push(&mut self) -> u8 {
+        debug_assert!(
+            self.depth < MAX_STACK_DEPTH,
+            "Stack overflow: depth {} exceeds max {MAX_STACK_DEPTH}",
+            self.depth,
+        );
         let reg = Self::reg_for_depth(self.depth);
         self.depth += 1;
         if self.depth > self.max_depth {
@@ -52,32 +59,50 @@ impl StackMachine {
     }
 
     pub fn set_depth(&mut self, depth: usize) {
+        debug_assert!(
+            depth <= MAX_STACK_DEPTH,
+            "set_depth: {depth} exceeds max {MAX_STACK_DEPTH}",
+        );
         self.depth = depth;
     }
 
     pub fn reg_at_depth(depth: usize) -> u8 {
-        if depth < STACK_REG_COUNT {
+        let reg = if depth < STACK_REG_COUNT {
             FIRST_STACK_REG + depth as u8
         } else {
             SPILL_TEMP_REG // Use dedicated temp register for spilled values
-        }
+        };
+        debug_assert!(
+            (FIRST_STACK_REG..=SPILL_TEMP_REG).contains(&reg),
+            "reg_at_depth: register {reg} out of valid range [{FIRST_STACK_REG}, {SPILL_TEMP_REG}]",
+        );
+        reg
     }
 
     pub const fn needs_spill(depth: usize) -> bool {
         depth >= STACK_REG_COUNT
     }
 
-    pub const fn spill_offset(depth: usize) -> i32 {
+    pub fn spill_offset(depth: usize) -> i32 {
+        debug_assert!(
+            depth >= STACK_REG_COUNT,
+            "spill_offset called with non-spill depth {depth}",
+        );
         let spill_index = depth - STACK_REG_COUNT;
         (spill_index as i32) * 8
     }
 
     fn reg_for_depth(depth: usize) -> u8 {
-        if depth < STACK_REG_COUNT {
+        let reg = if depth < STACK_REG_COUNT {
             FIRST_STACK_REG + depth as u8
         } else {
             SPILL_TEMP_REG // Use dedicated temp register for spilled values
-        }
+        };
+        debug_assert!(
+            (FIRST_STACK_REG..=SPILL_TEMP_REG).contains(&reg),
+            "reg_for_depth: register {reg} out of valid range [{FIRST_STACK_REG}, {SPILL_TEMP_REG}]",
+        );
+        reg
     }
 }
 

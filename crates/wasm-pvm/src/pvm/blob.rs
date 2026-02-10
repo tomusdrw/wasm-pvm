@@ -144,4 +144,41 @@ mod tests {
             vec![0b0000_0001, 0b0000_0001]
         );
     }
+
+    #[test]
+    fn test_load_imm64_mask() {
+        // LoadImm64 encodes to 10 bytes, Trap to 1 byte
+        let instructions = vec![
+            Instruction::LoadImm64 {
+                reg: 7,
+                value: 0xFEFD_0000,
+            },
+            Instruction::Trap,
+        ];
+
+        let blob = ProgramBlob::new(instructions);
+        let (code, mask) = blob.encode_code_and_mask();
+
+        // LoadImm64 = 10 bytes, Trap = 1 byte → total 11 bytes
+        assert_eq!(code.len(), 11, "code length should be 11");
+
+        // Check that the opcode is correct
+        assert_eq!(code[0], 20, "first byte should be LoadImm64 opcode (20)");
+        assert_eq!(code[10], 0, "byte 10 should be Trap opcode (0)");
+
+        // Check mask: bit 0 = 1 (LoadImm64 start), bits 1-9 = 0, bit 10 = 1 (Trap start)
+        let mask_bits: Vec<bool> = (0..11)
+            .map(|pc| {
+                let byte_idx = pc / 8;
+                let bit_idx = pc % 8;
+                (mask[byte_idx] >> bit_idx) & 1 == 1
+            })
+            .collect();
+
+        assert!(mask_bits[0], "PC 0 should be instruction start");
+        for pc in 1..10 {
+            assert!(!mask_bits[pc], "PC {} should NOT be instruction start", pc);
+        }
+        assert!(mask_bits[10], "PC 10 should be instruction start (Trap)");
+    }
 }

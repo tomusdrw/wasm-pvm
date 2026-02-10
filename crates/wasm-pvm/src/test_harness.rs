@@ -943,6 +943,7 @@ impl InstructionExt for Instruction {
             Instruction::ShloL32 { .. } => Some(Opcode::ShloL32),
             Instruction::ShloR32 { .. } => Some(Opcode::ShloR32),
             Instruction::SharR32 { .. } => Some(Opcode::SharR32),
+            Instruction::Sbrk { .. } => Some(Opcode::Sbrk),
             Instruction::CountSetBits64 { .. } => Some(Opcode::CountSetBits64),
             Instruction::CountSetBits32 { .. } => Some(Opcode::CountSetBits32),
             Instruction::LeadingZeroBits64 { .. } => Some(Opcode::LeadingZeroBits64),

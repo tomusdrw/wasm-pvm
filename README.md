@@ -2,19 +2,25 @@
 
 A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) bytecode for execution on the JAM (Join-Accumulate Machine) protocol.
 
-## Status: Active Development (62 tests passing)
+## Status: Active Development (62 tests passing, critical bugs fixed)
 
 **Project Goal**: Enable writing JAM programs in AssemblyScript (TypeScript-like) or hand-written WAT, compiled to PVM bytecode.
 
-**V1 Milestone**: Compile [anan-as](https://github.com/polkavm/anan-as) (PVM interpreter in AssemblyScript) to WASM → PVM.
+**V1 Milestone**: Compile [anan-as](https://github.com/polkavm/anan-as) (PVM interpreter in AssemblyScript) to WASM -> PVM, achieving PVM-in-PVM execution.
 
-**Current Achievement**: anan-as successfully compiles to a 423KB JAM file! The compiled output is a library (not standalone), so full PVM-in-PVM would require a wrapper with a `main()` entry point.
+**Current State**:
+- anan-as successfully compiles to a 423KB JAM file
+- 62 integration tests pass in direct execution
+- Critical bugs fixed: division overflow checks, import return values, memory.copy overlapping regions, WASM validation
+- Code quality: memory layout constants extracted, debug assertions added, zero clippy warnings
+- **Remaining blocker**: PVM-in-PVM inner interpreter PANICs (BUG-4 under investigation)
 
 ### Working Features
 
 **Arithmetic (i32 & i64)**:
 - `add`, `sub`, `mul`, `div_u`, `div_s`, `rem_u`, `rem_s`
 - All comparison operations (`eq`, `ne`, `lt_u/s`, `gt_u/s`, `le_u/s`, `ge_u/s`, `eqz`)
+- Division overflow checks (div-by-zero, INT_MIN/-1 -> trap)
 
 **Bitwise & Shift (i32 & i64)**:
 - `and`, `or`, `xor`
@@ -32,14 +38,16 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 - `i32.load/store`, `i64.load/store`
 - Sub-word variants: `load8_u/s`, `load16_u/s`, `load32_u/s`, `store8`, `store16`, `store32`
 - `memory.size`, `memory.grow` (returns -1)
-- `memory.fill`, `memory.copy` (bulk memory operations)
+- `memory.fill`, `memory.copy` (with memmove-correct overlapping region support)
 - `global.get`, `global.set`
 - WASM data section initialization
+- WASM module validation via `wasmparser::validate()`
 
 **Functions**:
 - `call` with proper return value handling
-- `call_indirect` (indirect function calls via table)
+- `call_indirect` (indirect function calls via table with signature validation)
 - Recursion support with proper call stack
+- Stack overflow detection (configurable 64KB default limit)
 - Local variables with spilling for functions with many locals
 - `local.get`, `local.set`, `local.tee`
 - `drop`, `select`
@@ -51,15 +59,12 @@ A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) byt
 - `i64.extend8_s`, `i64.extend16_s`, `i64.extend32_s` (sign extension)
 
 **Import Handling**:
-- Imported functions are stubbed (`abort` → TRAP, others → no-op)
+- Imported functions are stubbed (`abort` -> TRAP, others -> no-op with return value)
 
 ### Not Yet Implemented
 - Floating point (rejected by design - PVM has no FP; stubs exist for dead code)
-- Runtime signature validation for `call_indirect`
 - Dynamic memory growth (`memory.grow` returns -1)
-
-### Runtime Safety
-- **Stack overflow detection**: Deep recursion triggers PANIC (configurable 64KB default limit)
+- Host calls via `ecalli` (planned)
 
 ## Quick Start
 
@@ -73,7 +78,7 @@ cargo build --release
 
 ```bash
 # From WAT (WebAssembly Text) file
-cargo run -p wasm-pvm-cli -- compile examples-wat/add.jam.wat -o output.jam
+cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o output.jam
 
 # From WASM binary
 cargo run -p wasm-pvm-cli -- compile input.wasm -o output.jam
@@ -88,10 +93,27 @@ Requires Node.js and the anan-as PVM implementation (included as submodule):
 cd vendor/anan-as && npm ci && npm run build && cd ../..
 
 # Run with arguments (little-endian u32s)
-bun scripts/run-jam.ts output.jam --args=0500000007000000
+cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
 
-# Example: add.jam.wat with args 5 and 7 → returns 12
-bun scripts/run-jam.ts output.jam --args=0500000007000000
+# Example: add.jam.wat with args 5 and 7 -> returns 12
+cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
+# Output shows: As U32: 12
+```
+
+
+### Run on PVM Interpreter
+
+Requires Node.js and the anan-as PVM implementation (included as submodule):
+
+```bash
+# Setup (first time only)
+cd vendor/anan-as && npm ci && npm run build && cd ../..
+
+# Run with arguments (little-endian u32s)
+cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
+
+# Example: add.jam.wat with args 5 and 7 -> returns 12
+cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
 # Output shows: As U32: 12
 ```
 
@@ -102,17 +124,17 @@ WASM programs must follow the SPI entrypoint convention:
 ```wat
 (module
   (memory 1)
-  
+
   ;; Required globals for return value
   (global $result_ptr (mut i32) (i32.const 0))
   (global $result_len (mut i32) (i32.const 0))
-  
+
   ;; Entry point - receives args pointer and length
   (func (export "main") (param $args_ptr i32) (param $args_len i32)
     ;; Read input from args_ptr (PVM address 0xFEFF0000)
     ;; Write output to heap (0x30100+)
     ;; Set result_ptr and result_len globals
-    
+
     (global.set $result_ptr (i32.const 0x30100))
     (global.set $result_len (i32.const 4))
   )
@@ -132,9 +154,11 @@ WASM programs must follow the SPI entrypoint convention:
 | `0xFEFF0000` | Arguments (input data) |
 | `0xFFFF0000` | EXIT address (HALT) |
 
+See `crates/wasm-pvm/src/translate/memory_layout.rs` for the full layout with ASCII art diagram.
+
 ## Examples
 
-Working examples in `examples-wat/`:
+Working examples in `tests/fixtures/wat/`:
 
 | File | Description | Verified |
 |------|-------------|----------|
@@ -158,7 +182,7 @@ Working examples in `examples-wat/`:
 | `block-br-test.jam.wat` | Block branch tests | br/br_if |
 | `stack-test.jam.wat` | Operand stack tests | stack depth |
 
-AssemblyScript examples in `examples-as/`:
+AssemblyScript examples in `tests/fixtures/assembly/`:
 
 | File | Description | Verified |
 |------|-------------|----------|
@@ -175,25 +199,34 @@ crates/
   wasm-pvm/           # Core library
     src/
       pvm/            # PVM instruction definitions
-      translate/      # WASM → PVM translation
+      translate/      # WASM -> PVM translation
+        codegen.rs    # Main compiler (2,400 lines)
+        memory_layout.rs  # PVM memory address constants
+        stack.rs      # Operand stack management
       spi.rs          # JAM format encoder
   wasm-pvm-cli/       # Command-line tool
-examples-wat/         # Example WASM programs (*.jam.wat)
-examples-as/          # AssemblyScript examples
-scripts/
-  run-jam.ts          # PVM test runner
-  test-all.ts         # Automated test suite
+tests/                # Integration tests & tooling
+  fixtures/
+    wat/              # Example WASM programs (*.jam.wat)
+    assembly/         # AssemblyScript examples
+  utils/              # Utility scripts (run-jam, verify-jam)
+  helpers/            # Test helpers
+  data/               # Test definitions
 vendor/
   anan-as/            # PVM reference interpreter (submodule)
+review/               # Architecture review (2026-02-09)
+
 ```
 
 ## Documentation
 
 - [PLAN.md](./PLAN.md) - Project roadmap and current progress
-- [LEARNINGS.md](./LEARNINGS.md) - Technical discoveries and PVM instruction reference
+- [LEARNINGS.md](./LEARNINGS.md) - Technical discoveries, PVM instruction reference, and architecture insights
 - [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) - Known bugs and improvements to address
+- [V1-COMPLETION-PLAN.md](./V1-COMPLETION-PLAN.md) - Detailed V1 completion steps
 - [AGENTS.md](./AGENTS.md) - Guidelines for AI agents working on this project
 - [gp-0.7.2.md](./gp-0.7.2.md) - Gray Paper (JAM/PVM specification)
+- [review/](./review/) - Architecture review findings and proposals
 
 ## Testing
 
@@ -205,14 +238,14 @@ cargo test
 cargo clippy -- -D warnings
 
 # Run full integration test suite (62 tests)
-bun scripts/test-all.ts
+cd tests && bun test
 
 # Test a single example
-cargo run -p wasm-pvm-cli --quiet -- compile examples-wat/factorial.jam.wat -o /tmp/test.jam
-bun scripts/run-jam.ts /tmp/test.jam --args=05000000
+cargo run -p wasm-pvm-cli --quiet -- compile tests/fixtures/wat/factorial.jam.wat -o /tmp/test.jam
+cd tests && bun utils/run-jam.ts /tmp/test.jam --args=05000000
 
 # Verify a JAM file structure
-bun scripts/verify-jam.ts /tmp/test.jam
+cd tests && bun utils/verify-jam.ts /tmp/test.jam
 ```
 
 ## License

@@ -20,6 +20,7 @@ pub enum Opcode {
     BranchGeSImm = 89,
     BranchGtSImm = 90,
     MoveReg = 100,
+    Sbrk = 101,
     CountSetBits64 = 102,
     CountSetBits32 = 103,
     LeadingZeroBits64 = 104,
