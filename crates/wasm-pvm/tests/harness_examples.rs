@@ -34,6 +34,8 @@ fn test_arithmetic_operations() {
     assert!(add_count >= 1, "Should have at least one Add32");
 }
 
+// Legacy-backend instruction pattern tests (LLVM backend generates different patterns).
+#[cfg(not(feature = "llvm-backend"))]
 #[test]
 fn test_pattern_finding() {
     let wat = r#"
@@ -67,6 +69,7 @@ fn test_pattern_finding() {
     assert_has_pattern(&instructions, &pattern);
 }
 
+#[cfg(not(feature = "llvm-backend"))]
 #[test]
 fn test_exact_pattern_match() {
     // Test that verifies the sequence of constant loads exists somewhere in the code
@@ -290,6 +293,7 @@ fn test_i64_arithmetic() {
 // Advanced Pattern Matching Examples
 // =============================================================================
 
+#[cfg(not(feature = "llvm-backend"))]
 #[test]
 fn test_multiple_patterns() {
     let wat = r#"
@@ -330,6 +334,7 @@ fn test_multiple_patterns() {
     assert_has_pattern(&instructions, &mul_add_pattern);
 }
 
+#[cfg(not(feature = "llvm-backend"))]
 #[test]
 fn test_predicate_patterns() {
     let wat = r#"
@@ -413,6 +418,7 @@ fn test_filter_by_opcode() {
     assert!(!adds.is_empty(), "Should have Add32 instructions");
 }
 
+#[cfg(not(feature = "llvm-backend"))]
 #[test]
 fn test_exact_sequence_match() {
     let wat = r#"

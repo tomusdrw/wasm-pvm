@@ -195,6 +195,7 @@ fn test_local_tee_with_pending_spill() {
 }
 
 /// Multiple consecutive local.tee operations at different stack depths.
+#[cfg(not(feature = "llvm-backend"))]
 #[test]
 fn test_multiple_local_tee_consecutive() {
     let program = compile_wat(

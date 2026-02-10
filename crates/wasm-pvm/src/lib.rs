@@ -8,6 +8,10 @@
 
 pub mod error;
 pub mod ir;
+#[cfg(feature = "llvm-backend")]
+pub mod llvm_backend;
+#[cfg(feature = "llvm-backend")]
+pub mod llvm_frontend;
 pub mod pvm;
 pub mod spi;
 pub mod translate;

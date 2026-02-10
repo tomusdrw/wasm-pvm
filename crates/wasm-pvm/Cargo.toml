@@ -9,11 +9,13 @@ repository.workspace = true
 [features]
 default = ["test-harness"]
 test-harness = ["dep:wat"]
+llvm-backend = ["dep:inkwell"]
 
 [dependencies]
 wasmparser.workspace = true
 thiserror.workspace = true
 wat = { workspace = true, optional = true }
+inkwell = { workspace = true, optional = true }
 
 [dev-dependencies]
 wat.workspace = true

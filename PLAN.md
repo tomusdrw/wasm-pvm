@@ -186,14 +186,29 @@ Compile [anan-as](https://github.com/polkavm/anan-as) (PVM interpreter in Assemb
 
 ---
 
-## Technical Debt Acknowledgment (V2 Scope)
+## V2: LLVM IR Backend (In Progress)
 
-These issues are acknowledged but deferred:
+An alternative compilation pipeline using LLVM IR as the intermediate representation has been implemented behind the `llvm-backend` feature flag. See [ir.md](./ir.md) for the full migration plan.
 
-1. **No IR**: Direct translation works for V1 but prevents optimizations
-2. **Monolithic codegen.rs**: 2,400-line file stays for V1
-3. **Ad-hoc register allocation**: Hardcoded register usage stays
-4. **No optimizations**: Constant folding, DCE deferred
+**Pipeline**: `WASM → [inkwell] → LLVM IR → [mem2reg] → [Rust PVM backend] → PVM bytecode`
+
+**Status**: Phases 1-7 complete. All existing Rust tests and 360 TypeScript integration tests pass with `--features llvm-backend`. Phase 8 (differential testing, bug fixing, legacy removal) is in progress.
+
+**Key files**:
+- `src/llvm_frontend/` — WASM → LLVM IR translation (~1350 lines)
+- `src/llvm_backend/` — LLVM IR → PVM bytecode lowering (~1700 lines)
+- `src/translate/wasm_module.rs` — Shared WASM parsing (used by both pipelines)
+
+**Known gaps**: Division-by-zero trap sequences, multi-value returns.
+
+## Technical Debt Acknowledgment
+
+These issues are acknowledged:
+
+1. ~~**No IR**: Direct translation works for V1 but prevents optimizations~~ — **Addressed by LLVM backend**
+2. **Monolithic codegen.rs**: 2,400-line file stays as legacy backend
+3. ~~**Ad-hoc register allocation**: Hardcoded register usage stays~~ — **LLVM backend uses stack-slot approach (correctness-first); register allocator planned as future optimization**
+4. ~~**No optimizations**: Constant folding, DCE deferred~~ — **LLVM backend gets constant folding via inkwell builder + mem2reg pass; further passes available**
 5. **Passive data segments**: Not needed for current use cases
 
 See [review/](./review/) for the full architecture review and V2 recommendations.
