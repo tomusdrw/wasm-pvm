@@ -112,3 +112,102 @@ impl Opcode {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_terminating_opcodes() {
+        let terminating = [
+            Opcode::Trap,
+            Opcode::Fallthrough,
+            Opcode::Jump,
+            Opcode::JumpInd,
+            Opcode::BranchEqImm,
+            Opcode::BranchNeImm,
+            Opcode::BranchLtUImm,
+            Opcode::BranchLeUImm,
+            Opcode::BranchGeUImm,
+            Opcode::BranchGtUImm,
+            Opcode::BranchLtSImm,
+            Opcode::BranchLeSImm,
+            Opcode::BranchGeSImm,
+            Opcode::BranchGtSImm,
+            Opcode::BranchEq,
+            Opcode::BranchNe,
+            Opcode::BranchLtU,
+            Opcode::BranchLtS,
+            Opcode::BranchGeU,
+            Opcode::BranchGeS,
+        ];
+        for opcode in terminating {
+            assert!(opcode.is_terminating(), "{opcode:?} should be terminating");
+        }
+    }
+
+    #[test]
+    fn non_terminating_opcodes() {
+        let non_terminating = [
+            Opcode::Ecalli,
+            Opcode::LoadImm64,
+            Opcode::LoadImm,
+            Opcode::MoveReg,
+            Opcode::Sbrk,
+            Opcode::CountSetBits64,
+            Opcode::CountSetBits32,
+            Opcode::LeadingZeroBits64,
+            Opcode::LeadingZeroBits32,
+            Opcode::TrailingZeroBits64,
+            Opcode::TrailingZeroBits32,
+            Opcode::SignExtend8,
+            Opcode::SignExtend16,
+            Opcode::ZeroExtend16,
+            Opcode::StoreIndU8,
+            Opcode::StoreIndU16,
+            Opcode::StoreIndU32,
+            Opcode::StoreIndU64,
+            Opcode::LoadIndU8,
+            Opcode::LoadIndI8,
+            Opcode::LoadIndU16,
+            Opcode::LoadIndI16,
+            Opcode::LoadIndU32,
+            Opcode::LoadIndU64,
+            Opcode::AddImm32,
+            Opcode::AddImm64,
+            Opcode::SetLtUImm,
+            Opcode::SetLtSImm,
+            Opcode::Add32,
+            Opcode::Sub32,
+            Opcode::Mul32,
+            Opcode::DivU32,
+            Opcode::DivS32,
+            Opcode::RemU32,
+            Opcode::RemS32,
+            Opcode::Add64,
+            Opcode::Sub64,
+            Opcode::Mul64,
+            Opcode::DivU64,
+            Opcode::DivS64,
+            Opcode::RemU64,
+            Opcode::RemS64,
+            Opcode::ShloL64,
+            Opcode::ShloR64,
+            Opcode::SharR64,
+            Opcode::And,
+            Opcode::Xor,
+            Opcode::Or,
+            Opcode::ShloL32,
+            Opcode::ShloR32,
+            Opcode::SharR32,
+            Opcode::SetLtU,
+            Opcode::SetLtS,
+        ];
+        for opcode in non_terminating {
+            assert!(
+                !opcode.is_terminating(),
+                "{opcode:?} should NOT be terminating"
+            );
+        }
+    }
+}

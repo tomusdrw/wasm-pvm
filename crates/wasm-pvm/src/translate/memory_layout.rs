@@ -90,3 +90,87 @@ pub fn spilled_local_addr(func_idx: usize, local_offset: i32) -> i32 {
 pub fn global_addr(idx: u32) -> i32 {
     GLOBAL_MEMORY_BASE + (idx as i32) * 4
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wasm_memory_base_zero_funcs() {
+        assert_eq!(compute_wasm_memory_base(0), 0x50000);
+    }
+
+    #[test]
+    fn wasm_memory_base_one_func() {
+        assert_eq!(compute_wasm_memory_base(1), 0x50000);
+    }
+
+    #[test]
+    fn wasm_memory_base_many_funcs() {
+        // 200 funcs: 0x40000 + 200*512 = 0x40000 + 0x19000 = 0x59000
+        // Aligned up to 64KB: 0x60000
+        assert_eq!(compute_wasm_memory_base(200), 0x60000);
+    }
+
+    #[test]
+    fn stack_limit_zero() {
+        assert_eq!(stack_limit(0), STACK_SEGMENT_END);
+    }
+
+    #[test]
+    fn stack_limit_default() {
+        let limit = stack_limit(DEFAULT_STACK_SIZE);
+        let expected = (STACK_SEGMENT_END as u32).wrapping_sub(DEFAULT_STACK_SIZE) as i32;
+        assert_eq!(limit, expected);
+        // Limit should be below STACK_SEGMENT_END (in unsigned terms)
+        assert!((limit as u32) < (STACK_SEGMENT_END as u32));
+    }
+
+    #[test]
+    fn memory_size_global_offset_zero_globals() {
+        assert_eq!(memory_size_global_offset(0), GLOBAL_MEMORY_BASE);
+    }
+
+    #[test]
+    fn memory_size_global_offset_five_globals() {
+        assert_eq!(memory_size_global_offset(5), GLOBAL_MEMORY_BASE + 20);
+    }
+
+    #[test]
+    fn spilled_local_addr_func0_local0() {
+        assert_eq!(spilled_local_addr(0, 0), SPILLED_LOCALS_BASE);
+    }
+
+    #[test]
+    fn spilled_local_addr_func1_local8() {
+        assert_eq!(
+            spilled_local_addr(1, 8),
+            SPILLED_LOCALS_BASE + SPILLED_LOCALS_PER_FUNC + 8
+        );
+    }
+
+    #[test]
+    fn global_addr_zero() {
+        assert_eq!(global_addr(0), GLOBAL_MEMORY_BASE);
+    }
+
+    #[test]
+    fn global_addr_three() {
+        assert_eq!(global_addr(3), GLOBAL_MEMORY_BASE + 12);
+    }
+
+    #[test]
+    fn non_overlap_invariant() {
+        for n in [0, 1, 10, 100, 200] {
+            let wasm_base = compute_wasm_memory_base(n);
+            assert!(
+                global_addr(0) < SPILLED_LOCALS_BASE,
+                "globals must be below spilled locals"
+            );
+            assert!(
+                SPILLED_LOCALS_BASE < wasm_base,
+                "spilled locals must be below wasm memory base for {n} funcs"
+            );
+        }
+    }
+}

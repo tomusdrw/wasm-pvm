@@ -435,3 +435,130 @@ fn eval_const_ref(expr: &wasmparser::ConstExpr) -> Option<u32> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minimal_module_one_exported_main() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (func (export "main") (result i32)
+                    i32.const 42
+                )
+            )"#,
+        )
+        .unwrap();
+        let module = WasmModule::parse(&wasm).unwrap();
+        assert_eq!(module.main_func_local_idx, 0);
+        assert_eq!(module.functions.len(), 1);
+        assert_eq!(module.function_signatures.len(), 1);
+        assert_eq!(module.function_signatures[0], (0, true)); // 0 params, has return
+        assert_eq!(module.num_imported_funcs, 0);
+    }
+
+    #[test]
+    fn module_with_globals() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (global (mut i32) (i32.const 100))
+                (global (mut i32) (i32.const -5))
+                (func (export "main") (result i32)
+                    i32.const 0
+                )
+            )"#,
+        )
+        .unwrap();
+        let module = WasmModule::parse(&wasm).unwrap();
+        assert_eq!(module.globals.len(), 2);
+        assert_eq!(module.global_init_values, vec![100, -5]);
+    }
+
+    #[test]
+    fn module_with_memory() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (memory 2 16)
+                (func (export "main") (result i32)
+                    i32.const 0
+                )
+            )"#,
+        )
+        .unwrap();
+        let module = WasmModule::parse(&wasm).unwrap();
+        assert_eq!(module.memory_limits.initial_pages, 2);
+        assert_eq!(module.memory_limits.max_pages, Some(16));
+    }
+
+    #[test]
+    fn module_with_imports() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (import "env" "log" (func (param i32)))
+                (import "env" "read" (func (param i32 i32) (result i32)))
+                (func (export "main") (result i32)
+                    i32.const 0
+                )
+            )"#,
+        )
+        .unwrap();
+        let module = WasmModule::parse(&wasm).unwrap();
+        assert_eq!(module.num_imported_funcs, 2);
+        assert_eq!(module.imported_func_names, vec!["log", "read"]);
+        // main is at global index 2, local index 0
+        assert_eq!(module.main_func_local_idx, 0);
+        // function_signatures includes imports then locals
+        assert_eq!(module.function_signatures.len(), 3);
+        assert_eq!(module.function_signatures[0], (1, false)); // log: 1 param, no return
+        assert_eq!(module.function_signatures[1], (2, true)); // read: 2 params, has return
+        assert_eq!(module.function_signatures[2], (0, true)); // main: 0 params, has return
+    }
+
+    #[test]
+    fn module_with_data_segment() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (memory 1)
+                (data (i32.const 16) "hello")
+                (func (export "main") (result i32)
+                    i32.const 0
+                )
+            )"#,
+        )
+        .unwrap();
+        let module = WasmModule::parse(&wasm).unwrap();
+        assert_eq!(module.data_segments.len(), 1);
+        assert_eq!(module.data_segments[0].offset, 16);
+        assert_eq!(module.data_segments[0].data, b"hello");
+    }
+
+    #[test]
+    fn entry_detection_no_export_defaults_to_func_zero() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (func (result i32)
+                    i32.const 0
+                )
+            )"#,
+        )
+        .unwrap();
+        let module = WasmModule::parse(&wasm).unwrap();
+        assert_eq!(module.main_func_local_idx, 0);
+    }
+
+    #[test]
+    fn error_no_functions() {
+        let wasm = wat::parse_str("(module)").unwrap();
+        let result = WasmModule::parse(&wasm);
+        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::NoExportedFunction),
+            "expected NoExportedFunction, got: {err:?}"
+        );
+    }
+}

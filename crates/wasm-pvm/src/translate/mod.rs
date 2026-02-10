@@ -306,6 +306,82 @@ pub(crate) fn build_rw_data(
     rw_data
 }
 
+#[cfg(test)]
+mod tests {
+    use super::wasm_module::DataSegment;
+    use super::*;
+
+    #[test]
+    fn build_rw_data_no_globals_no_data() {
+        // Even with no user globals, the compiler-managed memory size global is present.
+        // globals_end = (0 + 1) * 4 = 4
+        let result = build_rw_data(&[], &[], 1, 0x50000);
+        assert_eq!(result.len(), 4);
+        // Memory size global at offset 0 should be initial_pages = 1
+        assert_eq!(&result[0..4], &1u32.to_le_bytes());
+    }
+
+    #[test]
+    fn build_rw_data_globals_only() {
+        let globals = vec![10, -5, 42];
+        let result = build_rw_data(&[], &globals, 1, 0x50000);
+        // globals_end = (3 + 1) * 4 = 16
+        assert_eq!(result.len(), 16);
+        // User globals at offsets 0, 4, 8
+        assert_eq!(&result[0..4], &10i32.to_le_bytes());
+        assert_eq!(&result[4..8], &(-5i32).to_le_bytes());
+        assert_eq!(&result[8..12], &42i32.to_le_bytes());
+        // Memory size global at offset 12
+        assert_eq!(&result[12..16], &1u32.to_le_bytes());
+    }
+
+    #[test]
+    fn build_rw_data_memory_size_global() {
+        let globals = vec![0, 0];
+        let initial_pages = 16;
+        let result = build_rw_data(&[], &globals, initial_pages, 0x50000);
+        // Memory size global at num_globals * 4 = 8
+        assert_eq!(&result[8..12], &16u32.to_le_bytes());
+    }
+
+    #[test]
+    fn build_rw_data_data_segment() {
+        let wasm_memory_base = 0x50000;
+        let wasm_to_rw_offset = wasm_memory_base as u32 - 0x30000;
+        let seg = DataSegment {
+            offset: 0,
+            data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+        };
+        let result = build_rw_data(&[seg], &[], 1, wasm_memory_base);
+        // Data appears at wasm_to_rw_offset + segment_offset = 0x20000
+        let data_start = wasm_to_rw_offset as usize;
+        assert_eq!(
+            &result[data_start..data_start + 4],
+            &[0xDE, 0xAD, 0xBE, 0xEF]
+        );
+    }
+
+    #[test]
+    fn build_rw_data_globals_and_data_segment() {
+        let wasm_memory_base = 0x50000;
+        let wasm_to_rw_offset = wasm_memory_base as u32 - 0x30000;
+        let globals = vec![99];
+        let seg = DataSegment {
+            offset: 10,
+            data: vec![0x01, 0x02],
+        };
+        let result = build_rw_data(&[seg], &globals, 2, wasm_memory_base);
+
+        // User global at offset 0
+        assert_eq!(&result[0..4], &99i32.to_le_bytes());
+        // Memory size global at offset 4
+        assert_eq!(&result[4..8], &2u32.to_le_bytes());
+        // Data segment at wasm_to_rw_offset + 10
+        let data_start = wasm_to_rw_offset as usize + 10;
+        assert_eq!(&result[data_start..data_start + 2], &[0x01, 0x02]);
+    }
+}
+
 fn resolve_call_fixups(
     instructions: &mut [Instruction],
     call_fixups: &[(usize, CallFixup)],

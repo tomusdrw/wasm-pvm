@@ -280,5 +280,3 @@ fn test_filter_by_opcode() {
     let adds = filter_by_opcode(&instructions, Opcode::Add32);
     assert!(!adds.is_empty(), "Should have Add32 instructions");
 }
-
-
