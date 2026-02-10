@@ -198,7 +198,9 @@ fn translate_operator(op: &Operator) -> Result<IrInstruction> {
         Operator::Br { relative_depth } => Ok(IrInstruction::Br(*relative_depth)),
         Operator::BrIf { relative_depth } => Ok(IrInstruction::BrIf(*relative_depth)),
         Operator::BrTable { targets } => {
-            let target_depths: Vec<u32> = targets.targets().map(|t| t.unwrap()).collect();
+            let target_depths: Vec<u32> = targets
+                .targets()
+                .collect::<std::result::Result<Vec<_>, _>>()?;
             let default = targets.default();
             Ok(IrInstruction::BrTable {
                 targets: target_depths,

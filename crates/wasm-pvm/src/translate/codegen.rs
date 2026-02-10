@@ -1034,7 +1034,8 @@ pub fn translate_function(
     body: &FunctionBody,
     ctx: &CompileContext,
 ) -> Result<FunctionTranslation> {
-    let (func_locals, ir) = crate::ir::build_ir(body)?;
+    let (func_locals, mut ir) = crate::ir::build_ir(body)?;
+    crate::ir::optimize(&mut ir);
     translate_function_ir(&ir, func_locals, ctx)
 }
 
