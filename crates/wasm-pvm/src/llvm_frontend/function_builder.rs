@@ -39,14 +39,6 @@ enum ControlFrame<'ctx> {
 }
 
 impl<'ctx> ControlFrame<'ctx> {
-    fn stack_depth(&self) -> usize {
-        match self {
-            Self::Block { stack_depth, .. }
-            | Self::Loop { stack_depth, .. }
-            | Self::If { stack_depth, .. } => *stack_depth,
-        }
-    }
-
     fn merge_bb(&self) -> BasicBlock<'ctx> {
         match self {
             Self::Block { merge_bb, .. }
@@ -55,7 +47,7 @@ impl<'ctx> ControlFrame<'ctx> {
         }
     }
 
-    /// The branch target for `br`: merge_bb for Block/If, header_bb for Loop.
+    /// The branch target for `br`: `merge_bb` for Block/If, `header_bb` for Loop.
     fn br_target(&self) -> BasicBlock<'ctx> {
         match self {
             Self::Block { merge_bb, .. } | Self::If { merge_bb, .. } => *merge_bb,
@@ -138,6 +130,7 @@ struct PvmIntrinsics<'ctx> {
 }
 
 impl<'ctx> WasmToLlvm<'ctx> {
+    #[must_use]
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
@@ -220,7 +213,8 @@ impl<'ctx> WasmToLlvm<'ctx> {
     pub fn translate_module(mut self, wasm_module: &WasmModule) -> Result<Module<'ctx>> {
         self.declare_functions(wasm_module);
         self.declare_globals(wasm_module);
-        self.type_signatures = wasm_module.type_signatures.clone();
+        self.type_signatures
+            .clone_from(&wasm_module.type_signatures);
 
         for (local_idx, func_body) in wasm_module.functions.iter().enumerate() {
             let global_idx = wasm_module.num_imported_funcs as usize + local_idx;
@@ -368,11 +362,8 @@ impl<'ctx> WasmToLlvm<'ctx> {
                     });
                     return Ok(());
                 }
-                Operator::Else => {
-                    // Else in dead code: handled by the Else arm below which checks unreachable
-                }
-                Operator::End => {
-                    // End in dead code: handled by the End arm below
+                Operator::Else | Operator::End => {
+                    // Else/End in dead code: handled by the arms below which check unreachable
                 }
                 _ => return Ok(()), // skip all other ops in dead code
             }
@@ -381,7 +372,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         match op {
             // === Constants ===
             Operator::I32Const { value } => {
-                self.push(self.i64_type.const_int(*value as u32 as u64, false));
+                self.push(self.i64_type.const_int(u64::from(*value as u32), false));
                 Ok(())
             }
             Operator::I64Const { value } => {
@@ -997,10 +988,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
                         })
                         .collect();
 
-                    let case_refs: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> =
-                        cases.iter().copied().collect();
-
-                    llvm_err(self.builder.build_switch(index32, default_bb, &case_refs))?;
+                    llvm_err(self.builder.build_switch(index32, default_bb, &cases))?;
                     self.unreachable = true;
                 }
                 Ok(())

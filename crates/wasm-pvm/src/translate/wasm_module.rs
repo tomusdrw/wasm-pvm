@@ -66,15 +66,15 @@ pub struct WasmModule<'a> {
     pub main_returns_ptr_len: bool,
     /// Whether the secondary entry function returns (i32, i32) for (ptr, len) convention.
     pub secondary_returns_ptr_len: bool,
-    /// Global index for result_ptr (legacy entry convention, None if using ptr/len returns).
+    /// Global index for `result_ptr` (legacy entry convention, None if using ptr/len returns).
     pub result_ptr_global: Option<u32>,
-    /// Global index for result_len (legacy entry convention, None if using ptr/len returns).
+    /// Global index for `result_len` (legacy entry convention, None if using ptr/len returns).
     pub result_len_global: Option<u32>,
-    /// (num_params, has_return) for each function (imports first, then locals).
+    /// (`num_params`, `has_return`) for each function (imports first, then locals).
     pub function_signatures: Vec<(usize, bool)>,
-    /// (num_params, num_results) for each type.
+    /// (`num_params`, `num_results`) for each type.
     pub type_signatures: Vec<(usize, usize)>,
-    /// Function table for indirect calls (u32::MAX = invalid entry).
+    /// Function table for indirect calls (`u32::MAX` = invalid entry).
     pub function_table: Vec<u32>,
     /// Base address of WASM linear memory in PVM address space.
     pub wasm_memory_base: i32,

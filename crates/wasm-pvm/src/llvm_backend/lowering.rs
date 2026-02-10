@@ -94,7 +94,7 @@ struct PvmEmitter<'ctx> {
     call_fixups: Vec<LlvmCallFixup>,
     indirect_call_fixups: Vec<LlvmIndirectCallFixup>,
 
-    /// For entry functions: (result_ptr_global, result_len_global) indices.
+    /// For entry functions: (`result_ptr_global`, `result_len_global`) indices.
     /// When set, the epilogue loads these globals into r7/r8 before exiting.
     result_globals: Option<(u32, u32)>,
 }
@@ -192,10 +192,6 @@ impl<'ctx> PvmEmitter<'ctx> {
         offset
     }
 
-    fn alloc_slot_for_int(&mut self, val: IntValue<'ctx>) -> i32 {
-        self.alloc_slot_for_key(val_key_int(val))
-    }
-
     fn get_slot(&self, key: ValKey) -> Option<i32> {
         self.value_slots.get(&key).copied()
     }
@@ -235,7 +231,7 @@ impl<'ctx> PvmEmitter<'ctx> {
     fn emit_load_const(&mut self, reg: u8, val: u64) {
         if val == 0 {
             self.emit(Instruction::LoadImm { reg, value: 0 });
-        } else if val <= i32::MAX as u64 {
+        } else if i32::try_from(val).is_ok() {
             self.emit(Instruction::LoadImm {
                 reg,
                 value: val as i32,
@@ -294,8 +290,8 @@ impl<'ctx> PvmEmitter<'ctx> {
 /// `result_globals`: For entry functions using the legacy globals convention,
 /// pass `Some((ptr_global_idx, len_global_idx))` so the epilogue loads them
 /// into r7/r8 before exiting.
-pub fn lower_function<'ctx>(
-    function: FunctionValue<'ctx>,
+pub fn lower_function(
+    function: FunctionValue<'_>,
     ctx: &LoweringContext,
     is_main: bool,
     _func_idx: usize,
@@ -593,19 +589,19 @@ fn lower_instruction<'ctx>(
 
 // ── Helpers to get operands ──
 
-/// Get the i-th operand of an instruction as a BasicValueEnum.
-fn get_operand<'ctx>(instr: InstructionValue<'ctx>, i: u32) -> Result<BasicValueEnum<'ctx>> {
+/// Get the i-th operand of an instruction as a `BasicValueEnum`.
+fn get_operand(instr: InstructionValue<'_>, i: u32) -> Result<BasicValueEnum<'_>> {
     instr
         .get_operand(i)
-        .and_then(|op| op.value())
+        .and_then(inkwell::values::Operand::value)
         .ok_or_else(|| Error::Internal(format!("missing operand {i} in {:?}", instr.get_opcode())))
 }
 
-/// Get the i-th operand of an instruction as a BasicBlock.
-fn get_bb_operand<'ctx>(instr: InstructionValue<'ctx>, i: u32) -> Result<BasicBlock<'ctx>> {
+/// Get the i-th operand of an instruction as a `BasicBlock`.
+fn get_bb_operand(instr: InstructionValue<'_>, i: u32) -> Result<BasicBlock<'_>> {
     instr
         .get_operand(i)
-        .and_then(|op| op.block())
+        .and_then(inkwell::values::Operand::block)
         .ok_or_else(|| {
             Error::Internal(format!(
                 "missing bb operand {i} in {:?}",
@@ -624,10 +620,12 @@ fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i32> {
 /// Detect the bit width of an instruction's result or first operand.
 fn operand_bit_width(instr: InstructionValue<'_>) -> u32 {
     // For most instructions, check the operand type.
-    if let Some(op) = instr.get_operand(0).and_then(|o| o.value()) {
-        if let BasicValueEnum::IntValue(iv) = op {
-            return iv.get_type().get_bit_width();
-        }
+    if let Some(op) = instr
+        .get_operand(0)
+        .and_then(inkwell::values::Operand::value)
+        && let BasicValueEnum::IntValue(iv) = op
+    {
+        return iv.get_type().get_bit_width();
     }
     64 // default
 }
@@ -1080,13 +1078,13 @@ fn emit_phi_copies<'ctx>(
         let phi_slot = result_slot(e, instr)?;
         let num_incomings = instr.get_num_operands() / 2;
         for i in 0..num_incomings {
-            if let Ok(block) = get_bb_operand(instr, 2 * i + 1) {
-                if block == current_bb {
-                    if let Ok(value) = get_operand(instr, 2 * i) {
-                        copies.push((phi_slot, value));
-                    }
-                    break;
+            if let Ok(block) = get_bb_operand(instr, 2 * i + 1)
+                && block == current_bb
+            {
+                if let Ok(value) = get_operand(instr, 2 * i) {
+                    copies.push((phi_slot, value));
                 }
+                break;
             }
         }
     }
@@ -1144,10 +1142,12 @@ fn has_phi_from<'ctx>(current_bb: BasicBlock<'ctx>, target_bb: BasicBlock<'ctx>)
         }
         let num_incomings = instr.get_num_operands() / 2;
         for i in 0..num_incomings {
-            if let Some(block) = instr.get_operand(2 * i + 1).and_then(|op| op.block()) {
-                if block == current_bb {
-                    return true;
-                }
+            if let Some(block) = instr
+                .get_operand(2 * i + 1)
+                .and_then(inkwell::values::Operand::block)
+                && block == current_bb
+            {
+                return true;
             }
         }
     }
@@ -1240,20 +1240,20 @@ fn lower_switch<'ctx>(
         let case_val = get_operand(instr, i)?;
         let case_bb = get_bb_operand(instr, i + 1)?;
 
-        if let BasicValueEnum::IntValue(iv) = case_val {
-            if let Some(c) = iv.get_zero_extended_constant() {
-                if has_phi_from(current_bb, case_bb) {
-                    // Needs a trampoline for phi copies.
-                    let trampoline = e.alloc_label();
-                    e.emit_branch_eq_imm_to_label(TEMP1, c as i32, trampoline);
-                    trampolines.push((trampoline, case_bb));
-                } else {
-                    let case_label = *e
-                        .block_labels
-                        .get(&case_bb)
-                        .ok_or_else(|| Error::Internal("switch case to unknown block".into()))?;
-                    e.emit_branch_eq_imm_to_label(TEMP1, c as i32, case_label);
-                }
+        if let BasicValueEnum::IntValue(iv) = case_val
+            && let Some(c) = iv.get_zero_extended_constant()
+        {
+            if has_phi_from(current_bb, case_bb) {
+                // Needs a trampoline for phi copies.
+                let trampoline = e.alloc_label();
+                e.emit_branch_eq_imm_to_label(TEMP1, c as i32, trampoline);
+                trampolines.push((trampoline, case_bb));
+            } else {
+                let case_label = *e
+                    .block_labels
+                    .get(&case_bb)
+                    .ok_or_else(|| Error::Internal("switch case to unknown block".into()))?;
+                e.emit_branch_eq_imm_to_label(TEMP1, c as i32, case_label);
             }
         }
         i += 2;
@@ -1277,6 +1277,7 @@ fn lower_switch<'ctx>(
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn lower_return<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -1313,10 +1314,10 @@ fn lower_return<'ctx>(
         }
     } else {
         // Normal function: ret void | ret i64 %val → r7.
-        if instr.get_num_operands() > 0 {
-            if let Ok(ret_val) = get_operand(instr, 0) {
-                e.load_operand(ret_val, RETURN_VALUE_REG);
-            }
+        if instr.get_num_operands() > 0
+            && let Ok(ret_val) = get_operand(instr, 0)
+        {
+            e.load_operand(ret_val, RETURN_VALUE_REG);
         }
     }
 
@@ -1408,7 +1409,7 @@ fn lower_call<'ctx>(
     let num_operands = instr.get_num_operands();
     let fn_operand = instr
         .get_operand(num_operands - 1)
-        .and_then(|op| op.value())
+        .and_then(inkwell::values::Operand::value)
         .ok_or_else(|| Error::Internal("call without function operand".into()))?;
     let fn_name = match fn_operand {
         BasicValueEnum::PointerValue(pv) => pv.get_name().to_string_lossy().to_string(),
@@ -1501,10 +1502,8 @@ fn lower_wasm_call<'ctx>(
     });
 
     // If function returns a value, store r7 to result slot.
-    if has_return {
-        if let Ok(slot) = result_slot(e, instr) {
-            e.store_to_slot(slot, RETURN_VALUE_REG);
-        }
+    if has_return && let Ok(slot) = result_slot(e, instr) {
+        e.store_to_slot(slot, RETURN_VALUE_REG);
     }
 
     Ok(())
@@ -1513,6 +1512,7 @@ fn lower_wasm_call<'ctx>(
 /// Emit a stub for calling an imported function.
 /// Imported functions are not available at PVM level — emit Trap for abort-like
 /// functions and a dummy return value (0) for others.
+#[allow(clippy::unnecessary_wraps)]
 fn lower_import_call<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -1530,14 +1530,12 @@ fn lower_import_call<'ctx>(
 
     // If the import has a return value, push a dummy 0 so the rest of the code
     // can still type-check (dead code after the trap).
-    if has_return {
-        if let Ok(slot) = result_slot(e, instr) {
-            e.emit(Instruction::LoadImm {
-                reg: TEMP_RESULT,
-                value: 0,
-            });
-            e.store_to_slot(slot, TEMP_RESULT);
-        }
+    if has_return && let Ok(slot) = result_slot(e, instr) {
+        e.emit(Instruction::LoadImm {
+            reg: TEMP_RESULT,
+            value: 0,
+        });
+        e.store_to_slot(slot, TEMP_RESULT);
     }
 
     Ok(())
@@ -1551,13 +1549,12 @@ fn lower_pvm_intrinsic<'ctx>(
 ) -> Result<()> {
     match name {
         // ── Loads ──
-        "__pvm_load_i32" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U32),
+        "__pvm_load_i32" | "__pvm_load_i32u_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U32),
         "__pvm_load_i64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U64),
         "__pvm_load_i8u" | "__pvm_load_i8u_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U8),
         "__pvm_load_i8s" | "__pvm_load_i8s_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::I8),
         "__pvm_load_i16u" | "__pvm_load_i16u_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U16),
         "__pvm_load_i16s" | "__pvm_load_i16s_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::I16),
-        "__pvm_load_i32u_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U32),
         "__pvm_load_i32s_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::I32S),
 
         // ── Stores ──
@@ -1938,7 +1935,7 @@ fn emit_pvm_memory_copy<'ctx>(
 fn lower_pvm_call_indirect<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
-    ctx: &LoweringContext,
+    _ctx: &LoweringContext,
 ) -> Result<()> {
     // __pvm_call_indirect(type_idx, table_entry, arg0, arg1, ...)
     // Operands: [type_idx, table_entry, arg0, ..., argN-1, fn_ptr]
