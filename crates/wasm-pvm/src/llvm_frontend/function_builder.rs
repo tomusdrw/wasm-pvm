@@ -1,3 +1,4 @@
+use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::BuilderError;
 use inkwell::context::Context;
@@ -7,7 +8,6 @@ use inkwell::types::{BasicMetadataTypeEnum, IntType};
 use inkwell::values::{
     BasicMetadataValueEnum, FunctionValue, GlobalValue, IntValue, PhiValue, PointerValue,
 };
-use inkwell::IntPredicate;
 use wasmparser::{FunctionBody, Operator};
 
 use crate::translate::wasm_module::WasmModule;
@@ -163,7 +163,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
         }
     }
 
-    fn declare_pvm_intrinsics(context: &'ctx Context, module: &Module<'ctx>) -> PvmIntrinsics<'ctx> {
+    fn declare_pvm_intrinsics(
+        context: &'ctx Context,
+        module: &Module<'ctx>,
+    ) -> PvmIntrinsics<'ctx> {
         let i64_type = context.i64_type();
         let void_type = context.void_type();
 
@@ -176,10 +179,8 @@ impl<'ctx> WasmToLlvm<'ctx> {
         // (pages: i64) -> i64
         let unary_sig = i64_type.fn_type(&[i64_type.into()], false);
         // (dst: i64, val: i64, len: i64) -> void
-        let ternary_void_sig = void_type.fn_type(
-            &[i64_type.into(), i64_type.into(), i64_type.into()],
-            false,
-        );
+        let ternary_void_sig =
+            void_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
         // call_indirect: (type_idx: i64, table_idx: i64) -> i64 (varargs)
         let call_indirect_sig = i64_type.fn_type(
             &[i64_type.into(), i64_type.into()],
@@ -248,11 +249,9 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 self.context.void_type().fn_type(&param_types, false)
             };
             let idx = self.functions.len();
-            let fn_val = self.module.add_function(
-                &format!("wasm_func_{idx}"),
-                fn_type,
-                None,
-            );
+            let fn_val = self
+                .module
+                .add_function(&format!("wasm_func_{idx}"), fn_type, None);
             self.functions.push(fn_val);
         }
     }
@@ -260,9 +259,9 @@ impl<'ctx> WasmToLlvm<'ctx> {
     fn declare_globals(&mut self, wasm_module: &WasmModule) {
         self.globals.clear();
         for (idx, &init_value) in wasm_module.global_init_values.iter().enumerate() {
-            let global =
-                self.module
-                    .add_global(self.i64_type, None, &format!("wasm_global_{idx}"));
+            let global = self
+                .module
+                .add_global(self.i64_type, None, &format!("wasm_global_{idx}"));
             global.set_initializer(&self.i64_type.const_int(init_value as u64, true));
             self.globals.push(global);
         }
@@ -296,8 +295,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
         // Create alloca slots for all locals
         for i in 0..total_locals {
-            let alloca =
-                llvm_err(self.builder.build_alloca(self.i64_type, &format!("local_{i}")))?;
+            let alloca = llvm_err(
+                self.builder
+                    .build_alloca(self.i64_type, &format!("local_{i}")),
+            )?;
             self.locals.push(alloca);
         }
 
@@ -401,12 +402,18 @@ impl<'ctx> WasmToLlvm<'ctx> {
             }
             Operator::LocalSet { local_index } => {
                 let val = self.pop()?;
-                llvm_err(self.builder.build_store(self.locals[*local_index as usize], val))?;
+                llvm_err(
+                    self.builder
+                        .build_store(self.locals[*local_index as usize], val),
+                )?;
                 Ok(())
             }
             Operator::LocalTee { local_index } => {
                 let val = self.peek()?;
-                llvm_err(self.builder.build_store(self.locals[*local_index as usize], val))?;
+                llvm_err(
+                    self.builder
+                        .build_store(self.locals[*local_index as usize], val),
+                )?;
                 Ok(())
             }
 
@@ -414,8 +421,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
             Operator::GlobalGet { global_index } => {
                 let idx = *global_index as usize;
                 let ptr = self.globals[idx].as_pointer_value();
-                let val =
-                    llvm_err(self.builder.build_load(self.i64_type, ptr, "global_get"))?;
+                let val = llvm_err(self.builder.build_load(self.i64_type, ptr, "global_get"))?;
                 self.push(val.into_int_value());
                 Ok(())
             }
@@ -430,19 +436,35 @@ impl<'ctx> WasmToLlvm<'ctx> {
             Operator::I32Add => self.i32_binop(|b, l, r| llvm_err(b.build_int_add(l, r, "i32add"))),
             Operator::I32Sub => self.i32_binop(|b, l, r| llvm_err(b.build_int_sub(l, r, "i32sub"))),
             Operator::I32Mul => self.i32_binop(|b, l, r| llvm_err(b.build_int_mul(l, r, "i32mul"))),
-            Operator::I32DivU => self.i32_binop(|b, l, r| llvm_err(b.build_int_unsigned_div(l, r, "i32divu"))),
-            Operator::I32DivS => self.i32_binop(|b, l, r| llvm_err(b.build_int_signed_div(l, r, "i32divs"))),
-            Operator::I32RemU => self.i32_binop(|b, l, r| llvm_err(b.build_int_unsigned_rem(l, r, "i32remu"))),
-            Operator::I32RemS => self.i32_binop(|b, l, r| llvm_err(b.build_int_signed_rem(l, r, "i32rems"))),
+            Operator::I32DivU => {
+                self.i32_binop(|b, l, r| llvm_err(b.build_int_unsigned_div(l, r, "i32divu")))
+            }
+            Operator::I32DivS => {
+                self.i32_binop(|b, l, r| llvm_err(b.build_int_signed_div(l, r, "i32divs")))
+            }
+            Operator::I32RemU => {
+                self.i32_binop(|b, l, r| llvm_err(b.build_int_unsigned_rem(l, r, "i32remu")))
+            }
+            Operator::I32RemS => {
+                self.i32_binop(|b, l, r| llvm_err(b.build_int_signed_rem(l, r, "i32rems")))
+            }
 
             // === i64 Arithmetic ===
             Operator::I64Add => self.i64_binop(|b, l, r| llvm_err(b.build_int_add(l, r, "i64add"))),
             Operator::I64Sub => self.i64_binop(|b, l, r| llvm_err(b.build_int_sub(l, r, "i64sub"))),
             Operator::I64Mul => self.i64_binop(|b, l, r| llvm_err(b.build_int_mul(l, r, "i64mul"))),
-            Operator::I64DivU => self.i64_binop(|b, l, r| llvm_err(b.build_int_unsigned_div(l, r, "i64divu"))),
-            Operator::I64DivS => self.i64_binop(|b, l, r| llvm_err(b.build_int_signed_div(l, r, "i64divs"))),
-            Operator::I64RemU => self.i64_binop(|b, l, r| llvm_err(b.build_int_unsigned_rem(l, r, "i64remu"))),
-            Operator::I64RemS => self.i64_binop(|b, l, r| llvm_err(b.build_int_signed_rem(l, r, "i64rems"))),
+            Operator::I64DivU => {
+                self.i64_binop(|b, l, r| llvm_err(b.build_int_unsigned_div(l, r, "i64divu")))
+            }
+            Operator::I64DivS => {
+                self.i64_binop(|b, l, r| llvm_err(b.build_int_signed_div(l, r, "i64divs")))
+            }
+            Operator::I64RemU => {
+                self.i64_binop(|b, l, r| llvm_err(b.build_int_unsigned_rem(l, r, "i64remu")))
+            }
+            Operator::I64RemS => {
+                self.i64_binop(|b, l, r| llvm_err(b.build_int_signed_rem(l, r, "i64rems")))
+            }
 
             // === i32 Bitwise ===
             Operator::I32And => self.i32_binop(|b, l, r| llvm_err(b.build_and(l, r, "i32and"))),
@@ -455,14 +477,26 @@ impl<'ctx> WasmToLlvm<'ctx> {
             Operator::I64Xor => self.i64_binop(|b, l, r| llvm_err(b.build_xor(l, r, "i64xor"))),
 
             // === i32 Shifts ===
-            Operator::I32Shl => self.i32_binop(|b, l, r| llvm_err(b.build_left_shift(l, r, "i32shl"))),
-            Operator::I32ShrU => self.i32_binop(|b, l, r| llvm_err(b.build_right_shift(l, r, false, "i32shru"))),
-            Operator::I32ShrS => self.i32_binop(|b, l, r| llvm_err(b.build_right_shift(l, r, true, "i32shrs"))),
+            Operator::I32Shl => {
+                self.i32_binop(|b, l, r| llvm_err(b.build_left_shift(l, r, "i32shl")))
+            }
+            Operator::I32ShrU => {
+                self.i32_binop(|b, l, r| llvm_err(b.build_right_shift(l, r, false, "i32shru")))
+            }
+            Operator::I32ShrS => {
+                self.i32_binop(|b, l, r| llvm_err(b.build_right_shift(l, r, true, "i32shrs")))
+            }
 
             // === i64 Shifts ===
-            Operator::I64Shl => self.i64_binop(|b, l, r| llvm_err(b.build_left_shift(l, r, "i64shl"))),
-            Operator::I64ShrU => self.i64_binop(|b, l, r| llvm_err(b.build_right_shift(l, r, false, "i64shru"))),
-            Operator::I64ShrS => self.i64_binop(|b, l, r| llvm_err(b.build_right_shift(l, r, true, "i64shrs"))),
+            Operator::I64Shl => {
+                self.i64_binop(|b, l, r| llvm_err(b.build_left_shift(l, r, "i64shl")))
+            }
+            Operator::I64ShrU => {
+                self.i64_binop(|b, l, r| llvm_err(b.build_right_shift(l, r, false, "i64shru")))
+            }
+            Operator::I64ShrS => {
+                self.i64_binop(|b, l, r| llvm_err(b.build_right_shift(l, r, true, "i64shrs")))
+            }
 
             // === i32 Rotations ===
             Operator::I32Rotl => self.i32_rotate("llvm.fshl"),
@@ -512,21 +546,41 @@ impl<'ctx> WasmToLlvm<'ctx> {
             Operator::I32WrapI64 => {
                 let val = self.pop()?;
                 let trunc = llvm_err(self.builder.build_int_truncate(val, self.i32_type, "wrap"))?;
-                let ext = llvm_err(self.builder.build_int_z_extend(trunc, self.i64_type, "wrap_ext"))?;
+                let ext = llvm_err(self.builder.build_int_z_extend(
+                    trunc,
+                    self.i64_type,
+                    "wrap_ext",
+                ))?;
                 self.push(ext);
                 Ok(())
             }
             Operator::I64ExtendI32S => {
                 let val = self.pop()?;
-                let trunc = llvm_err(self.builder.build_int_truncate(val, self.i32_type, "ext_trunc"))?;
-                let ext = llvm_err(self.builder.build_int_s_extend(trunc, self.i64_type, "i64extends"))?;
+                let trunc = llvm_err(self.builder.build_int_truncate(
+                    val,
+                    self.i32_type,
+                    "ext_trunc",
+                ))?;
+                let ext = llvm_err(self.builder.build_int_s_extend(
+                    trunc,
+                    self.i64_type,
+                    "i64extends",
+                ))?;
                 self.push(ext);
                 Ok(())
             }
             Operator::I64ExtendI32U => {
                 let val = self.pop()?;
-                let trunc = llvm_err(self.builder.build_int_truncate(val, self.i32_type, "ext_trunc"))?;
-                let ext = llvm_err(self.builder.build_int_z_extend(trunc, self.i64_type, "i64extendu"))?;
+                let trunc = llvm_err(self.builder.build_int_truncate(
+                    val,
+                    self.i32_type,
+                    "ext_trunc",
+                ))?;
+                let ext = llvm_err(self.builder.build_int_z_extend(
+                    trunc,
+                    self.i64_type,
+                    "i64extendu",
+                ))?;
                 self.push(ext);
                 Ok(())
             }
@@ -545,18 +599,18 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 let cond = self.pop()?;
                 let val2 = self.pop()?;
                 let val1 = self.pop()?;
-                let cond32 =
-                    llvm_err(self.builder.build_int_truncate(cond, self.i32_type, "sel_cond"))?;
+                let cond32 = llvm_err(self.builder.build_int_truncate(
+                    cond,
+                    self.i32_type,
+                    "sel_cond",
+                ))?;
                 let cond_bool = llvm_err(self.builder.build_int_compare(
                     IntPredicate::NE,
                     cond32,
                     self.i32_type.const_zero(),
                     "sel_test",
                 ))?;
-                let result = llvm_err(
-                    self.builder
-                        .build_select(cond_bool, val1, val2, "select"),
-                )?;
+                let result = llvm_err(self.builder.build_select(cond_bool, val1, val2, "select"))?;
                 self.push(result.into_int_value());
                 Ok(())
             }
@@ -654,9 +708,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 }
                 let has_result = !matches!(blockty, wasmparser::BlockType::Empty);
                 let cond = self.pop()?;
-                let cond32 = llvm_err(
-                    self.builder.build_int_truncate(cond, self.i32_type, "if_cond"),
-                )?;
+                let cond32 = llvm_err(self.builder.build_int_truncate(
+                    cond,
+                    self.i32_type,
+                    "if_cond",
+                ))?;
                 let cond_bool = llvm_err(self.builder.build_int_compare(
                     IntPredicate::NE,
                     cond32,
@@ -697,9 +753,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
             Operator::Else => {
                 // Extract values from frame before any mutable borrow of self
-                let frame = self.control_stack.last().ok_or_else(|| {
-                    Error::Internal("Else without matching If".into())
-                })?;
+                let frame = self
+                    .control_stack
+                    .last()
+                    .ok_or_else(|| Error::Internal("Else without matching If".into()))?;
                 let (merge, else_block, phi, depth) = if let ControlFrame::If {
                     else_bb,
                     merge_bb,
@@ -714,9 +771,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 };
 
                 // Now mark else_seen
-                if let Some(ControlFrame::If { else_seen, .. }) =
-                    self.control_stack.last_mut()
-                {
+                if let Some(ControlFrame::If { else_seen, .. }) = self.control_stack.last_mut() {
                     *else_seen = true;
                 }
 
@@ -736,9 +791,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
             }
 
             Operator::End => {
-                let frame = self.control_stack.pop().ok_or_else(|| {
-                    Error::Internal("End without matching control frame".into())
-                })?;
+                let frame = self
+                    .control_stack
+                    .pop()
+                    .ok_or_else(|| Error::Internal("End without matching control frame".into()))?;
 
                 match frame {
                     ControlFrame::Block {
@@ -751,13 +807,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
                             if !self.unreachable {
                                 if let Some(phi) = result_phi {
                                     let val = self.pop()?;
-                                    let current_bb =
-                                        self.builder.get_insert_block().unwrap();
+                                    let current_bb = self.builder.get_insert_block().unwrap();
                                     phi.add_incoming(&[(&val, current_bb)]);
                                 }
-                                llvm_err(
-                                    self.builder.build_unconditional_branch(merge_bb),
-                                )?;
+                                llvm_err(self.builder.build_unconditional_branch(merge_bb))?;
                             }
                             // Position at merge block and emit actual return
                             self.builder.position_at_end(merge_bb);
@@ -778,13 +831,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
                             if !self.unreachable {
                                 if let Some(phi) = result_phi {
                                     let val = self.pop()?;
-                                    let current_bb =
-                                        self.builder.get_insert_block().unwrap();
+                                    let current_bb = self.builder.get_insert_block().unwrap();
                                     phi.add_incoming(&[(&val, current_bb)]);
                                 }
-                                llvm_err(
-                                    self.builder.build_unconditional_branch(merge_bb),
-                                )?;
+                                llvm_err(self.builder.build_unconditional_branch(merge_bb))?;
                             }
                             self.builder.position_at_end(merge_bb);
                             self.operand_stack.truncate(stack_depth);
@@ -800,9 +850,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
                         ..
                     } => {
                         if !self.unreachable {
-                            llvm_err(
-                                self.builder.build_unconditional_branch(merge_bb),
-                            )?;
+                            llvm_err(self.builder.build_unconditional_branch(merge_bb))?;
                         }
                         self.builder.position_at_end(merge_bb);
                         self.operand_stack.truncate(stack_depth);
@@ -818,21 +866,16 @@ impl<'ctx> WasmToLlvm<'ctx> {
                         if !self.unreachable {
                             if let Some(phi) = result_phi {
                                 let val = self.pop()?;
-                                let current_bb =
-                                    self.builder.get_insert_block().unwrap();
+                                let current_bb = self.builder.get_insert_block().unwrap();
                                 phi.add_incoming(&[(&val, current_bb)]);
                             }
-                            llvm_err(
-                                self.builder.build_unconditional_branch(merge_bb),
-                            )?;
+                            llvm_err(self.builder.build_unconditional_branch(merge_bb))?;
                         }
 
                         if !else_seen {
                             // No else branch: else_bb falls through to merge
                             self.builder.position_at_end(else_bb);
-                            llvm_err(
-                                self.builder.build_unconditional_branch(merge_bb),
-                            )?;
+                            llvm_err(self.builder.build_unconditional_branch(merge_bb))?;
                         }
 
                         self.builder.position_at_end(merge_bb);
@@ -867,9 +910,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
             Operator::BrIf { relative_depth } => {
                 if !self.unreachable {
                     let cond = self.pop()?;
-                    let cond32 = llvm_err(
-                        self.builder.build_int_truncate(cond, self.i32_type, "brif_c"),
-                    )?;
+                    let cond32 = llvm_err(self.builder.build_int_truncate(
+                        cond,
+                        self.i32_type,
+                        "brif_c",
+                    ))?;
                     let cond_bool = llvm_err(self.builder.build_int_compare(
                         IntPredicate::NE,
                         cond32,
@@ -892,8 +937,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
                     }
 
                     let fn_val = self.current_fn.unwrap();
-                    let continue_bb =
-                        self.context.append_basic_block(fn_val, "brif_cont");
+                    let continue_bb = self.context.append_basic_block(fn_val, "brif_cont");
                     llvm_err(self.builder.build_conditional_branch(
                         cond_bool,
                         target_bb,
@@ -907,10 +951,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
             Operator::BrTable { targets } => {
                 if !self.unreachable {
                     let index = self.pop()?;
-                    let index32 = llvm_err(
-                        self.builder
-                            .build_int_truncate(index, self.i32_type, "brtbl_idx"),
-                    )?;
+                    let index32 = llvm_err(self.builder.build_int_truncate(
+                        index,
+                        self.i32_type,
+                        "brtbl_idx",
+                    ))?;
 
                     let default_depth = targets.default() as usize;
                     let default_idx = self.control_stack.len() - 1 - default_depth;
@@ -945,8 +990,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
                         .iter()
                         .enumerate()
                         .map(|(i, &depth)| {
-                            let case_val =
-                                self.i32_type.const_int(i as u64, false);
+                            let case_val = self.i32_type.const_int(i as u64, false);
                             let idx = self.control_stack.len() - 1 - depth as usize;
                             let bb = self.control_stack[idx].br_target();
                             (case_val, bb)
@@ -956,36 +1000,72 @@ impl<'ctx> WasmToLlvm<'ctx> {
                     let case_refs: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> =
                         cases.iter().copied().collect();
 
-                    llvm_err(
-                        self.builder.build_switch(index32, default_bb, &case_refs),
-                    )?;
+                    llvm_err(self.builder.build_switch(index32, default_bb, &case_refs))?;
                     self.unreachable = true;
                 }
                 Ok(())
             }
 
             // === Memory loads ===
-            Operator::I32Load { memarg } => self.emit_load(self.pvm_intrinsics.load_i32, memarg.offset),
-            Operator::I64Load { memarg } => self.emit_load(self.pvm_intrinsics.load_i64, memarg.offset),
-            Operator::I32Load8U { memarg } => self.emit_load(self.pvm_intrinsics.load_i8u, memarg.offset),
-            Operator::I32Load8S { memarg } => self.emit_load(self.pvm_intrinsics.load_i8s, memarg.offset),
-            Operator::I32Load16U { memarg } => self.emit_load(self.pvm_intrinsics.load_i16u, memarg.offset),
-            Operator::I32Load16S { memarg } => self.emit_load(self.pvm_intrinsics.load_i16s, memarg.offset),
-            Operator::I64Load8U { memarg } => self.emit_load(self.pvm_intrinsics.load_i8u_64, memarg.offset),
-            Operator::I64Load8S { memarg } => self.emit_load(self.pvm_intrinsics.load_i8s_64, memarg.offset),
-            Operator::I64Load16U { memarg } => self.emit_load(self.pvm_intrinsics.load_i16u_64, memarg.offset),
-            Operator::I64Load16S { memarg } => self.emit_load(self.pvm_intrinsics.load_i16s_64, memarg.offset),
-            Operator::I64Load32U { memarg } => self.emit_load(self.pvm_intrinsics.load_i32u_64, memarg.offset),
-            Operator::I64Load32S { memarg } => self.emit_load(self.pvm_intrinsics.load_i32s_64, memarg.offset),
+            Operator::I32Load { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i32, memarg.offset)
+            }
+            Operator::I64Load { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i64, memarg.offset)
+            }
+            Operator::I32Load8U { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i8u, memarg.offset)
+            }
+            Operator::I32Load8S { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i8s, memarg.offset)
+            }
+            Operator::I32Load16U { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i16u, memarg.offset)
+            }
+            Operator::I32Load16S { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i16s, memarg.offset)
+            }
+            Operator::I64Load8U { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i8u_64, memarg.offset)
+            }
+            Operator::I64Load8S { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i8s_64, memarg.offset)
+            }
+            Operator::I64Load16U { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i16u_64, memarg.offset)
+            }
+            Operator::I64Load16S { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i16s_64, memarg.offset)
+            }
+            Operator::I64Load32U { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i32u_64, memarg.offset)
+            }
+            Operator::I64Load32S { memarg } => {
+                self.emit_load(self.pvm_intrinsics.load_i32s_64, memarg.offset)
+            }
 
             // === Memory stores ===
-            Operator::I32Store { memarg } => self.emit_store(self.pvm_intrinsics.store_i32, memarg.offset),
-            Operator::I64Store { memarg } => self.emit_store(self.pvm_intrinsics.store_i64, memarg.offset),
-            Operator::I32Store8 { memarg } => self.emit_store(self.pvm_intrinsics.store_i8, memarg.offset),
-            Operator::I32Store16 { memarg } => self.emit_store(self.pvm_intrinsics.store_i16, memarg.offset),
-            Operator::I64Store8 { memarg } => self.emit_store(self.pvm_intrinsics.store_i8_64, memarg.offset),
-            Operator::I64Store16 { memarg } => self.emit_store(self.pvm_intrinsics.store_i16_64, memarg.offset),
-            Operator::I64Store32 { memarg } => self.emit_store(self.pvm_intrinsics.store_i32_64, memarg.offset),
+            Operator::I32Store { memarg } => {
+                self.emit_store(self.pvm_intrinsics.store_i32, memarg.offset)
+            }
+            Operator::I64Store { memarg } => {
+                self.emit_store(self.pvm_intrinsics.store_i64, memarg.offset)
+            }
+            Operator::I32Store8 { memarg } => {
+                self.emit_store(self.pvm_intrinsics.store_i8, memarg.offset)
+            }
+            Operator::I32Store16 { memarg } => {
+                self.emit_store(self.pvm_intrinsics.store_i16, memarg.offset)
+            }
+            Operator::I64Store8 { memarg } => {
+                self.emit_store(self.pvm_intrinsics.store_i8_64, memarg.offset)
+            }
+            Operator::I64Store16 { memarg } => {
+                self.emit_store(self.pvm_intrinsics.store_i16_64, memarg.offset)
+            }
+            Operator::I64Store32 { memarg } => {
+                self.emit_store(self.pvm_intrinsics.store_i32_64, memarg.offset)
+            }
 
             // === Memory management ===
             Operator::MemorySize { .. } => {
@@ -1049,15 +1129,12 @@ impl<'ctx> WasmToLlvm<'ctx> {
                     args.push(self.pop()?.into());
                 }
                 args.reverse();
-                let result =
-                    llvm_err(self.builder.build_call(target_fn, &args, "call"))?;
+                let result = llvm_err(self.builder.build_call(target_fn, &args, "call"))?;
                 if target_fn.get_type().get_return_type().is_some() {
                     let val = result
                         .try_as_basic_value()
                         .basic()
-                        .ok_or_else(|| {
-                            Error::Internal("call returned void unexpectedly".into())
-                        })?
+                        .ok_or_else(|| Error::Internal("call returned void unexpectedly".into()))?
                         .into_int_value();
                     self.push(val);
                 }
@@ -1071,23 +1148,22 @@ impl<'ctx> WasmToLlvm<'ctx> {
                     .type_signatures
                     .get(*type_index as usize)
                     .copied()
-                    .ok_or_else(|| {
-                        Error::Internal(format!("unknown type index {type_index}"))
-                    })?;
+                    .ok_or_else(|| Error::Internal(format!("unknown type index {type_index}")))?;
                 // Pop the table entry index (on top of the args on the stack)
                 let table_entry = self.pop()?;
                 // Pop arguments in reverse order
-                let mut fn_args: Vec<BasicMetadataValueEnum> =
-                    Vec::with_capacity(num_params);
+                let mut fn_args: Vec<BasicMetadataValueEnum> = Vec::with_capacity(num_params);
                 for _ in 0..num_params {
                     fn_args.push(self.pop()?.into());
                 }
                 fn_args.reverse();
                 // Build intrinsic args: type_idx, table_entry, then function args
-                let mut all_args: Vec<BasicMetadataValueEnum> =
-                    Vec::with_capacity(num_params + 2);
-                all_args
-                    .push(self.i64_type.const_int(u64::from(*type_index), false).into());
+                let mut all_args: Vec<BasicMetadataValueEnum> = Vec::with_capacity(num_params + 2);
+                all_args.push(
+                    self.i64_type
+                        .const_int(u64::from(*type_index), false)
+                        .into(),
+                );
                 all_args.push(table_entry.into());
                 all_args.extend(fn_args);
                 let result = llvm_err(self.builder.build_call(
@@ -1099,9 +1175,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
                     let val = result
                         .try_as_basic_value()
                         .basic()
-                        .ok_or_else(|| {
-                            Error::Internal("call_indirect returned void".into())
-                        })?
+                        .ok_or_else(|| Error::Internal("call_indirect returned void".into()))?
                         .into_int_value();
                     self.push(val);
                 }
@@ -1195,8 +1269,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
         let lhs32 = llvm_err(self.builder.build_int_truncate(lhs, self.i32_type, "l32"))?;
         let rhs32 = llvm_err(self.builder.build_int_truncate(rhs, self.i32_type, "r32"))?;
         let result32 = f(&self.builder, lhs32, rhs32)?;
-        let result64 =
-            llvm_err(self.builder.build_int_z_extend(result32, self.i64_type, "ext"))?;
+        let result64 = llvm_err(
+            self.builder
+                .build_int_z_extend(result32, self.i64_type, "ext"),
+        )?;
         self.push(result64);
         Ok(())
     }
@@ -1224,7 +1300,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
         let lhs32 = llvm_err(self.builder.build_int_truncate(lhs, self.i32_type, "cl"))?;
         let rhs32 = llvm_err(self.builder.build_int_truncate(rhs, self.i32_type, "cr"))?;
         let cmp = llvm_err(self.builder.build_int_compare(pred, lhs32, rhs32, "cmp"))?;
-        let ext = llvm_err(self.builder.build_int_z_extend(cmp, self.i64_type, "cmpext"))?;
+        let ext = llvm_err(
+            self.builder
+                .build_int_z_extend(cmp, self.i64_type, "cmpext"),
+        )?;
         self.push(ext);
         Ok(())
     }
@@ -1233,7 +1312,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
         let cmp = llvm_err(self.builder.build_int_compare(pred, lhs, rhs, "cmp"))?;
-        let ext = llvm_err(self.builder.build_int_z_extend(cmp, self.i64_type, "cmpext"))?;
+        let ext = llvm_err(
+            self.builder
+                .build_int_z_extend(cmp, self.i64_type, "cmpext"),
+        )?;
         self.push(ext);
         Ok(())
     }
@@ -1247,7 +1329,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
             self.i32_type.const_zero(),
             "eqz",
         ))?;
-        let ext = llvm_err(self.builder.build_int_z_extend(cmp, self.i64_type, "eqzext"))?;
+        let ext = llvm_err(
+            self.builder
+                .build_int_z_extend(cmp, self.i64_type, "eqzext"),
+        )?;
         self.push(ext);
         Ok(())
     }
@@ -1260,7 +1345,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
             self.i64_type.const_zero(),
             "eqz",
         ))?;
-        let ext = llvm_err(self.builder.build_int_z_extend(cmp, self.i64_type, "eqzext"))?;
+        let ext = llvm_err(
+            self.builder
+                .build_int_z_extend(cmp, self.i64_type, "eqzext"),
+        )?;
         self.push(ext);
         Ok(())
     }
@@ -1274,8 +1362,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
         let amt32 = llvm_err(self.builder.build_int_truncate(rhs, self.i32_type, "rota"))?;
         let result32 =
             self.call_ternary_intrinsic(intrinsic_name, self.i32_type, val32, val32, amt32)?;
-        let ext =
-            llvm_err(self.builder.build_int_z_extend(result32, self.i64_type, "rotext"))?;
+        let ext = llvm_err(
+            self.builder
+                .build_int_z_extend(result32, self.i64_type, "rotext"),
+        )?;
         self.push(ext);
         Ok(())
     }
@@ -1300,8 +1390,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
             // ctpop has no extra arg
             self.call_unary_intrinsic(intrinsic_name, self.i32_type, val32)?
         };
-        let ext =
-            llvm_err(self.builder.build_int_z_extend(result32, self.i64_type, "cntext"))?;
+        let ext = llvm_err(
+            self.builder
+                .build_int_z_extend(result32, self.i64_type, "cntext"),
+        )?;
         self.push(ext);
         Ok(())
     }
@@ -1322,13 +1414,24 @@ impl<'ctx> WasmToLlvm<'ctx> {
     fn sign_extend_in_i32(&mut self, from_bits: u32) -> Result<()> {
         let val = self.pop()?;
         let narrow_type = self.context.custom_width_int_type(from_bits);
-        let val32 = llvm_err(self.builder.build_int_truncate(val, self.i32_type, "se_t32"))?;
-        let narrow =
-            llvm_err(self.builder.build_int_truncate(val32, narrow_type, "se_narrow"))?;
-        let extended =
-            llvm_err(self.builder.build_int_s_extend(narrow, self.i32_type, "se_ext32"))?;
-        let result =
-            llvm_err(self.builder.build_int_z_extend(extended, self.i64_type, "se_ext64"))?;
+        let val32 = llvm_err(
+            self.builder
+                .build_int_truncate(val, self.i32_type, "se_t32"),
+        )?;
+        let narrow = llvm_err(
+            self.builder
+                .build_int_truncate(val32, narrow_type, "se_narrow"),
+        )?;
+        let extended = llvm_err(self.builder.build_int_s_extend(
+            narrow,
+            self.i32_type,
+            "se_ext32",
+        ))?;
+        let result = llvm_err(self.builder.build_int_z_extend(
+            extended,
+            self.i64_type,
+            "se_ext64",
+        ))?;
         self.push(result);
         Ok(())
     }
@@ -1336,10 +1439,14 @@ impl<'ctx> WasmToLlvm<'ctx> {
     fn sign_extend_in_i64(&mut self, from_bits: u32) -> Result<()> {
         let val = self.pop()?;
         let narrow_type = self.context.custom_width_int_type(from_bits);
-        let narrow =
-            llvm_err(self.builder.build_int_truncate(val, narrow_type, "se_narrow"))?;
-        let result =
-            llvm_err(self.builder.build_int_s_extend(narrow, self.i64_type, "se_ext"))?;
+        let narrow = llvm_err(
+            self.builder
+                .build_int_truncate(val, narrow_type, "se_narrow"),
+        )?;
+        let result = llvm_err(
+            self.builder
+                .build_int_s_extend(narrow, self.i64_type, "se_ext"),
+        )?;
         self.push(result);
         Ok(())
     }
@@ -1357,8 +1464,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         let fn_val = intrinsic
             .get_declaration(&self.module, &[operand_type.into()])
             .ok_or_else(|| Error::Internal(format!("{name} declaration failed")))?;
-        let result =
-            llvm_err(self.builder.build_call(fn_val, &[val.into()], "intrinsic"))?;
+        let result = llvm_err(self.builder.build_call(fn_val, &[val.into()], "intrinsic"))?;
         result
             .try_as_basic_value()
             .basic()
@@ -1378,14 +1484,13 @@ impl<'ctx> WasmToLlvm<'ctx> {
         let fn_val = intrinsic
             .get_declaration(&self.module, &[operand_type.into()])
             .ok_or_else(|| Error::Internal(format!("{name} declaration failed")))?;
-        let bool_val: BasicMetadataValueEnum = self
-            .i1_type
-            .const_int(u64::from(bool_arg), false)
-            .into();
-        let result = llvm_err(
-            self.builder
-                .build_call(fn_val, &[val.into(), bool_val], "intrinsic"),
-        )?;
+        let bool_val: BasicMetadataValueEnum =
+            self.i1_type.const_int(u64::from(bool_arg), false).into();
+        let result = llvm_err(self.builder.build_call(
+            fn_val,
+            &[val.into(), bool_val],
+            "intrinsic",
+        ))?;
         result
             .try_as_basic_value()
             .basic()
@@ -1406,10 +1511,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
         let fn_val = intrinsic
             .get_declaration(&self.module, &[operand_type.into()])
             .ok_or_else(|| Error::Internal(format!("{name} declaration failed")))?;
-        let result = llvm_err(
-            self.builder
-                .build_call(fn_val, &[a.into(), b.into(), c.into()], "intrinsic"),
-        )?;
+        let result = llvm_err(self.builder.build_call(
+            fn_val,
+            &[a.into(), b.into(), c.into()],
+            "intrinsic",
+        ))?;
         result
             .try_as_basic_value()
             .basic()

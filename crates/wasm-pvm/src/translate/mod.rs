@@ -212,9 +212,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
     if !module.function_table.is_empty() {
         ro_data.clear();
         for &func_idx in &module.function_table {
-            if func_idx == u32::MAX
-                || (func_idx as usize) < module.num_imported_funcs as usize
-            {
+            if func_idx == u32::MAX || (func_idx as usize) < module.num_imported_funcs as usize {
                 ro_data.extend_from_slice(&u32::MAX.to_le_bytes());
                 ro_data.extend_from_slice(&u32::MAX.to_le_bytes());
             } else {

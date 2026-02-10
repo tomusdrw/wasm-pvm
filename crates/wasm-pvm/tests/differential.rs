@@ -6,7 +6,7 @@
 
 #![cfg(feature = "llvm-backend")]
 
-use wasm_pvm::translate::{compile_legacy, compile_via_llvm, WasmModule};
+use wasm_pvm::translate::{WasmModule, compile_legacy, compile_via_llvm};
 
 /// Read a WAT fixture file and parse to WASM bytes.
 fn load_wat_fixture(name: &str) -> Vec<u8> {

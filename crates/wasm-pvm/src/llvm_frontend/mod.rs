@@ -7,8 +7,8 @@ pub use function_builder::WasmToLlvm;
 use inkwell::context::Context;
 use inkwell::module::Module;
 
-use crate::translate::wasm_module::WasmModule;
 use crate::Result;
+use crate::translate::wasm_module::WasmModule;
 
 /// Translate a parsed WASM module into an LLVM IR module.
 ///

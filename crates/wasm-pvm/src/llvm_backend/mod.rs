@@ -3,6 +3,5 @@
 mod lowering;
 
 pub use lowering::{
-    lower_function, LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup,
-    LoweringContext,
+    LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup, LoweringContext, lower_function,
 };

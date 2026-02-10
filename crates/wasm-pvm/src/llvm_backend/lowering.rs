@@ -5,12 +5,12 @@
 
 use std::collections::HashMap;
 
+use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{
     AnyValue, AnyValueEnum, AsValueRef, BasicValueEnum, FunctionValue, InstructionOpcode,
     InstructionValue, IntValue,
 };
-use inkwell::IntPredicate;
 
 use crate::pvm::Instruction;
 use crate::translate::memory_layout;
@@ -594,10 +594,7 @@ fn lower_instruction<'ctx>(
 // ── Helpers to get operands ──
 
 /// Get the i-th operand of an instruction as a BasicValueEnum.
-fn get_operand<'ctx>(
-    instr: InstructionValue<'ctx>,
-    i: u32,
-) -> Result<BasicValueEnum<'ctx>> {
+fn get_operand<'ctx>(instr: InstructionValue<'ctx>, i: u32) -> Result<BasicValueEnum<'ctx>> {
     instr
         .get_operand(i)
         .and_then(|op| op.value())
@@ -605,10 +602,7 @@ fn get_operand<'ctx>(
 }
 
 /// Get the i-th operand of an instruction as a BasicBlock.
-fn get_bb_operand<'ctx>(
-    instr: InstructionValue<'ctx>,
-    i: u32,
-) -> Result<BasicBlock<'ctx>> {
+fn get_bb_operand<'ctx>(instr: InstructionValue<'ctx>, i: u32) -> Result<BasicBlock<'ctx>> {
     instr
         .get_operand(i)
         .and_then(|op| op.block())
@@ -623,12 +617,8 @@ fn get_bb_operand<'ctx>(
 /// Get the slot offset for an instruction's result.
 fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i32> {
     let key = val_key_instr(instr);
-    e.get_slot(key).ok_or_else(|| {
-        Error::Internal(format!(
-            "no slot for {:?} result",
-            instr.get_opcode()
-        ))
-    })
+    e.get_slot(key)
+        .ok_or_else(|| Error::Internal(format!("no slot for {:?} result", instr.get_opcode())))
 }
 
 /// Detect the bit width of an instruction's result or first operand.
@@ -675,29 +665,121 @@ fn lower_binary_arith<'ctx>(
     e.load_operand(rhs, TEMP2);
 
     match (op, bits <= 32) {
-        (BinaryOp::Add, true) => e.emit(Instruction::Add32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Add, false) => e.emit(Instruction::Add64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Sub, true) => e.emit(Instruction::Sub32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Sub, false) => e.emit(Instruction::Sub64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Mul, true) => e.emit(Instruction::Mul32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Mul, false) => e.emit(Instruction::Mul64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::UDiv, true) => e.emit(Instruction::DivU32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::UDiv, false) => e.emit(Instruction::DivU64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::SDiv, true) => e.emit(Instruction::DivS32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::SDiv, false) => e.emit(Instruction::DivS64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::URem, true) => e.emit(Instruction::RemU32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::URem, false) => e.emit(Instruction::RemU64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::SRem, true) => e.emit(Instruction::RemS32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::SRem, false) => e.emit(Instruction::RemS64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::And, _) => e.emit(Instruction::And { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Or, _) => e.emit(Instruction::Or { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Xor, _) => e.emit(Instruction::Xor { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Shl, true) => e.emit(Instruction::ShloL32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::Shl, false) => e.emit(Instruction::ShloL64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::LShr, true) => e.emit(Instruction::ShloR32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::LShr, false) => e.emit(Instruction::ShloR64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::AShr, true) => e.emit(Instruction::SharR32 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
-        (BinaryOp::AShr, false) => e.emit(Instruction::SharR64 { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 }),
+        (BinaryOp::Add, true) => e.emit(Instruction::Add32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Add, false) => e.emit(Instruction::Add64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Sub, true) => e.emit(Instruction::Sub32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Sub, false) => e.emit(Instruction::Sub64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Mul, true) => e.emit(Instruction::Mul32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Mul, false) => e.emit(Instruction::Mul64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::UDiv, true) => e.emit(Instruction::DivU32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::UDiv, false) => e.emit(Instruction::DivU64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::SDiv, true) => e.emit(Instruction::DivS32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::SDiv, false) => e.emit(Instruction::DivS64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::URem, true) => e.emit(Instruction::RemU32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::URem, false) => e.emit(Instruction::RemU64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::SRem, true) => e.emit(Instruction::RemS32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::SRem, false) => e.emit(Instruction::RemS64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::And, _) => e.emit(Instruction::And {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Or, _) => e.emit(Instruction::Or {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Xor, _) => e.emit(Instruction::Xor {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Shl, true) => e.emit(Instruction::ShloL32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::Shl, false) => e.emit(Instruction::ShloL64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::LShr, true) => e.emit(Instruction::ShloR32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::LShr, false) => e.emit(Instruction::ShloR64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::AShr, true) => e.emit(Instruction::SharR32 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
+        (BinaryOp::AShr, false) => e.emit(Instruction::SharR64 {
+            dst: TEMP_RESULT,
+            src1: TEMP1,
+            src2: TEMP2,
+        }),
     }
 
     e.store_to_slot(slot, TEMP_RESULT);
@@ -706,10 +788,7 @@ fn lower_binary_arith<'ctx>(
 
 // ── Comparisons ──
 
-fn lower_icmp<'ctx>(
-    e: &mut PvmEmitter<'ctx>,
-    instr: InstructionValue<'ctx>,
-) -> Result<()> {
+fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let lhs = get_operand(instr, 0)?;
     let rhs = get_operand(instr, 1)?;
     let slot = result_slot(e, instr)?;
@@ -724,45 +803,112 @@ fn lower_icmp<'ctx>(
     match pred {
         IntPredicate::EQ => {
             // xor + setltuimm(result, 1) → (a == b)
-            e.emit(Instruction::Xor { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 });
-            e.emit(Instruction::SetLtUImm { dst: TEMP_RESULT, src: TEMP_RESULT, value: 1 });
+            e.emit(Instruction::Xor {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            e.emit(Instruction::SetLtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 1,
+            });
         }
         IntPredicate::NE => {
             // xor, then check nonzero: loadimm 0 → SCRATCH1, setltu(SCRATCH1, result)
-            e.emit(Instruction::Xor { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 });
-            e.emit(Instruction::LoadImm { reg: SCRATCH1, value: 0 });
-            e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: SCRATCH1, src2: TEMP_RESULT });
+            e.emit(Instruction::Xor {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            e.emit(Instruction::LoadImm {
+                reg: SCRATCH1,
+                value: 0,
+            });
+            e.emit(Instruction::SetLtU {
+                dst: TEMP_RESULT,
+                src1: SCRATCH1,
+                src2: TEMP_RESULT,
+            });
         }
         IntPredicate::ULT => {
-            e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 });
+            e.emit(Instruction::SetLtU {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
         }
         IntPredicate::SLT => {
-            e.emit(Instruction::SetLtS { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 });
+            e.emit(Instruction::SetLtS {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
         }
         IntPredicate::UGT => {
             // a > b ⟺ b < a
-            e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: TEMP2, src2: TEMP1 });
+            e.emit(Instruction::SetLtU {
+                dst: TEMP_RESULT,
+                src1: TEMP2,
+                src2: TEMP1,
+            });
         }
         IntPredicate::SGT => {
-            e.emit(Instruction::SetLtS { dst: TEMP_RESULT, src1: TEMP2, src2: TEMP1 });
+            e.emit(Instruction::SetLtS {
+                dst: TEMP_RESULT,
+                src1: TEMP2,
+                src2: TEMP1,
+            });
         }
         IntPredicate::ULE => {
             // a <= b ⟺ !(b < a)
-            e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: TEMP2, src2: TEMP1 });
-            e.emit(Instruction::SetLtUImm { dst: TEMP_RESULT, src: TEMP_RESULT, value: 1 });
+            e.emit(Instruction::SetLtU {
+                dst: TEMP_RESULT,
+                src1: TEMP2,
+                src2: TEMP1,
+            });
+            e.emit(Instruction::SetLtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 1,
+            });
         }
         IntPredicate::SLE => {
-            e.emit(Instruction::SetLtS { dst: TEMP_RESULT, src1: TEMP2, src2: TEMP1 });
-            e.emit(Instruction::SetLtUImm { dst: TEMP_RESULT, src: TEMP_RESULT, value: 1 });
+            e.emit(Instruction::SetLtS {
+                dst: TEMP_RESULT,
+                src1: TEMP2,
+                src2: TEMP1,
+            });
+            e.emit(Instruction::SetLtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 1,
+            });
         }
         IntPredicate::UGE => {
             // a >= b ⟺ !(a < b)
-            e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 });
-            e.emit(Instruction::SetLtUImm { dst: TEMP_RESULT, src: TEMP_RESULT, value: 1 });
+            e.emit(Instruction::SetLtU {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            e.emit(Instruction::SetLtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 1,
+            });
         }
         IntPredicate::SGE => {
-            e.emit(Instruction::SetLtS { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 });
-            e.emit(Instruction::SetLtUImm { dst: TEMP_RESULT, src: TEMP_RESULT, value: 1 });
+            e.emit(Instruction::SetLtS {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            e.emit(Instruction::SetLtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 1,
+            });
         }
     }
 
@@ -772,10 +918,7 @@ fn lower_icmp<'ctx>(
 
 // ── Conversions ──
 
-fn lower_zext<'ctx>(
-    e: &mut PvmEmitter<'ctx>,
-    instr: InstructionValue<'ctx>,
-) -> Result<()> {
+fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
     let from_bits = operand_bit_width(instr);
@@ -809,10 +952,7 @@ fn lower_zext<'ctx>(
     Ok(())
 }
 
-fn lower_sext<'ctx>(
-    e: &mut PvmEmitter<'ctx>,
-    instr: InstructionValue<'ctx>,
-) -> Result<()> {
+fn lower_sext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
     let from_bits = operand_bit_width(instr);
@@ -854,10 +994,7 @@ fn lower_sext<'ctx>(
     Ok(())
 }
 
-fn lower_trunc<'ctx>(
-    e: &mut PvmEmitter<'ctx>,
-    instr: InstructionValue<'ctx>,
-) -> Result<()> {
+fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
 
@@ -898,10 +1035,7 @@ fn lower_trunc<'ctx>(
 
 // ── Select ──
 
-fn lower_select<'ctx>(
-    e: &mut PvmEmitter<'ctx>,
-    instr: InstructionValue<'ctx>,
-) -> Result<()> {
+fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     // select i1 %cond, i64 %true_val, i64 %false_val
     let cond = get_operand(instr, 0)?;
     let true_val = get_operand(instr, 1)?;
@@ -1033,9 +1167,10 @@ fn lower_br<'ctx>(
         // Unconditional: br label %dest
         let dest_bb = get_bb_operand(instr, 0)?;
         emit_phi_copies(e, current_bb, dest_bb)?;
-        let label = *e.block_labels.get(&dest_bb).ok_or_else(|| {
-            Error::Internal("branch to unknown basic block".into())
-        })?;
+        let label = *e
+            .block_labels
+            .get(&dest_bb)
+            .ok_or_else(|| Error::Internal("branch to unknown basic block".into()))?;
         e.emit_jump_to_label(label);
     } else {
         // Conditional: br i1 %cond, label %then, label %else
@@ -1043,12 +1178,14 @@ fn lower_br<'ctx>(
         let then_bb = get_bb_operand(instr, 1)?;
         let else_bb = get_bb_operand(instr, 2)?;
 
-        let then_label = *e.block_labels.get(&then_bb).ok_or_else(|| {
-            Error::Internal("branch to unknown then block".into())
-        })?;
-        let else_label = *e.block_labels.get(&else_bb).ok_or_else(|| {
-            Error::Internal("branch to unknown else block".into())
-        })?;
+        let then_label = *e
+            .block_labels
+            .get(&then_bb)
+            .ok_or_else(|| Error::Internal("branch to unknown then block".into()))?;
+        let else_label = *e
+            .block_labels
+            .get(&else_bb)
+            .ok_or_else(|| Error::Internal("branch to unknown else block".into()))?;
 
         let then_has_phis = has_phi_from(current_bb, then_bb);
         let else_has_phis = has_phi_from(current_bb, else_bb);
@@ -1087,9 +1224,10 @@ fn lower_switch<'ctx>(
     let val = get_operand(instr, 0)?;
     let default_bb = get_bb_operand(instr, 1)?;
 
-    let default_label = *e.block_labels.get(&default_bb).ok_or_else(|| {
-        Error::Internal("switch default to unknown block".into())
-    })?;
+    let default_label = *e
+        .block_labels
+        .get(&default_bb)
+        .ok_or_else(|| Error::Internal("switch default to unknown block".into()))?;
 
     e.load_operand(val, TEMP1);
 
@@ -1110,9 +1248,10 @@ fn lower_switch<'ctx>(
                     e.emit_branch_eq_imm_to_label(TEMP1, c as i32, trampoline);
                     trampolines.push((trampoline, case_bb));
                 } else {
-                    let case_label = *e.block_labels.get(&case_bb).ok_or_else(|| {
-                        Error::Internal("switch case to unknown block".into())
-                    })?;
+                    let case_label = *e
+                        .block_labels
+                        .get(&case_bb)
+                        .ok_or_else(|| Error::Internal("switch case to unknown block".into()))?;
                     e.emit_branch_eq_imm_to_label(TEMP1, c as i32, case_label);
                 }
             }
@@ -1126,9 +1265,10 @@ fn lower_switch<'ctx>(
 
     // Emit trampolines for cases that need phi copies.
     for (trampoline_label, case_bb) in trampolines {
-        let case_label = *e.block_labels.get(&case_bb).ok_or_else(|| {
-            Error::Internal("switch case to unknown block".into())
-        })?;
+        let case_label = *e
+            .block_labels
+            .get(&case_bb)
+            .ok_or_else(|| Error::Internal("switch case to unknown block".into()))?;
         e.define_label(trampoline_label);
         emit_phi_copies(e, current_bb, case_bb)?;
         e.emit_jump_to_label(case_label);
@@ -1198,7 +1338,9 @@ fn lower_load<'ctx>(
     // Try to extract the global index from the name.
     if let BasicValueEnum::PointerValue(pv) = ptr {
         let name = pv.get_name().to_string_lossy().to_string();
-        if let Some(idx) = name.strip_prefix("wasm_global_").and_then(|s| s.parse::<u32>().ok())
+        if let Some(idx) = name
+            .strip_prefix("wasm_global_")
+            .and_then(|s| s.parse::<u32>().ok())
         {
             let global_addr = memory_layout::global_addr(idx);
             e.emit(Instruction::LoadImm {
@@ -1231,7 +1373,9 @@ fn lower_store<'ctx>(
 
     if let BasicValueEnum::PointerValue(pv) = ptr {
         let name = pv.get_name().to_string_lossy().to_string();
-        if let Some(idx) = name.strip_prefix("wasm_global_").and_then(|s| s.parse::<u32>().ok())
+        if let Some(idx) = name
+            .strip_prefix("wasm_global_")
+            .and_then(|s| s.parse::<u32>().ok())
         {
             let global_addr = memory_layout::global_addr(idx);
             e.load_operand(val, TEMP1);
@@ -1409,18 +1553,10 @@ fn lower_pvm_intrinsic<'ctx>(
         // ── Loads ──
         "__pvm_load_i32" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U32),
         "__pvm_load_i64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U64),
-        "__pvm_load_i8u" | "__pvm_load_i8u_64" => {
-            emit_pvm_load(e, instr, ctx, PvmLoadKind::U8)
-        }
-        "__pvm_load_i8s" | "__pvm_load_i8s_64" => {
-            emit_pvm_load(e, instr, ctx, PvmLoadKind::I8)
-        }
-        "__pvm_load_i16u" | "__pvm_load_i16u_64" => {
-            emit_pvm_load(e, instr, ctx, PvmLoadKind::U16)
-        }
-        "__pvm_load_i16s" | "__pvm_load_i16s_64" => {
-            emit_pvm_load(e, instr, ctx, PvmLoadKind::I16)
-        }
+        "__pvm_load_i8u" | "__pvm_load_i8u_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U8),
+        "__pvm_load_i8s" | "__pvm_load_i8s_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::I8),
+        "__pvm_load_i16u" | "__pvm_load_i16u_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U16),
+        "__pvm_load_i16s" | "__pvm_load_i16s_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::I16),
         "__pvm_load_i32u_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::U32),
         "__pvm_load_i32s_64" => emit_pvm_load(e, instr, ctx, PvmLoadKind::I32S),
 
@@ -1429,9 +1565,7 @@ fn lower_pvm_intrinsic<'ctx>(
             emit_pvm_store(e, instr, ctx, PvmStoreKind::U32)
         }
         "__pvm_store_i64" => emit_pvm_store(e, instr, ctx, PvmStoreKind::U64),
-        "__pvm_store_i8" | "__pvm_store_i8_64" => {
-            emit_pvm_store(e, instr, ctx, PvmStoreKind::U8)
-        }
+        "__pvm_store_i8" | "__pvm_store_i8_64" => emit_pvm_store(e, instr, ctx, PvmStoreKind::U8),
         "__pvm_store_i16" | "__pvm_store_i16_64" => {
             emit_pvm_store(e, instr, ctx, PvmStoreKind::U16)
         }
@@ -1482,17 +1616,49 @@ fn emit_pvm_load<'ctx>(
     // Emit the PVM load with wasm_memory_base as the offset.
     let offset = ctx.wasm_memory_base;
     match kind {
-        PvmLoadKind::U8 => e.emit(Instruction::LoadIndU8 { dst: TEMP_RESULT, base: TEMP1, offset }),
-        PvmLoadKind::I8 => e.emit(Instruction::LoadIndI8 { dst: TEMP_RESULT, base: TEMP1, offset }),
-        PvmLoadKind::U16 => e.emit(Instruction::LoadIndU16 { dst: TEMP_RESULT, base: TEMP1, offset }),
-        PvmLoadKind::I16 => e.emit(Instruction::LoadIndI16 { dst: TEMP_RESULT, base: TEMP1, offset }),
-        PvmLoadKind::U32 => e.emit(Instruction::LoadIndU32 { dst: TEMP_RESULT, base: TEMP1, offset }),
+        PvmLoadKind::U8 => e.emit(Instruction::LoadIndU8 {
+            dst: TEMP_RESULT,
+            base: TEMP1,
+            offset,
+        }),
+        PvmLoadKind::I8 => e.emit(Instruction::LoadIndI8 {
+            dst: TEMP_RESULT,
+            base: TEMP1,
+            offset,
+        }),
+        PvmLoadKind::U16 => e.emit(Instruction::LoadIndU16 {
+            dst: TEMP_RESULT,
+            base: TEMP1,
+            offset,
+        }),
+        PvmLoadKind::I16 => e.emit(Instruction::LoadIndI16 {
+            dst: TEMP_RESULT,
+            base: TEMP1,
+            offset,
+        }),
+        PvmLoadKind::U32 => e.emit(Instruction::LoadIndU32 {
+            dst: TEMP_RESULT,
+            base: TEMP1,
+            offset,
+        }),
         PvmLoadKind::I32S => {
             // Load as u32 then sign-extend from 32 bits.
-            e.emit(Instruction::LoadIndU32 { dst: TEMP_RESULT, base: TEMP1, offset });
-            e.emit(Instruction::AddImm32 { dst: TEMP_RESULT, src: TEMP_RESULT, value: 0 });
+            e.emit(Instruction::LoadIndU32 {
+                dst: TEMP_RESULT,
+                base: TEMP1,
+                offset,
+            });
+            e.emit(Instruction::AddImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 0,
+            });
         }
-        PvmLoadKind::U64 => e.emit(Instruction::LoadIndU64 { dst: TEMP_RESULT, base: TEMP1, offset }),
+        PvmLoadKind::U64 => e.emit(Instruction::LoadIndU64 {
+            dst: TEMP_RESULT,
+            base: TEMP1,
+            offset,
+        }),
     }
 
     e.store_to_slot(slot, TEMP_RESULT);
@@ -1514,10 +1680,26 @@ fn emit_pvm_store<'ctx>(
 
     let offset = ctx.wasm_memory_base;
     match kind {
-        PvmStoreKind::U8 => e.emit(Instruction::StoreIndU8 { base: TEMP1, src: TEMP2, offset }),
-        PvmStoreKind::U16 => e.emit(Instruction::StoreIndU16 { base: TEMP1, src: TEMP2, offset }),
-        PvmStoreKind::U32 => e.emit(Instruction::StoreIndU32 { base: TEMP1, src: TEMP2, offset }),
-        PvmStoreKind::U64 => e.emit(Instruction::StoreIndU64 { base: TEMP1, src: TEMP2, offset }),
+        PvmStoreKind::U8 => e.emit(Instruction::StoreIndU8 {
+            base: TEMP1,
+            src: TEMP2,
+            offset,
+        }),
+        PvmStoreKind::U16 => e.emit(Instruction::StoreIndU16 {
+            base: TEMP1,
+            src: TEMP2,
+            offset,
+        }),
+        PvmStoreKind::U32 => e.emit(Instruction::StoreIndU32 {
+            base: TEMP1,
+            src: TEMP2,
+            offset,
+        }),
+        PvmStoreKind::U64 => e.emit(Instruction::StoreIndU64 {
+            base: TEMP1,
+            src: TEMP2,
+            offset,
+        }),
     }
 
     Ok(())
@@ -1891,9 +2073,15 @@ fn lower_llvm_intrinsic<'ctx>(
         let val = get_operand(instr, 0)?;
         e.load_operand(val, TEMP1);
         if name.contains("i32") {
-            e.emit(Instruction::LeadingZeroBits32 { dst: TEMP_RESULT, src: TEMP1 });
+            e.emit(Instruction::LeadingZeroBits32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+            });
         } else {
-            e.emit(Instruction::LeadingZeroBits64 { dst: TEMP_RESULT, src: TEMP1 });
+            e.emit(Instruction::LeadingZeroBits64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+            });
         }
         e.store_to_slot(slot, TEMP_RESULT);
         return Ok(());
@@ -1903,9 +2091,15 @@ fn lower_llvm_intrinsic<'ctx>(
         let val = get_operand(instr, 0)?;
         e.load_operand(val, TEMP1);
         if name.contains("i32") {
-            e.emit(Instruction::TrailingZeroBits32 { dst: TEMP_RESULT, src: TEMP1 });
+            e.emit(Instruction::TrailingZeroBits32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+            });
         } else {
-            e.emit(Instruction::TrailingZeroBits64 { dst: TEMP_RESULT, src: TEMP1 });
+            e.emit(Instruction::TrailingZeroBits64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+            });
         }
         e.store_to_slot(slot, TEMP_RESULT);
         return Ok(());
@@ -1915,9 +2109,15 @@ fn lower_llvm_intrinsic<'ctx>(
         let val = get_operand(instr, 0)?;
         e.load_operand(val, TEMP1);
         if name.contains("i32") {
-            e.emit(Instruction::CountSetBits32 { dst: TEMP_RESULT, src: TEMP1 });
+            e.emit(Instruction::CountSetBits32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+            });
         } else {
-            e.emit(Instruction::CountSetBits64 { dst: TEMP_RESULT, src: TEMP1 });
+            e.emit(Instruction::CountSetBits64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+            });
         }
         e.store_to_slot(slot, TEMP_RESULT);
         return Ok(());
@@ -1954,28 +2154,68 @@ fn lower_llvm_intrinsic<'ctx>(
             value: bits,
         });
         if is_32 {
-            e.emit(Instruction::Sub32 { dst: SCRATCH2, src1: SCRATCH2, src2: SCRATCH1 });
+            e.emit(Instruction::Sub32 {
+                dst: SCRATCH2,
+                src1: SCRATCH2,
+                src2: SCRATCH1,
+            });
         } else {
-            e.emit(Instruction::Sub64 { dst: SCRATCH2, src1: SCRATCH2, src2: SCRATCH1 });
+            e.emit(Instruction::Sub64 {
+                dst: SCRATCH2,
+                src1: SCRATCH2,
+                src2: SCRATCH1,
+            });
         }
 
         if name.contains("fshl") {
             // (a << amt) | (b >> (bits - amt))
             if is_32 {
-                e.emit(Instruction::ShloL32 { dst: TEMP1, src1: TEMP1, src2: SCRATCH1 });
-                e.emit(Instruction::ShloR32 { dst: TEMP2, src1: TEMP2, src2: SCRATCH2 });
+                e.emit(Instruction::ShloL32 {
+                    dst: TEMP1,
+                    src1: TEMP1,
+                    src2: SCRATCH1,
+                });
+                e.emit(Instruction::ShloR32 {
+                    dst: TEMP2,
+                    src1: TEMP2,
+                    src2: SCRATCH2,
+                });
             } else {
-                e.emit(Instruction::ShloL64 { dst: TEMP1, src1: TEMP1, src2: SCRATCH1 });
-                e.emit(Instruction::ShloR64 { dst: TEMP2, src1: TEMP2, src2: SCRATCH2 });
+                e.emit(Instruction::ShloL64 {
+                    dst: TEMP1,
+                    src1: TEMP1,
+                    src2: SCRATCH1,
+                });
+                e.emit(Instruction::ShloR64 {
+                    dst: TEMP2,
+                    src1: TEMP2,
+                    src2: SCRATCH2,
+                });
             }
         } else {
             // (a << (bits - amt)) | (b >> amt)
             if is_32 {
-                e.emit(Instruction::ShloL32 { dst: TEMP1, src1: TEMP1, src2: SCRATCH2 });
-                e.emit(Instruction::ShloR32 { dst: TEMP2, src1: TEMP2, src2: SCRATCH1 });
+                e.emit(Instruction::ShloL32 {
+                    dst: TEMP1,
+                    src1: TEMP1,
+                    src2: SCRATCH2,
+                });
+                e.emit(Instruction::ShloR32 {
+                    dst: TEMP2,
+                    src1: TEMP2,
+                    src2: SCRATCH1,
+                });
             } else {
-                e.emit(Instruction::ShloL64 { dst: TEMP1, src1: TEMP1, src2: SCRATCH2 });
-                e.emit(Instruction::ShloR64 { dst: TEMP2, src1: TEMP2, src2: SCRATCH1 });
+                e.emit(Instruction::ShloL64 {
+                    dst: TEMP1,
+                    src1: TEMP1,
+                    src2: SCRATCH2,
+                });
+                e.emit(Instruction::ShloR64 {
+                    dst: TEMP2,
+                    src1: TEMP2,
+                    src2: SCRATCH1,
+                });
             }
         }
 
