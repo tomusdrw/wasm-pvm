@@ -1,9 +1,5 @@
 (module
   (memory 1)
-
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
-
   (table 1 funcref)
   (elem (i32.const 0) $get_three)
   (type $nullary (func (result i32)))
@@ -12,7 +8,7 @@
     (i32.const 3)
   )
 
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $step i32)
     (local $obj_ptr i32)
     (local $pc i32)
@@ -52,8 +48,8 @@
             (i32.load offset=8 (local.get $obj_ptr))
           )
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -84,8 +80,8 @@
             (i32.load offset=8 (local.get $obj_ptr))
           )
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -100,8 +96,8 @@
           (i32.add (local.get $pc) (i32.add (i32.const 1) (local.get $result)))
         )
         (i32.store (i32.const 0) (i32.load offset=4 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -121,8 +117,8 @@
           (i32.add (local.get $pc) (i32.add (i32.const 1) (local.get $result)))
         )
         (i32.store (i32.const 0) (i32.load offset=4 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -143,8 +139,8 @@
           )
         )
         (i32.store (i32.const 0) (i32.load offset=8 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -167,8 +163,8 @@
           )
         )
         (i32.store (i32.const 0) (i32.load offset=4 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -190,10 +186,13 @@
           )
         )
         (i32.store (i32.const 0) (i32.load offset=4 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
+
+    (i32.const 0)  ;; default result_ptr
+    (i32.const 0)  ;; default result_len
   )
 )

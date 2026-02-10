@@ -1,13 +1,9 @@
 (module
   (memory 1)
-
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
-
   ;; Test i64 operations with constants
   ;; Input: operation selector (i32)
   ;; 0=div_u, 1=rem_u, 2=shl, 3=shr_u, 4=and, 5=or, 6=xor, 7=ge_u, 8=le_u
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $op i32)
     (local $result i32)
     ;; Keep only 2 locals (plus 2 params = 4 total) to avoid spilling
@@ -101,7 +97,7 @@
     (i32.store (i32.const 0) (local.get $result))
 
     ;; Set return value
-    (global.set $result_ptr (i32.const 0))
-    (global.set $result_len (i32.const 4))
+    (i32.const 0)  ;; result_ptr
+    (i32.const 4)  ;; result_len
   )
 )

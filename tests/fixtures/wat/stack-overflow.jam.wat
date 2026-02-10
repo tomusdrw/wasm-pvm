@@ -3,8 +3,6 @@
 (module
   (memory 1)
   
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
   
   ;; Recursive function that decrements n until 0
   ;; Each call uses ~48 bytes of stack (40 bytes header + some for operand stack)
@@ -19,7 +17,7 @@
     )
   )
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $result i32)
     
     ;; Read the recursion depth from args
@@ -28,7 +26,7 @@
     )
     
     (i32.store (i32.const 0) (local.get $result))
-    (global.set $result_ptr (i32.const 0))
-    (global.set $result_len (i32.const 4))
+    (i32.const 0)  ;; result_ptr
+    (i32.const 4)  ;; result_len
   )
 )

@@ -1,14 +1,12 @@
 (module
   (memory 1)
   
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
   
   ;; factorial(n) using only 2 extra locals (reuse params after reading args)
   ;; params: $args_ptr (idx 0) -> reused as $i
   ;;         $args_len (idx 1) -> reused as $n
   ;; locals: $result (idx 2)
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $result i32)
     
     ;; Read n from args into $args_len (reusing param as $n)
@@ -45,7 +43,7 @@
     ;; Write result to heap
     (i32.store (i32.const 0) (local.get $result))
     
-    (global.set $result_ptr (i32.const 0))
-    (global.set $result_len (i32.const 4))
+    (i32.const 0)  ;; result_ptr
+    (i32.const 4)  ;; result_len
   )
 )

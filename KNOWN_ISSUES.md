@@ -33,7 +33,7 @@ The `memory.copy` now has backward copy path when `dest > src`. When regions ove
 **Status**: FIXED (2026-02-09)
 **Severity**: Medium -> High (WASM spec violation)
 
-All 8 div/rem ops now have div-by-zero checks (`BranchNeImm + Trap`). `DivS32`/`DivS64` have `INT_MIN/-1` overflow checks. For i64, uses `LoadImm64 + Xor` approach since `i64::MIN` doesn't fit in a 32-bit immediate. 8 regression tests in `tests/division_checks.rs`.
+All 8 div/rem ops now have div-by-zero checks (`BranchNeImm + Trap`). `DivS32`/`DivS64` have `INT_MIN/-1` overflow checks. For i64, uses `LoadImm64 + Xor` approach since `i64::MIN` doesn't fit in a 32-bit immediate. 8 regression tests in `crates/wasm-pvm/tests/division_checks.rs`.
 
 ---
 
@@ -42,7 +42,7 @@ All 8 div/rem ops now have div-by-zero checks (`BranchNeImm + Trap`). `DivS32`/`
 **Status**: FIXED (2026-02-09)
 **Severity**: Medium
 
-Imported function stubs now push a dummy value (0) when the import signature has a return type, maintaining stack balance. 4 regression tests in `tests/import_returns.rs`.
+Imported function stubs now push a dummy value (0) when the import signature has a return type, maintaining stack balance. 4 regression tests in `crates/wasm-pvm/tests/import_returns.rs`.
 
 ---
 

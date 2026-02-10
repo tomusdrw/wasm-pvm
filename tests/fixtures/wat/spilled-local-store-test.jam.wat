@@ -13,10 +13,6 @@
 
 (module
   (memory 1)
-
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
-
   ;; Function table for call_indirect
   (table 2 funcref)
   (elem (i32.const 0) $return_seven $return_three)
@@ -31,7 +27,7 @@
     (i32.const 3)
   )
 
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     ;; 2 params + 15 additional locals = 17 total (same as nextSteps)
     (local $step i32)       ;; local 2
     (local $obj_ptr i32)    ;; local 3
@@ -79,8 +75,8 @@
         i32.store offset=16
         ;; Output
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -92,8 +88,8 @@
         (drop (call_indirect (type $exe_type) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
         ;; Read spilled local
         (i32.store (i32.const 0) (local.get $l7))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -125,8 +121,8 @@
         i32.store offset=16
         ;; Output
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -135,8 +131,8 @@
     (if (i32.eq (local.get $step) (i32.const 3))
       (then
         (i32.store (i32.const 0) (call_indirect (type $exe_type) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -159,15 +155,15 @@
         i32.store offset=16
         ;; Output
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
 
     ;; Default: return 0
     (i32.store (i32.const 0) (i32.const 0))
-    (global.set $result_ptr (i32.const 0))
-    (global.set $result_len (i32.const 4))
+    (i32.const 0)  ;; result_ptr
+    (i32.const 4)  ;; result_len
   )
 )

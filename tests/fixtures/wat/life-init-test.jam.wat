@@ -3,10 +3,8 @@
 (module
   (memory 1)
   
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $buf_a i32)
     
     (local.set $buf_a (i32.const 0))
@@ -57,7 +55,7 @@
           (i32.shl (i32.load8_u (i32.add (local.get $buf_a) (i32.const 14))) (i32.const 16))
           (i32.shl (i32.load8_u (i32.add (local.get $buf_a) (i32.const 15))) (i32.const 24)))))
     
-    (global.set $result_ptr (i32.const 0x30200))
-    (global.set $result_len (i32.const 24))
+    (i32.const 0x30200)  ;; result_ptr
+    (i32.const 24)  ;; result_len
   )
 )

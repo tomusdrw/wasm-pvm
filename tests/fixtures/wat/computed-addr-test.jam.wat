@@ -5,10 +5,8 @@
 (module
   (memory 1)
   
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $test_case i32)
     (local $base i32)
     (local $addr i32)
@@ -54,7 +52,7 @@
     ;; Store result at WASM address 0x200 (-> PVM address 0x50200)
     (i32.store (i32.const 0x200) (local.get $val))
     ;; result_ptr is WASM address - epilogue adds WASM_MEMORY_BASE
-    (global.set $result_ptr (i32.const 0x200))
-    (global.set $result_len (i32.const 4))
+    (i32.const 0x200)  ;; result_ptr
+    (i32.const 4)  ;; result_len
   )
 )

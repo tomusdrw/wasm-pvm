@@ -1,12 +1,8 @@
 (module
   (memory 1)
-
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
-
   ;; Test function with many locals (triggers spilling)
   ;; Computes: a + b + c + d + e + f where each is set from input + index
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $a i32)  ;; local 2 -> r11
     (local $b i32)  ;; local 3 -> r12
     (local $c i32)  ;; local 4 -> spilled
@@ -38,7 +34,7 @@
     (i32.store (i32.const 0) (local.get $result))
 
     ;; Set return value
-    (global.set $result_ptr (i32.const 0))
-    (global.set $result_len (i32.const 4))
+    (i32.const 0)  ;; result_ptr
+    (i32.const 4)  ;; result_len
   )
 )

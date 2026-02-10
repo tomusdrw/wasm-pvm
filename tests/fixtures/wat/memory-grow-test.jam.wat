@@ -1,10 +1,6 @@
 (module
   (memory 1)
-
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
-
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $step i32)
     (local $old_pages i32)
     (local $new_pages i32)
@@ -15,8 +11,8 @@
     (if (i32.eqz (local.get $step))
       (then
         (i32.store (i32.const 0) (memory.size))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -25,8 +21,8 @@
     (if (i32.eq (local.get $step) (i32.const 1))
       (then
         (i32.store (i32.const 0) (memory.grow (i32.const 1)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -43,8 +39,8 @@
             (local.get $new_pages)
           )
         )
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -58,8 +54,8 @@
         (i32.store (i32.const 65536) (i32.const 42))
         ;; Read it back
         (i32.store (i32.const 0) (i32.load (i32.const 65536)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
@@ -71,10 +67,13 @@
         ;; Store 99 at offset 131072 (start of 3rd page)
         (i32.store (i32.const 131072) (i32.const 99))
         (i32.store (i32.const 0) (i32.load (i32.const 131072)))
-        (global.set $result_ptr (i32.const 0))
-        (global.set $result_len (i32.const 4))
+        (i32.const 0)  ;; result_ptr
+        (i32.const 4)  ;; result_len
         (return)
       )
     )
+
+    (i32.const 0)  ;; default result_ptr
+    (i32.const 0)  ;; default result_len
   )
 )

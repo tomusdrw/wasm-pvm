@@ -4,10 +4,8 @@
 (module
   (memory 1)
   
-  (global $result_ptr (mut i32) (i32.const 0))
-  (global $result_len (mut i32) (i32.const 0))
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
     (local $y i32)
     (local $x i32)
     (local $src i32)
@@ -81,7 +79,7 @@
     
     ;; Expected: 128 ones (checkerboard pattern has 128 1s in 16x16)
     (i32.store (i32.const 0x30300) (local.get $sum))
-    (global.set $result_ptr (i32.const 0x30300))
-    (global.set $result_len (i32.const 4))
+    (i32.const 0x30300)  ;; result_ptr
+    (i32.const 4)  ;; result_len
   )
 )
