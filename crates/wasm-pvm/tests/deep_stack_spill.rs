@@ -1,4 +1,3 @@
-use wasm_pvm::pvm::Opcode;
 use wasm_pvm::test_harness::*;
 
 /// Basic test: push 6 values (forces 1 spill), then pop all with operations.
@@ -24,15 +23,7 @@ fn test_stack_depth_6_basic() {
         "#,
     )
     .expect("compile");
-    let instructions = extract_instructions(&program);
-    // LLVM backend constant-folds pure-constant expressions during IR construction,
-    // so no Add32 instructions are emitted. Only check with legacy backend.
-    #[cfg(not(feature = "llvm-backend"))]
-    assert!(
-        count_opcode(&instructions, Opcode::Add32) >= 5,
-        "Should have 5 Add32 instructions"
-    );
-    let _ = instructions;
+    let _instructions = extract_instructions(&program);
 }
 
 /// Push 8 values (3 spilled), then reduce with additions.
@@ -62,13 +53,7 @@ fn test_stack_depth_8() {
         "#,
     )
     .expect("compile");
-    let instructions = extract_instructions(&program);
-    #[cfg(not(feature = "llvm-backend"))]
-    assert!(
-        count_opcode(&instructions, Opcode::Add32) >= 7,
-        "Should have 7 Add32 instructions"
-    );
-    let _ = instructions;
+    let _instructions = extract_instructions(&program);
 }
 
 /// Operand stack spill across a function call boundary.
@@ -171,14 +156,7 @@ fn test_deep_stack_mixed_operations() {
         "#,
     )
     .expect("compile");
-    let instructions = extract_instructions(&program);
-    #[cfg(not(feature = "llvm-backend"))]
-    {
-        assert!(has_opcode(&instructions, Opcode::Mul32));
-        assert!(has_opcode(&instructions, Opcode::Add32));
-        assert!(has_opcode(&instructions, Opcode::Sub32));
-    }
-    let _ = instructions;
+    let _instructions = extract_instructions(&program);
 }
 
 /// Spilled stack with conditional (if/else) to test that spill state

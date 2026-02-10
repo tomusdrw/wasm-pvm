@@ -2,15 +2,11 @@
     clippy::cast_possible_truncation, // intentional: WASM uses i32/i64, PVM uses u8 registers
     clippy::cast_possible_wrap, // intentional: unsigned/signed conversions for WASM address arithmetic
     clippy::cast_sign_loss, // intentional: WASM addresses are i32 but stored as u32
-    clippy::too_many_lines, // codegen.rs is intentionally monolithic for V1
-    clippy::missing_errors_doc // will be addressed in V2 documentation pass
+    clippy::missing_errors_doc // will be addressed in documentation pass
 )]
 
 pub mod error;
-pub mod ir;
-#[cfg(feature = "llvm-backend")]
 pub mod llvm_backend;
-#[cfg(feature = "llvm-backend")]
 pub mod llvm_frontend;
 pub mod pvm;
 pub mod spi;

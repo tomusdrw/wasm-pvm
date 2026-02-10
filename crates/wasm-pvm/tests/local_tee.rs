@@ -194,34 +194,6 @@ fn test_local_tee_with_pending_spill() {
     );
 }
 
-/// Multiple consecutive local.tee operations at different stack depths.
-#[cfg(not(feature = "llvm-backend"))]
-#[test]
-fn test_multiple_local_tee_consecutive() {
-    let program = compile_wat(
-        r#"
-        (module
-            (func (export "main") (result i32)
-                (local i32 i32 i32)
-                i32.const 10
-                local.tee 0
-                local.tee 1
-                local.tee 2
-            )
-        )
-        "#,
-    )
-    .expect("compile");
-    let instructions = extract_instructions(&program);
-
-    // Each local.tee should emit an AddImm64 copy (for register locals)
-    let copy_count = count_opcode(&instructions, Opcode::AddImm64);
-    assert!(
-        copy_count >= 3,
-        "Three consecutive local.tee should emit at least 3 AddImm64 copies, found {copy_count}"
-    );
-}
-
 /// local.tee inside a loop at spill depth - regression test for complex control flow.
 #[test]
 fn test_local_tee_in_loop_with_spill() {
