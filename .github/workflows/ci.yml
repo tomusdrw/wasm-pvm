@@ -82,5 +82,8 @@ jobs:
       - name: Install tests dependencies
         run: cd tests && bun install
 
+      - name: Build test fixtures
+        run: cd tests && bun run build
+
       - name: Run integration tests
         run: cd tests && bun test
