@@ -4,6 +4,7 @@
     clippy::missing_errors_doc // TODO: Add docs in V2 (Task #34/Documentation)
 )]
 
+pub mod abi;
 pub mod error;
 pub mod llvm_backend;
 pub mod llvm_frontend;
