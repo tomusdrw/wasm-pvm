@@ -373,13 +373,25 @@ impl<'ctx> WasmToLlvm<'ctx> {
         // In unreachable code, only track control flow structure for End matching.
         if self.unreachable {
             match op {
-                Operator::Block { .. } | Operator::Loop { .. } | Operator::If { .. } => {
+                Operator::Block { .. } | Operator::Loop { .. } => {
                     // Push a dummy frame so End can pop it
                     let dummy_bb = self.builder.get_insert_block().unwrap();
                     self.control_stack.push(ControlFrame::Block {
                         merge_bb: dummy_bb,
                         result_phi: None,
                         stack_depth: self.operand_stack.len(),
+                    });
+                    return Ok(());
+                }
+                Operator::If { .. } => {
+                    // Push an If frame so Else can match it
+                    let dummy_bb = self.builder.get_insert_block().unwrap();
+                    self.control_stack.push(ControlFrame::If {
+                        else_bb: dummy_bb,
+                        merge_bb: dummy_bb,
+                        result_phi: None,
+                        stack_depth: self.operand_stack.len(),
+                        else_seen: false,
                     });
                     return Ok(());
                 }
