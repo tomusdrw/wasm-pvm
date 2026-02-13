@@ -46,9 +46,6 @@ export function compileToJAM(inputPath: string, outputName: string): string {
     `${outputName}.jam`
   );
 
-  if (!isStale(inputPath, jamFile)) {
-    return jamFile;
-  }
 
   const cmd = `${CLI_BINARY} compile ${inputPath} -o ${jamFile}`;
   execSync(cmd, {

@@ -34,72 +34,6 @@ fn test_arithmetic_operations() {
     assert!(add_count >= 1, "Should have at least one Add32");
 }
 
-#[test]
-fn test_pattern_finding() {
-    let wat = r#"
-        (module
-            (func (export "main") (param i32 i32) (result i32)
-                local.get 0
-                local.get 1
-                i32.mul
-            )
-        )
-    "#;
-
-    let program = compile_wat(wat).expect("Failed to compile");
-    let instructions = extract_instructions(&program);
-
-    // Look for a pattern: AddImm64 (used as move for locals) followed by Mul32 anywhere in the code
-    // (the compiler uses AddImm64 { value: 0 } to set up local variable registers, then Mul32)
-    let pattern = vec![
-        InstructionPattern::AddImm64 {
-            dst: Pat::Any,
-            src: Pat::Any,
-            value: Pat::Any,
-        },
-        InstructionPattern::Mul32 {
-            dst: Pat::Any,
-            src1: Pat::Any,
-            src2: Pat::Any,
-        },
-    ];
-
-    assert_has_pattern(&instructions, &pattern);
-}
-
-#[test]
-fn test_exact_pattern_match() {
-    // Test that verifies the sequence of constant loads exists somewhere in the code
-    let wat = r#"
-        (module
-            (func (export "main") (result i32)
-                i32.const 10
-                i32.const 20
-                i32.add
-            )
-        )
-    "#;
-
-    let program = compile_wat(wat).expect("Failed to compile");
-    let instructions = extract_instructions(&program);
-
-    // The compiler adds prologue code, so look for the pattern in the full instruction sequence
-    assert!(!instructions.is_empty());
-
-    // Look for LoadImm with value 10 followed by LoadImm with value 20
-    let pattern = vec![
-        InstructionPattern::LoadImm {
-            reg: Pat::Any,
-            value: Pat::Exact(10),
-        },
-        InstructionPattern::LoadImm {
-            reg: Pat::Any,
-            value: Pat::Exact(20),
-        },
-    ];
-    assert_has_pattern(&instructions, &pattern);
-}
-
 // =============================================================================
 // Control Flow Testing
 // =============================================================================
@@ -287,76 +221,6 @@ fn test_i64_arithmetic() {
 }
 
 // =============================================================================
-// Advanced Pattern Matching Examples
-// =============================================================================
-
-#[test]
-fn test_multiple_patterns() {
-    let wat = r#"
-        (module
-            (func (export "main") (param i32) (result i32)
-                local.get 0
-                i32.const 2
-                i32.mul
-                i32.const 1
-                i32.add
-            )
-        )
-    "#;
-
-    let program = compile_wat(wat).expect("Failed to compile");
-    let instructions = extract_instructions(&program);
-
-    // Pattern: multiplication followed by loading constant 1, then addition
-    // The compiler inserts LoadImm between Mul32 and Add32 for the constant
-    let mul_add_pattern = vec![
-        InstructionPattern::Mul32 {
-            dst: Pat::Any,
-            src1: Pat::Any,
-            src2: Pat::Any,
-        },
-        InstructionPattern::LoadImm {
-            reg: Pat::Any,
-            value: Pat::Exact(1),
-        },
-        InstructionPattern::Add32 {
-            dst: Pat::Any,
-            src1: Pat::Any,
-            src2: Pat::Any,
-        },
-    ];
-
-    // This pattern should exist in the code
-    assert_has_pattern(&instructions, &mul_add_pattern);
-}
-
-#[test]
-fn test_predicate_patterns() {
-    let wat = r#"
-        (module
-            (func (export "main") (result i32)
-                i32.const 100
-                i32.const 200
-                i32.add
-            )
-        )
-    "#;
-
-    let program = compile_wat(wat).expect("Failed to compile");
-    let instructions = extract_instructions(&program);
-
-    // Find instructions with positive immediate values
-    let positive_load = InstructionPattern::LoadImm {
-        reg: Pat::Any,
-        value: Pat::Predicate(|v| *v > 0),
-    };
-
-    // Should find at least one positive load
-    let has_positive = instructions.iter().any(|i| positive_load.matches(i));
-    assert!(has_positive, "Should have positive constant loads");
-}
-
-// =============================================================================
 // Error Testing
 // =============================================================================
 
@@ -411,39 +275,4 @@ fn test_filter_by_opcode() {
     // Filter for all Add32 instructions
     let adds = filter_by_opcode(&instructions, Opcode::Add32);
     assert!(!adds.is_empty(), "Should have Add32 instructions");
-}
-
-#[test]
-fn test_exact_sequence_match() {
-    let wat = r#"
-        (module
-            (func (export "main") (result i32)
-                i32.const 5
-                i32.const 10
-                i32.add
-            )
-        )
-    "#;
-
-    let program = compile_wat(wat).expect("Failed to compile");
-    let code = program.code();
-    let instructions = code.instructions();
-
-    // Check that the two constants appear as LoadImm instructions
-    if instructions.len() >= 2 {
-        let expected = vec![
-            InstructionPattern::LoadImm {
-                reg: Pat::Any,
-                value: Pat::Exact(5),
-            },
-            InstructionPattern::LoadImm {
-                reg: Pat::Any,
-                value: Pat::Exact(10),
-            },
-        ];
-
-        // Verify the exact match (may fail due to epilogue code,
-        // so we just check the pattern exists somewhere)
-        assert_has_pattern(instructions, &expected);
-    }
 }

@@ -13,6 +13,8 @@ test-harness = ["dep:wat"]
 [dependencies]
 wasmparser.workspace = true
 thiserror.workspace = true
+inkwell.workspace = true
+tracing.workspace = true
 wat = { workspace = true, optional = true }
 
 [dev-dependencies]

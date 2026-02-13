@@ -17,6 +17,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+inkwell = { version = "0.8", features = ["llvm18-1"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

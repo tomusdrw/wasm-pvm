@@ -42,10 +42,6 @@ function ensureDirs() {
 }
 
 function buildCliBinary() {
-  if (fs.existsSync(CLI_BINARY)) {
-    console.log("CLI binary exists, skipping cargo build.");
-    return;
-  }
   console.log("Building CLI binary...");
   execSync("cargo build -p wasm-pvm-cli --release", {
     cwd: PROJECT_ROOT,
@@ -157,20 +153,13 @@ async function main() {
 
   console.log(`\nCompiling ${allJamTargets.length} files -> JAM...`);
   let jamCompiled = 0;
-  let jamSkipped = 0;
 
   await runParallel(
     allJamTargets,
     (target) => {
       try {
-        const jamFile = path.join(JAM_DIR, `${target.outputName}.jam`);
-        const existed = fs.existsSync(jamFile);
         compileToJAM(target.inputPath, target.outputName);
-        if (existed) {
-          jamSkipped++;
-        } else {
-          jamCompiled++;
-        }
+        jamCompiled++;
       } catch (err: any) {
         console.error(
           `  FAIL: ${target.outputName}: ${err.message}`
@@ -180,7 +169,7 @@ async function main() {
     CONCURRENCY
   );
   console.log(
-    `  JAM: ${jamCompiled} compiled, ${jamSkipped} up-to-date`
+    `  JAM: ${jamCompiled} compiled`
   );
 
   console.log("\nBuild complete.");
