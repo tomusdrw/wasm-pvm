@@ -37,9 +37,11 @@ StoreIndU64 SP, r4, offset_c // Store c
 This generates 4 instructions for a simple add, whereas a register-allocated approach could do it in 1 (if `a` and `b` are already in registers).
 
 ### Why This Was Done
+
 This approach guarantees correctness (no register spills needed during computation) and simplifies the backend significantly. It avoids the complexity of graph coloring or linear scan allocation.
 
 ### Recommendation
+
 Implement a proper register allocator (e.g., Linear Scan) for the PVM backend to map LLVM values to PVM registers (`r0`-`r12`) where possible, spilling only when necessary.
 
 ---
@@ -59,6 +61,7 @@ PVM instructions `MemoryCopy` and `MemoryFill` do not exist (despite being intri
 **Performance Issue**: Byte-by-byte copying is extremely inefficient for large blocks. The current lowering uses `MemoryCopy` and `MemoryFill` intrinsics that are expanded to byte-by-byte loops.
 
 ### Recommendation
+
 1.  ✅ **Correctness**: ~~Implement overlap detection and a backward copy loop~~ - **DONE**
 2.  **Optimize Performance**: Use word-sized (64-bit) loads/stores for the bulk of the copy/fill, handling unaligned heads/tails separately. This would significantly improve performance for large memory operations while maintaining correctness.
 
@@ -74,6 +77,7 @@ PVM instructions `MemoryCopy` and `MemoryFill` do not exist (despite being intri
 The compiler allocates stack slots for *all* LLVM values, even those that are short-lived or dead. It also reserves space for all function parameters in the frame, even if they could stay in registers.
 
 ### Recommendation
+
 Liveness analysis in the backend would allow reusing slots and reducing frame size.
 
 ---

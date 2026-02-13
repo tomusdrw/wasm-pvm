@@ -21,9 +21,11 @@ The architecture rewrite fixed several correctness issues (stack overflow, impor
 **Location**: `crates/wasm-pvm/src/llvm_backend/lowering.rs:1934` (`emit_pvm_memory_copy`)
 
 #### Problem
+
 The backend previously lowered `memory.copy` to a simple forward loop, which corrupted data when `dst > src` (shifting right).
 
 #### Fix Implemented
+
 Implemented proper `memmove` semantics:
 - Added a check for overlap: `if src < dst { backward_copy } else { forward_copy }`.
 - **Forward Copy**: `dst++ = src++` (standard).
@@ -39,11 +41,13 @@ Implemented proper `memmove` semantics:
 **Location**: `crates/wasm-pvm/src/llvm_backend/lowering.rs`
 
 #### Description
+
 WASM requires `div_s` and `rem_s` to trap on division by zero and signed overflow (`INT_MIN / -1`). The compiler currently emits raw PVM instructions (`DivS32`, etc.) without explicit checks.
 
 **Decision**: Explicit checks are omitted intentionally. We rely on PVM's native behavior and gas metering to handle these cases, or accept the divergence from strict WASM semantics (similar to the lack of Floating Point support). This reduces code size and complexity.
 
 #### Impact
+
 - Division by zero behavior depends on PVM (likely trap or defined result).
 - Overflow behavior depends on PVM.
 
