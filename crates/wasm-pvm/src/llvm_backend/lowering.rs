@@ -9,7 +9,7 @@ use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{
     AnyValue, AnyValueEnum, AsValueRef, BasicValueEnum, FunctionValue, InstructionOpcode,
-    InstructionValue, IntValue,
+    InstructionValue, IntValue, PhiValue,
 };
 
 use crate::pvm::Instruction;
@@ -97,6 +97,13 @@ struct PvmEmitter<'ctx> {
     /// For entry functions: (`result_ptr_global`, `result_len_global`) indices.
     /// When set, the epilogue loads these globals into r7/r8 before exiting.
     result_globals: Option<(u32, u32)>,
+
+    /// When true, the entry function's return value is a packed i64:
+    /// lower 32 bits = ptr (WASM address), upper 32 bits = len.
+    entry_returns_ptr_len: bool,
+
+    /// WASM memory base address (for converting WASM addresses to PVM addresses).
+    wasm_memory_base: i32,
 }
 
 /// Wrapper key for LLVM values in the slot map.
@@ -129,6 +136,8 @@ impl<'ctx> PvmEmitter<'ctx> {
             call_fixups: Vec::new(),
             indirect_call_fixups: Vec::new(),
             result_globals: None,
+            entry_returns_ptr_len: false,
+            wasm_memory_base: 0,
         }
     }
 
@@ -296,9 +305,12 @@ pub fn lower_function(
     is_main: bool,
     _func_idx: usize,
     result_globals: Option<(u32, u32)>,
+    entry_returns_ptr_len: bool,
 ) -> Result<LlvmFunctionTranslation> {
     let mut emitter = PvmEmitter::new();
     emitter.result_globals = result_globals;
+    emitter.entry_returns_ptr_len = entry_returns_ptr_len;
+    emitter.wasm_memory_base = ctx.wasm_memory_base;
 
     // Phase 1: Pre-scan — allocate labels for blocks and slots for all SSA values.
     pre_scan_function(&mut emitter, function);
@@ -415,14 +427,16 @@ fn emit_prologue<'ctx>(
         });
         e.emit(Instruction::Trap);
         e.define_label(continue_label);
+    }
 
-        // Allocate stack frame.
-        e.emit(Instruction::AddImm64 {
-            dst: STACK_PTR_REG,
-            src: STACK_PTR_REG,
-            value: -e.frame_size,
-        });
+    // Allocate stack frame (needed for SSA slot storage in all functions).
+    e.emit(Instruction::AddImm64 {
+        dst: STACK_PTR_REG,
+        src: STACK_PTR_REG,
+        value: -e.frame_size,
+    });
 
+    if !is_main {
         // Save return address.
         e.emit(Instruction::StoreIndU64 {
             base: STACK_PTR_REG,
@@ -1063,6 +1077,7 @@ fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -
 /// Uses a two-pass approach to handle potential phi cycles: first loads all
 /// incoming values into temp registers (or temp stack slots), then stores them
 /// to the phi node slots.
+#[allow(unsafe_code)] // PhiValue::new is safe here: we verify opcode == Phi first.
 fn emit_phi_copies<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     current_bb: BasicBlock<'ctx>,
@@ -1076,14 +1091,16 @@ fn emit_phi_copies<'ctx>(
             break; // Phi nodes are always at the start of a block.
         }
         let phi_slot = result_slot(e, instr)?;
-        let num_incomings = instr.get_num_operands() / 2;
+        // Use PhiValue API to properly access incoming (value, block) pairs.
+        // InstructionValue::get_num_operands() only counts values, not blocks,
+        // so the old `get_num_operands() / 2` approach was wrong.
+        let phi: PhiValue<'ctx> = unsafe { PhiValue::new(instr.as_value_ref()) };
+        let num_incomings = phi.count_incoming();
         for i in 0..num_incomings {
-            if let Ok(block) = get_bb_operand(instr, 2 * i + 1)
+            if let Some((value, block)) = phi.get_incoming(i)
                 && block == current_bb
             {
-                if let Ok(value) = get_operand(instr, 2 * i) {
-                    copies.push((phi_slot, value));
-                }
+                copies.push((phi_slot, value));
                 break;
             }
         }
@@ -1135,16 +1152,16 @@ fn emit_phi_copies<'ctx>(
 }
 
 /// Check whether `target_bb` has any phi nodes with incomings from `current_bb`.
+#[allow(unsafe_code)] // PhiValue::new is safe here: we verify opcode == Phi first.
 fn has_phi_from<'ctx>(current_bb: BasicBlock<'ctx>, target_bb: BasicBlock<'ctx>) -> bool {
     for instr in target_bb.get_instructions() {
         if instr.get_opcode() != InstructionOpcode::Phi {
             break;
         }
-        let num_incomings = instr.get_num_operands() / 2;
+        let phi: PhiValue<'ctx> = unsafe { PhiValue::new(instr.as_value_ref()) };
+        let num_incomings = phi.count_incoming();
         for i in 0..num_incomings {
-            if let Some(block) = instr
-                .get_operand(2 * i + 1)
-                .and_then(inkwell::values::Operand::block)
+            if let Some((_, block)) = phi.get_incoming(i)
                 && block == current_bb
             {
                 return true;
@@ -1174,9 +1191,10 @@ fn lower_br<'ctx>(
         e.emit_jump_to_label(label);
     } else {
         // Conditional: br i1 %cond, label %then, label %else
+        // LLVM internal operand order: [cond, false_bb, true_bb]
         let cond = get_operand(instr, 0)?;
-        let then_bb = get_bb_operand(instr, 1)?;
-        let else_bb = get_bb_operand(instr, 2)?;
+        let else_bb = get_bb_operand(instr, 1)?;
+        let then_bb = get_bb_operand(instr, 2)?;
 
         let then_label = *e
             .block_labels
@@ -1285,27 +1303,72 @@ fn lower_return<'ctx>(
 ) -> Result<()> {
     if is_main {
         if let Some((ptr_global, len_global)) = e.result_globals {
-            // Legacy globals convention: load result_ptr → r7, result_len → r8.
+            // Globals convention: load result_ptr and result_len from WASM globals.
+            // JAM SPI result convention: r7 = start address, r8 = end address.
+            let wasm_memory_base = e.wasm_memory_base;
             let ptr_addr = memory_layout::global_addr(ptr_global);
             e.emit(Instruction::LoadImm {
                 reg: TEMP1,
                 value: ptr_addr,
             });
             e.emit(Instruction::LoadIndU32 {
-                dst: ARGS_PTR_REG,
+                dst: TEMP1,
                 base: TEMP1,
                 offset: 0,
             });
             let len_addr = memory_layout::global_addr(len_global);
             e.emit(Instruction::LoadImm {
-                reg: TEMP1,
+                reg: TEMP2,
                 value: len_addr,
             });
             e.emit(Instruction::LoadIndU32 {
-                dst: ARGS_LEN_REG,
-                base: TEMP1,
+                dst: TEMP2,
+                base: TEMP2,
                 offset: 0,
             });
+            // r7 = wasm_ptr + wasm_memory_base (start PVM address)
+            e.emit(Instruction::AddImm32 {
+                dst: ARGS_PTR_REG,
+                src: TEMP1,
+                value: wasm_memory_base,
+            });
+            // r8 = r7 + len (end PVM address)
+            e.emit(Instruction::Add64 {
+                dst: ARGS_LEN_REG,
+                src1: ARGS_PTR_REG,
+                src2: TEMP2,
+            });
+        } else if e.entry_returns_ptr_len && instr.get_num_operands() > 0 {
+            // Packed (ptr, len) convention: return value is packed i64.
+            // Lower 32 bits = WASM ptr, upper 32 bits = len.
+            // JAM SPI result convention: r7 = start address, r8 = end address.
+            if let Ok(ret_val) = get_operand(instr, 0) {
+                let wasm_memory_base = e.wasm_memory_base;
+                e.load_operand(ret_val, TEMP1);
+                // TEMP2 = packed >> 32 (length)
+                e.emit(Instruction::LoadImm {
+                    reg: TEMP2,
+                    value: 32,
+                });
+                e.emit(Instruction::ShloR64 {
+                    dst: TEMP2,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                });
+                // r7 = (packed & 0xFFFFFFFF) + wasm_memory_base (start address)
+                // AddImm32 naturally truncates to 32 bits and adds the base.
+                e.emit(Instruction::AddImm32 {
+                    dst: ARGS_PTR_REG,
+                    src: TEMP1,
+                    value: wasm_memory_base,
+                });
+                // r8 = r7 + len (end address)
+                e.emit(Instruction::Add64 {
+                    dst: ARGS_LEN_REG,
+                    src1: ARGS_PTR_REG,
+                    src2: TEMP2,
+                });
+            }
         } else if instr.get_num_operands() > 0 {
             // Entry function returns a value → r7.
             if let Ok(ret_val) = get_operand(instr, 0) {

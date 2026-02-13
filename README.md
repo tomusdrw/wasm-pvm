@@ -123,7 +123,6 @@ tests/                   # Integration tests & tooling
   utils/                 # Utility scripts (run-jam, verify-jam)
   helpers/               # Test helpers
   data/                  # Test definitions
-  differential.rs        # 43 differential tests
 vendor/
   anan-as/               # PVM reference interpreter (submodule)
 ```

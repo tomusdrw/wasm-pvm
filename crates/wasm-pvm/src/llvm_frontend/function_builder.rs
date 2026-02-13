@@ -95,6 +95,8 @@ pub struct WasmToLlvm<'ctx> {
     locals: Vec<PointerValue<'ctx>>,
     current_fn: Option<FunctionValue<'ctx>>,
     has_return: bool,
+    /// True when the entry function returns (ptr, len) packed into a single i64.
+    entry_returns_ptr_len: bool,
     control_stack: Vec<ControlFrame<'ctx>>,
     /// True when current position is after a terminator (unreachable code).
     unreachable: bool,
@@ -151,6 +153,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
             locals: Vec::new(),
             current_fn: None,
             has_return: false,
+            entry_returns_ptr_len: false,
             control_stack: Vec::new(),
             unreachable: false,
         }
@@ -220,7 +223,22 @@ impl<'ctx> WasmToLlvm<'ctx> {
             let global_idx = wasm_module.num_imported_funcs as usize + local_idx;
             let func_value = self.functions[global_idx];
             let (num_params, has_return) = wasm_module.function_signatures[global_idx];
-            self.translate_function(func_body, func_value, num_params, has_return)?;
+            let is_main = local_idx == wasm_module.main_func_local_idx;
+            let is_secondary = wasm_module.secondary_entry_local_idx == Some(local_idx);
+            let entry_returns_ptr_len = if is_main {
+                wasm_module.main_returns_ptr_len
+            } else if is_secondary {
+                wasm_module.secondary_returns_ptr_len
+            } else {
+                false
+            };
+            self.translate_function(
+                func_body,
+                func_value,
+                num_params,
+                has_return,
+                entry_returns_ptr_len,
+            )?;
         }
 
         self.run_mem2reg()?;
@@ -267,12 +285,14 @@ impl<'ctx> WasmToLlvm<'ctx> {
         func_value: FunctionValue<'ctx>,
         num_params: usize,
         has_return: bool,
+        entry_returns_ptr_len: bool,
     ) -> Result<()> {
         self.operand_stack.clear();
         self.locals.clear();
         self.control_stack.clear();
         self.current_fn = Some(func_value);
         self.has_return = has_return;
+        self.entry_returns_ptr_len = entry_returns_ptr_len;
         self.unreachable = false;
 
         let entry_bb = self.context.append_basic_block(func_value, "entry");
@@ -623,7 +643,20 @@ impl<'ctx> WasmToLlvm<'ctx> {
                     let fn_phi = self.control_stack[0].result_phi();
                     let fn_merge = self.control_stack[0].merge_bb();
                     if let Some(phi) = fn_phi {
-                        let val = self.pop()?;
+                        let val = if self.entry_returns_ptr_len {
+                            // Pop both values: len (top), then ptr.
+                            let len = self.pop()?;
+                            let ptr = self.pop()?;
+                            // Pack: (ptr & 0xFFFFFFFF) | (len << 32)
+                            let mask = self.i64_type.const_int(0xFFFF_FFFF, false);
+                            let ptr_masked = llvm_err(self.builder.build_and(ptr, mask, "ptr_lo"))?;
+                            let shift = self.i64_type.const_int(32, false);
+                            let len_shifted =
+                                llvm_err(self.builder.build_left_shift(len, shift, "len_hi"))?;
+                            llvm_err(self.builder.build_or(ptr_masked, len_shifted, "packed"))?
+                        } else {
+                            self.pop()?
+                        };
                         let current_bb = self.builder.get_insert_block().unwrap();
                         phi.add_incoming(&[(&val, current_bb)]);
                     }
@@ -797,7 +830,26 @@ impl<'ctx> WasmToLlvm<'ctx> {
                             // Function-level End: branch to merge which has the return
                             if !self.unreachable {
                                 if let Some(phi) = result_phi {
-                                    let val = self.pop()?;
+                                    let val = if self.entry_returns_ptr_len {
+                                        // Pop both values: len (top), then ptr.
+                                        let len = self.pop()?;
+                                        let ptr = self.pop()?;
+                                        // Pack: (ptr & 0xFFFFFFFF) | (len << 32)
+                                        let mask = self.i64_type.const_int(0xFFFF_FFFF, false);
+                                        let ptr_masked =
+                                            llvm_err(self.builder.build_and(ptr, mask, "ptr_lo"))?;
+                                        let shift = self.i64_type.const_int(32, false);
+                                        let len_shifted = llvm_err(
+                                            self.builder.build_left_shift(len, shift, "len_hi"),
+                                        )?;
+                                        llvm_err(self.builder.build_or(
+                                            ptr_masked,
+                                            len_shifted,
+                                            "packed",
+                                        ))?
+                                    } else {
+                                        self.pop()?
+                                    };
                                     let current_bb = self.builder.get_insert_block().unwrap();
                                     phi.add_incoming(&[(&val, current_bb)]);
                                 }

@@ -1,57 +1,6 @@
 use wasm_pvm::pvm::Opcode;
 use wasm_pvm::test_harness::*;
 
-/// local.tee to a register local (index 0-3) with shallow stack (no spill).
-/// Should produce an AddImm64 copy from stack reg to local reg.
-#[test]
-fn test_local_tee_register_local_shallow_stack() {
-    let program = compile_wat(
-        r#"
-        (module
-            (func (export "main") (param i32) (result i32)
-                (local i32)
-                i32.const 42
-                local.tee 1
-            )
-        )
-        "#,
-    )
-    .expect("compile");
-    let instructions = extract_instructions(&program);
-
-    // The local.tee should emit AddImm64 to copy from stack to local register
-    assert!(
-        has_opcode(&instructions, Opcode::AddImm64),
-        "local.tee to register local should use AddImm64 for copy"
-    );
-}
-
-/// local.tee to a spilled local (index 4+) with shallow stack.
-/// Should produce a StoreIndU64 to memory.
-#[test]
-fn test_local_tee_spilled_local_shallow_stack() {
-    let program = compile_wat(
-        r#"
-        (module
-            (func (export "main") (param i32) (result i32)
-                (local i32 i32 i32 i32 i32)
-                i32.const 99
-                local.tee 5
-            )
-        )
-        "#,
-    )
-    .expect("compile");
-    let instructions = extract_instructions(&program);
-
-    // local.tee to spilled local should store to memory
-    let store_count = count_opcode(&instructions, Opcode::StoreIndU64);
-    assert!(
-        store_count >= 1,
-        "local.tee to spilled local should emit StoreIndU64, found {store_count}"
-    );
-}
-
 /// local.tee to register local with deep stack (stack is spilling).
 /// Pushes 6+ values to force operand stack spill, then does local.tee.
 #[test]
@@ -191,34 +140,6 @@ fn test_local_tee_with_pending_spill() {
     assert!(
         !instructions.is_empty(),
         "Should compile local.tee with pending spill"
-    );
-}
-
-/// Multiple consecutive local.tee operations at different stack depths.
-#[cfg(not(feature = "llvm-backend"))]
-#[test]
-fn test_multiple_local_tee_consecutive() {
-    let program = compile_wat(
-        r#"
-        (module
-            (func (export "main") (result i32)
-                (local i32 i32 i32)
-                i32.const 10
-                local.tee 0
-                local.tee 1
-                local.tee 2
-            )
-        )
-        "#,
-    )
-    .expect("compile");
-    let instructions = extract_instructions(&program);
-
-    // Each local.tee should emit an AddImm64 copy (for register locals)
-    let copy_count = count_opcode(&instructions, Opcode::AddImm64);
-    assert!(
-        copy_count >= 3,
-        "Three consecutive local.tee should emit at least 3 AddImm64 copies, found {copy_count}"
     );
 }
 

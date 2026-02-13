@@ -53,7 +53,6 @@ crates/
 
 tests/                     # Integration tests & tooling
 ├── build.ts               # Test build orchestrator
-├── differential.rs        # 43 differential tests
 ├── utils/                 # Utility scripts (run-jam, verify-jam, trace)
 ├── fixtures/              # Test cases
 │   ├── wat/               # WAT test programs (43 fixtures)
@@ -85,7 +84,7 @@ vendor/                    # Git submodules (anan-as)
 - **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
 - **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first, register allocator is future work)
 - **All values as i64**: PVM registers are 64-bit; simplifies translation
-- **Feature flags**: `llvm-backend` feature flag (to be removed once LLVM is sole backend)
+- **LLVM backend**: inkwell (LLVM 18 bindings) is a required dependency
 
 ---
 
@@ -105,7 +104,7 @@ vendor/                    # Git submodules (anan-as)
 ### Project-Specific
 - No `lib/` folder in crates — flat src structure
 - Integration tests in TypeScript (`tests/`)
-- Rust differential tests in `tests/differential.rs`
+- Rust unit tests in `crates/wasm-pvm/tests/`
 
 ---
 

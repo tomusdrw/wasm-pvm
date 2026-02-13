@@ -295,7 +295,10 @@ impl Instruction {
 }
 
 fn encode_three_reg(opcode: Opcode, dst: u8, src1: u8, src2: u8) -> Vec<u8> {
-    vec![opcode as u8, (src1 & 0x0F) << 4 | (src2 & 0x0F), dst & 0x0F]
+    // PVM three-reg encoding: [opcode, rB_hi | rA_lo, rD]
+    // Semantics: reg[rD] = reg[rA] OP reg[rB]
+    // We want: reg[dst] = reg[src1] OP reg[src2], so rA=src1, rB=src2
+    vec![opcode as u8, (src2 & 0x0F) << 4 | (src1 & 0x0F), dst & 0x0F]
 }
 
 fn encode_two_reg(opcode: Opcode, dst: u8, src: u8) -> Vec<u8> {

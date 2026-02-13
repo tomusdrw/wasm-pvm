@@ -24,7 +24,6 @@
 
 ### Testing improvements
 
-- [ ] Expand differential tests to compare execution results (not just compilation)
 - [ ] Add property-based tests / fuzzing
 - [ ] Increase test coverage
 
@@ -46,7 +45,7 @@
 | `src/translate/mod.rs` | Compilation orchestration + SPI assembly |
 | `src/translate/memory_layout.rs` | PVM memory address constants |
 | `src/pvm/instruction.rs` | PVM instruction encoding |
-| `tests/differential.rs` | 43 differential tests |
+| `tests/*.rs` | Rust integration tests |
 
 ---
 
