@@ -1077,7 +1077,6 @@ fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -
 /// Uses a two-pass approach to handle potential phi cycles: first loads all
 /// incoming values into temp registers (or temp stack slots), then stores them
 /// to the phi node slots.
-#[allow(unsafe_code)] // PhiValue::new is safe here: we verify opcode == Phi first.
 fn emit_phi_copies<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     current_bb: BasicBlock<'ctx>,
@@ -1094,7 +1093,9 @@ fn emit_phi_copies<'ctx>(
         // Use PhiValue API to properly access incoming (value, block) pairs.
         // InstructionValue::get_num_operands() only counts values, not blocks,
         // so the old `get_num_operands() / 2` approach was wrong.
-        let phi: PhiValue<'ctx> = unsafe { PhiValue::new(instr.as_value_ref()) };
+        let phi: PhiValue<'ctx> = instr
+            .try_into()
+            .map_err(|()| Error::Internal("expected Phi instruction".into()))?;
         let num_incomings = phi.count_incoming();
         for i in 0..num_incomings {
             if let Some((value, block)) = phi.get_incoming(i)
@@ -1152,13 +1153,14 @@ fn emit_phi_copies<'ctx>(
 }
 
 /// Check whether `target_bb` has any phi nodes with incomings from `current_bb`.
-#[allow(unsafe_code)] // PhiValue::new is safe here: we verify opcode == Phi first.
 fn has_phi_from<'ctx>(current_bb: BasicBlock<'ctx>, target_bb: BasicBlock<'ctx>) -> bool {
     for instr in target_bb.get_instructions() {
         if instr.get_opcode() != InstructionOpcode::Phi {
             break;
         }
-        let phi: PhiValue<'ctx> = unsafe { PhiValue::new(instr.as_value_ref()) };
+        let Ok(phi): std::result::Result<PhiValue<'ctx>, _> = instr.try_into() else {
+            break;
+        };
         let num_incomings = phi.count_incoming();
         for i in 0..num_incomings {
             if let Some((_, block)) = phi.get_incoming(i)
@@ -2052,6 +2054,7 @@ fn lower_pvm_call_indirect<'ctx>(
     });
 
     // Dispatch table lookup: each entry is 8 bytes (4-byte jump ref + 4-byte type index).
+    // Multiply table index by 8 (entry size) via 3 doublings: idx * 2 * 2 * 2
     // table_addr = RO_DATA_BASE + table_idx * 8
     e.emit(Instruction::Add32 {
         dst: ARGS_LEN_REG,

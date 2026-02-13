@@ -335,3 +335,53 @@ fn encode_imm(value: i32) -> Vec<u8> {
     };
     bytes[..len].to_vec()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_three_reg_encoding() {
+        // Test Add32 with dst=3, src1=1, src2=2
+        // Expected: [opcode, (src2 << 4) | src1, dst] = [opcode, 0x21, 0x03]
+        let instr = Instruction::Add32 {
+            dst: 3,
+            src1: 1,
+            src2: 2,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::Add32 as u8);
+        assert_eq!(encoded[1], 0x21); // src2=2 in high nibble, src1=1 in low nibble
+        assert_eq!(encoded[2], 0x03); // dst
+    }
+
+    #[test]
+    fn test_three_reg_encoding_symmetric() {
+        // Verify src1 and src2 are distinguishable (not commutative in encoding)
+        let instr1 = Instruction::Sub32 {
+            dst: 0,
+            src1: 5,
+            src2: 7,
+        };
+        let instr2 = Instruction::Sub32 {
+            dst: 0,
+            src1: 7,
+            src2: 5,
+        };
+        assert_ne!(instr1.encode(), instr2.encode());
+    }
+
+    #[test]
+    fn test_three_reg_encoding_edge_registers() {
+        // Test with register 0 and register 12 (max used in PVM)
+        let instr = Instruction::Add64 {
+            dst: 12,
+            src1: 0,
+            src2: 12,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::Add64 as u8);
+        assert_eq!(encoded[1], 0xC0); // src2=12 in high nibble, src1=0 in low nibble
+        assert_eq!(encoded[2], 0x0C); // dst=12
+    }
+}

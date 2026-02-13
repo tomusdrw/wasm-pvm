@@ -69,7 +69,7 @@ Technical learnings, PVM architecture details, and conventions used in the compi
 
 PVM's `JUMP_IND` instruction uses a **jump table** lookup, NOT direct address jumping:
 
-```
+```text
 JUMP_IND rA, offset
   target_address = jumpTable[(rA + offset) / 2 - 1]
   jump to target_address
@@ -85,6 +85,7 @@ JUMP_IND rA, offset
 ## PVM Instruction Encoding
 
 ### ThreeReg Instructions
+
 For ThreeReg instructions (ADD_32, SUB_32, etc.):
 - Encoding: `[opcode, src1<<4 | src2, dst]`
 - **Execution: reg[c] = op(reg[b], reg[a])** — Note the swap!
@@ -92,9 +93,10 @@ For ThreeReg instructions (ADD_32, SUB_32, etc.):
 This means for `SET_LT_U`, it computes `dst = (src2 < src1)`, NOT `dst = (src1 < src2)`.
 
 ### TwoRegOneImm Encoding
+
 High nibble (args.a) is typically the SOURCE, low nibble (args.b) is the DESTINATION:
 
-```
+```text
 Byte layout: [opcode] [src << 4 | dst] [imm...]
 
 Example ADD_IMM_32: regs[dst] = regs[src] + imm

@@ -360,10 +360,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
         }
 
         // Verify function ends cleanly (the final End should have popped the fn frame)
-        debug_assert!(
-            self.control_stack.is_empty(),
-            "control stack not empty after function translation"
-        );
+        if !self.control_stack.is_empty() {
+            return Err(Error::Internal(
+                "control stack not empty after function translation".into(),
+            ));
+        }
 
         Ok(())
     }
@@ -1569,7 +1570,8 @@ impl<'ctx> WasmToLlvm<'ctx> {
         use inkwell::passes::PassBuilderOptions;
         use inkwell::targets::{InitializationConfig, Target, TargetMachine};
 
-        Target::initialize_all(&InitializationConfig::default());
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| Target::initialize_all(&InitializationConfig::default()));
         let triple = TargetMachine::get_default_triple();
         let target = Target::from_triple(&triple)
             .map_err(|e| Error::Internal(format!("LLVM target error: {e}")))?;

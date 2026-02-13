@@ -239,8 +239,12 @@ impl<'a> WasmModule<'a> {
         }
 
         // Convert main_func_idx from global to local function index
-        let main_func_local_idx =
-            main_func_idx.map_or(0, |idx| idx as usize - num_imported_funcs as usize);
+        let main_func_local_idx = if let Some(idx) = main_func_idx {
+            idx as usize - num_imported_funcs as usize
+        } else {
+            tracing::warn!("No 'main' export found, defaulting to first local function");
+            0
+        };
 
         // Detect result_ptr / result_len globals (legacy entry convention)
         let mut result_ptr_global = None;
@@ -285,8 +289,8 @@ impl<'a> WasmModule<'a> {
             idx.checked_sub(num_imported_funcs)
                 .map(|v| v as usize)
                 .or_else(|| {
-                    eprintln!(
-                        "Warning: secondary entry function {idx} is an imported function, ignoring"
+                    tracing::warn!(
+                        "secondary entry function {idx} is an imported function, ignoring"
                     );
                     None
                 })
@@ -299,7 +303,7 @@ impl<'a> WasmModule<'a> {
             idx.checked_sub(num_imported_funcs)
                 .map(|v| v as usize)
                 .or_else(|| {
-                    eprintln!("Warning: start function {idx} is an imported function, ignoring");
+                    tracing::warn!("start function {idx} is an imported function, ignoring");
                     None
                 })
         });
@@ -390,7 +394,7 @@ fn calculate_heap_pages(
     let default_max_pages: u32 = if data_segments.is_empty() { 256 } else { 1024 };
     let max_memory_pages = match memory_limits.max_pages {
         Some(declared_max) => declared_max,
-        None => default_max_pages.max(1024),
+        None => default_max_pages,
     };
 
     let wasm_memory_end = wasm_memory_base as usize + (max_memory_pages as usize) * 64 * 1024;
