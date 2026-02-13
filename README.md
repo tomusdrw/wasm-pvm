@@ -129,7 +129,6 @@ vendor/
 
 ## Documentation
 
-- [PLAN.md](./PLAN.md) - Project roadmap and remaining work
 - [LEARNINGS.md](./LEARNINGS.md) - Technical reference (PVM architecture, conventions)
 - [AGENTS.md](./AGENTS.md) - Guidelines for AI agents working on this project
 - [gp-0.7.2.md](./gp-0.7.2.md) - Gray Paper (JAM/PVM specification)
