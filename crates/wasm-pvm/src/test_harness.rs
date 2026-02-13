@@ -33,6 +33,7 @@
 //! }
 //! ```
 
+// Test helpers are allowed to be verbose or duplicative.
 #![allow(
     clippy::match_same_arms,
     clippy::must_use_candidate,
@@ -42,7 +43,7 @@
 )]
 
 use crate::pvm::{Instruction, Opcode};
-use crate::{Error, Result, SpiProgram, compile};
+use crate::{compile, Error, Result, SpiProgram};
 
 /// Parse WAT (WebAssembly Text) format to WASM binary
 pub fn wat_to_wasm(wat: &str) -> Result<Vec<u8>> {

@@ -3,6 +3,17 @@
 // Each SSA value gets a dedicated stack slot (correctness-first, no register allocation).
 // Pattern: load operands from slots → temp regs, compute, store result to slot.
 
+// We use 'as' casts extensively for:
+// - PVM register indices (u8) from iterators
+// - Address offsets (i32) from pointers
+// - Immediate values (i32/i64) from LLVM constants
+// These are intentional truncations/wraps where we know the range is safe or valid for PVM.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
 use std::collections::HashMap;
 
 use inkwell::IntPredicate;

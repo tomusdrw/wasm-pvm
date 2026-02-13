@@ -1,3 +1,6 @@
+// Parsing code uses casts to convert WASM u64 fields to PVM u32/usize types.
+#![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+
 use crate::{Error, Result};
 use wasmparser::{FunctionBody, GlobalType, Parser, Payload};
 

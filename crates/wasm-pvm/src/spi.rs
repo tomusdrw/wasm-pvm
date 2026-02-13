@@ -1,3 +1,6 @@
+// SPI encoding uses u32 lengths but writes u24. Truncation is checked or expected.
+#![allow(clippy::cast_possible_truncation)]
+
 use crate::pvm::ProgramBlob;
 
 pub struct SpiProgram {

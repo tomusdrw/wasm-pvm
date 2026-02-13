@@ -1,3 +1,10 @@
+// Address calculations and jump offsets often require wrapping/truncation.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
 pub mod memory_layout;
 pub mod wasm_module;
 

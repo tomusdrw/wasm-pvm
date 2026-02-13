@@ -1,4 +1,10 @@
-use inkwell::IntPredicate;
+// We use 'as' casts for PVM immediate values and offsets where we control the ranges.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::BuilderError;
 use inkwell::context::Context;
@@ -8,6 +14,7 @@ use inkwell::types::{BasicMetadataTypeEnum, IntType};
 use inkwell::values::{
     BasicMetadataValueEnum, FunctionValue, GlobalValue, IntValue, PhiValue, PointerValue,
 };
+use inkwell::IntPredicate;
 use wasmparser::{FunctionBody, Operator};
 
 use crate::translate::wasm_module::WasmModule;
