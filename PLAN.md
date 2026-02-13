@@ -1,7 +1,7 @@
 # Comprehensive Step-by-Step V1 Completion Plan
 
 **Objective**: Get WASM→PVM compiler to V1 completion state  
-**Duration**: 10 weeks (revised from 1 week based on review findings)  
+**Duration**: 10 weeks (50 work days)  
 **Goal**: Working PVM-in-PVM with all critical bugs fixed
 
 ---
@@ -115,7 +115,7 @@
 **Priority**: CRITICAL  
 **Goal**: Make inner interpreter work
 
-#### Week 3: Diagnostic Setup (Days 11-17)
+#### Week 3: Diagnostic Setup (Days 11-15)
 
 **Day 11: Trace Infrastructure**
 - [ ] Review scripts/trace-steps.ts
@@ -136,52 +136,49 @@
 - [ ] Determine if it's register value, memory content, or instruction flow
 - [ ] Hypothesize root cause
 
-**Day 14-15: Root Cause Analysis**
+**Day 14-15: Root Cause Analysis & Fix**
 - [ ] If register values differ: trace back to where they diverged
 - [ ] If memory differs: identify which store corrupted it
 - [ ] If instruction flow differs: check jump table/branch logic
-
-**Day 16-17: Fix Implementation**
 - [ ] Implement fix for identified issue
 - [ ] Test fix
-- [ ] Document findings
 
 **Deliverable**: Root cause identified and fixed
 
-#### Week 4: Validation (Days 18-24)
+#### Week 4: Validation (Days 16-20)
 
-**Day 18-20: PVM-in-PVM Test Suite**
+**Day 16-18: PVM-in-PVM Test Suite**
 - [ ] Run add.jam.wat → should return 12
 - [ ] Run factorial.jam.wat → should return 120 (5!)
 - [ ] Run fibonacci.jam.wat → should return 55 (fib(10))
 - [ ] Run gcd.jam.wat → should return 6 (gcd(48,18))
 
-**Day 21-22: Fix Remaining Issues**
+**Day 19: Fix Remaining Issues**
 - [ ] If any test fails, debug and fix
 - [ ] Use same tracing approach
 - [ ] Document patterns in failures
 
-**Day 23-24: Expanded Testing**
+**Day 20: Expanded Testing**
 - [ ] Test all 62 programs through PVM-in-PVM
 - [ ] Record which pass/fail
 - [ ] Create spreadsheet of results
 
 **Deliverable**: At least 4 core tests passing in PVM-in-PVM
 
-#### Week 5: Full Suite (Days 25-31)
+#### Week 5: Full Suite (Days 21-25)
 
-**Day 25-28: Remaining Test Fixes**
+**Day 21-23: Remaining Test Fixes**
 - [ ] For each failing test:
   - Identify if it's a known issue pattern
   - Apply fix if generic
   - Skip if requires major work (document)
 
-**Day 29-30: Final Validation**
+**Day 24: Final Validation**
 - [ ] Run full test suite: `bun scripts/test-all.ts`
 - [ ] All 62 should pass directly
 - [ ] Core tests should pass PVM-in-PVM
 
-**Day 31: Documentation**
+**Day 25: Documentation**
 - [ ] Document PVM-in-PVM results
 - [ ] Update status.md
 - [ ] Create issue for remaining failing tests (if any)
@@ -194,15 +191,15 @@
 **Priority**: HIGH  
 **Goal**: Address code quality, add tests
 
-#### Week 6: Code Quality (Days 32-38)
+#### Week 6: Code Quality (Days 26-30)
 
-**Day 32: Remove Dead Code**
+**Day 26: Remove Dead Code**
 - [ ] Delete `check_for_floats` function (unused, marked dead_code)
 - [ ] Delete `is_float_op` function (unused)
 - [ ] Remove commented-out code
 - [ ] Run tests to ensure nothing breaks
 
-**Day 33: Fix Clippy Warnings**
+**Day 27: Fix Clippy Warnings**
 - [ ] Remove `#![allow(...)]` from lib.rs
 - [ ] Fix cast warnings with explicit conversions:
   ```rust
@@ -212,7 +209,7 @@
 - [ ] Break up long functions (extract helpers)
 - [ ] Add missing error documentation
 
-**Day 34: Memory Layout Abstraction**
+**Day 28: Memory Layout Abstraction**
 - [ ] Create `MemoryLayout` struct
 - [ ] Move magic numbers:
   ```rust
@@ -223,55 +220,49 @@
 - [ ] Replace scattered constants with `layout.global_addr(idx)`
 - [ ] Run tests
 
-**Day 35: Assertions**
+**Day 29: Assertions**
 - [ ] Add debug assertions in spill_push/spill_pop
 - [ ] Assert stack depth within bounds
 - [ ] Assert register indices valid
 - [ ] Run with debug builds to catch issues
 
-**Day 36-37: Documentation**
+**Day 30: Documentation & Review**
 - [ ] Document register conventions
 - [ ] Document calling convention
 - [ ] Add module-level docs
-
-**Day 38: Review**
 - [ ] Run clippy: should have 0 warnings
 - [ ] Run tests: all should pass
-- [ ] Review changes with team (if applicable)
 
 **Deliverable**: Clean, documented, warning-free code
 
-#### Week 7: Testing (Days 39-45)
+#### Week 7: Testing (Days 31-35)
 
-**Day 39: Unit Test StackMachine**
+**Day 31: Unit Test StackMachine**
 - [ ] Test push/pop at various depths
 - [ ] Test spill detection
 - [ ] Test register assignment
 
-**Day 40: Test Spilling**
+**Day 32: Test Spilling**
 - [ ] Test with stack depth 0-10
 - [ ] Verify values preserved correctly
 - [ ] Test interactions with function calls
 
-**Day 41: Regression Tests**
+**Day 33: Regression Tests**
 - [ ] Add test for memory.copy overlap
 - [ ] Add test for division overflow
 - [ ] Add test for import return values
 
-**Day 42: Edge Cases**
+**Day 34: Edge Cases**
 - [ ] Test with maximum locals (64)
 - [ ] Test with deep call stack
 - [ ] Test with empty functions
 
-**Day 43-44: Coverage**
+**Day 35: Coverage & Validation**
 - [ ] Run `cargo tarpaulin`
 - [ ] Identify uncovered code
 - [ ] Add tests for uncovered paths
-
-**Day 45: Validation**
 - [ ] Coverage should be > 60%
 - [ ] All new tests should pass
-- [ ] Document test strategy
 
 **Deliverable**: Comprehensive test suite with >60% coverage
 
@@ -281,88 +272,79 @@
 **Priority**: MEDIUM  
 **Goal**: Complete V1, prepare for V2
 
-#### Week 8: Documentation (Days 46-52)
+#### Week 8: Documentation (Days 36-40)
 
-**Day 46: Update AGENTS.md**
+**Day 36: Update AGENTS.md**
 - [ ] Add section on critical bugs
 - [ ] Document PVM-in-PVM current status
 - [ ] Add "Common Pitfalls" section
 
-**Day 47: Update PLAN.md**
+**Day 37: Update PLAN.md**
 - [ ] Mark completed phases
 - [ ] Update V1 definition
 - [ ] Add V2 planning section
 
-**Day 48: Architecture Documentation**
+**Day 38: Architecture Documentation**
 - [ ] Create ARCHITECTURE.md
 - [ ] Document current design (translator pattern)
 - [ ] Document known limitations
 
-**Day 49: API Documentation**
+**Day 39: API Documentation & User Guide**
 - [ ] Document public API
-- [ ] Add examples
+- [ ] Create USAGE.md with examples
 - [ ] Generate docs with `cargo doc`
 
-**Day 50: User Guide**
-- [ ] Create USAGE.md
-- [ ] Step-by-step examples
-- [ ] Troubleshooting guide
-
-**Day 51-52: Review**
+**Day 40: Review**
 - [ ] Review all documentation
 - [ ] Ensure consistency
 - [ ] Fix typos and formatting
 
 **Deliverable**: Complete documentation
 
-#### Week 9: Final Validation (Days 53-59)
+#### Week 9: Final Validation (Days 41-45)
 
-**Day 53-54: Full Test Suite**
+**Day 41: Full Test Suite**
 - [ ] Run `cargo test` (all Rust tests)
 - [ ] Run `bun scripts/test-all.ts` (62 integration tests)
 - [ ] Run PVM-in-PVM core tests
 - [ ] Record all results
 
-**Day 55: Performance Check**
+**Day 42: Performance Check**
 - [ ] Time compilation of anan-as
 - [ ] Compare to baseline
 - [ ] Ensure no major regressions
 
-**Day 56: CI/CD**
+**Day 43: CI/CD**
 - [ ] Ensure GitHub Actions workflow passes
 - [ ] Add PVM-in-PVM test to CI
 - [ ] Set up coverage reporting
 
-**Day 57-58: V1 Review**
+**Day 44: V1 Review**
 - [ ] Create V1 checklist
 - [ ] Verify all MUST HAVE items complete
 - [ ] Document SHOULD HAVE status
 
-**Day 59: Prepare Release**
+**Day 45: Prepare Release**
 - [ ] Tag commit as v1.0
 - [ ] Create release notes
 - [ ] Update version numbers
 
 **Deliverable**: V1 ready for release
 
-#### Week 10: Buffer & Transition (Days 60-66)
+#### Week 10: Buffer & Transition (Days 46-50)
 
-**Day 60-62: Buffer Time**
+**Day 46-48: Buffer Time**
 - [ ] Fix any last-minute issues
 - [ ] Address feedback
 - [ ] Final polish
 
-**Day 63-64: V2 Planning**
+**Day 49: V2 Planning**
 - [ ] Document V2 goals
 - [ ] Create roadmap
 - [ ] Prioritize features
+- [ ] Update README.md and CHANGELOG.md
 
-**Day 65: Final Documentation**
-- [ ] Update README.md
-- [ ] Update CHANGELOG.md
-- [ ] Final review
-
-**Day 66: V1 Complete** 🎉
+**Day 50: V1 Complete** 🎉
 
 **Deliverable**: V1 complete, V2 planned
 
@@ -400,19 +382,19 @@
 - [ ] import returns handled
 - [ ] All 62 tests pass
 
-### Week 5 (Day 31)
+### Week 5 (Day 25)
 **Checkpoint**: PVM-in-PVM core tests pass
 - [ ] add.jam.wat returns 12 in PVM-in-PVM
 - [ ] factorial, fibonacci, gcd pass
 - [ ] Root cause of PANIC identified and fixed
 
-### Week 7 (Day 45)
+### Week 7 (Day 35)
 **Checkpoint**: Code quality improved
 - [ ] 0 clippy warnings
 - [ ] >60% test coverage
 - [ ] Documentation complete
 
-### Week 10 (Day 66)
+### Week 10 (Day 50)
 **Checkpoint**: V1 Complete
 - [ ] All MUST HAVE items done
 - [ ] All tests pass
