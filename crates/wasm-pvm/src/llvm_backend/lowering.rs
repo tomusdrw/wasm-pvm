@@ -24,14 +24,14 @@ use inkwell::values::{
 };
 
 use crate::pvm::Instruction;
-use crate::{abi, Error, Result};
+use crate::{Error, Result, abi};
 
 // ── Register assignments ──
 
 use crate::abi::{
     ARGS_LEN_REG, ARGS_PTR_REG, FIRST_LOCAL_REG, FRAME_HEADER_SIZE, MAX_LOCAL_REGS,
-    RETURN_ADDR_REG, RETURN_VALUE_REG, SCRATCH1, SCRATCH2, STACK_PTR_REG, TEMP1, TEMP2,
-    TEMP_RESULT,
+    RETURN_ADDR_REG, RETURN_VALUE_REG, SCRATCH1, SCRATCH2, STACK_PTR_REG, TEMP_RESULT, TEMP1,
+    TEMP2,
 };
 
 // ── Public types ──
@@ -475,8 +475,7 @@ fn emit_prologue<'ctx>(
             e.store_to_slot(slot, FIRST_LOCAL_REG + i as u8);
         } else {
             // Overflow params from PARAM_OVERFLOW_BASE.
-            let overflow_offset =
-                abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP1,
                 value: overflow_offset,
@@ -1529,8 +1528,7 @@ fn lower_wasm_call<'ctx>(
             e.load_operand(arg, FIRST_LOCAL_REG + i as u8);
         } else {
             e.load_operand(arg, TEMP1);
-            let overflow_offset =
-                abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: overflow_offset,
@@ -2098,8 +2096,7 @@ fn lower_pvm_call_indirect<'ctx>(
             e.load_operand(arg, FIRST_LOCAL_REG + i as u8);
         } else {
             e.load_operand(arg, TEMP1);
-            let overflow_offset =
-                abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: overflow_offset,

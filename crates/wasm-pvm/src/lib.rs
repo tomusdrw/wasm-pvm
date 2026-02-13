@@ -1,4 +1,3 @@
-
 #![allow(
     clippy::too_many_lines, // TODO: Remove after refactoring lowering.rs (Task #30)
     clippy::missing_errors_doc // TODO: Add docs in V2 (Task #34/Documentation)
