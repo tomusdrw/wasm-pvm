@@ -240,7 +240,7 @@ When summing `Uint8Array` elements where the result may exceed 255, always cast 
 - Simple control flow (if/else, loops, blocks) works correctly
 
 **Register Convention**:
-- r0: Return address (jump table index)
+- r0: Return address (jump table offset)
 - r1: Stack pointer
 - r2-r6: Operand stack (5 slots)
 - r7: Return value / SPI args pointer
