@@ -1,6 +1,6 @@
 # WASM to PVM Recompiler - Technical Reference
 
-**Date**: 2026-02-10
+**Date**: 2026-02-13
 
 Technical learnings, PVM architecture details, and conventions used in the compiler.
 
@@ -30,7 +30,7 @@ Technical learnings, PVM architecture details, and conventions used in the compi
 
 | Register | Usage |
 |----------|-------|
-| r0 | Return address (jump table index) |
+| r0 | Return address (jump table offset) |
 | r1 | Stack pointer |
 | r2-r6 | Scratch registers |
 | r7 | Return value from calls / SPI args pointer (in main) |
@@ -48,7 +48,7 @@ Technical learnings, PVM architecture details, and conventions used in the compi
 4. Save locals r9-r12 to `[sp+8..40]`
 5. Save any additional state to stack
 6. Place arguments in r9+ (first 4 args) and PARAM_OVERFLOW_BASE (5th+)
-7. Load return address (jump table index) into r0
+7. Load return address (jump table offset) into r0
 8. Jump to callee entry point
 
 **After return (caller-side):**
@@ -87,10 +87,10 @@ JUMP_IND rA, offset
 ### ThreeReg Instructions
 
 For ThreeReg instructions (ADD_32, SUB_32, etc.):
-- Encoding: `[opcode, src1<<4 | src2, dst]`
-- **Execution: reg[c] = op(reg[b], reg[a])** — Note the swap!
+- Encoding: `[opcode, src2<<4 | src1, dst]`
+- **Semantics: reg[dst] = reg[src1] op reg[src2]**
 
-This means for `SET_LT_U`, it computes `dst = (src2 < src1)`, NOT `dst = (src1 < src2)`.
+Note that `src2` is in the high nibble (rB) and `src1` is in the low nibble (rA).
 
 ### TwoRegOneImm Encoding
 
@@ -174,6 +174,7 @@ Example STORE_IND_U32: memory[regs[base] + offset] = regs[src]
 | `0x10000` | Read-only data (dispatch table for `call_indirect`) |
 | `0x30000` | Globals storage |
 | `0x30100` | User heap (result storage) |
+| `0x3FF00` | Parameter overflow area (5th+ args) |
 | `0x40000` | Spilled locals (512 bytes per function) |
 | `0x50000+` | WASM linear memory base (data sections placed here) |
 
@@ -206,9 +207,7 @@ PVM follows RISC-V semantics for division (returns specific values instead of tr
 - **Division by zero**: All div/rem operations
 - **Signed overflow**: `INT_MIN / -1` for `i32.div_s`
 
-The compiler currently relies on PVM hardware behavior for these edge cases (trap sequences planned).
-
-For i64 signed overflow: `i64::MIN` doesn't fit in a 32-bit immediate, so use `LoadImm64 + Xor` approach with fast path.
+The compiler currently relies on PVM hardware behavior for these edge cases.
 
 ---
 
