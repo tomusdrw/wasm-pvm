@@ -8,7 +8,7 @@
 
 ## Summary
 
-The architecture rewrite fixed several correctness issues (stack overflow, import returns), but the `memory.copy` overlap bug remains, and division safety checks are still missing.
+The architecture rewrite fixed several correctness issues (stack overflow, import returns, memory.copy overlap handling), but division safety checks are still missing.
 
 ---
 

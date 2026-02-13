@@ -21,7 +21,7 @@ The V2 architecture (LLVM-based) significantly improved code quality. The codeba
     *   Clean separation of concerns.
 
 2.  **Safety**:
-    *   No `unsafe` blocks found in the core logic.
+    *   No `unsafe` blocks found in `llvm_frontend/`, `llvm_backend/`, and `translate/` as of 2026-02-13.
     *   Proper error propagation using `Result`.
 
 3.  **Readability**:
@@ -36,14 +36,16 @@ The V2 architecture (LLVM-based) significantly improved code quality. The codeba
 ### 1. Large Files
 *   `crates/wasm-pvm/src/llvm_backend/lowering.rs`: ~2300 lines.
     *   Contains lowering logic for ALL instructions.
-    *   Could be split into submodules: `alu.rs`, `memory.rs`, `control_flow.rs`.
+    *   The `lowering.rs` file could be split into submodules such as `alu.rs`, `memory.rs`, and `control_flow.rs`.
 
 ### 2. Duplicate Lowering Logic
+
 *   Binary operations (`Add`, `Sub`, `Mul`...) share very similar boilerplate.
     *   Currently handled via `lower_binary_arith` helper, which is good.
     *   PVM intrinsic lowering (`emit_pvm_load`, `emit_pvm_store`) has repetitive match arms.
 
 ### 3. Magic Constants
+
 *   Some constants in `lowering.rs` (e.g., `STACK_PTR_REG = 1`) are duplicated from `translate/mod.rs`.
 *   Ideally, these should be in a shared `constants.rs` or `pvm_abi.rs`.
 

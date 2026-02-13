@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-13  
 **Scope**: Core compilation pipeline (WASM → LLVM IR → PVM bytecode)  
-**Status**: 360 integration tests passing, production-ready architecture
+**Status**: CI passing, production-ready architecture
 
 ---
 

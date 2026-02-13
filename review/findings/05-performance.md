@@ -22,12 +22,14 @@ Every SSA value lives in a stack slot. Every instruction involves:
 3.  Store result to stack.
 
 **Example**: `a = b + c` becomes:
-```
+
+```text
 LoadInd r2, SP, offset_b
 LoadInd r3, SP, offset_c
 Add r4, r2, r3
 StoreInd SP, r4, offset_a
 ```
+
 (4 instructions + 3 memory accesses) vs (1 instruction) if allocated.
 
 ### 2. Byte-by-Byte Memory Ops 🟡

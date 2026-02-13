@@ -44,23 +44,23 @@ Implement a proper register allocator (e.g., Linear Scan) for the PVM backend to
 
 ---
 
-## Flaw 2: Manual `memory.copy` / `memory.fill` Loops
+## Flaw 2: Manual `memory.copy` / `memory.fill` Loops (Performance Only)
 
-**Severity**: 🔴 High (Correctness & Performance)
-**Location**: `crates/wasm-pvm/src/llvm_backend/lowering.rs`
-**Impact**: Correctness bugs (overlap) and poor performance
+**Severity**: 🟡 Medium (Performance)
+**Location**: `crates/wasm-pvm/src/llvm_backend/lowering.rs` (`emit_pvm_memory_copy`, `emit_pvm_memory_fill`)
+**Impact**: Poor performance for large memory operations
 
 ### Problem Description
 
 PVM instructions `MemoryCopy` and `MemoryFill` do not exist (despite being intrinsics in the frontend). The backend lowers them to explicit byte-by-byte loops in PVM bytecode.
 
-**Correctness Issue**: The current `memory.copy` lowering loop iterates forward (`i = 0..len`). This **corrupts data** if the source and destination regions overlap and `dest > src` (shifting memory right). WASM spec requires handling overlap correctly (like `memmove`).
+**Correctness**: ✅ **FIXED** - The `memory.copy` lowering in `lowering.rs` now implements memmove-style logic with proper overlap detection. When `dest > src`, it copies backward (from end to start) to avoid overwriting source before reading. This ensures correct behavior for overlapping regions.
 
-**Performance Issue**: Byte-by-byte copying is extremely inefficient for large blocks.
+**Performance Issue**: Byte-by-byte copying is extremely inefficient for large blocks. The current lowering uses `MemoryCopy` and `MemoryFill` intrinsics that are expanded to byte-by-byte loops.
 
 ### Recommendation
-1.  **Fix Correctness**: Implement overlap detection and a backward copy loop.
-2.  **Optimize**: Use word-sized (64-bit) loads/stores for the bulk of the copy/fill, handling unaligned heads/tails separately.
+1.  ✅ **Correctness**: ~~Implement overlap detection and a backward copy loop~~ - **DONE**
+2.  **Optimize Performance**: Use word-sized (64-bit) loads/stores for the bulk of the copy/fill, handling unaligned heads/tails separately. This would significantly improve performance for large memory operations while maintaining correctness.
 
 ---
 

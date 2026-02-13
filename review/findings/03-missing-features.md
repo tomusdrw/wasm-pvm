@@ -15,18 +15,22 @@ The compiler implements the WASM MVP (Minimum Viable Product). Major missing fea
 ## Confirmed Missing Features
 
 ### 1. Floating Point Support ❌
+
 **Status**: **Wontfix** (By Design)
 PVM does not support floating point. The compiler intentionally rejects float operations.
 
 ### 2. Host Calls (`ecalli`) 🔵
+
 **Status**: Planned
 PVM `ecalli` instruction is not yet generated. Support is needed for WASI or generic host functions. Currently, imports trap.
 
 ### 3. Passive Data Segments (`memory.init`) 🟡
+
 **Status**: Missing
 Only active data segments are supported. `memory.init` and `data.drop` are not implemented in the frontend.
 
 ### 4. Bulk Memory Operations 🟡
+
 **Status**: Partial
 `memory.copy` and `memory.fill` are implemented (via loop lowerings), but `memory.init`, `table.init`, `table.copy` are missing.
 
