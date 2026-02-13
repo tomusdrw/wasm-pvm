@@ -486,7 +486,7 @@ arr[0] + arr[1]  // Computes (value & 0xFF)
 
 ## The Compiler Works, But...
 
-**Works for**: 
+**Works for**:
 - Simple programs (add, factorial, fibonacci)
 - Direct execution (no nesting)
 - Programs without complex memory patterns
@@ -519,7 +519,7 @@ The current architecture is a **direct translator**, not a real compiler:
 - Division edge cases
 - Complex AS patterns
 
-**Recommendation**: See review/proposals/07-testing-strategy.md for comprehensive testing plan.
+**Recommendation**: See tracking GitHub issues #30-#40 for comprehensive testing plan.
 
 ---
 
@@ -527,6 +527,4 @@ The current architecture is a **direct translator**, not a real compiler:
 
 - Original: LEARNINGS.md (technical details)
 - Architecture Review: review/findings/ (critical analysis)
-- Proposed Architecture: review/proposals/06-proposed-architecture.md
-- Testing Strategy: review/proposals/07-testing-strategy.md
-- Rebuilding Plan: review/proposals/08-rebuilding-plan.md
+- Architecture & Planning: See tracking GitHub issues #30-#40
