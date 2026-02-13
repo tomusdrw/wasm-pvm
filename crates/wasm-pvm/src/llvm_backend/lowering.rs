@@ -1957,12 +1957,27 @@ fn emit_pvm_memory_copy<'ctx>(
         value: ctx.wasm_memory_base,
     });
 
-    // Loop: while size > 0, copy byte.
-    let loop_start = e.alloc_label();
+    // Check for overlap and direction: if dst > src, copy backwards.
+    // BranchLtU(reg1: dst, reg2: src) checks if src < dst (i.e. dst > src).
+    let backward_label = e.alloc_label();
+    let forward_label = e.alloc_label();
     let loop_end = e.alloc_label();
 
+    // Check if length is 0 (optimization).
     e.emit_branch_eq_imm_to_label(TEMP_RESULT, 0, loop_end);
-    e.define_label(loop_start);
+
+    // If src < dst (i.e. dst > src), use backward copy.
+    let fixup_idx = e.instructions.len();
+    e.fixups.push((fixup_idx, backward_label));
+    e.emit(Instruction::BranchLtU {
+        reg1: TEMP1, // dst
+        reg2: TEMP2, // src
+        offset: 0,
+    });
+
+    // ── Forward Copy (dst <= src or no overlap) ──
+    // while size > 0: dst++ = src++
+    e.define_label(forward_label);
 
     e.emit(Instruction::LoadIndU8 {
         dst: SCRATCH1,
@@ -1989,7 +2004,61 @@ fn emit_pvm_memory_copy<'ctx>(
         src: TEMP_RESULT,
         value: -1,
     });
-    e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, loop_start);
+    e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, forward_label);
+    e.emit_jump_to_label(loop_end);
+
+    // ── Backward Copy (dst > src) ──
+    // src += len - 1; dst += len - 1;
+    // while size > 0: dst-- = src--
+    e.define_label(backward_label);
+
+    // Decrement size once for the offset calculation (len - 1).
+    e.emit(Instruction::AddImm64 {
+        dst: SCRATCH2,
+        src: TEMP_RESULT,
+        value: -1,
+    });
+    // Adjust pointers to the end.
+    e.emit(Instruction::Add64 {
+        dst: TEMP1,
+        src1: TEMP1,
+        src2: SCRATCH2,
+    });
+    e.emit(Instruction::Add64 {
+        dst: TEMP2,
+        src1: TEMP2,
+        src2: SCRATCH2,
+    });
+
+    let backward_loop = e.alloc_label();
+    e.define_label(backward_loop);
+
+    e.emit(Instruction::LoadIndU8 {
+        dst: SCRATCH1,
+        base: TEMP2,
+        offset: 0,
+    });
+    e.emit(Instruction::StoreIndU8 {
+        base: TEMP1,
+        src: SCRATCH1,
+        offset: 0,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP1,
+        src: TEMP1,
+        value: -1,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP2,
+        src: TEMP2,
+        value: -1,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP_RESULT,
+        src: TEMP_RESULT,
+        value: -1,
+    });
+    e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, backward_loop);
 
     e.define_label(loop_end);
     Ok(())

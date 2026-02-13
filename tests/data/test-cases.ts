@@ -467,20 +467,37 @@ const testSuites: TestSuite[] = [
       },
     ],
   },
-  {
-    name: "simple-memory-test",
-    layer: 2,
-    source: { type: "wat", file: "simple-memory-test.jam.wat" },
-    tests: [
-      {
-        args: "00000000",
-        expected: 42,
-        description: "memory store8/load8_u: store 42, read back 42",
-      },
-    ],
-  },
-  {
-    name: "nested-calls",
+   {
+     name: "simple-memory-test",
+     layer: 2,
+     source: { type: "wat", file: "simple-memory-test.jam.wat" },
+     tests: [
+       {
+         args: "00000000",
+         expected: 42,
+         description: "memory store8/load8_u: store 42, read back 42",
+       },
+     ],
+   },
+   {
+     name: "memory-copy-overlap",
+     layer: 2,
+     source: { type: "wat", file: "memory_copy_overlap.jam.wat" },
+     tests: [
+       {
+         args: "00000000",
+         expected: 0x02010201,
+         description: "memory.copy forward overlap: copy 4 bytes from 0x50000 to 0x50002",
+       },
+       {
+         args: "01000000",
+         expected: 0x07060605,
+         description: "memory.copy backward overlap: copy 4 bytes from 0x50004 to 0x50002",
+       },
+     ],
+   },
+   {
+     name: "nested-calls",
     layer: 2,
     source: { type: "wat", file: "nested-calls.jam.wat" },
     tests: [
