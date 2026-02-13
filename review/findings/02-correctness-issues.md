@@ -14,40 +14,21 @@ The architecture rewrite fixed several correctness issues (stack overflow, impor
 
 ## Confirmed Bugs
 
-### Bug 1: `memory.copy` Fails on Overlapping Regions 🔴
+### Bug 1: `memory.copy` Fails on Overlapping Regions ✅
 
-**Status**: **Still Open** (Verified 2026-02-13 in `lowering.rs`)
+**Status**: **Fixed** (Verified 2026-02-13)
 **Severity**: High
 **Location**: `crates/wasm-pvm/src/llvm_backend/lowering.rs:1934` (`emit_pvm_memory_copy`)
 
 #### Problem
-The backend lowers `memory.copy` to a simple forward loop:
+The backend previously lowered `memory.copy` to a simple forward loop, which corrupted data when `dst > src` (shifting right).
 
-```rust
-// Pseudo-code of current implementation
-while size > 0 {
-    temp = load(src)
-    store(dst, temp)
-    src++
-    dst++
-    size--
-}
-```
-
-This fails when `dst > src` and regions overlap (e.g., `copy(src=0, dst=1, len=2)`). The first byte is written to `dst` (which is `src+1`), overwriting the second byte of source before it is read.
-
-#### Fix Required
-Implement overlap check:
-```rust
-if dst > src && dst < src + len {
-    // Backward copy
-    src += len - 1;
-    dst += len - 1;
-    while size > 0 { ... src--; dst--; }
-} else {
-    // Forward copy (existing)
-}
-```
+#### Fix Implemented
+Implemented proper `memmove` semantics:
+- Added a check for overlap: `if src < dst { backward_copy } else { forward_copy }`.
+- **Forward Copy**: `dst++ = src++` (standard).
+- **Backward Copy**: `dst += len-1; src += len-1; dst-- = src--`.
+- Verified with new integration tests `tests/fixtures/wat/memory_copy_overlap.jam.wat`.
 
 ---
 

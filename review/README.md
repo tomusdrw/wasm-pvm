@@ -11,14 +11,12 @@
 
 Since the previous review (2026-02-09), the codebase has undergone a **complete architectural rewrite**. The compiler now properly uses **LLVM IR** as an intermediate representation, addressing the fundamental "No IR" flaw. The codebase is now structured, modular, and extensible.
 
-However, a critical correctness issue regarding **`memory.copy` overlap** remains unaddressed. Division safety checks and stack depth limits are intentionally delegated to PVM semantics/gas.
-
 ### Key Findings at a Glance
 
 | Category | Status | Summary |
 |----------|--------|---------|
 | **Architecture** | 🟢 **Excellent** | Proper frontend (LLVM) / backend split. Clean orchestration. |
-| **Correctness** | 🟡 **Medium Risk** | `memory.copy` corrupts overlapping data. Div/Stack checks delegated. |
+| **Correctness** | 🟢 **Good** | `memory.copy` fixed. Div/Stack checks delegated to PVM. |
 | **Security** | 🟢 **Good** | Validation added. Resource exhaustion handled by Gas. |
 | **Code Quality** | 🟢 **Good** | Modular, readable, typed. |
 | **Performance** | 🟡 **Suboptimal** | Slot-based backend generates excessive memory traffic. |
@@ -31,13 +29,13 @@ However, a critical correctness issue regarding **`memory.copy` overlap** remain
 2.  **Validation**: Now validates WASM input using `wasmparser`.
 3.  **Stack Safety**: Prologue checks for frame overflow; recursion limited by gas.
 4.  **Import Handling**: Imports with return values are now handled correctly (dummy values).
+5.  **Correctness**: `memory.copy` now handles overlapping regions correctly (memmove).
 
 ---
 
 ## Critical Action Items
 
-1.  **Fix `memory.copy`**: Implement backward copying for overlapping regions where `dst > src`.
-2.  **Optimize Backend**: Implement a register allocator to replace the current slot-based approach.
+1.  **Optimize Backend**: Implement a register allocator to replace the current slot-based approach.
 
 **Note**: Division checks and explicit recursion limits are NOT required (delegated to PVM).
 
