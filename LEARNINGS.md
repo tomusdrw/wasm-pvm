@@ -253,7 +253,7 @@ When summing `Uint8Array` elements where the result may exceed 255, always cast 
 
 **Problem**: WASM is translated directly to PVM machine code.
 
-```
+```text
 Current: WASM → PVM bytes
 Proper:  WASM → IR → Optimizations → PVM bytes
 ```
@@ -278,8 +278,9 @@ Proper:  WASM → IR → Optimizations → PVM bytes
 | Memory operations | 300+ | Separate module |
 | Register allocation | Mixed | Separate module |
 
-**Better Structure** (see review/proposals/06-proposed-architecture.md):
-```
+**Better Structure** (see issue #30):
+
+```text
 translate/
   mod.rs           - Orchestration
   ir.rs            - Intermediate representation
@@ -386,7 +387,7 @@ self.resolve_fixups()?;
 
 **Current Status**: Fix applied but PVM-in-PVM still PANICs. Investigation ongoing.
 
-**Lesson**: 
+**Lesson**:
 - Memory operations are critical - any bug causes cascading failures
 - AS runtime internals (unshift, copy) affect generated code
 - Need to test with AS runtime patterns, not just WAT
@@ -466,18 +467,18 @@ arr[0] + arr[1]  // Computes (value & 0xFF)
 
 ## Short Term (V1 Polish)
 
-5. **Extract constants**: Create MemoryLayout abstraction
-6. **Fix warnings**: Remove clippy suppressions
-7. **Add tests**: StackMachine, spilling, control flow
-8. **Document thoroughly**: Every register usage, every memory address
+1. **Extract constants**: Create MemoryLayout abstraction (see issue #31)
+2. **Fix warnings**: Remove clippy suppressions
+3. **Add tests**: StackMachine, spilling, control flow (see issue #32)
+4. **Document thoroughly**: Every register usage, every memory address (see issue #34)
 
 ## Long Term (V2 Architecture)
 
-9. **Add IR**: SSA-based intermediate representation
-10. **Split codegen**: Separate modules per responsibility
-11. **Proper allocator**: Graph coloring or linear scan
-12. **Optimizations**: Constant folding, DCE, CSE
-13. **CFG**: Control flow graph with dominance analysis
+5. **Add IR**: SSA-based intermediate representation
+6. **Split codegen**: Separate modules per responsibility
+7. **Proper allocator**: Graph coloring or linear scan
+8. **Optimizations**: Constant folding, DCE, CSE
+9. **CFG**: Control flow graph with dominance analysis
 
 ---
 
