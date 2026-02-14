@@ -225,6 +225,16 @@ pub enum InstructionPattern {
         src1: Pat<u8>,
         src2: Pat<u8>,
     },
+    SetLtUImm {
+        dst: Pat<u8>,
+        src: Pat<u8>,
+        value: Pat<i32>,
+    },
+    SetLtSImm {
+        dst: Pat<u8>,
+        src: Pat<u8>,
+        value: Pat<i32>,
+    },
     Jump {
         offset: Pat<i32>,
     },
@@ -580,6 +590,22 @@ impl InstructionPattern {
                 },
                 Instruction::SetLtS { dst, src1, src2 },
             ) => d_pat.matches(dst) && s1_pat.matches(src1) && s2_pat.matches(src2),
+            (
+                P::SetLtUImm {
+                    dst: d_pat,
+                    src: s_pat,
+                    value: v_pat,
+                },
+                Instruction::SetLtUImm { dst, src, value },
+            ) => d_pat.matches(dst) && s_pat.matches(src) && v_pat.matches(value),
+            (
+                P::SetLtSImm {
+                    dst: d_pat,
+                    src: s_pat,
+                    value: v_pat,
+                },
+                Instruction::SetLtSImm { dst, src, value },
+            ) => d_pat.matches(dst) && s_pat.matches(src) && v_pat.matches(value),
             (P::Jump { offset: o_pat }, Instruction::Jump { offset }) => o_pat.matches(offset),
             (
                 P::JumpInd {
