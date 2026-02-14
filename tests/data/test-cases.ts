@@ -974,6 +974,28 @@ const testSuites: TestSuite[] = [
       },
     ],
   },
+  {
+    name: "as-tests-comparisons",
+    layer: 2,
+    source: { type: "as", file: "tests-comparisons.ts" },
+    tests: [
+      {
+        args: "0500000005000000",
+        expected: 31, // 1 (equal) | 2 (<=) | 4 (>=) | 8 (signed <=) | 16 (signed >=) = 31
+        description: "AS: 5 == 5, all comparison bits set",
+      },
+      {
+        args: "0300000007000000",
+        expected: 26, // 2 (<=) | 8 (signed <=) | 16 (signed >=) = 26 (3<=7 but 3!=7 and 3 not >= 7)
+        description: "AS: 3 < 7, <= and signed comparisons",
+      },
+      {
+        args: "0a00000005000000",
+        expected: 20, // 4 (>=) | 16 (signed >=) = 20 (10>=5)
+        description: "AS: 10 > 5, >= comparisons",
+      },
+    ],
+  },
 
   // ===== LAYER 3 — Regression & Edge Cases =====
   {
