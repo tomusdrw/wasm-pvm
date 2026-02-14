@@ -143,13 +143,37 @@ cargo test
 # Run clippy
 cargo clippy -- -D warnings
 
+# IMPORTANT: Build test artifacts first!
+cd tests && bun build.ts
+
 # Run full integration test suite (360 tests)
-cd tests && bun test
+# Use `bun run test` (builds then tests), NOT `bun test` (tests only)
+cd tests && bun run test
+
+# Quick development check - Layer 1 tests only (~140 tests, ~15 seconds)
+cd tests && bun test layer1/
 
 # Test a single example
 cargo run -p wasm-pvm-cli --quiet -- compile tests/fixtures/wat/factorial.jam.wat -o /tmp/test.jam
 cd tests && bun utils/run-jam.ts /tmp/test.jam --args=05000000
 ```
+
+### Test Organization & Workflow
+
+The test suite is organized into three layers:
+
+- **Layer 1** (`layer1/`): Core/smoke tests (~140 tests) - Fast, run these during development
+- **Layer 2** (`layer2/`): Feature tests (~80 tests) - Extended functionality
+- **Layer 3** (`layer3/`): Regression/edge cases (~140 tests) - Bug fixes and edge cases
+
+**Development workflow**:
+1. Make your changes to the Rust code
+2. Run Rust unit tests: `cargo test`
+3. Build test artifacts: `cd tests && bun build.ts`
+4. Quick validation: `cd tests && bun test layer1/` (~15 seconds)
+5. Full validation before committing: `cd tests && bun run test` (~60 seconds)
+
+**Note**: `bun run test` from the `tests/` directory runs `bun build.ts && bun test`, ensuring JAM files are always up-to-date. `bun test` alone will fail if the test artifacts haven't been built.
 
 ## License
 
