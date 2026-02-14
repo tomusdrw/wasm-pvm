@@ -33,6 +33,7 @@
 //! }
 //! ```
 
+// Test helpers are allowed to be verbose or duplicative.
 #![allow(
     clippy::match_same_arms,
     clippy::must_use_candidate,

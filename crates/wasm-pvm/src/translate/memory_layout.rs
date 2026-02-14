@@ -1,5 +1,8 @@
 //! PVM memory address layout constants.
-//!
+
+// Memory layout constants often use negative i32s or large u32s that wrap.
+#![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+
 //! All WASM-to-PVM memory regions are defined here so the layout can be
 //! understood and modified in one place.
 //!

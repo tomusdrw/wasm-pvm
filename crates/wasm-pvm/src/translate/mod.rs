@@ -1,3 +1,10 @@
+// Address calculations and jump offsets often require wrapping/truncation.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
 pub mod memory_layout;
 pub mod wasm_module;
 
@@ -6,12 +13,8 @@ use crate::{Error, Result, SpiProgram};
 
 pub use wasm_module::WasmModule;
 
-// ── Register assignments (shared with LLVM backend) ──
-
-pub const ARGS_PTR_REG: u8 = 7;
-pub const ARGS_LEN_REG: u8 = 8;
-pub const RETURN_ADDR_REG: u8 = 0;
-pub const STACK_PTR_REG: u8 = 1;
+// Re-export register constants from abi module
+pub use crate::abi::{ARGS_LEN_REG, ARGS_PTR_REG, RETURN_ADDR_REG, STACK_PTR_REG};
 
 // ── Call fixup types (shared with LLVM backend) ──
 

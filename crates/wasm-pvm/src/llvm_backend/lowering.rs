@@ -3,6 +3,17 @@
 // Each SSA value gets a dedicated stack slot (correctness-first, no register allocation).
 // Pattern: load operands from slots → temp regs, compute, store result to slot.
 
+// We use 'as' casts extensively for:
+// - PVM register indices (u8) from iterators
+// - Address offsets (i32) from pointers
+// - Immediate values (i32/i64) from LLVM constants
+// These are intentional truncations/wraps where we know the range is safe or valid for PVM.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
 use std::collections::HashMap;
 
 use inkwell::IntPredicate;
@@ -13,29 +24,15 @@ use inkwell::values::{
 };
 
 use crate::pvm::Instruction;
-use crate::translate::memory_layout;
-use crate::{Error, Result};
+use crate::{Error, Result, abi};
 
 // ── Register assignments ──
 
-const RETURN_ADDR_REG: u8 = 0;
-const STACK_PTR_REG: u8 = 1;
-/// Temp registers for loading operands from slots.
-const TEMP1: u8 = 2;
-const TEMP2: u8 = 3;
-/// Temp register for computation results.
-const TEMP_RESULT: u8 = 4;
-/// Extra scratch registers.
-const SCRATCH1: u8 = 5;
-const SCRATCH2: u8 = 6;
-const RETURN_VALUE_REG: u8 = 7;
-const ARGS_PTR_REG: u8 = 7;
-const ARGS_LEN_REG: u8 = 8;
-const FIRST_LOCAL_REG: u8 = 9;
-const MAX_LOCAL_REGS: usize = 4;
-
-/// Frame header: saved r0, r9, r10, r11, r12 (5 × 8 = 40 bytes).
-const FRAME_HEADER_SIZE: i32 = 40;
+use crate::abi::{
+    ARGS_LEN_REG, ARGS_PTR_REG, FIRST_LOCAL_REG, FRAME_HEADER_SIZE, MAX_LOCAL_REGS,
+    RETURN_ADDR_REG, RETURN_VALUE_REG, SCRATCH1, SCRATCH2, STACK_PTR_REG, TEMP_RESULT, TEMP1,
+    TEMP2,
+};
 
 // ── Public types ──
 
@@ -401,7 +398,7 @@ fn emit_prologue<'ctx>(
 ) {
     if !is_main {
         // Stack overflow check: verify SP - frame_size >= stack_limit.
-        let limit = memory_layout::stack_limit(ctx.stack_size);
+        let limit = abi::stack_limit(ctx.stack_size);
         let continue_label = e.alloc_label();
 
         // Must use LoadImm64 (not LoadImm) because the limit is in the 0xFExx_xxxx
@@ -478,8 +475,7 @@ fn emit_prologue<'ctx>(
             e.store_to_slot(slot, FIRST_LOCAL_REG + i as u8);
         } else {
             // Overflow params from PARAM_OVERFLOW_BASE.
-            let overflow_offset =
-                memory_layout::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP1,
                 value: overflow_offset,
@@ -499,7 +495,7 @@ fn emit_epilogue(e: &mut PvmEmitter<'_>, is_main: bool) {
         // For main, jump to exit address.
         e.emit(Instruction::LoadImm {
             reg: TEMP1,
-            value: memory_layout::EXIT_ADDRESS,
+            value: abi::EXIT_ADDRESS,
         });
         e.emit(Instruction::JumpInd {
             reg: TEMP1,
@@ -1308,7 +1304,7 @@ fn lower_return<'ctx>(
             // Globals convention: load result_ptr and result_len from WASM globals.
             // JAM SPI result convention: r7 = start address, r8 = end address.
             let wasm_memory_base = e.wasm_memory_base;
-            let ptr_addr = memory_layout::global_addr(ptr_global);
+            let ptr_addr = abi::global_addr(ptr_global);
             e.emit(Instruction::LoadImm {
                 reg: TEMP1,
                 value: ptr_addr,
@@ -1318,7 +1314,7 @@ fn lower_return<'ctx>(
                 base: TEMP1,
                 offset: 0,
             });
-            let len_addr = memory_layout::global_addr(len_global);
+            let len_addr = abi::global_addr(len_global);
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: len_addr,
@@ -1408,7 +1404,7 @@ fn lower_load<'ctx>(
             .strip_prefix("wasm_global_")
             .and_then(|s| s.parse::<u32>().ok())
         {
-            let global_addr = memory_layout::global_addr(idx);
+            let global_addr = abi::global_addr(idx);
             e.emit(Instruction::LoadImm {
                 reg: TEMP1,
                 value: global_addr,
@@ -1443,7 +1439,7 @@ fn lower_store<'ctx>(
             .strip_prefix("wasm_global_")
             .and_then(|s| s.parse::<u32>().ok())
         {
-            let global_addr = memory_layout::global_addr(idx);
+            let global_addr = abi::global_addr(idx);
             e.load_operand(val, TEMP1);
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
@@ -1532,8 +1528,7 @@ fn lower_wasm_call<'ctx>(
             e.load_operand(arg, FIRST_LOCAL_REG + i as u8);
         } else {
             e.load_operand(arg, TEMP1);
-            let overflow_offset =
-                memory_layout::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: overflow_offset,
@@ -1773,7 +1768,7 @@ fn emit_pvm_memory_size<'ctx>(
     ctx: &LoweringContext,
 ) -> Result<()> {
     let slot = result_slot(e, instr)?;
-    let global_addr = memory_layout::memory_size_global_offset(ctx.num_globals);
+    let global_addr = abi::memory_size_global_offset(ctx.num_globals);
 
     e.emit(Instruction::LoadImm {
         reg: TEMP1,
@@ -1795,7 +1790,7 @@ fn emit_pvm_memory_grow<'ctx>(
 ) -> Result<()> {
     let delta = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
-    let global_addr = memory_layout::memory_size_global_offset(ctx.num_globals);
+    let global_addr = abi::memory_size_global_offset(ctx.num_globals);
 
     // Load delta into SCRATCH1.
     e.load_operand(delta, SCRATCH1);
@@ -2101,8 +2096,7 @@ fn lower_pvm_call_indirect<'ctx>(
             e.load_operand(arg, FIRST_LOCAL_REG + i as u8);
         } else {
             e.load_operand(arg, TEMP1);
-            let overflow_offset =
-                memory_layout::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: overflow_offset,
@@ -2143,7 +2137,7 @@ fn lower_pvm_call_indirect<'ctx>(
     e.emit(Instruction::AddImm32 {
         dst: ARGS_LEN_REG,
         src: ARGS_LEN_REG,
-        value: memory_layout::RO_DATA_BASE,
+        value: abi::RO_DATA_BASE,
     });
 
     // Load and validate type signature.

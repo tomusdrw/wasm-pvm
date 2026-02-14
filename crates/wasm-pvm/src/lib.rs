@@ -1,11 +1,9 @@
 #![allow(
-    clippy::cast_possible_truncation, // intentional: WASM uses i32/i64, PVM uses u8 registers
-    clippy::cast_possible_wrap, // intentional: unsigned/signed conversions for WASM address arithmetic
-    clippy::cast_sign_loss, // intentional: WASM addresses are i32 but stored as u32
-    clippy::too_many_lines, // lowering.rs is intentionally monolithic for V1
-    clippy::missing_errors_doc // will be addressed in V2 documentation pass
+    clippy::too_many_lines, // TODO: Remove after refactoring lowering.rs (Task #30)
+    clippy::missing_errors_doc // TODO: Add docs in V2 (Task #34/Documentation)
 )]
 
+pub mod abi;
 pub mod error;
 pub mod llvm_backend;
 pub mod llvm_frontend;

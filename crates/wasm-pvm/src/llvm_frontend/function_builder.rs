@@ -1,3 +1,10 @@
+// We use 'as' casts for PVM immediate values and offsets where we control the ranges.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::BuilderError;
