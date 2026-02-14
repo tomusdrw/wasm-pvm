@@ -181,6 +181,18 @@ fn lower_host_call<'ctx>(
         }
     };
 
+    if num_args > 6 {
+        return Err(Error::Unsupported(format!(
+            "host_call supports at most 6 arguments (1 index + 5 data), got {num_args}"
+        )));
+    }
+
+    let ecalli_index: u32 = ecalli_index.try_into().map_err(|_| {
+        Error::Unsupported(format!(
+            "host_call ecalli index {ecalli_index} exceeds u32 range"
+        ))
+    })?;
+
     // Load remaining arguments into r7-r11.
     for i in 1..num_args.min(6) {
         let arg = get_operand(instr, i as u32)?;
@@ -189,7 +201,7 @@ fn lower_host_call<'ctx>(
     }
 
     e.emit(Instruction::Ecalli {
-        index: ecalli_index as u32,
+        index: ecalli_index,
     });
 
     if has_return && let Ok(slot) = result_slot(e, instr) {

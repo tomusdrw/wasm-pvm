@@ -3,6 +3,7 @@ import { ANAN_AS_CLI, PROJECT_ROOT } from "./paths";
 
 export interface RunResult {
   exitValue: number;
+  exitCode: number;
   stdout: string;
   stderr: string;
 }
@@ -74,6 +75,7 @@ export function runJamWithOutput(jamFile: string, args: string, pc?: number): Ru
 
     return {
       exitValue: parseExitValue(stdout),
+      exitCode: 0,
       stdout,
       stderr: "",
     };
@@ -85,6 +87,7 @@ export function runJamWithOutput(jamFile: string, args: string, pc?: number): Ru
     try {
       return {
         exitValue: parseExitValue(stdout),
+        exitCode: error.status ?? 1,
         stdout,
         stderr,
       };

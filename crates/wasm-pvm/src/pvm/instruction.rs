@@ -277,7 +277,7 @@ impl Instruction {
             }
             Self::Ecalli { index } => {
                 let mut bytes = vec![Opcode::Ecalli as u8];
-                bytes.extend_from_slice(&encode_imm(*index as i32));
+                bytes.extend_from_slice(&encode_uimm(*index));
                 bytes
             }
         }
@@ -324,6 +324,22 @@ fn encode_two_reg_one_off(opcode: Opcode, reg1: u8, reg2: u8, offset: i32) -> Ve
     let mut bytes = vec![opcode as u8, (reg1 & 0x0F) << 4 | (reg2 & 0x0F)];
     bytes.extend_from_slice(&offset.to_le_bytes());
     bytes
+}
+
+fn encode_uimm(value: u32) -> Vec<u8> {
+    let bytes = value.to_le_bytes();
+    let len = if value == 0 {
+        0
+    } else if value <= 0xFF {
+        1
+    } else if value <= 0xFFFF {
+        2
+    } else if value <= 0xFF_FFFF {
+        3
+    } else {
+        4
+    };
+    bytes[..len].to_vec()
 }
 
 fn encode_imm(value: i32) -> Vec<u8> {
@@ -389,5 +405,19 @@ mod tests {
         assert_eq!(encoded[0], Opcode::Add64 as u8);
         assert_eq!(encoded[1], 0xC0); // src2=12 in high nibble, src1=0 in low nibble
         assert_eq!(encoded[2], 0x0C); // dst=12
+    }
+
+    #[test]
+    fn test_ecalli_encoding_roundtrip() {
+        for index in [0u32, 100, 0x1234, 0xFFFF_FFFE] {
+            let instr = Instruction::Ecalli { index };
+            let encoded = instr.encode();
+            assert_eq!(encoded[0], Opcode::Ecalli as u8);
+            let imm = &encoded[1..];
+            let mut bytes = [0u8; 4];
+            bytes[..imm.len()].copy_from_slice(imm);
+            let decoded = u32::from_le_bytes(bytes);
+            assert_eq!(decoded, index, "roundtrip failed for index {index}");
+        }
     }
 }
