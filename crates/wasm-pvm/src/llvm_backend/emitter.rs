@@ -204,7 +204,22 @@ impl<'ctx> PvmEmitter<'ctx> {
     pub fn load_operand(&mut self, val: BasicValueEnum<'ctx>, temp_reg: u8) -> Result<()> {
         match val {
             BasicValueEnum::IntValue(iv) => {
-                if let Some(const_val) = iv.get_zero_extended_constant() {
+                if let Some(signed_val) = iv.get_sign_extended_constant() {
+                    // Try sign-extended first: negative i32 values emit compact
+                    // LoadImm instead of LoadImm64.
+                    if let Ok(v32) = i32::try_from(signed_val) {
+                        self.emit(Instruction::LoadImm {
+                            reg: temp_reg,
+                            value: v32,
+                        });
+                    } else {
+                        self.emit(Instruction::LoadImm64 {
+                            reg: temp_reg,
+                            value: signed_val as u64,
+                        });
+                    }
+                } else if let Some(const_val) = iv.get_zero_extended_constant() {
+                    // Fallback for unsigned constants.
                     self.emit_load_const(temp_reg, const_val);
                 } else if let Some(slot) = self.get_slot(val_key_int(iv)) {
                     self.emit(Instruction::LoadIndU64 {
@@ -325,8 +340,14 @@ pub fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i3
 }
 
 /// Detect the bit width of an instruction's result or first operand.
+/// Checks the result type first (important for ZExt/SExt/Trunc where result
+/// width differs from operand width), then falls back to operand inspection.
 pub fn operand_bit_width(instr: InstructionValue<'_>) -> u32 {
-    // For most instructions, check the operand type.
+    // Prefer the instruction's result type (correct for conversion instructions).
+    if let inkwell::types::AnyTypeEnum::IntType(ty) = instr.get_type() {
+        return ty.get_bit_width();
+    }
+    // Fallback: check the first operand's type.
     if let Some(op) = instr
         .get_operand(0)
         .and_then(inkwell::values::Operand::value)

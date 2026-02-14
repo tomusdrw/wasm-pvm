@@ -114,7 +114,11 @@ pub fn lower_import_call<'ctx>(
         .function_signatures
         .get(global_func_idx as usize)
         .copied()
-        .unwrap_or((0, false));
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "unknown import function signature for index {global_func_idx}"
+            ))
+        })?;
 
     // All import stubs emit Trap (the function is not available).
     e.emit(Instruction::Trap);
