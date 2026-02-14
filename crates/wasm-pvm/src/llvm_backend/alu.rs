@@ -47,8 +47,8 @@ pub fn lower_binary_arith<'ctx>(
     let slot = result_slot(e, instr)?;
     let bits = operand_bit_width(instr);
 
-    e.load_operand(lhs, TEMP1);
-    e.load_operand(rhs, TEMP2);
+    e.load_operand(lhs, TEMP1)?;
+    e.load_operand(rhs, TEMP2)?;
 
     match (op, bits <= 32) {
         (BinaryOp::Add, true) => e.emit(Instruction::Add32 {
@@ -181,8 +181,8 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         .get_icmp_predicate()
         .ok_or_else(|| crate::Error::Internal("ICmp without predicate".into()))?;
 
-    e.load_operand(lhs, TEMP1);
-    e.load_operand(rhs, TEMP2);
+    e.load_operand(lhs, TEMP1)?;
+    e.load_operand(rhs, TEMP2)?;
 
     match pred {
         IntPredicate::EQ => {
@@ -305,7 +305,7 @@ pub fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     let slot = result_slot(e, instr)?;
     let from_bits = operand_bit_width(instr);
 
-    e.load_operand(src, TEMP1);
+    e.load_operand(src, TEMP1)?;
 
     if from_bits == 1 {
         // i1 → i32/i64: value is already 0 or 1, just copy.
@@ -339,7 +339,7 @@ pub fn lower_sext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     let slot = result_slot(e, instr)?;
     let from_bits = operand_bit_width(instr);
 
-    e.load_operand(src, TEMP1);
+    e.load_operand(src, TEMP1)?;
 
     if from_bits == 1 {
         // i1 → i64: 0→0, 1→-1 (all ones).
@@ -380,7 +380,7 @@ pub fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
 
-    e.load_operand(src, TEMP1);
+    e.load_operand(src, TEMP1)?;
 
     // Check the result type to determine target bit width.
     // For trunc i64 to i32: AddImm32 truncates and sign-extends.
@@ -423,15 +423,15 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
     let slot = result_slot(e, instr)?;
 
     // Start with false_val in result slot.
-    e.load_operand(false_val, TEMP_RESULT);
+    e.load_operand(false_val, TEMP_RESULT)?;
     e.store_to_slot(slot, TEMP_RESULT);
 
     // If cond != 0, overwrite with true_val.
-    e.load_operand(cond, TEMP1);
+    e.load_operand(cond, TEMP1)?;
     let skip_label = e.alloc_label();
     e.emit_branch_eq_imm_to_label(TEMP1, 0, skip_label);
 
-    e.load_operand(true_val, TEMP_RESULT);
+    e.load_operand(true_val, TEMP_RESULT)?;
     e.store_to_slot(slot, TEMP_RESULT);
 
     e.define_label(skip_label);

@@ -77,7 +77,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
 
     if name.contains("ctlz") {
         let val = get_operand(instr, 0)?;
-        e.load_operand(val, TEMP1);
+        e.load_operand(val, TEMP1)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::LeadingZeroBits32 {
@@ -96,7 +96,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
 
     if name.contains("cttz") {
         let val = get_operand(instr, 0)?;
-        e.load_operand(val, TEMP1);
+        e.load_operand(val, TEMP1)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::TrailingZeroBits32 {
@@ -115,7 +115,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
 
     if name.contains("ctpop") {
         let val = get_operand(instr, 0)?;
-        e.load_operand(val, TEMP1);
+        e.load_operand(val, TEMP1)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::CountSetBits32 {
@@ -142,13 +142,9 @@ pub fn lower_llvm_intrinsic<'ctx>(
         let bits = operand_bit_width(instr);
         let is_32 = bits == 32;
 
-        e.load_operand(a, TEMP1);
-        e.load_operand(b, TEMP2);
-        e.load_operand(amt, SCRATCH1);
-
-        // Fast-path: if amt == 0, fshl returns a, fshr returns b.
-        let done_label = e.alloc_label();
-        e.emit_branch_eq_imm_to_label(SCRATCH1, 0, done_label);
+        e.load_operand(a, TEMP1)?;
+        e.load_operand(b, TEMP2)?;
+        e.load_operand(amt, SCRATCH1)?;
 
         // Mask shift amount to valid range.
         e.emit(Instruction::LoadImm {
@@ -237,38 +233,6 @@ pub fn lower_llvm_intrinsic<'ctx>(
             src1: TEMP1,
             src2: TEMP2,
         });
-
-        // Jump past the fast-path result assignment.
-        let past_done = e.alloc_label();
-        e.emit_jump_to_label(past_done);
-
-        // Fast-path: store correct operand directly.
-        e.define_label(done_label);
-        if name.contains("fshl") {
-            // fshl(a, b, 0) = a
-            e.store_to_slot(slot, TEMP1);
-        } else {
-            // fshr(a, b, 0) = b
-            e.store_to_slot(slot, TEMP2);
-        }
-
-        // Continue with normal result (already in TEMP_RESULT).
-        e.define_label(past_done);
-
-        // If we took the fast-path, result is in TEMP1/TEMP2; otherwise it's in TEMP_RESULT.
-        // Copy to result slot if not already there.
-        if name.contains("fshl") {
-            // Result is in TEMP1 after OR, but fast-path stored TEMP1 directly.
-            // Need to handle both cases.
-            // Actually, let's just reload from the appropriate location.
-            // For simplicity, always store the final result.
-        }
-        // The OR result is in TEMP_RESULT - make sure it's stored.
-        // For the fast-path case, we already stored to slot.
-        // Let's reorganize to avoid duplication.
-
-        // Actually, simpler approach: always store from TEMP_RESULT, except fast-path.
-        // Let's redo this more cleanly.
 
         e.store_to_slot(slot, TEMP_RESULT);
         return Ok(());

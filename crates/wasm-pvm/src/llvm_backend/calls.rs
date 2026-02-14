@@ -56,9 +56,9 @@ pub fn lower_wasm_call<'ctx>(
     for i in 0..num_args {
         let arg = get_operand(instr, i as u32)?;
         if i < abi::MAX_LOCAL_REGS {
-            e.load_operand(arg, abi::FIRST_LOCAL_REG + i as u8);
+            e.load_operand(arg, abi::FIRST_LOCAL_REG + i as u8)?;
         } else {
-            e.load_operand(arg, TEMP1);
+            e.load_operand(arg, TEMP1)?;
             let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
@@ -168,7 +168,7 @@ pub fn lower_pvm_call_indirect<'ctx>(
 
     // Load table entry index into ARGS_LEN_REG and save it in the spill area.
     // Using OPERAND_SPILL_BASE ensures we have reserved space in the frame.
-    e.load_operand(table_entry_val, abi::ARGS_LEN_REG);
+    e.load_operand(table_entry_val, abi::ARGS_LEN_REG)?;
     e.emit(Instruction::StoreIndU64 {
         base: abi::STACK_PTR_REG,
         src: abi::ARGS_LEN_REG,
@@ -179,9 +179,9 @@ pub fn lower_pvm_call_indirect<'ctx>(
     for i in 0..num_args {
         let arg = get_operand(instr, (i + 2) as u32)?;
         if i < abi::MAX_LOCAL_REGS {
-            e.load_operand(arg, abi::FIRST_LOCAL_REG + i as u8);
+            e.load_operand(arg, abi::FIRST_LOCAL_REG + i as u8)?;
         } else {
-            e.load_operand(arg, TEMP1);
+            e.load_operand(arg, TEMP1)?;
             let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
@@ -278,29 +278,19 @@ pub fn lower_call<'ctx>(
     instr: InstructionValue<'ctx>,
     ctx: &LoweringContext,
 ) -> Result<()> {
-    // Get the called function name from the last operand (the function pointer).
-    // Try to extract a reliable function name - prefer direct function references
-    // over indirect calls where possible.
-    let num_operands = instr.get_num_operands();
-    let fn_operand = instr
-        .get_operand(num_operands - 1)
-        .and_then(inkwell::values::Operand::value)
-        .ok_or_else(|| Error::Internal("call without function operand".into()))?;
+    // Extract the called function name using CallSiteValue API for robustness.
+    // This handles direct calls reliably, even through bitcasts or aliases.
+    let call_site: inkwell::values::CallSiteValue = instr.try_into().map_err(|()| {
+        Error::Internal("expected call instruction to convert to CallSiteValue".into())
+    })?;
 
-    // Extract function name - handle both direct calls (PointerValue with name)
-    // and indirect calls (PointerValue without meaningful name).
-    let fn_name = match fn_operand {
-        BasicValueEnum::PointerValue(pv) => {
-            let name = pv.get_name().to_string_lossy().to_string();
-            if name.is_empty() {
-                // Indirect call - fall back to using the pointer value directly
-                return Err(Error::Internal(
-                    "indirect call not supported for this function pointer".into(),
-                ));
-            }
-            name
-        }
-        _ => return Err(Error::Internal("call operand is not a pointer".into())),
+    let fn_name = if let Some(fn_val) = call_site.get_called_fn_value() {
+        fn_val.get_name().to_string_lossy().to_string()
+    } else {
+        // Indirect call without a statically known callee.
+        return Err(Error::Internal(
+            "indirect call not supported (no static callee)".into(),
+        ));
     };
 
     if fn_name.starts_with("__pvm_") {

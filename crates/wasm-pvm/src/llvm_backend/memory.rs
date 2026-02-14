@@ -75,7 +75,7 @@ pub fn lower_wasm_global_store<'ctx>(
             .and_then(|s| s.parse::<u32>().ok())
         {
             let global_addr = abi::global_addr(idx);
-            e.load_operand(val, TEMP1);
+            e.load_operand(val, TEMP1)?;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: global_addr,
@@ -125,7 +125,7 @@ pub fn emit_pvm_load<'ctx>(
     let addr = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
 
-    e.load_operand(addr, TEMP1);
+    e.load_operand(addr, TEMP1)?;
 
     // Emit the PVM load with wasm_memory_base as the offset.
     let offset = ctx.wasm_memory_base;
@@ -190,8 +190,8 @@ pub fn emit_pvm_store<'ctx>(
     let addr = get_operand(instr, 0)?;
     let val = get_operand(instr, 1)?;
 
-    e.load_operand(addr, TEMP1);
-    e.load_operand(val, TEMP2);
+    e.load_operand(addr, TEMP1)?;
+    e.load_operand(val, TEMP2)?;
 
     let offset = ctx.wasm_memory_base;
     match kind {
@@ -255,7 +255,7 @@ pub fn emit_pvm_memory_grow<'ctx>(
     let global_addr = abi::memory_size_global_offset(ctx.num_globals);
 
     // Load delta into SCRATCH1.
-    e.load_operand(delta, SCRATCH1);
+    e.load_operand(delta, SCRATCH1)?;
 
     // Load current memory size into TEMP_RESULT (this will be the return value on success).
     e.emit(Instruction::LoadImm {
@@ -279,7 +279,9 @@ pub fn emit_pvm_memory_grow<'ctx>(
     let fail_label = e.alloc_label();
     let end_label = e.alloc_label();
 
-    // Branch to fail if SCRATCH2 < TEMP_RESULT (i.e. new_size < current).
+    // Branch to fail if new_size < current (overflow).
+    // PVM BranchLtU branches when reg2 < reg1, so reg1=TEMP_RESULT, reg2=SCRATCH2
+    // means "branch if SCRATCH2(new_size) < TEMP_RESULT(current)".
     let fixup_idx = e.instructions.len();
     e.fixups.push((fixup_idx, fail_label));
     e.emit(Instruction::BranchLtU {
@@ -360,9 +362,9 @@ pub fn emit_pvm_memory_fill<'ctx>(
     let val = get_operand(instr, 1)?;
     let len = get_operand(instr, 2)?;
 
-    e.load_operand(dst_addr, TEMP1); // dest
-    e.load_operand(val, TEMP2); // value
-    e.load_operand(len, TEMP_RESULT); // size (counter)
+    e.load_operand(dst_addr, TEMP1)?; // dest
+    e.load_operand(val, TEMP2)?; // value
+    e.load_operand(len, TEMP_RESULT)?; // size (counter)
 
     // Add wasm_memory_base to dest.
     e.emit(Instruction::AddImm32 {
@@ -412,9 +414,9 @@ pub fn emit_pvm_memory_copy<'ctx>(
     let src_addr = get_operand(instr, 1)?;
     let len = get_operand(instr, 2)?;
 
-    e.load_operand(dst_addr, TEMP1); // dest
-    e.load_operand(src_addr, TEMP2); // src
-    e.load_operand(len, TEMP_RESULT); // size (counter)
+    e.load_operand(dst_addr, TEMP1)?; // dest
+    e.load_operand(src_addr, TEMP2)?; // src
+    e.load_operand(len, TEMP_RESULT)?; // size (counter)
 
     // Add wasm_memory_base to both addresses.
     e.emit(Instruction::AddImm32 {

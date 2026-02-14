@@ -199,9 +199,8 @@ impl<'ctx> PvmEmitter<'ctx> {
     // ── Value load / store ──
 
     /// Load a value into a temp register. Constants are inlined; SSA values are loaded from slots.
-    /// Logs warnings for unknown values instead of silently emitting 0.
-    #[allow(clippy::single_match_else)]
-    pub fn load_operand(&mut self, val: BasicValueEnum<'ctx>, temp_reg: u8) {
+    /// Returns an error for unknown values instead of silently emitting incorrect code.
+    pub fn load_operand(&mut self, val: BasicValueEnum<'ctx>, temp_reg: u8) -> Result<()> {
         match val {
             BasicValueEnum::IntValue(iv) => {
                 if let Some(const_val) = iv.get_zero_extended_constant() {
@@ -213,29 +212,20 @@ impl<'ctx> PvmEmitter<'ctx> {
                         offset: slot,
                     });
                 } else {
-                    // Log warning instead of silently emitting 0.
-                    tracing::warn!(
-                        "unknown int value slot for {:?}, emitting 0 as fallback",
+                    return Err(Error::Internal(format!(
+                        "no slot for int value {:?}",
                         val_key_int(iv)
-                    );
-                    self.emit(Instruction::LoadImm {
-                        reg: temp_reg,
-                        value: 0,
-                    });
+                    )));
                 }
             }
             _ => {
-                // Log warning instead of silently emitting 0.
-                tracing::warn!(
-                    "cannot load non-integer value type {:?}, emitting 0 as fallback",
+                return Err(Error::Internal(format!(
+                    "cannot load non-integer value type {:?}",
                     val.get_type()
-                );
-                self.emit(Instruction::LoadImm {
-                    reg: temp_reg,
-                    value: 0,
-                });
+                )));
             }
         }
+        Ok(())
     }
 
     pub fn emit_load_const(&mut self, reg: u8, val: u64) {
@@ -262,22 +252,21 @@ impl<'ctx> PvmEmitter<'ctx> {
     // ── Fixup resolution ──
 
     pub fn resolve_fixups(&mut self) -> Result<()> {
+        // Precompute byte offsets for each instruction to avoid O(n²) re-scanning.
+        let mut offsets = Vec::with_capacity(self.instructions.len());
+        let mut running = 0usize;
+        for instr in &self.instructions {
+            offsets.push(running);
+            running += instr.encode().len();
+        }
+
         for &(instr_idx, label_id) in &self.fixups {
             let target_offset = self.labels[label_id]
                 .ok_or_else(|| Error::Unsupported("unresolved label".to_string()))?;
 
-            // Calculate the byte offset where this instruction starts.
-            let instr_start: usize = self.instructions[..instr_idx]
-                .iter()
-                .map(|i| i.encode().len())
-                .sum();
-
-            // Calculate the instruction's encoded length to get the end position (next PC).
-            let instr_len = self.instructions[instr_idx].encode().len();
-            let instr_end = instr_start + instr_len;
-
-            // Relative offset should be from instruction end (next PC) to target.
-            let relative_offset = (target_offset as i32) - (instr_end as i32);
+            // PVM jump offsets are relative to the instruction start.
+            let instr_start = offsets[instr_idx];
+            let relative_offset = (target_offset as i32) - (instr_start as i32);
 
             match &mut self.instructions[instr_idx] {
                 Instruction::Jump { offset }

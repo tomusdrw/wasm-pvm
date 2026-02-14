@@ -58,7 +58,7 @@ pub fn lower_br<'ctx>(
         let then_has_phis = has_phi_from(current_bb, then_bb);
         let else_has_phis = has_phi_from(current_bb, else_bb);
 
-        e.load_operand(cond, TEMP1);
+        e.load_operand(cond, TEMP1)?;
 
         if !then_has_phis && !else_has_phis {
             // No phi copies needed — simple branch.
@@ -98,7 +98,7 @@ pub fn lower_switch<'ctx>(
         .get(&default_bb)
         .ok_or_else(|| Error::Internal("switch default to unknown block".into()))?;
 
-    e.load_operand(val, TEMP1);
+    e.load_operand(val, TEMP1)?;
 
     // Collect cases. For each case that targets a block with phis, use a trampoline.
     let num_operands = instr.get_num_operands();
@@ -196,7 +196,7 @@ pub fn lower_return<'ctx>(
             // JAM SPI result convention: r7 = start address, r8 = end address.
             let ret_val = get_operand(instr, 0)?;
             let wasm_memory_base = e.wasm_memory_base;
-            e.load_operand(ret_val, TEMP1);
+            e.load_operand(ret_val, TEMP1)?;
             // TEMP2 = packed >> 32 (length)
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
@@ -223,13 +223,13 @@ pub fn lower_return<'ctx>(
         } else if instr.get_num_operands() > 0 {
             // Entry function returns a value → r7.
             let ret_val = get_operand(instr, 0)?;
-            e.load_operand(ret_val, abi::RETURN_VALUE_REG);
+            e.load_operand(ret_val, abi::RETURN_VALUE_REG)?;
         }
     } else {
         // Normal function: ret void | ret i64 %val → r7.
         if instr.get_num_operands() > 0 {
             let ret_val = get_operand(instr, 0)?;
-            e.load_operand(ret_val, abi::RETURN_VALUE_REG);
+            e.load_operand(ret_val, abi::RETURN_VALUE_REG)?;
         }
     }
 
@@ -323,7 +323,7 @@ pub fn emit_phi_copies<'ctx>(
     if copies.len() == 1 {
         // Single phi — no cycle possible, direct copy.
         let (slot, value) = copies[0];
-        e.load_operand(value, TEMP1);
+        e.load_operand(value, TEMP1)?;
         e.store_to_slot(slot, TEMP1);
     } else {
         // Multiple phis — use two-pass to avoid clobbering.
@@ -332,7 +332,7 @@ pub fn emit_phi_copies<'ctx>(
         if copies.len() <= temp_regs.len() {
             // All fit in temp registers: load all first, then store all.
             for (i, (_, value)) in copies.iter().enumerate() {
-                e.load_operand(*value, temp_regs[i]);
+                e.load_operand(*value, temp_regs[i])?;
             }
             for (i, (slot, _)) in copies.iter().enumerate() {
                 e.store_to_slot(*slot, temp_regs[i]);
