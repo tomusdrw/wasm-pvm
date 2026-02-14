@@ -62,6 +62,7 @@ pub enum Instruction {
     LoadIndU16 { dst: u8, base: u8, offset: i32 },
     LoadIndI16 { dst: u8, base: u8, offset: i32 },
     StoreIndU16 { base: u8, src: u8, offset: i32 },
+    Ecalli { index: u32 },
 }
 
 impl Instruction {
@@ -272,6 +273,11 @@ impl Instruction {
                     (*base & 0x0F) << 4 | (*src & 0x0F),
                 ];
                 bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::Ecalli { index } => {
+                let mut bytes = vec![Opcode::Ecalli as u8];
+                bytes.extend_from_slice(&encode_imm(*index as i32));
                 bytes
             }
         }
