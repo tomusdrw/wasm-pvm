@@ -12,8 +12,9 @@ function writeResult(val: i32): void {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
-  const a = load<i32>(args_ptr);
-  const b = load<i32>(args_ptr + 4);
+  // Load as u32 for unsigned comparison tests
+  const a = load<u32>(args_ptr);
+  const b = load<u32>(args_ptr + 4);
 
   let result: i32 = 0;
 
@@ -32,14 +33,16 @@ export function main(args_ptr: i32, args_len: i32): void {
     result = result | 4;  // bit 2: a >= b
   }
 
-  // Test signed less than or equal - also uses SetLtUImm for negation
+  // Test signed less than or equal - cast to i32 for signed comparison
   // This exercises signed comparisons
-  if (a as i32 <= b as i32) {
+  const aSigned: i32 = a as i32;
+  const bSigned: i32 = b as i32;
+  if (aSigned <= bSigned) {
     result = result | 8;  // bit 3: signed a <= b
   }
 
   // Test signed greater than or equal
-  if (a as i32 >= b as i32) {
+  if (aSigned >= bSigned) {
     result = result | 16; // bit 4: signed a >= b
   }
 
