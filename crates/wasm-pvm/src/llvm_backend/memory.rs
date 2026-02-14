@@ -19,8 +19,11 @@ use crate::{Error, Result, abi};
 use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_slot};
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
-/// Lower a load from a WASM global (after mem2reg, remaining loads are from LLVM globals).
-pub fn lower_load<'ctx>(
+/// Lower a load from a WASM global variable.
+///
+/// After mem2reg optimization, remaining loads in LLVM IR typically access
+/// WASM global variables (represented as LLVM globals with names like `wasm_global_N`).
+pub fn lower_wasm_global_load<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
     _ctx: &LoweringContext,
@@ -55,8 +58,8 @@ pub fn lower_load<'ctx>(
     )))
 }
 
-/// Lower a store to a WASM global.
-pub fn lower_store<'ctx>(
+/// Lower a store to a WASM global variable.
+pub fn lower_wasm_global_store<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
     _ctx: &LoweringContext,
@@ -272,10 +275,20 @@ pub fn emit_pvm_memory_grow<'ctx>(
         src2: SCRATCH1,
     });
 
-    // Check new_size > max_pages → fail.
+    // Check for overflow: if new_size < current, overflow occurred.
     let fail_label = e.alloc_label();
     let end_label = e.alloc_label();
 
+    // Branch to fail if SCRATCH2 < TEMP_RESULT (i.e. new_size < current).
+    let fixup_idx = e.instructions.len();
+    e.fixups.push((fixup_idx, fail_label));
+    e.emit(Instruction::BranchLtU {
+        reg1: TEMP_RESULT,
+        reg2: SCRATCH2,
+        offset: 0,
+    });
+
+    // Check new_size > max_pages → fail.
     e.emit(Instruction::LoadImm {
         reg: SCRATCH1,
         value: ctx.max_memory_pages as i32,

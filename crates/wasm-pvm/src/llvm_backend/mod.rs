@@ -59,7 +59,7 @@ pub fn lower_function(
     emitter.frame_size = emitter.next_slot_offset;
 
     // Phase 2: Emit prologue.
-    emit_prologue(&mut emitter, function, ctx, is_main);
+    emit_prologue(&mut emitter, function, ctx, is_main)?;
 
     // Phase 3: Lower each basic block.
     for bb in function.get_basic_blocks() {
@@ -86,7 +86,7 @@ fn emit_prologue<'ctx>(
     function: FunctionValue<'ctx>,
     ctx: &LoweringContext,
     is_main: bool,
-) {
+) -> Result<()> {
     if !is_main {
         // Stack overflow check: verify SP - frame_size >= stack_limit.
         let limit = abi::stack_limit(ctx.stack_size);
@@ -146,7 +146,9 @@ fn emit_prologue<'ctx>(
     let params = function.get_params();
     for (i, param) in params.iter().enumerate() {
         let key = emitter::val_key_basic(*param);
-        let slot = e.get_slot(key).unwrap();
+        let slot = e
+            .get_slot(key)
+            .ok_or_else(|| Error::Internal(format!("no slot for parameter {i} (key {key:?})")))?;
 
         if is_main {
             // For main, SPI passes r7=args_ptr, r8=args_len.
@@ -179,6 +181,8 @@ fn emit_prologue<'ctx>(
             e.store_to_slot(slot, TEMP1);
         }
     }
+
+    Ok(())
 }
 
 /// Lower a single LLVM instruction.
@@ -194,7 +198,7 @@ fn lower_instruction<'ctx>(
     };
     use calls::lower_call;
     use control_flow::{lower_br, lower_return, lower_switch};
-    use memory::{lower_load, lower_store};
+    use memory::{lower_wasm_global_load, lower_wasm_global_store};
 
     match instr.get_opcode() {
         // Binary arithmetic
@@ -235,8 +239,8 @@ fn lower_instruction<'ctx>(
         }
 
         // Load/Store (globals after mem2reg)
-        InstructionOpcode::Load => lower_load(e, instr, ctx),
-        InstructionOpcode::Store => lower_store(e, instr, ctx),
+        InstructionOpcode::Load => lower_wasm_global_load(e, instr, ctx),
+        InstructionOpcode::Store => lower_wasm_global_store(e, instr, ctx),
 
         // Calls (intrinsics + wasm functions)
         InstructionOpcode::Call => lower_call(e, instr, ctx),

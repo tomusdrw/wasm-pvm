@@ -194,44 +194,41 @@ pub fn lower_return<'ctx>(
             // Packed (ptr, len) convention: return value is packed i64.
             // Lower 32 bits = WASM ptr, upper 32 bits = len.
             // JAM SPI result convention: r7 = start address, r8 = end address.
-            if let Ok(ret_val) = get_operand(instr, 0) {
-                let wasm_memory_base = e.wasm_memory_base;
-                e.load_operand(ret_val, TEMP1);
-                // TEMP2 = packed >> 32 (length)
-                e.emit(Instruction::LoadImm {
-                    reg: TEMP2,
-                    value: 32,
-                });
-                e.emit(Instruction::ShloR64 {
-                    dst: TEMP2,
-                    src1: TEMP1,
-                    src2: TEMP2,
-                });
-                // r7 = (packed & 0xFFFFFFFF) + wasm_memory_base (start address)
-                // AddImm32 naturally truncates to 32 bits and adds the base.
-                e.emit(Instruction::AddImm32 {
-                    dst: abi::ARGS_PTR_REG,
-                    src: TEMP1,
-                    value: wasm_memory_base,
-                });
-                // r8 = r7 + len (end address)
-                e.emit(Instruction::Add64 {
-                    dst: abi::ARGS_LEN_REG,
-                    src1: abi::ARGS_PTR_REG,
-                    src2: TEMP2,
-                });
-            }
+            let ret_val = get_operand(instr, 0)?;
+            let wasm_memory_base = e.wasm_memory_base;
+            e.load_operand(ret_val, TEMP1);
+            // TEMP2 = packed >> 32 (length)
+            e.emit(Instruction::LoadImm {
+                reg: TEMP2,
+                value: 32,
+            });
+            e.emit(Instruction::ShloR64 {
+                dst: TEMP2,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            // r7 = (packed & 0xFFFFFFFF) + wasm_memory_base (start address)
+            // AddImm32 naturally truncates to 32 bits and adds the base.
+            e.emit(Instruction::AddImm32 {
+                dst: abi::ARGS_PTR_REG,
+                src: TEMP1,
+                value: wasm_memory_base,
+            });
+            // r8 = r7 + len (end address)
+            e.emit(Instruction::Add64 {
+                dst: abi::ARGS_LEN_REG,
+                src1: abi::ARGS_PTR_REG,
+                src2: TEMP2,
+            });
         } else if instr.get_num_operands() > 0 {
             // Entry function returns a value → r7.
-            if let Ok(ret_val) = get_operand(instr, 0) {
-                e.load_operand(ret_val, abi::RETURN_VALUE_REG);
-            }
+            let ret_val = get_operand(instr, 0)?;
+            e.load_operand(ret_val, abi::RETURN_VALUE_REG);
         }
     } else {
         // Normal function: ret void | ret i64 %val → r7.
-        if instr.get_num_operands() > 0
-            && let Ok(ret_val) = get_operand(instr, 0)
-        {
+        if instr.get_num_operands() > 0 {
+            let ret_val = get_operand(instr, 0)?;
             e.load_operand(ret_val, abi::RETURN_VALUE_REG);
         }
     }
@@ -341,23 +338,11 @@ pub fn emit_phi_copies<'ctx>(
                 e.store_to_slot(*slot, temp_regs[i]);
             }
         } else {
-            // Fallback: use temp stack space below the frame (negative offsets from SP).
-            for (i, (_, value)) in copies.iter().enumerate() {
-                e.load_operand(*value, TEMP1);
-                e.emit(Instruction::StoreIndU64 {
-                    base: abi::STACK_PTR_REG,
-                    src: TEMP1,
-                    offset: -(8 + i as i32 * 8),
-                });
-            }
-            for (i, (slot, _)) in copies.iter().enumerate() {
-                e.emit(Instruction::LoadIndU64 {
-                    dst: TEMP1,
-                    base: abi::STACK_PTR_REG,
-                    offset: -(8 + i as i32 * 8),
-                });
-                e.store_to_slot(*slot, TEMP1);
-            }
+            // Too many phi values to fit in temp registers.
+            // This requires spill space in the frame, which is not currently reserved.
+            return Err(Error::Unsupported(
+                "too many phi values for available temp registers".to_string(),
+            ));
         }
     }
 

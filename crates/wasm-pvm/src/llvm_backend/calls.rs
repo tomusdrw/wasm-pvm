@@ -101,8 +101,8 @@ pub fn lower_wasm_call<'ctx>(
 }
 
 /// Emit a stub for calling an imported function.
-/// Imported functions are not available at PVM level — emit Trap for abort-like
-/// functions and a dummy return value (0) for others.
+/// Imported functions are not available at PVM level — emit Trap (all import
+/// stubs trap since the actual function is not available in PVM).
 #[allow(clippy::unnecessary_wraps)]
 pub fn lower_import_call<'ctx>(
     e: &mut PvmEmitter<'ctx>,
