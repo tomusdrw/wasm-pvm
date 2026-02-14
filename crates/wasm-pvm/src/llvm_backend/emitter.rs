@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{
-    AsValueRef, BasicValueEnum, FunctionValue, InstructionValue, IntValue, PhiValue,
+    AnyValue, AsValueRef, BasicValueEnum, FunctionValue, InstructionValue, IntValue, PhiValue,
 };
 
 use crate::pvm::Instruction;
@@ -199,7 +199,8 @@ impl<'ctx> PvmEmitter<'ctx> {
     // ── Value load / store ──
 
     /// Load a value into a temp register. Constants are inlined; SSA values are loaded from slots.
-    /// Returns an error for unknown values instead of silently emitting incorrect code.
+    /// Poison/undef values are materialized as 0 (any value is valid for undefined behavior).
+    /// Returns an error for truly unknown values.
     pub fn load_operand(&mut self, val: BasicValueEnum<'ctx>, temp_reg: u8) -> Result<()> {
         match val {
             BasicValueEnum::IntValue(iv) => {
@@ -211,10 +212,17 @@ impl<'ctx> PvmEmitter<'ctx> {
                         base: STACK_PTR_REG,
                         offset: slot,
                     });
+                } else if iv.is_poison() || iv.is_undef() {
+                    // Poison/undef values can be materialized as any value; use 0.
+                    self.emit(Instruction::LoadImm {
+                        reg: temp_reg,
+                        value: 0,
+                    });
                 } else {
                     return Err(Error::Internal(format!(
-                        "no slot for int value {:?}",
-                        val_key_int(iv)
+                        "no slot for int value {:?} (opcode: {:?})",
+                        val_key_int(iv),
+                        iv.as_instruction().map(InstructionValue::get_opcode),
                     )));
                 }
             }
