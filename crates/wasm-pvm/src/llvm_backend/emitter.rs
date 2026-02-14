@@ -90,6 +90,9 @@ pub struct PvmEmitter<'ctx> {
 
     /// WASM memory base address (for converting WASM addresses to PVM addresses).
     pub(crate) wasm_memory_base: i32,
+
+    /// Current byte offset of the emitted code (for O(1) offset calculations).
+    pub(crate) byte_offset: usize,
 }
 
 /// Wrapper key for LLVM values in the slot map.
@@ -124,6 +127,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             result_globals: None,
             entry_returns_ptr_len: false,
             wasm_memory_base: 0,
+            byte_offset: 0,
         }
     }
 
@@ -145,10 +149,11 @@ impl<'ctx> PvmEmitter<'ctx> {
     }
 
     pub fn current_offset(&self) -> usize {
-        self.instructions.iter().map(|i| i.encode().len()).sum()
+        self.byte_offset
     }
 
     pub fn emit(&mut self, instr: Instruction) {
+        self.byte_offset += instr.encode().len();
         self.instructions.push(instr);
     }
 
@@ -194,6 +199,8 @@ impl<'ctx> PvmEmitter<'ctx> {
     // ── Value load / store ──
 
     /// Load a value into a temp register. Constants are inlined; SSA values are loaded from slots.
+    /// Logs warnings for unknown values instead of silently emitting 0.
+    #[allow(clippy::single_match_else)]
     pub fn load_operand(&mut self, val: BasicValueEnum<'ctx>, temp_reg: u8) {
         match val {
             BasicValueEnum::IntValue(iv) => {
@@ -206,7 +213,11 @@ impl<'ctx> PvmEmitter<'ctx> {
                         offset: slot,
                     });
                 } else {
-                    // Unknown value — shouldn't happen. Load 0 as fallback.
+                    // Log warning instead of silently emitting 0.
+                    tracing::warn!(
+                        "unknown int value slot for {:?}, emitting 0 as fallback",
+                        val_key_int(iv)
+                    );
                     self.emit(Instruction::LoadImm {
                         reg: temp_reg,
                         value: 0,
@@ -214,7 +225,11 @@ impl<'ctx> PvmEmitter<'ctx> {
                 }
             }
             _ => {
-                // Non-int values shouldn't appear in our IR (all i64).
+                // Log warning instead of silently emitting 0.
+                tracing::warn!(
+                    "cannot load non-integer value type {:?}, emitting 0 as fallback",
+                    val.get_type()
+                );
                 self.emit(Instruction::LoadImm {
                     reg: temp_reg,
                     value: 0,
@@ -251,12 +266,18 @@ impl<'ctx> PvmEmitter<'ctx> {
             let target_offset = self.labels[label_id]
                 .ok_or_else(|| Error::Unsupported("unresolved label".to_string()))?;
 
+            // Calculate the byte offset where this instruction starts.
             let instr_start: usize = self.instructions[..instr_idx]
                 .iter()
                 .map(|i| i.encode().len())
                 .sum();
 
-            let relative_offset = (target_offset as i32) - (instr_start as i32);
+            // Calculate the instruction's encoded length to get the end position (next PC).
+            let instr_len = self.instructions[instr_idx].encode().len();
+            let instr_end = instr_start + instr_len;
+
+            // Relative offset should be from instruction end (next PC) to target.
+            let relative_offset = (target_offset as i32) - (instr_end as i32);
 
             match &mut self.instructions[instr_idx] {
                 Instruction::Jump { offset }

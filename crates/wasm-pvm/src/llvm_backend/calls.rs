@@ -141,24 +141,38 @@ pub fn lower_pvm_call_indirect<'ctx>(
     // __pvm_call_indirect(type_idx, table_entry, arg0, arg1, ...)
     // Operands: [type_idx, table_entry, arg0, ..., argN-1, fn_ptr]
     let num_operands = instr.get_num_operands();
+
+    // Prevent underflow when calculating num_args.
+    if num_operands < 3 {
+        return Err(Error::Internal(format!(
+            "__pvm_call_indirect requires at least 3 operands, got {num_operands}"
+        )));
+    }
+
     let num_args = (num_operands - 3) as usize; // subtract type_idx, table_entry, fn_ptr
 
     let type_idx_val = get_operand(instr, 0)?;
     let table_entry_val = get_operand(instr, 1)?;
 
-    // Load type_idx as an immediate (it's always a constant).
+    // Validate type_idx is a constant integer (required for signature validation).
     let expected_type_idx = match type_idx_val {
-        BasicValueEnum::IntValue(iv) => iv.get_zero_extended_constant().unwrap_or(0) as u32,
-        _ => 0,
+        BasicValueEnum::IntValue(iv) => iv.get_zero_extended_constant().ok_or_else(|| {
+            Error::Internal("__pvm_call_indirect type_idx must be a constant".into())
+        })? as u32,
+        _ => {
+            return Err(Error::Internal(
+                "__pvm_call_indirect type_idx must be an integer".into(),
+            ));
+        }
     };
 
-    // Load table entry index into ARGS_LEN_REG and save it early.
+    // Load table entry index into ARGS_LEN_REG and save it in the spill area.
+    // Using OPERAND_SPILL_BASE ensures we have reserved space in the frame.
     e.load_operand(table_entry_val, abi::ARGS_LEN_REG);
-    // Save table index below the frame where it won't be clobbered by arg loading.
     e.emit(Instruction::StoreIndU64 {
         base: abi::STACK_PTR_REG,
         src: abi::ARGS_LEN_REG,
-        offset: -8,
+        offset: abi::OPERAND_SPILL_BASE, // Use documented spill area instead of hardcoded -8
     });
 
     // Load function arguments into r9-r12 and overflow area.
@@ -185,7 +199,7 @@ pub fn lower_pvm_call_indirect<'ctx>(
     e.emit(Instruction::LoadIndU64 {
         dst: abi::ARGS_LEN_REG, // r8, used as SAVED_TABLE_IDX_REG
         base: abi::STACK_PTR_REG,
-        offset: -8,
+        offset: abi::OPERAND_SPILL_BASE, // Use documented spill area
     });
 
     // Dispatch table lookup: each entry is 8 bytes (4-byte jump ref + 4-byte type index).
@@ -265,13 +279,27 @@ pub fn lower_call<'ctx>(
     ctx: &LoweringContext,
 ) -> Result<()> {
     // Get the called function name from the last operand (the function pointer).
+    // Try to extract a reliable function name - prefer direct function references
+    // over indirect calls where possible.
     let num_operands = instr.get_num_operands();
     let fn_operand = instr
         .get_operand(num_operands - 1)
         .and_then(inkwell::values::Operand::value)
         .ok_or_else(|| Error::Internal("call without function operand".into()))?;
+
+    // Extract function name - handle both direct calls (PointerValue with name)
+    // and indirect calls (PointerValue without meaningful name).
     let fn_name = match fn_operand {
-        BasicValueEnum::PointerValue(pv) => pv.get_name().to_string_lossy().to_string(),
+        BasicValueEnum::PointerValue(pv) => {
+            let name = pv.get_name().to_string_lossy().to_string();
+            if name.is_empty() {
+                // Indirect call - fall back to using the pointer value directly
+                return Err(Error::Internal(
+                    "indirect call not supported for this function pointer".into(),
+                ));
+            }
+            name
+        }
         _ => return Err(Error::Internal("call operand is not a pointer".into())),
     };
 
