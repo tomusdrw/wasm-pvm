@@ -483,6 +483,33 @@ fn test_spill_preservation_across_call() {
         add_count >= 2,
         "Expected at least 2 Add32 (before and after call), got {add_count}"
     );
+
+    // Verify spill round-trip: the first Add32 result is stored to an SP-relative slot,
+    // and later reloaded from the same offset after the call.
+    let stored_offsets: Vec<i32> = instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::StoreIndU64 {
+                base: 1, offset, ..
+            } if *offset >= 40 => Some(*offset), // >= FRAME_HEADER_SIZE
+            _ => None,
+        })
+        .collect();
+    let loaded_offsets: Vec<i32> = instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::LoadIndU64 {
+                base: 1, offset, ..
+            } if *offset >= 40 => Some(*offset),
+            _ => None,
+        })
+        .collect();
+    // At least one stored slot offset should also appear in loaded offsets (round-trip).
+    let has_round_trip = stored_offsets.iter().any(|s| loaded_offsets.contains(s));
+    assert!(
+        has_round_trip,
+        "Expected at least one SP slot to be stored and later reloaded (spill round-trip)"
+    );
 }
 
 // ── Phi Node / Control Flow Merge ──
