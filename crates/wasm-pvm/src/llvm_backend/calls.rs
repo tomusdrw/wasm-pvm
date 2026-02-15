@@ -93,7 +93,8 @@ pub fn lower_wasm_call<'ctx>(
     });
 
     // If function returns a value, store r7 to result slot.
-    if has_return && let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.store_to_slot(slot, abi::RETURN_VALUE_REG);
     }
 
@@ -138,7 +139,8 @@ pub fn lower_import_call<'ctx>(
 
     // If the import has a return value, push a dummy 0 so the rest of the code
     // can still type-check (dead code after the trap).
-    if has_return && let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.emit(Instruction::LoadImm {
             reg: TEMP_RESULT,
             value: 0,
@@ -204,7 +206,8 @@ fn lower_host_call<'ctx>(
         index: ecalli_index,
     });
 
-    if has_return && let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.store_to_slot(slot, abi::RETURN_VALUE_REG);
     }
 
@@ -252,7 +255,8 @@ fn lower_pvm_ptr<'ctx>(
         value: ctx.wasm_memory_base,
     });
 
-    if has_return && let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.store_to_slot(slot, TEMP_RESULT);
     }
 
@@ -392,6 +396,7 @@ pub fn lower_pvm_call_indirect<'ctx>(
     });
 
     // Store return value if the call produces one.
+    // Use result_slot to check if the instruction has a result; void calls won't have a slot.
     if let Ok(slot) = result_slot(e, instr) {
         e.store_to_slot(slot, abi::RETURN_VALUE_REG);
     }
