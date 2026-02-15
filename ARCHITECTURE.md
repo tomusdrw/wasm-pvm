@@ -40,7 +40,7 @@ them as follows:
 
 Every function allocates a stack frame. The stack grows **downward** (SP decreases).
 
-```
+```text
                 Higher addresses
           ┌─────────────────────────┐
           │   caller's frame ...    │
@@ -63,8 +63,11 @@ new SP →  ├─────────────────────�
 **Frame size** = `FRAME_HEADER_SIZE (40) + num_ssa_values * 8`
 
 The operand spill area at `SP + OPERAND_SPILL_BASE` (i.e. `SP - 0x100`) is used for
-temporary storage during phi-node copies and indirect calls. It does not overlap
-with the frame because frames are always smaller than 256 bytes.
+temporary storage during phi-node copies and indirect calls. The frame grows *upward*
+from SP (toward higher addresses), while the spill area is *below* SP, so the two
+regions never overlap regardless of frame size. However, a callee's frame allocation
+must not reach into the caller's spill area — this is protected by the stack overflow
+check which ensures `SP - frame_size >= stack_limit`.
 
 ### Stack-Slot Approach
 
@@ -92,7 +95,7 @@ Return value: **r7** (single i64).
 
 ### Caller Sequence
 
-```
+```text
 1. Load arguments into r9–r12 (first 4)
 2. Store overflow arguments to PARAM_OVERFLOW_BASE
 3. LoadImm64  r0, <return_jump_table_index>
@@ -103,7 +106,7 @@ Return value: **r7** (single i64).
 
 ### Callee Prologue
 
-```
+```asm
 1. Stack overflow check (skipped for entry function):
      LoadImm64  t1, stack_limit        ; unsigned comparison!
      AddImm64   t2, sp, -frame_size
@@ -124,7 +127,7 @@ Return value: **r7** (single i64).
 
 ### Callee Epilogue (return)
 
-```
+```asm
 1. Load return value into r7 (if returning a value)
 2. Restore callee-saved registers:
      LoadIndU64  r9,  [sp+8]
@@ -145,20 +148,20 @@ Return value: **r7** (single i64).
 
 PVM's `JUMP_IND` instruction uses a **jump table** — it is not a direct address jump:
 
-```
+```text
 JUMP_IND rA, offset
   target_address = jumpTable[(rA + offset) / 2 - 1]
 ```
 
 Return addresses stored in r0 are therefore **jump-table indices**, not code offsets:
 
-```
+```text
 r0 = (jump_table_index + 1) * 2
 ```
 
 The jump table is laid out as:
 
-```
+```text
 [ return_addr_0, return_addr_1, ...,   // for call return sites
   func_0_entry,  func_1_entry,  ... ]  // for indirect calls
 ```
@@ -173,7 +176,7 @@ encode function entry points used by the dispatch table.
 A **dispatch table** at `RO_DATA_BASE` (`0x10000`) maps WASM table indices to
 function entry points:
 
-```
+```text
 Dispatch table entry (8 bytes each):
   [0–3]  Jump address (u32, byte offset → jump table index)
   [4–7]  Type signature index (u32)
@@ -181,7 +184,7 @@ Dispatch table entry (8 bytes each):
 
 The indirect call sequence:
 
-```
+```asm
  1. Compute dispatch_addr = RO_DATA_BASE + table_index * 8
  2. Load type_idx from [dispatch_addr + 4]
  3. Compare type_idx with expected_type_idx
@@ -257,7 +260,7 @@ then r7/r8 are restored.
 
 ## Memory Layout
 
-```
+```text
 PVM Address Space:
   0x00000 - 0x0FFFF   Reserved / guard (fault on access)
   0x10000 - 0x1FFFF   Read-only data (RO_DATA_BASE) — dispatch tables
@@ -287,7 +290,7 @@ PVM Address Space:
 
 The compiled output is a JAM file in the SPI (Standard Program Interface) format:
 
-```
+```text
 Offset  Size    Field
 ──────  ──────  ─────────────────────
 0       3       ro_data_len (u24 LE)
@@ -304,7 +307,7 @@ Offset  Size    Field
 
 Inside the `code` section, the PVM blob format is:
 
-```
+```text
 - jump_table_len  (varint u32)
 - item_len        (u8, always 4)
 - code_len        (varint u32)
@@ -317,7 +320,7 @@ Inside the `code` section, the PVM blob format is:
 
 The first 10 bytes of code are the entry header:
 
-```
+```text
 [0–4]   Jump  <main_function_offset>        (5 bytes)
 [5–9]   Jump  <secondary_entry_offset>      (5 bytes, or Trap + padding)
 ```
@@ -344,6 +347,7 @@ where storing one phi value would overwrite a source needed by another phi.
 | Decision | Rationale |
 |----------|-----------|
 | Stack-slot for every SSA value | Correctness-first; no register allocator needed |
+| Spill area below SP | Frame grows up from SP, spill area grows down — no overlap |
 | Global `PARAM_OVERFLOW_BASE` | Avoids stack frame complexity for overflow params |
 | Jump-table indices as return addresses | Required by PVM's `JUMP_IND` semantics |
 | Entry function has no stack check | Starts with full stack, nothing to overflow into |
