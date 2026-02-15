@@ -37,13 +37,14 @@ npm run build
 cd ../..
 echo "anan-as OK"
 
-# Run full integration test suite
+# Run full integration test suite (clean build to match CI)
 echo "Running full integration test suite..."
 cd tests
 if [ ! -d "node_modules" ]; then
     bun install
 fi
-bun test
+rm -rf build
+bun run test
 cd ..
 echo "Integration tests OK"
 
