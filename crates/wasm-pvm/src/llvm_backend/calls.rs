@@ -229,6 +229,14 @@ fn lower_pvm_ptr<'ctx>(
 
     let arg = get_operand(instr, 0)?;
     e.load_operand(arg, TEMP_RESULT)?;
+    // Zero-extend the WASM i32 address to 64 bits so sign-extended
+    // negatives don't corrupt the pointer. AddImm32 with 0 clears the
+    // upper 32 bits in PVM.
+    e.emit(Instruction::AddImm32 {
+        dst: TEMP_RESULT,
+        src: TEMP_RESULT,
+        value: 0,
+    });
     e.emit(Instruction::AddImm64 {
         dst: TEMP_RESULT,
         src: TEMP_RESULT,

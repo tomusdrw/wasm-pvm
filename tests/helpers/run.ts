@@ -30,6 +30,11 @@ function parseExitValue(output: string): number {
   if (resultMatch) {
     let hexResult = resultMatch[1];
 
+    // Ensure even length so byte-splitting works correctly (e.g. "1" -> "01").
+    if (hexResult.length % 2 !== 0) {
+      hexResult = "0" + hexResult;
+    }
+
     if (hexResult.length < 8) {
       hexResult = hexResult.padEnd(8, "0");
     } else if (hexResult.length > 8) {

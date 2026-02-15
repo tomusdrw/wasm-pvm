@@ -13,6 +13,7 @@ describe("host-call-log output", () => {
   test("should emit [INFO] test-log: Hello from PVM!", () => {
     const jamFile = resolve(JAM_DIR, "host-call-log.jam");
     const result = runJamWithOutput(jamFile, "00000000");
+    expect(result.exitCode).toBe(0);
     expect(result.exitValue).toBe(42);
     expect(result.stdout).toContain("[INFO] test-log: Hello from PVM!");
   });
