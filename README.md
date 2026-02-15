@@ -107,8 +107,14 @@ crates/
     src/
       llvm_frontend/     # WASM -> LLVM IR translation
         function_builder.rs  # Core translator (~1350 lines)
-      llvm_backend/      # LLVM IR -> PVM bytecode lowering
-        lowering.rs      # Core lowering (~1900 lines)
+      llvm_backend/      # LLVM IR -> PVM bytecode lowering (see ARCHITECTURE.md)
+        mod.rs           # Public API + instruction dispatch
+        emitter.rs       # PvmEmitter struct + value management
+        alu.rs           # Arithmetic, logic, comparisons, conversions
+        memory.rs        # Load/store, memory intrinsics
+        control_flow.rs  # Branches, phi nodes, switch, return
+        calls.rs         # Direct/indirect calls, import stubs
+        intrinsics.rs    # PVM + LLVM intrinsic lowering
       translate/         # Compilation orchestration
         mod.rs           # Pipeline dispatch + SPI assembly
         wasm_module.rs   # WASM section parsing
@@ -129,7 +135,8 @@ vendor/
 
 ## Documentation
 
-- [LEARNINGS.md](./LEARNINGS.md) - Technical reference (PVM architecture, conventions)
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - Register conventions, calling convention, stack frame layout, memory map
+- [LEARNINGS.md](./LEARNINGS.md) - Technical reference (PVM architecture, debugging journal)
 - [AGENTS.md](./AGENTS.md) - Guidelines for AI agents working on this project
 - [gp-0.7.2.md](./gp-0.7.2.md) - Gray Paper (JAM/PVM specification)
 - [review/](./review/) - Architecture review (2026-02-09)

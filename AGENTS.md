@@ -3,7 +3,7 @@
 **Project**: WebAssembly to PolkaVM (PVM) bytecode recompiler
 **Stack**: Rust (core) + TypeScript (tests) + AssemblyScript (examples)
 **Architecture**: `WASM → [inkwell] → LLVM IR → [mem2reg] → [Rust PVM backend] → PVM bytecode`
-**Docs**: `PLAN.md` (roadmap), `LEARNINGS.md` (tech reference), `gp-0.7.2.md` (PVM spec)
+**Docs**: `ARCHITECTURE.md` (ABI & calling conventions), `LEARNINGS.md` (tech reference), `gp-0.7.2.md` (PVM spec)
 
 ---
 
