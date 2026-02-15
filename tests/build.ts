@@ -34,6 +34,7 @@ const CONCURRENCY = 8;
  */
 const AS_RUNTIME_VARIANTS: Record<string, { suffix: string; runtime: string }[]> = {
   "alloc-test.ts": [
+    { suffix: "-stub", runtime: "stub" },
     { suffix: "-minimal", runtime: "minimal" },
     { suffix: "-incremental", runtime: "incremental" },
   ],
