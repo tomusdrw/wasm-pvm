@@ -401,7 +401,11 @@ pub fn emit_pvm_memory_fill<'ctx>(
     Ok(())
 }
 
-/// Emit memory.copy operation (handles overlapping regions).
+/// Emit memory.copy with memmove semantics (handles overlapping regions).
+///
+/// When `dst > src`, a naive forward copy corrupts overlapping bytes before
+/// they are read. We detect this case and copy backward (from high to low
+/// addresses) so that source data is always read before being overwritten.
 pub fn emit_pvm_memory_copy<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
