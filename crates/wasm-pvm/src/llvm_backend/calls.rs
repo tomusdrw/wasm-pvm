@@ -221,21 +221,30 @@ fn lower_pvm_ptr<'ctx>(
     has_return: bool,
 ) -> Result<()> {
     let num_args = (instr.get_num_operands() - 1) as usize;
-    if num_args == 0 {
-        return Err(Error::Unsupported(
-            "pvm_ptr requires one argument (wasm address)".into(),
-        ));
+    if num_args != 1 {
+        return Err(Error::Unsupported(format!(
+            "pvm_ptr requires exactly one argument (wasm address), got {num_args}"
+        )));
     }
 
     let arg = get_operand(instr, 0)?;
     e.load_operand(arg, TEMP_RESULT)?;
-    // Zero-extend the WASM i32 address to 64 bits so sign-extended
-    // negatives don't corrupt the pointer. AddImm32 with 0 clears the
-    // upper 32 bits in PVM.
-    e.emit(Instruction::AddImm32 {
+    // Zero-extend the WASM i32 address to 64 bits by shifting left then
+    // logically right by 32 bits, clearing the upper 32 bits without
+    // sign-extension.
+    e.emit(Instruction::LoadImm {
+        reg: TEMP1,
+        value: 32,
+    });
+    e.emit(Instruction::ShloL64 {
         dst: TEMP_RESULT,
-        src: TEMP_RESULT,
-        value: 0,
+        src1: TEMP_RESULT,
+        src2: TEMP1,
+    });
+    e.emit(Instruction::ShloR64 {
+        dst: TEMP_RESULT,
+        src1: TEMP_RESULT,
+        src2: TEMP1,
     });
     e.emit(Instruction::AddImm64 {
         dst: TEMP_RESULT,
