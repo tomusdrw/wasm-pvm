@@ -33,6 +33,9 @@ pub struct IndirectCallFixup {
 
 const ENTRY_HEADER_SIZE: usize = 10;
 
+/// `RO_DATA` region size is 64KB (0x10000 to 0x1FFFF)
+const RO_DATA_SIZE: usize = 64 * 1024;
+
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let module = WasmModule::parse(wasm)?;
     compile_via_llvm(&module)
@@ -49,6 +52,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
 
     // Calculate RO_DATA offsets for passive data segments
     let mut data_segment_offsets = std::collections::HashMap::new();
+    let mut data_segment_lengths = std::collections::HashMap::new();
     let mut current_ro_offset = if module.function_table.is_empty() {
         1 // dummy byte if no function table
     } else {
@@ -57,11 +61,20 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
 
     for (idx, seg) in module.data_segments.iter().enumerate() {
         if seg.offset.is_none() {
+            // Check that segment fits within RO_DATA region
+            if current_ro_offset + seg.data.len() > RO_DATA_SIZE {
+                return Err(Error::Internal(format!(
+                    "passive data segment {} (size {}) would overflow RO_DATA region ({} bytes used of {})",
+                    idx,
+                    seg.data.len(),
+                    current_ro_offset,
+                    RO_DATA_SIZE
+                )));
+            }
             data_segment_offsets.insert(idx as u32, current_ro_offset as u32);
+            data_segment_lengths.insert(idx as u32, seg.data.len() as u32);
             current_ro_offset += seg.data.len();
         }
-    }
-
     }
 
     // Phase 2: Build lowering context

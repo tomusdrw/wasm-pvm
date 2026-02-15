@@ -5,6 +5,7 @@
     clippy::cast_sign_loss
 )]
 
+use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::BuilderError;
 use inkwell::context::Context;
@@ -14,7 +15,6 @@ use inkwell::types::{BasicMetadataTypeEnum, IntType};
 use inkwell::values::{
     BasicMetadataValueEnum, FunctionValue, GlobalValue, IntValue, PhiValue, PointerValue,
 };
-use inkwell::IntPredicate;
 use wasmparser::{FunctionBody, Operator};
 
 use crate::translate::wasm_module::WasmModule;
@@ -659,7 +659,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
             }
 
             // === Control flow ===
-            Operator::Nop => Ok(()),
+            Operator::Nop | Operator::DataDrop { .. } => Ok(()),
 
             Operator::Unreachable => {
                 if !self.unreachable {
@@ -1203,8 +1203,6 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 ))?;
                 Ok(())
             }
-
-            Operator::DataDrop { .. } => Ok(()),
 
             // === Calls ===
             Operator::Call { function_index } => {

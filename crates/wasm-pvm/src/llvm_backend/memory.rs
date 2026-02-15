@@ -14,10 +14,10 @@
 use inkwell::values::{BasicValueEnum, InstructionValue};
 
 use crate::pvm::Instruction;
-use crate::{abi, Error, Result};
+use crate::{Error, Result, abi};
 
-use super::emitter::{get_operand, result_slot, LoweringContext, PvmEmitter};
-use crate::abi::{TEMP1, TEMP2, TEMP_RESULT};
+use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_slot};
+use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 /// Lower a load from a WASM global variable.
 ///
@@ -568,7 +568,7 @@ pub fn emit_pvm_memory_init<'ctx>(
         _ => {
             return Err(Error::Internal(
                 "memory.init segment index must be int".into(),
-            ))
+            ));
         }
     };
 
