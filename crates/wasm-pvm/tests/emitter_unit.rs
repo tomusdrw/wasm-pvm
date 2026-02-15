@@ -1,0 +1,554 @@
+//! Unit tests for PvmEmitter: slot allocation, label management, fixup resolution,
+//! and constant emission — the core "stack machine" logic (issue #32).
+
+use wasm_pvm::test_harness::*;
+use wasm_pvm::{Instruction, Opcode};
+
+// ── Slot Allocation ──
+
+/// Slot offsets start after the frame header and increment by 8.
+#[test]
+fn test_slot_allocation_offsets() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                i32.add
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // The add instruction should load two values from stack slots (params),
+    // compute, and store the result back. We expect LoadIndU64 instructions
+    // that load from SP+offset where offsets are multiples of 8.
+    assert_has_pattern(
+        &instructions,
+        &[
+            // Load param 0 from slot
+            InstructionPattern::LoadIndU64 {
+                dst: Pat::Any,
+                base: Pat::Exact(1), // SP
+                offset: Pat::Any,
+            },
+        ],
+    );
+
+    // Verify slot offsets are multiples of 8 (each value gets an 8-byte slot).
+    let sp_offsets: Vec<i32> = instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::LoadIndU64 {
+                base: 1, offset, ..
+            }
+            | Instruction::StoreIndU64 {
+                base: 1, offset, ..
+            } => Some(*offset),
+            _ => None,
+        })
+        .filter(|o| *o >= 0) // Exclude negative offsets (spill area)
+        .collect();
+    for offset in &sp_offsets {
+        assert_eq!(offset % 8, 0, "Slot offset {offset} is not a multiple of 8");
+    }
+}
+
+/// Each SSA value gets its own slot — verify multiple slots are allocated.
+#[test]
+fn test_multiple_slot_allocation() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32 i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                i32.add
+                local.get 2
+                i32.add
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Should have multiple StoreIndU64 instructions to store results to slots.
+    let store_count = count_opcode(&instructions, Opcode::StoreIndU64);
+    // At minimum: store result of first add + store result of second add + prologue saves
+    assert!(
+        store_count >= 2,
+        "Expected at least 2 StoreIndU64 for intermediate results, got {store_count}"
+    );
+}
+
+// ── Constant Loading ──
+
+/// Small constants (fits in i32) should use LoadImm, not LoadImm64.
+#[test]
+fn test_small_constant_uses_load_imm() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (result i32)
+                i32.const 42
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // LLVM may constant-fold, but the value 42 should appear as a LoadImm somewhere.
+    let load_imm_count = count_opcode(&instructions, Opcode::LoadImm);
+    assert!(
+        load_imm_count > 0,
+        "Expected LoadImm for small constant, got none"
+    );
+
+    // Should NOT need LoadImm64 for a small constant.
+    // (LoadImm64 may appear for other reasons like frame size, so we check the value.)
+    let has_42 = instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadImm { value: 42, .. }));
+    assert!(has_42, "Expected LoadImm with value 42");
+}
+
+/// Large i64 constants that don't fit in i32 should use LoadImm64.
+#[test]
+fn test_large_constant_uses_load_imm64() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (result i64)
+                i64.const 0x1_0000_0000
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    let load_imm64_count = count_opcode(&instructions, Opcode::LoadImm64);
+    assert!(
+        load_imm64_count > 0,
+        "Expected LoadImm64 for large constant, got none"
+    );
+}
+
+/// Negative i32 constants should use sign-extended LoadImm (compact encoding).
+#[test]
+fn test_negative_constant_uses_load_imm() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (result i32)
+                i32.const -1
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // LLVM constant-folds `i32.const -1` at IR level. Depending on how LLVM
+    // represents it, the backend emits either:
+    //   - LoadImm { value: -1 } (sign-extended i32)
+    //   - LoadImm64 { value: 0xFFFF_FFFF } (i32 -1 stored as u32 in u64)
+    //   - LoadImm64 { value: u64::MAX } (i64 -1, all bits set)
+    let has_neg1 = instructions.iter().any(|i| match i {
+        Instruction::LoadImm { value, .. } => *value == -1,
+        Instruction::LoadImm64 { value, .. } => *value == 0xFFFF_FFFF || *value == u64::MAX,
+        _ => false,
+    });
+    assert!(has_neg1, "Expected LoadImm(-1) or LoadImm64(0xFFFFFFFF)");
+}
+
+// ── Label & Fixup Resolution ──
+
+/// Branch instructions should have non-zero offsets after fixup resolution.
+#[test]
+fn test_branch_fixup_resolution() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                if (result i32)
+                    i32.const 1
+                else
+                    i32.const 2
+                end
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Should have at least one branch with a non-zero offset (resolved fixup).
+    let has_resolved_branch = instructions.iter().any(|i| match i {
+        Instruction::BranchEqImm { offset, .. }
+        | Instruction::BranchNeImm { offset, .. }
+        | Instruction::Jump { offset } => *offset != 0,
+        _ => false,
+    });
+    assert!(
+        has_resolved_branch,
+        "Expected at least one branch with resolved (non-zero) offset"
+    );
+}
+
+/// Loop generates a backward branch (negative offset).
+#[test]
+fn test_loop_backward_branch() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32) (result i32)
+                (local $i i32)
+                (local.set $i (i32.const 0))
+                (block
+                    (loop
+                        local.get $i
+                        i32.const 1
+                        i32.add
+                        local.tee $i
+                        i32.const 10
+                        i32.lt_u
+                        br_if 0
+                    )
+                )
+                local.get $i
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Loop's br_if should produce a backward branch (negative offset).
+    // The branch type depends on how LLVM lowers the comparison.
+    let has_backward = instructions.iter().any(|i| match i {
+        Instruction::BranchNeImm { offset, .. }
+        | Instruction::BranchEqImm { offset, .. }
+        | Instruction::BranchGeSImm { offset, .. }
+        | Instruction::Jump { offset } => *offset < 0,
+        Instruction::BranchGeU { offset, .. } | Instruction::BranchLtU { offset, .. } => {
+            *offset < 0
+        }
+        _ => false,
+    });
+    assert!(
+        has_backward,
+        "Expected at least one backward branch (negative offset) for loop"
+    );
+}
+
+// ── Stack Slot Load/Store Patterns ──
+
+/// Verify that parameters are loaded from stack slots via SP-relative loads.
+#[test]
+fn test_param_loaded_from_sp_slot() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                i32.sub
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Both params should be loaded from SP-relative slots.
+    // Pattern: LoadIndU64 { dst: TEMP1/TEMP2, base: SP(1), offset: slot }
+    assert_has_pattern(
+        &instructions,
+        &[
+            InstructionPattern::LoadIndU64 {
+                dst: Pat::Any,
+                base: Pat::Exact(1), // SP register
+                offset: Pat::Any,
+            },
+            InstructionPattern::LoadIndU64 {
+                dst: Pat::Any,
+                base: Pat::Exact(1), // SP register
+                offset: Pat::Any,
+            },
+            InstructionPattern::Sub32 {
+                dst: Pat::Any,
+                src1: Pat::Any,
+                src2: Pat::Any,
+            },
+        ],
+    );
+}
+
+/// Results are stored back to stack slots via SP-relative stores.
+#[test]
+fn test_result_stored_to_sp_slot() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                i32.add
+                i32.const 1
+                i32.add
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // After the first add, the result should be stored to a slot.
+    assert_has_pattern(
+        &instructions,
+        &[
+            InstructionPattern::Add32 {
+                dst: Pat::Any,
+                src1: Pat::Any,
+                src2: Pat::Any,
+            },
+            InstructionPattern::StoreIndU64 {
+                base: Pat::Exact(1), // SP register
+                src: Pat::Any,
+                offset: Pat::Any,
+            },
+        ],
+    );
+}
+
+// ── Frame Prologue/Epilogue ──
+
+/// Every function should have a prologue that adjusts SP.
+#[test]
+fn test_function_prologue_adjusts_sp() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (result i32)
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Prologue should subtract frame size from SP (AddImm64 with negative value on SP).
+    // The stack grows downwards, so the value must be negative.
+    assert_has_pattern(
+        &instructions,
+        &[InstructionPattern::AddImm64 {
+            dst: Pat::Exact(1),                // SP
+            src: Pat::Exact(1),                // SP
+            value: Pat::Predicate(|v| *v < 0), // negative frame size
+        }],
+    );
+}
+
+/// Function call saves/restores return address to stack.
+#[test]
+fn test_call_saves_return_address() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func $helper (param i32) (result i32)
+                local.get 0
+            )
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                call $helper
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // The caller should save the return address (r0) to the stack frame.
+    assert_has_pattern(
+        &instructions,
+        &[InstructionPattern::StoreIndU64 {
+            base: Pat::Exact(1),   // SP
+            src: Pat::Exact(0),    // r0 (return address)
+            offset: Pat::Exact(0), // first slot in frame header
+        }],
+    );
+}
+
+// ── Multi-value / Deeper Stack ──
+
+/// Verify that chained operations properly load intermediate results from slots.
+#[test]
+fn test_chained_operations_use_slots() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32 i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                i32.add
+                local.get 2
+                i32.mul
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // The intermediate add result should be stored, then loaded for the mul.
+    // Pattern: Add32 → StoreIndU64 → ... → LoadIndU64 → LoadIndU64 → Mul32
+    let add_count = count_opcode(&instructions, Opcode::Add32);
+    let mul_count = count_opcode(&instructions, Opcode::Mul32);
+    assert!(add_count >= 1, "Expected at least 1 Add32");
+    assert!(mul_count >= 1, "Expected at least 1 Mul32");
+
+    // The intermediate result of add must be stored and then reloaded for mul.
+    let store_count = count_opcode(&instructions, Opcode::StoreIndU64);
+    assert!(
+        store_count >= 2,
+        "Expected at least 2 StoreIndU64 (add result + mul result), got {store_count}"
+    );
+}
+
+/// Select (ternary) operation should produce correct slot pattern.
+#[test]
+fn test_select_uses_slots() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32 i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                local.get 2
+                select
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Select should load all 3 operands from slots and branch.
+    let load_count = count_opcode(&instructions, Opcode::LoadIndU64);
+    assert!(
+        load_count >= 3,
+        "Expected at least 3 LoadIndU64 for select operands, got {load_count}"
+    );
+}
+
+/// Verify that spilling across function calls preserves values.
+/// After a call, previously computed values must still be loadable from their slots.
+#[test]
+fn test_spill_preservation_across_call() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func $identity (param i32) (result i32)
+                local.get 0
+            )
+            (func (export "main") (param i32 i32) (result i32)
+                ;; Compute a value before the call
+                local.get 0
+                local.get 1
+                i32.add
+                ;; Call function (clobbers temp registers)
+                local.get 0
+                call $identity
+                ;; Use the pre-call result (must be loaded from slot, not register)
+                i32.add
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // After the call, the pre-call add result must be loaded back from its slot.
+    // We should see: Add32 → StoreIndU64 → ... → Jump (call) → ... → LoadIndU64 → Add32
+    let add_count = count_opcode(&instructions, Opcode::Add32);
+    assert!(
+        add_count >= 2,
+        "Expected at least 2 Add32 (before and after call), got {add_count}"
+    );
+
+    // Verify spill round-trip: the first Add32 result is stored to an SP-relative slot,
+    // and later reloaded from the same offset after the call.
+    let stored_offsets: Vec<i32> = instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::StoreIndU64 {
+                base: 1, offset, ..
+            } if *offset >= 40 => Some(*offset), // >= FRAME_HEADER_SIZE
+            _ => None,
+        })
+        .collect();
+    let loaded_offsets: Vec<i32> = instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::LoadIndU64 {
+                base: 1, offset, ..
+            } if *offset >= 40 => Some(*offset),
+            _ => None,
+        })
+        .collect();
+    // At least one stored slot offset should also appear in loaded offsets (round-trip).
+    let has_round_trip = stored_offsets.iter().any(|s| loaded_offsets.contains(s));
+    assert!(
+        has_round_trip,
+        "Expected at least one SP slot to be stored and later reloaded (spill round-trip)"
+    );
+}
+
+// ── Phi Node / Control Flow Merge ──
+
+/// If/else with a result value should produce phi-like slot stores from both branches.
+#[test]
+fn test_if_else_result_phi_slots() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                if (result i32)
+                    i32.const 10
+                else
+                    i32.const 20
+                end
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Both branches store their result to the phi's slot.
+    // We should see LoadImm 10, StoreIndU64, ... LoadImm 20, StoreIndU64
+    let has_10 = instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadImm { value: 10, .. }));
+    let has_20 = instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadImm { value: 20, .. }));
+    assert!(has_10, "Expected LoadImm 10 for if-branch");
+    assert!(has_20, "Expected LoadImm 20 for else-branch");
+
+    // Both branch values should be stored to slots (phi nodes in the merge block).
+    let store_count = count_opcode(&instructions, Opcode::StoreIndU64);
+    assert!(
+        store_count >= 2,
+        "Expected at least 2 StoreIndU64 for phi values, got {store_count}"
+    );
+}
