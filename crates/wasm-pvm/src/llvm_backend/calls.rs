@@ -267,7 +267,7 @@ fn lower_pvm_ptr<'ctx>(
 pub fn lower_pvm_call_indirect<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
-    _ctx: &LoweringContext,
+    ctx: &LoweringContext,
 ) -> Result<()> {
     // __pvm_call_indirect(type_idx, table_entry, arg0, arg1, ...)
     // Operands: [type_idx, table_entry, arg0, ..., argN-1, fn_ptr]
@@ -395,9 +395,15 @@ pub fn lower_pvm_call_indirect<'ctx>(
         jump_ind_instr,
     });
 
+    // Derive has_return from the type signature (same approach as direct calls).
+    let has_return = ctx
+        .type_signatures
+        .get(expected_type_idx as usize)
+        .is_some_and(|(_num_params, num_results)| *num_results > 0);
+
     // Store return value if the call produces one.
-    // Use result_slot to check if the instruction has a result; void calls won't have a slot.
-    if let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.store_to_slot(slot, abi::RETURN_VALUE_REG);
     }
 
