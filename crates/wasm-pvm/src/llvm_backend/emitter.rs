@@ -34,6 +34,7 @@ pub struct LoweringContext {
     pub type_signatures: Vec<(usize, usize)>,
     pub function_table: Vec<u32>,
     pub num_imported_funcs: usize,
+    pub imported_func_names: Vec<String>,
     pub initial_memory_pages: u32,
     pub max_memory_pages: u32,
     pub stack_size: u32,

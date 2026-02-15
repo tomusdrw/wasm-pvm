@@ -365,6 +365,9 @@ pub enum InstructionPattern {
     },
     Trap,
     Fallthrough,
+    Ecalli {
+        index: Pat<u32>,
+    },
 }
 
 impl InstructionPattern {
@@ -813,6 +816,7 @@ impl InstructionPattern {
                 },
                 Instruction::ZeroExtend16 { dst, src },
             ) => d_pat.matches(dst) && s_pat.matches(src),
+            (P::Ecalli { index: i_pat }, Instruction::Ecalli { index }) => i_pat.matches(index),
             _ => false,
         }
     }
@@ -986,6 +990,7 @@ impl InstructionExt for Instruction {
             Instruction::LoadIndI16 { .. } => Some(Opcode::LoadIndI16),
             Instruction::StoreIndU8 { .. } => Some(Opcode::StoreIndU8),
             Instruction::StoreIndU16 { .. } => Some(Opcode::StoreIndU16),
+            Instruction::Ecalli { .. } => Some(Opcode::Ecalli),
         }
     }
 }

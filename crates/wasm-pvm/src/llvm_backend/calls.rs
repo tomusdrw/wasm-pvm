@@ -100,10 +100,10 @@ pub fn lower_wasm_call<'ctx>(
     Ok(())
 }
 
-/// Emit a stub for calling an imported function.
-/// Imported functions are not available at PVM level — emit Trap (all import
-/// stubs trap since the actual function is not available in PVM).
-#[allow(clippy::unnecessary_wraps)]
+/// Emit code for calling an imported function.
+///
+/// Recognizes special imports (`host_call`, `pvm_ptr`) and emits appropriate
+/// PVM instructions. All other imports emit `Trap`.
 pub fn lower_import_call<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -120,7 +120,20 @@ pub fn lower_import_call<'ctx>(
             ))
         })?;
 
-    // All import stubs emit Trap (the function is not available).
+    let import_name = ctx
+        .imported_func_names
+        .get(global_func_idx as usize)
+        .map(String::as_str);
+
+    if import_name == Some("host_call") {
+        return lower_host_call(e, instr, has_return);
+    }
+
+    if import_name == Some("pvm_ptr") {
+        return lower_pvm_ptr(e, instr, ctx, has_return);
+    }
+
+    // All other import stubs emit Trap (the function is not available).
     e.emit(Instruction::Trap);
 
     // If the import has a return value, push a dummy 0 so the rest of the code
@@ -130,6 +143,116 @@ pub fn lower_import_call<'ctx>(
             reg: TEMP_RESULT,
             value: 0,
         });
+        e.store_to_slot(slot, TEMP_RESULT);
+    }
+
+    Ok(())
+}
+
+/// Emit an `ecalli` instruction for the `host_call` gateway import.
+///
+/// Convention: `host_call(ecalli_index, r7, r8, r9, r10, r11)` where the first
+/// argument is a compile-time constant that becomes the `ecalli` immediate, and
+/// remaining arguments are loaded into registers r7-r11.
+fn lower_host_call<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+    has_return: bool,
+) -> Result<()> {
+    let num_args = (instr.get_num_operands() - 1) as usize;
+    if num_args == 0 {
+        return Err(Error::Unsupported(
+            "host_call requires at least one argument (ecalli index)".into(),
+        ));
+    }
+
+    // First argument must be a compile-time constant (ecalli index is an immediate).
+    let first_arg = get_operand(instr, 0)?;
+    let ecalli_index = match first_arg {
+        BasicValueEnum::IntValue(iv) => iv.get_zero_extended_constant().ok_or_else(|| {
+            Error::Unsupported(
+                "host_call first argument (ecalli index) must be a compile-time constant".into(),
+            )
+        })?,
+        _ => {
+            return Err(Error::Unsupported(
+                "host_call first argument must be an integer".into(),
+            ));
+        }
+    };
+
+    if num_args > 6 {
+        return Err(Error::Unsupported(format!(
+            "host_call supports at most 6 arguments (1 index + 5 data), got {num_args}"
+        )));
+    }
+
+    let ecalli_index: u32 = ecalli_index.try_into().map_err(|_| {
+        Error::Unsupported(format!(
+            "host_call ecalli index {ecalli_index} exceeds u32 range"
+        ))
+    })?;
+
+    // Load remaining arguments into r7-r11.
+    for i in 1..num_args.min(6) {
+        let arg = get_operand(instr, i as u32)?;
+        let target_reg = abi::RETURN_VALUE_REG + (i - 1) as u8;
+        e.load_operand(arg, target_reg)?;
+    }
+
+    e.emit(Instruction::Ecalli {
+        index: ecalli_index,
+    });
+
+    if has_return && let Ok(slot) = result_slot(e, instr) {
+        e.store_to_slot(slot, abi::RETURN_VALUE_REG);
+    }
+
+    Ok(())
+}
+
+/// Emit code for the `pvm_ptr` import: convert a WASM address to a PVM address.
+///
+/// Compiles to a single `AddImm64` that adds `wasm_memory_base` to the argument.
+fn lower_pvm_ptr<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+    ctx: &LoweringContext,
+    has_return: bool,
+) -> Result<()> {
+    let num_args = (instr.get_num_operands() - 1) as usize;
+    if num_args != 1 {
+        return Err(Error::Unsupported(format!(
+            "pvm_ptr requires exactly one argument (wasm address), got {num_args}"
+        )));
+    }
+
+    let arg = get_operand(instr, 0)?;
+    e.load_operand(arg, TEMP_RESULT)?;
+    // Zero-extend the WASM i32 address to 64 bits by shifting left then
+    // logically right by 32 bits, clearing the upper 32 bits without
+    // sign-extension.
+    e.emit(Instruction::LoadImm {
+        reg: TEMP1,
+        value: 32,
+    });
+    e.emit(Instruction::ShloL64 {
+        dst: TEMP_RESULT,
+        src1: TEMP_RESULT,
+        src2: TEMP1,
+    });
+    e.emit(Instruction::ShloR64 {
+        dst: TEMP_RESULT,
+        src1: TEMP_RESULT,
+        src2: TEMP1,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP_RESULT,
+        src: TEMP_RESULT,
+        value: ctx.wasm_memory_base,
+    });
+
+    if has_return && let Ok(slot) = result_slot(e, instr) {
         e.store_to_slot(slot, TEMP_RESULT);
     }
 
