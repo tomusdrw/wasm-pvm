@@ -14,10 +14,10 @@
 use inkwell::values::{BasicValueEnum, InstructionValue};
 
 use crate::pvm::Instruction;
-use crate::{abi, Error, Result};
+use crate::{Error, Result, abi};
 
-use super::emitter::{get_operand, result_slot, LoweringContext, PvmEmitter};
-use crate::abi::{TEMP1, TEMP2, TEMP_RESULT};
+use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_slot};
+use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 /// Lower a load from a WASM global variable.
 ///
@@ -568,7 +568,7 @@ pub fn emit_pvm_memory_init<'ctx>(
         _ => {
             return Err(Error::Internal(
                 "memory.init segment index must be int".into(),
-            ))
+            ));
         }
     };
 
@@ -581,6 +581,66 @@ pub fn emit_pvm_memory_init<'ctx>(
     e.load_operand(dst_addr, TEMP1)?; // dst (in RAM)
     e.load_operand(src_offset_val, TEMP2)?; // src offset (relative to segment start)
     e.load_operand(len_val, TEMP_RESULT)?; // len (counter)
+
+    // Bounds checks: trap if src_offset + len > segment_length or dst + len > memory_size
+    let bounds_ok_label = e.alloc_label();
+
+    // Get segment length
+    let seg_len = *ctx
+        .data_segment_lengths
+        .get(&seg_idx)
+        .ok_or_else(|| Error::Internal(format!("no length for data segment {seg_idx}")))?;
+
+    // Check 1: src_offset + len <= segment_length
+    // Calculate src_end = src_offset + len (use SCRATCH1)
+    e.emit(Instruction::Add64 {
+        dst: SCRATCH1,
+        src1: TEMP2,
+        src2: TEMP_RESULT,
+    });
+    // If src_end > seg_len, trap
+    e.emit(Instruction::LoadImm {
+        reg: TEMP2,
+        value: seg_len as i32,
+    });
+    // Use SetLtU: src_end > seg_len  ⟺  seg_len < src_end
+    e.emit(Instruction::SetLtU {
+        dst: SCRATCH1,
+        src1: TEMP2,
+        src2: SCRATCH1,
+    });
+    // If result != 0, trap
+    e.emit_branch_eq_imm_to_label(SCRATCH1, 0, bounds_ok_label);
+    e.emit(Instruction::Trap);
+    e.define_label(bounds_ok_label);
+
+    // Check 2: dst + len <= memory_size
+    let bounds_ok_label2 = e.alloc_label();
+    // Calculate dst_end = dst + len (use SCRATCH1)
+    e.emit(Instruction::Add64 {
+        dst: SCRATCH1,
+        src1: TEMP1,
+        src2: TEMP_RESULT,
+    });
+    // Memory size = initial_memory_pages * 64KB
+    let memory_size = i64::from(ctx.initial_memory_pages) * 64 * 1024;
+    e.emit(Instruction::LoadImm64 {
+        reg: TEMP2,
+        value: memory_size as u64,
+    });
+    // If dst_end > memory_size, trap
+    e.emit(Instruction::SetLtU {
+        dst: SCRATCH1,
+        src1: TEMP2,
+        src2: SCRATCH1,
+    });
+    e.emit_branch_eq_imm_to_label(SCRATCH1, 0, bounds_ok_label2);
+    e.emit(Instruction::Trap);
+    e.define_label(bounds_ok_label2);
+
+    // Reload src_offset and len (clobbered by bounds checks)
+    e.load_operand(src_offset_val, TEMP2)?;
+    e.load_operand(len_val, TEMP_RESULT)?;
 
     // Calculate src_addr = RO_DATA_BASE + ro_offset + src_offset
     // Use TEMP2 for source address

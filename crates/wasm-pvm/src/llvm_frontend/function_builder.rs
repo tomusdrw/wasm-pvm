@@ -5,6 +5,7 @@
     clippy::cast_sign_loss
 )]
 
+use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::BuilderError;
 use inkwell::context::Context;
@@ -14,7 +15,6 @@ use inkwell::types::{BasicMetadataTypeEnum, IntType};
 use inkwell::values::{
     BasicMetadataValueEnum, FunctionValue, GlobalValue, IntValue, PhiValue, PointerValue,
 };
-use inkwell::IntPredicate;
 use wasmparser::{FunctionBody, Operator};
 
 use crate::translate::wasm_module::WasmModule;
@@ -659,7 +659,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
             }
 
             // === Control flow ===
-            Operator::Nop => Ok(()),
+            Operator::Nop | Operator::DataDrop { .. } => Ok(()),
 
             Operator::Unreachable => {
                 if !self.unreachable {
@@ -890,12 +890,12 @@ impl<'ctx> WasmToLlvm<'ctx> {
                             // Position at merge block and emit actual return
                             self.builder.position_at_end(merge_bb);
                             if let Some(phi) = result_phi {
-                                let ret_val = if phi.count_incoming() == 0 {
-                                    // Block is unreachable (dead code), return undef.
-                                    self.i64_type.get_undef()
-                                } else {
-                                    phi.as_basic_value().into_int_value()
-                                };
+                                // Ensure phi has at least one incoming; if not, add undef
+                                if phi.count_incoming() == 0 {
+                                    let undef = self.i64_type.get_undef();
+                                    phi.add_incoming(&[(&undef, merge_bb)]);
+                                }
+                                let ret_val = phi.as_basic_value().into_int_value();
                                 llvm_err(self.builder.build_return(Some(&ret_val)))?;
                             } else {
                                 llvm_err(self.builder.build_return(None))?;
@@ -1203,8 +1203,6 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 ))?;
                 Ok(())
             }
-
-            Operator::DataDrop { .. } => Ok(()),
 
             // === Calls ===
             Operator::Call { function_index } => {

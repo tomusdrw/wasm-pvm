@@ -13,15 +13,15 @@
 
 use inkwell::values::InstructionValue;
 
-use crate::pvm::Instruction;
 use crate::Result;
+use crate::pvm::Instruction;
 
-use super::emitter::{get_operand, operand_bit_width, result_slot, LoweringContext, PvmEmitter};
+use super::emitter::{LoweringContext, PvmEmitter, get_operand, operand_bit_width, result_slot};
 use super::memory::{
-    emit_pvm_load, emit_pvm_memory_copy, emit_pvm_memory_fill, emit_pvm_memory_grow,
-    emit_pvm_memory_init, emit_pvm_memory_size, emit_pvm_store, PvmLoadKind, PvmStoreKind,
+    PvmLoadKind, PvmStoreKind, emit_pvm_load, emit_pvm_memory_copy, emit_pvm_memory_fill,
+    emit_pvm_memory_grow, emit_pvm_memory_init, emit_pvm_memory_size, emit_pvm_store,
 };
-use crate::abi::{TEMP1, TEMP2, TEMP_RESULT};
+use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 /// Lower a PVM intrinsic call.
 pub fn lower_pvm_intrinsic<'ctx>(

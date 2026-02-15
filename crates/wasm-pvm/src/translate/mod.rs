@@ -49,6 +49,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
 
     // Calculate RO_DATA offsets for passive data segments
     let mut data_segment_offsets = std::collections::HashMap::new();
+    let mut data_segment_lengths = std::collections::HashMap::new();
     let mut current_ro_offset = if module.function_table.is_empty() {
         1 // dummy byte if no function table
     } else {
@@ -58,10 +59,9 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
     for (idx, seg) in module.data_segments.iter().enumerate() {
         if seg.offset.is_none() {
             data_segment_offsets.insert(idx as u32, current_ro_offset as u32);
+            data_segment_lengths.insert(idx as u32, seg.data.len() as u32);
             current_ro_offset += seg.data.len();
         }
-    }
-
     }
 
     // Phase 2: Build lowering context
@@ -77,6 +77,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         max_memory_pages: module.max_memory_pages,
         stack_size: memory_layout::DEFAULT_STACK_SIZE,
         data_segment_offsets,
+        data_segment_lengths,
     };
 
     // Phase 3: LLVM IR → PVM bytecode for each function
