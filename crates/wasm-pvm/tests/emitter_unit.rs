@@ -37,6 +37,24 @@ fn test_slot_allocation_offsets() {
             },
         ],
     );
+
+    // Verify slot offsets are multiples of 8 (each value gets an 8-byte slot).
+    let sp_offsets: Vec<i32> = instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::LoadIndU64 {
+                base: 1, offset, ..
+            }
+            | Instruction::StoreIndU64 {
+                base: 1, offset, ..
+            } => Some(*offset),
+            _ => None,
+        })
+        .filter(|o| *o >= 0) // Exclude negative offsets (spill area)
+        .collect();
+    for offset in &sp_offsets {
+        assert_eq!(offset % 8, 0, "Slot offset {offset} is not a multiple of 8");
+    }
 }
 
 /// Each SSA value gets its own slot — verify multiple slots are allocated.
@@ -136,9 +154,11 @@ fn test_negative_constant_uses_load_imm() {
     .expect("compile");
     let instructions = extract_instructions(&program);
 
-    // LLVM constant-folds `i32.const -1` at IR level. The returned value
-    // ends up as a LoadImm64 with 0xFFFFFFFF (zero-extended -1_i32) or
-    // a LoadImm with the truncated i32 representation.
+    // LLVM constant-folds `i32.const -1` at IR level. Depending on how LLVM
+    // represents it, the backend emits either:
+    //   - LoadImm { value: -1 } (sign-extended i32)
+    //   - LoadImm64 { value: 0xFFFF_FFFF } (i32 -1 stored as u32 in u64)
+    //   - LoadImm64 { value: u64::MAX } (i64 -1, all bits set)
     let has_neg1 = instructions.iter().any(|i| match i {
         Instruction::LoadImm { value, .. } => *value == -1,
         Instruction::LoadImm64 { value, .. } => *value == 0xFFFF_FFFF || *value == u64::MAX,
@@ -326,12 +346,13 @@ fn test_function_prologue_adjusts_sp() {
     let instructions = extract_instructions(&program);
 
     // Prologue should subtract frame size from SP (AddImm64 with negative value on SP).
+    // The stack grows downwards, so the value must be negative.
     assert_has_pattern(
         &instructions,
         &[InstructionPattern::AddImm64 {
-            dst: Pat::Exact(1), // SP
-            src: Pat::Exact(1), // SP
-            value: Pat::Any,    // negative frame size
+            dst: Pat::Exact(1),                // SP
+            src: Pat::Exact(1),                // SP
+            value: Pat::Predicate(|v| *v < 0), // negative frame size
         }],
     );
 }
