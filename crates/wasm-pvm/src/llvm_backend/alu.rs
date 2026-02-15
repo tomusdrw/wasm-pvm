@@ -11,14 +11,14 @@
     clippy::cast_sign_loss
 )]
 
-use inkwell::values::{AnyValue, AnyValueEnum, InstructionValue};
 use inkwell::IntPredicate;
+use inkwell::values::{AnyValue, AnyValueEnum, InstructionValue};
 
-use crate::pvm::Instruction;
 use crate::Result;
+use crate::pvm::Instruction;
 
-use super::emitter::{get_operand, operand_bit_width, result_slot, PvmEmitter, SCRATCH1};
-use crate::abi::{TEMP1, TEMP2, TEMP_RESULT};
+use super::emitter::{PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot};
+use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 #[derive(Clone, Copy)]
 pub enum BinaryOp {
@@ -130,7 +130,7 @@ pub fn lower_binary_arith<'ctx>(
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            })
+            });
         }
         (BinaryOp::UDiv, false) => {
             emit_div_zero_check(e, TEMP2);
@@ -138,7 +138,7 @@ pub fn lower_binary_arith<'ctx>(
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            })
+            });
         }
         (BinaryOp::SDiv, true) => {
             emit_div_zero_check(e, TEMP2);
@@ -147,7 +147,7 @@ pub fn lower_binary_arith<'ctx>(
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            })
+            });
         }
         (BinaryOp::SDiv, false) => {
             emit_div_zero_check(e, TEMP2);
@@ -156,7 +156,7 @@ pub fn lower_binary_arith<'ctx>(
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            })
+            });
         }
         (BinaryOp::URem, true) => {
             emit_div_zero_check(e, TEMP2);
@@ -164,7 +164,7 @@ pub fn lower_binary_arith<'ctx>(
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            })
+            });
         }
         (BinaryOp::URem, false) => {
             emit_div_zero_check(e, TEMP2);
@@ -172,7 +172,7 @@ pub fn lower_binary_arith<'ctx>(
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            })
+            });
         }
         (BinaryOp::SRem, true) => {
             emit_div_zero_check(e, TEMP2);
@@ -187,7 +187,7 @@ pub fn lower_binary_arith<'ctx>(
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            })
+            });
         }
         (BinaryOp::SRem, false) => {
             emit_div_zero_check(e, TEMP2);
@@ -195,7 +195,7 @@ pub fn lower_binary_arith<'ctx>(
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            })
+            });
         }
         (BinaryOp::And, _) => e.emit(Instruction::And {
             dst: TEMP_RESULT,
