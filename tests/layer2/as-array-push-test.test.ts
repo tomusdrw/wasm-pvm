@@ -1,3 +1,14 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-array-push-test"));
+
+const tests = [
+  {
+    args: "",
+    expected: 28,
+    description: "AS: Array.push() sum test - should return 28",
+  },
+];
+
+defineSuite({
+  name: "as-array-push-test",
+  tests: tests,
+});

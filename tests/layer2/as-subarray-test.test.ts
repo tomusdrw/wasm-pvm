@@ -1,3 +1,14 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-subarray-test"));
+
+const tests = [
+  {
+    args: "",
+    expected: 30,
+    description: "AS: Uint8Array.subarray() test - should return 30",
+  },
+];
+
+defineSuite({
+  name: "as-subarray-test",
+  tests: tests,
+});

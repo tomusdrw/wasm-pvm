@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-complex-alloc-test"));
+
+const tests = [
+  { args: "0000000000000000", expected: 1090, description: "AS: Complex allocation test" },
+];
+
+defineSuite({
+  name: "as-complex-alloc-test",
+  tests: tests,
+});

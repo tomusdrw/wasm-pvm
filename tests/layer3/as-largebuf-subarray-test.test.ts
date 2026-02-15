@@ -1,3 +1,15 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-largebuf-subarray-test"));
+
+const tests = [
+  { args: "00", expected: 45, description: "AS: large buffer direct sum" },
+  { args: "01", expected: 45, description: "AS: large buffer subarray sum" },
+  { args: "02", expected: 45, description: "AS: large buffer lowerBytes sum" },
+  { args: "03", expected: 10045, description: "AS: large buffer lowerBytes len+sum" },
+  { args: "04", expected: 1045, description: "AS: large buffer middle slice" },
+  { args: "05", expected: 190, description: "AS: large buffer multiple slices" },
+];
+
+defineSuite({
+  name: "as-largebuf-subarray-test",
+  tests: tests,
+});

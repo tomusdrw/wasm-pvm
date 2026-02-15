@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-mini-pvm-runner"));
+
+const tests = [
+  { args: "e80300000000000000000000040000000200000011223344aabb", expected: 286331153, description: "AS: mini-pvm-runner - marker check" },
+];
+
+defineSuite({
+  name: "as-mini-pvm-runner",
+  tests: tests,
+});

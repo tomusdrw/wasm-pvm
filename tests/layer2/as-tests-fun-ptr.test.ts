@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-tests-fun-ptr"));
+
+const tests = [
+  { args: "00000000", expected: 50, description: "Function pointers / Indirect calls" },
+];
+
+defineSuite({
+  name: "as-tests-fun-ptr",
+  tests: tests,
+});

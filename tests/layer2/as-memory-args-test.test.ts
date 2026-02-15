@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-memory-args-test"));
+
+const tests = [
+  { args: "0500000007000000", expected: 4277796864, description: "AS: memory args test - args_ptr check" },
+];
+
+defineSuite({
+  name: "as-memory-args-test",
+  tests: tests,
+});

@@ -1,3 +1,16 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("entry-points"));
+
+const tests = [
+  { args: "", expected: 42, description: "main (PC=0) returns 42" },
+  {
+    args: "",
+    expected: 99,
+    description: "main2 (PC=5) returns 99",
+    pc: 5,
+  },
+];
+
+defineSuite({
+  name: "entry-points",
+  tests: tests,
+});

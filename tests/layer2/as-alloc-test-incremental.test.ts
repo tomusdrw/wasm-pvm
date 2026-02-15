@@ -1,3 +1,14 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-alloc-test-incremental"));
+
+const tests = [
+  {
+    args: "",
+    expected: 1107,
+    description: "AS: alloc test (incremental GC) = 1107",
+  },
+];
+
+defineSuite({
+  name: "as-alloc-test-incremental",
+  tests: tests,
+});
