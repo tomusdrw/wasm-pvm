@@ -14,10 +14,10 @@
 use inkwell::values::{BasicValueEnum, InstructionValue};
 
 use crate::pvm::Instruction;
-use crate::{Error, Result, abi};
+use crate::{abi, Error, Result};
 
-use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_slot};
-use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
+use super::emitter::{get_operand, result_slot, LoweringContext, PvmEmitter};
+use crate::abi::{TEMP1, TEMP2, TEMP_RESULT};
 
 /// Lower a load from a WASM global variable.
 ///
@@ -536,6 +536,101 @@ pub fn emit_pvm_memory_copy<'ctx>(
         value: -1,
     });
     e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, backward_loop);
+
+    e.define_label(loop_end);
+    Ok(())
+}
+
+/// Emit memory.init operation.
+pub fn emit_pvm_memory_init<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+    ctx: &LoweringContext,
+) -> Result<()> {
+    use crate::abi::{RO_DATA_BASE, SCRATCH1};
+
+    // __pvm_memory_init(segment_idx, dst, src_offset, len)
+    let seg_idx_val = get_operand(instr, 0)?;
+    let dst_addr = get_operand(instr, 1)?;
+    let src_offset_val = get_operand(instr, 2)?;
+    let len_val = get_operand(instr, 3)?;
+
+    let seg_idx = match seg_idx_val {
+        BasicValueEnum::IntValue(iv) => {
+            if let Some(val) = iv.get_zero_extended_constant() {
+                val as u32
+            } else {
+                return Err(Error::Internal(
+                    "memory.init segment index must be constant".into(),
+                ));
+            }
+        }
+        _ => {
+            return Err(Error::Internal(
+                "memory.init segment index must be int".into(),
+            ))
+        }
+    };
+
+    let ro_offset = *ctx
+        .data_segment_offsets
+        .get(&seg_idx)
+        .ok_or_else(|| Error::Internal(format!("unknown passive data segment index {seg_idx}")))?;
+
+    // Load operands
+    e.load_operand(dst_addr, TEMP1)?; // dst (in RAM)
+    e.load_operand(src_offset_val, TEMP2)?; // src offset (relative to segment start)
+    e.load_operand(len_val, TEMP_RESULT)?; // len (counter)
+
+    // Calculate src_addr = RO_DATA_BASE + ro_offset + src_offset
+    // Use TEMP2 for source address
+    e.emit(Instruction::AddImm32 {
+        dst: TEMP2,
+        src: TEMP2,
+        value: (RO_DATA_BASE as u32 + ro_offset) as i32,
+    });
+
+    // Calculate dst_addr = wasm_memory_base + dst
+    // Use TEMP1 for dest address
+    e.emit(Instruction::AddImm32 {
+        dst: TEMP1,
+        src: TEMP1,
+        value: ctx.wasm_memory_base,
+    });
+
+    // Loop: while size > 0: dst++ = src++
+    let loop_start = e.alloc_label();
+    let loop_end = e.alloc_label();
+
+    e.emit_branch_eq_imm_to_label(TEMP_RESULT, 0, loop_end);
+    e.define_label(loop_start);
+
+    e.emit(Instruction::LoadIndU8 {
+        dst: SCRATCH1,
+        base: TEMP2,
+        offset: 0,
+    });
+    e.emit(Instruction::StoreIndU8 {
+        base: TEMP1,
+        src: SCRATCH1,
+        offset: 0,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP1,
+        src: TEMP1,
+        value: 1,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP2,
+        src: TEMP2,
+        value: 1,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP_RESULT,
+        src: TEMP_RESULT,
+        value: -1,
+    });
+    e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, loop_start);
 
     e.define_label(loop_end);
     Ok(())

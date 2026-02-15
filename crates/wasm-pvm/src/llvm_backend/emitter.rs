@@ -38,6 +38,8 @@ pub struct LoweringContext {
     pub initial_memory_pages: u32,
     pub max_memory_pages: u32,
     pub stack_size: u32,
+    /// Map from data segment index to offset in RO_DATA (for passive segments).
+    pub data_segment_offsets: HashMap<u32, u32>,
 }
 
 /// Result of lowering one LLVM function to PVM instructions.

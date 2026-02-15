@@ -5,7 +5,6 @@
     clippy::cast_sign_loss
 )]
 
-use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::BuilderError;
 use inkwell::context::Context;
@@ -15,6 +14,7 @@ use inkwell::types::{BasicMetadataTypeEnum, IntType};
 use inkwell::values::{
     BasicMetadataValueEnum, FunctionValue, GlobalValue, IntValue, PhiValue, PointerValue,
 };
+use inkwell::IntPredicate;
 use wasmparser::{FunctionBody, Operator};
 
 use crate::translate::wasm_module::WasmModule;
@@ -135,6 +135,7 @@ struct PvmIntrinsics<'ctx> {
     memory_grow: FunctionValue<'ctx>,
     memory_fill: FunctionValue<'ctx>,
     memory_copy: FunctionValue<'ctx>,
+    memory_init: FunctionValue<'ctx>,
     call_indirect: FunctionValue<'ctx>,
 }
 
@@ -184,6 +185,16 @@ impl<'ctx> WasmToLlvm<'ctx> {
         // (dst: i64, val: i64, len: i64) -> void
         let ternary_void_sig =
             void_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
+        // (segment_idx: i64, dst: i64, src_offset: i64, len: i64) -> void
+        let quad_void_sig = void_type.fn_type(
+            &[
+                i64_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+            ],
+            false,
+        );
         // call_indirect: (type_idx: i64, table_idx: i64) -> i64 (varargs)
         let call_indirect_sig = i64_type.fn_type(
             &[i64_type.into(), i64_type.into()],
@@ -216,6 +227,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
             memory_grow: decl("__pvm_memory_grow", unary_sig),
             memory_fill: decl("__pvm_memory_fill", ternary_void_sig),
             memory_copy: decl("__pvm_memory_copy", ternary_void_sig),
+            memory_init: decl("__pvm_memory_init", quad_void_sig),
             call_indirect: decl("__pvm_call_indirect", call_indirect_sig),
         }
     }
@@ -1179,6 +1191,20 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 ))?;
                 Ok(())
             }
+            Operator::MemoryInit { data_index, .. } => {
+                let len = self.pop()?;
+                let src_offset = self.pop()?;
+                let dst = self.pop()?;
+                let seg_idx = self.i64_type.const_int(u64::from(*data_index), false);
+                llvm_err(self.builder.build_call(
+                    self.pvm_intrinsics.memory_init,
+                    &[seg_idx.into(), dst.into(), src_offset.into(), len.into()],
+                    "meminit",
+                ))?;
+                Ok(())
+            }
+
+            Operator::DataDrop { .. } => Ok(()),
 
             // === Calls ===
             Operator::Call { function_index } => {
