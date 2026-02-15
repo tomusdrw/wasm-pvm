@@ -34,5 +34,5 @@ export function defineSuite(suite: SuiteSpec) {
 
 /** Returns all suites that have been defined via defineSuite(). */
 export function getRegisteredSuites(): SuiteSpec[] {
-  return suiteRegistry;
+  return [...suiteRegistry];
 }
