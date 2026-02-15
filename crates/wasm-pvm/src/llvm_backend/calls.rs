@@ -93,7 +93,8 @@ pub fn lower_wasm_call<'ctx>(
     });
 
     // If function returns a value, store r7 to result slot.
-    if has_return && let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.store_to_slot(slot, abi::RETURN_VALUE_REG);
     }
 
@@ -138,7 +139,8 @@ pub fn lower_import_call<'ctx>(
 
     // If the import has a return value, push a dummy 0 so the rest of the code
     // can still type-check (dead code after the trap).
-    if has_return && let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.emit(Instruction::LoadImm {
             reg: TEMP_RESULT,
             value: 0,
@@ -204,7 +206,8 @@ fn lower_host_call<'ctx>(
         index: ecalli_index,
     });
 
-    if has_return && let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.store_to_slot(slot, abi::RETURN_VALUE_REG);
     }
 
@@ -252,7 +255,8 @@ fn lower_pvm_ptr<'ctx>(
         value: ctx.wasm_memory_base,
     });
 
-    if has_return && let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.store_to_slot(slot, TEMP_RESULT);
     }
 
@@ -263,7 +267,7 @@ fn lower_pvm_ptr<'ctx>(
 pub fn lower_pvm_call_indirect<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
-    _ctx: &LoweringContext,
+    ctx: &LoweringContext,
 ) -> Result<()> {
     // __pvm_call_indirect(type_idx, table_entry, arg0, arg1, ...)
     // Operands: [type_idx, table_entry, arg0, ..., argN-1, fn_ptr]
@@ -391,8 +395,21 @@ pub fn lower_pvm_call_indirect<'ctx>(
         jump_ind_instr,
     });
 
+    // Derive has_return from the type signature (same approach as direct calls).
+    let (_num_params, num_results) = ctx
+        .type_signatures
+        .get(expected_type_idx as usize)
+        .copied()
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "unknown type signature index for indirect call: {expected_type_idx}"
+            ))
+        })?;
+    let has_return = num_results > 0;
+
     // Store return value if the call produces one.
-    if let Ok(slot) = result_slot(e, instr) {
+    if has_return {
+        let slot = result_slot(e, instr)?;
         e.store_to_slot(slot, abi::RETURN_VALUE_REG);
     }
 
