@@ -15,7 +15,12 @@ export interface SuiteSpec {
   tests: TestSpec[];
 }
 
+/** Global registry of all defined suites (populated at import time). */
+const suiteRegistry: SuiteSpec[] = [];
+
 export function defineSuite(suite: SuiteSpec) {
+  suiteRegistry.push(suite);
+
   const jamFile = path.join(JAM_DIR, `${suite.name}.jam`);
   describe(suite.name, () => {
     for (const t of suite.tests) {
@@ -25,4 +30,9 @@ export function defineSuite(suite: SuiteSpec) {
       });
     }
   });
+}
+
+/** Returns all suites that have been defined via defineSuite(). */
+export function getRegisteredSuites(): SuiteSpec[] {
+  return suiteRegistry;
 }

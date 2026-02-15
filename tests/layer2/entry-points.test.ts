@@ -1,3 +1,9 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("entry-points"));
+
+const tests = [
+];
+
+defineSuite({
+  name: "entry-points",
+  tests: tests,
+});

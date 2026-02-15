@@ -1,3 +1,9 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-subarray-offset-test"));
+
+const tests = [
+];
+
+defineSuite({
+  name: "as-subarray-offset-test",
+  tests: tests,
+});

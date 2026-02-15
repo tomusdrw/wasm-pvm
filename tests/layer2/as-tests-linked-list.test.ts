@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-tests-linked-list"));
+
+const tests = [
+  { args: "00000000", expected: 60, description: "Linked list sum (recursive)" },
+];
+
+defineSuite({
+  name: "as-tests-linked-list",
+  tests: tests,
+});

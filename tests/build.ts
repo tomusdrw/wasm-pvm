@@ -4,6 +4,13 @@
  * 1. Builds the CLI binary (cargo build)
  * 2. Compiles AS sources -> WASM
  * 3. Compiles WAT/WASM -> JAM
+ *
+ * Build targets are discovered from the filesystem:
+ * - WAT files: tests/fixtures/wat/*.jam.wat
+ * - AS files: tests/fixtures/assembly/*.ts
+ *
+ * For AS sources that need multiple runtime variants (e.g. alloc-test),
+ * add entries to AS_RUNTIME_VARIANTS below.
  */
 
 import { execSync } from "node:child_process";
@@ -14,12 +21,23 @@ import {
   WAT_DIR,
   WASM_DIR,
   JAM_DIR,
-  CLI_BINARY,
+  AS_ASSEMBLY_DIR,
 } from "./helpers/paths";
 import { compileAS, compileToJAM } from "./helpers/compile";
-import { getAllSuites } from "./data/test-cases";
 
 const CONCURRENCY = 8;
+
+/**
+ * AS sources that need to be compiled with non-default runtimes.
+ * Each entry maps a source file to additional (outputSuffix, runtime) pairs.
+ * Every AS source is always compiled with "stub" runtime by default.
+ */
+const AS_RUNTIME_VARIANTS: Record<string, { suffix: string; runtime: string }[]> = {
+  "alloc-test.ts": [
+    { suffix: "-minimal", runtime: "minimal" },
+    { suffix: "-incremental", runtime: "incremental" },
+  ],
+};
 
 async function runParallel<T>(
   items: T[],
@@ -65,32 +83,39 @@ function collectBuildTargets(): {
   asTargets: ASBuildTarget[];
   jamTargets: JAMBuildTarget[];
 } {
-  const suites = getAllSuites();
   const asTargets: ASBuildTarget[] = [];
   const jamTargets: JAMBuildTarget[] = [];
-  const seenAS = new Set<string>();
-  const seenJAM = new Set<string>();
 
-  for (const suite of suites) {
-    if (suite.source.type === "as") {
-      const key = `${suite.source.file}:${suite.source.runtime || "stub"}:${suite.name}`;
-      if (!seenAS.has(key)) {
-        seenAS.add(key);
-        // The output name for AS is the suite name without the "as-" prefix
-        const baseName = suite.name.slice(3);
+  // Discover WAT files from filesystem
+  const watFiles = fs.readdirSync(WAT_DIR).filter((f) => f.endsWith(".jam.wat"));
+  for (const watFile of watFiles) {
+    const outputName = watFile.replace(/\.jam\.wat$/, "");
+    jamTargets.push({
+      inputPath: path.join(WAT_DIR, watFile),
+      outputName,
+    });
+  }
+
+  // Discover AS files from filesystem
+  const asFiles = fs.readdirSync(AS_ASSEMBLY_DIR).filter((f) => f.endsWith(".ts"));
+  for (const asFile of asFiles) {
+    const baseName = asFile.replace(/\.ts$/, "");
+
+    // Default: compile with "stub" runtime
+    asTargets.push({
+      sourceName: asFile,
+      outputName: baseName,
+      runtime: "stub",
+    });
+
+    // Additional runtime variants if configured
+    const variants = AS_RUNTIME_VARIANTS[asFile];
+    if (variants) {
+      for (const variant of variants) {
         asTargets.push({
-          sourceName: suite.source.file,
-          outputName: baseName,
-          runtime: suite.source.runtime || "stub",
-        });
-      }
-    } else if (suite.source.type === "wat") {
-      if (!seenJAM.has(suite.name)) {
-        seenJAM.add(suite.name);
-        const watFile = path.join(WAT_DIR, suite.source.file);
-        jamTargets.push({
-          inputPath: watFile,
-          outputName: suite.name,
+          sourceName: asFile,
+          outputName: `${baseName}${variant.suffix}`,
+          runtime: variant.runtime,
         });
       }
     }

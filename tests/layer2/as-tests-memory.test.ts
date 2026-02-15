@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-tests-memory"));
+
+const tests = [
+  { args: "00000000", expected: 850, description: "Byte manipulation check" },
+];
+
+defineSuite({
+  name: "as-tests-memory",
+  tests: tests,
+});

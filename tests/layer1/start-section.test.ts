@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("start-section"));
+
+const tests = [
+  { args: "00000000", expected: 42, description: "start-section returns 42" },
+];
+
+defineSuite({
+  name: "start-section",
+  tests: tests,
+});

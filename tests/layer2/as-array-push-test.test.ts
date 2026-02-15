@@ -1,3 +1,9 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-array-push-test"));
+
+const tests = [
+];
+
+defineSuite({
+  name: "as-array-push-test",
+  tests: tests,
+});

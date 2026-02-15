@@ -4,6 +4,9 @@
  *
  * Compiles anan-as compiler to PVM, then runs test cases through the compiled anan-as-in-pvm.
  *
+ * Discovers test suites by dynamically importing all *.test.ts files from the
+ * layer directories and collecting suites registered via defineSuite().
+ *
  * Usage: bun tests/utils/test-pvm-in-pvm.ts [--filter=pattern] [--verbose]
  */
 
@@ -11,10 +14,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'child_process';
-import { getAllSuites } from '../data/test-cases';
+import { Glob } from 'bun';
+import type { SuiteSpec } from '../helpers/suite';
+import { getRegisteredSuites } from '../helpers/suite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, '../..');
+const testsDir = path.join(__dirname, '..');
 
 // Paths for compiled artifacts
 const ANAN_AS_COMPILER_WASM = path.join(projectRoot, 'vendor/anan-as/build/compiler.wasm');
@@ -34,6 +40,22 @@ function compileAnanAsToPvm(): void {
   });
 
   console.log(`Compiled anan-as compiler to: ${ANAN_AS_COMPILER_JAM}`);
+}
+
+async function discoverSuites(): Promise<SuiteSpec[]> {
+  const glob = new Glob('layer*/*.test.ts');
+  const testFiles: string[] = [];
+  for await (const file of glob.scan({ cwd: testsDir })) {
+    testFiles.push(path.join(testsDir, file));
+  }
+  testFiles.sort();
+
+  // Import all test files to trigger defineSuite() registration
+  for (const file of testFiles) {
+    await import(file);
+  }
+
+  return getRegisteredSuites();
 }
 
 function runTestThroughAnanAsInPvm(testName: string, args: string, innerPc?: number, verbose = false): number {
@@ -136,7 +158,7 @@ function runTestThroughAnanAsInPvm(testName: string, args: string, innerPc?: num
 }
 
 async function runAllTests(filter?: string, verbose = false): Promise<void> {
-  const testCases = getAllSuites();
+  const testCases = await discoverSuites();
   const filteredTestCases = filter ? testCases.filter(tc => tc.name.includes(filter)) : testCases;
 
   console.log(`Running ${filteredTestCases.length} test cases through PVM-in-PVM execution...`);
@@ -148,24 +170,24 @@ async function runAllTests(filter?: string, verbose = false): Promise<void> {
   for (const testCase of filteredTestCases) {
     console.log(`Testing ${testCase.name}...`);
 
-    for (const test of testCase.tests) {
+    for (const t of testCase.tests) {
       try {
         if (verbose) {
-          console.log(`  Running: ${test.description}`);
+          console.log(`  Running: ${t.description}`);
         }
 
-        const actual = runTestThroughAnanAsInPvm(testCase.name, test.args, test.pc, verbose);
+        const actual = runTestThroughAnanAsInPvm(testCase.name, t.args, t.pc, verbose);
 
-        if (actual === test.expected) {
-          console.log(`  PASS ${test.description}`);
+        if (actual === t.expected) {
+          console.log(`  PASS ${t.description}`);
           passed++;
         } else {
-          console.log(`  FAIL ${test.description} - expected ${test.expected}, got ${actual}`);
+          console.log(`  FAIL ${t.description} - expected ${t.expected}, got ${actual}`);
           failed++;
         }
 
       } catch (error: any) {
-        console.log(`  FAIL ${test.description} - ERROR: ${error.message}`);
+        console.log(`  FAIL ${t.description} - ERROR: ${error.message}`);
         failed++;
       }
     }

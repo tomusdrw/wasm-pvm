@@ -1,3 +1,9 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-alloc-test-stub"));
+
+const tests = [
+];
+
+defineSuite({
+  name: "as-alloc-test-stub",
+  tests: tests,
+});

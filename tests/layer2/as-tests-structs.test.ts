@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-tests-structs"));
+
+const tests = [
+  { args: "00000000", expected: 32, description: "Struct emulation (Dot Product)" },
+];
+
+defineSuite({
+  name: "as-tests-structs",
+  tests: tests,
+});

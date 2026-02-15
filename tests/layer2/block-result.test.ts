@@ -1,3 +1,11 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("block-result"));
+
+const tests = [
+  { args: "00000000", expected: 42, description: "block with result returns 42" },
+  { args: "01000000", expected: 100, description: "block with br returns 100 (not 999)" },
+];
+
+defineSuite({
+  name: "block-result",
+  tests: tests,
+});

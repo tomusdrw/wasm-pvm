@@ -144,7 +144,7 @@ crates/
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
 | Fix compilation pipeline | `translate/mod.rs` | `compile()` |
-| Add test case | `tests/data/test-cases.ts` | Hex args, little-endian |
+| Add test case | `tests/layer{1,2,3}/*.test.ts` | Each file calls `defineSuite()` with hex args, little-endian |
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
 | Verify JAM file | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |

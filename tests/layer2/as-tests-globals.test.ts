@@ -1,3 +1,10 @@
 import { defineSuite } from "../helpers/suite";
-import { getSuite } from "../data/test-cases";
-defineSuite(getSuite("as-tests-globals"));
+
+const tests = [
+  { args: "00000000", expected: 17, description: "Global variable manipulation" },
+];
+
+defineSuite({
+  name: "as-tests-globals",
+  tests: tests,
+});
