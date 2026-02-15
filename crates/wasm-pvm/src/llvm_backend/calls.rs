@@ -396,10 +396,16 @@ pub fn lower_pvm_call_indirect<'ctx>(
     });
 
     // Derive has_return from the type signature (same approach as direct calls).
-    let has_return = ctx
+    let (_num_params, num_results) = ctx
         .type_signatures
         .get(expected_type_idx as usize)
-        .is_some_and(|(_num_params, num_results)| *num_results > 0);
+        .copied()
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "unknown type signature index for indirect call: {expected_type_idx}"
+            ))
+        })?;
+    let has_return = num_results > 0;
 
     // Store return value if the call produces one.
     if has_return {
