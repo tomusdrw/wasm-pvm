@@ -11,14 +11,14 @@
     clippy::cast_sign_loss
 )]
 
-use inkwell::IntPredicate;
 use inkwell::values::{AnyValue, AnyValueEnum, InstructionValue};
+use inkwell::IntPredicate;
 
-use crate::Result;
 use crate::pvm::Instruction;
+use crate::Result;
 
-use super::emitter::{PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot};
-use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
+use super::emitter::{get_operand, operand_bit_width, result_slot, PvmEmitter, SCRATCH1};
+use crate::abi::{TEMP1, TEMP2, TEMP_RESULT};
 
 #[derive(Clone, Copy)]
 pub enum BinaryOp {
