@@ -90,6 +90,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         max_memory_pages: module.max_memory_pages,
         stack_size: memory_layout::DEFAULT_STACK_SIZE,
         data_segment_offsets,
+        data_segment_lengths,
     };
 
     // Phase 3: LLVM IR → PVM bytecode for each function

@@ -15,6 +15,7 @@ const ADD_WAT = path.join(PROJECT_ROOT, 'tests/fixtures/wat/add.jam.wat');
 const DIST_DIR = path.join(PROJECT_ROOT, 'tests/dist');
 const ANAN_AS_JAM = path.join(DIST_DIR, 'anan-as.jam');
 const ADD_JAM = path.join(DIST_DIR, 'add.jam');
+const GAS = BigInt(100_000_000);
 
 function ensureDist() {
     if (!fs.existsSync(DIST_DIR)) {
@@ -35,7 +36,7 @@ function runJam(jamFile: string, argsHex: string) {
     const ananAsCli = path.join(PROJECT_ROOT, 'vendor/anan-as/dist/bin/index.js');
     const logFile = path.join(PROJECT_ROOT, 'repro.log');
     try {
-        const cmd = `node "${ananAsCli}" run --spi --no-metadata --gas=100000000 "${jamFile}" 0x${argsHex}`;
+        const cmd = `node "${ananAsCli}" run --spi --no-metadata --gas=${GAS} "${jamFile}" 0x${argsHex}`;
         // Redirect output to file to avoid buffer overflow and allow analysis
         execSync(`${cmd} > "${logFile}" 2>&1`, {
             cwd: PROJECT_ROOT,
@@ -77,7 +78,7 @@ function main() {
     // 05 00 00 00 | 07 00 00 00
     const innerArgs = Buffer.from([0x05, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00]);
 
-    const gas = BigInt(100_000_000);
+    const gas = GAS;
     const pc = 0;
     
     const buffer = Buffer.alloc(20 + addJamBytes.length + innerArgs.length);
