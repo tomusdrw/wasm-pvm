@@ -24,10 +24,10 @@ impl Default for MemoryLimits {
     }
 }
 
-/// Represents an active data segment parsed from WASM.
+/// Represents a data segment parsed from WASM.
 pub struct DataSegment {
-    /// Offset in WASM linear memory (where the data goes).
-    pub offset: u32,
+    /// Offset in WASM linear memory (active only). None for passive segments.
+    pub offset: Option<u32>,
     /// The actual data bytes.
     pub data: Vec<u8>,
 }
@@ -220,16 +220,23 @@ impl<'a> WasmModule<'a> {
                 Payload::DataSection(reader) => {
                     for data in reader {
                         let data = data?;
-                        if let wasmparser::DataKind::Active {
-                            memory_index: _,
-                            offset_expr,
-                        } = data.kind
-                        {
-                            let offset = eval_const_i32(&offset_expr)? as u32;
-                            data_segments.push(DataSegment {
-                                offset,
-                                data: data.data.to_vec(),
-                            });
+                        match data.kind {
+                            wasmparser::DataKind::Active {
+                                memory_index: _,
+                                offset_expr,
+                            } => {
+                                let offset = eval_const_i32(&offset_expr)? as u32;
+                                data_segments.push(DataSegment {
+                                    offset: Some(offset),
+                                    data: data.data.to_vec(),
+                                });
+                            }
+                            wasmparser::DataKind::Passive => {
+                                data_segments.push(DataSegment {
+                                    offset: None,
+                                    data: data.data.to_vec(),
+                                });
+                            }
                         }
                     }
                 }

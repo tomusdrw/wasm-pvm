@@ -540,3 +540,176 @@ pub fn emit_pvm_memory_copy<'ctx>(
     e.define_label(loop_end);
     Ok(())
 }
+
+/// Emit memory.init operation.
+pub fn emit_pvm_memory_init<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+    ctx: &LoweringContext,
+) -> Result<()> {
+    use crate::abi::{self, RO_DATA_BASE, SCRATCH1};
+
+    // __pvm_memory_init(segment_idx, dst, src_offset, len)
+    let seg_idx_val = get_operand(instr, 0)?;
+    let dst_addr = get_operand(instr, 1)?;
+    let src_offset_val = get_operand(instr, 2)?;
+    let len_val = get_operand(instr, 3)?;
+
+    let seg_idx = match seg_idx_val {
+        BasicValueEnum::IntValue(iv) => {
+            if let Some(val) = iv.get_zero_extended_constant() {
+                val as u32
+            } else {
+                return Err(Error::Internal(
+                    "memory.init segment index must be constant".into(),
+                ));
+            }
+        }
+        _ => {
+            return Err(Error::Internal(
+                "memory.init segment index must be int".into(),
+            ));
+        }
+    };
+
+    let ro_offset = *ctx
+        .data_segment_offsets
+        .get(&seg_idx)
+        .ok_or_else(|| Error::Internal(format!("unknown passive data segment index {seg_idx}")))?;
+
+    // Load operands
+    e.load_operand(dst_addr, TEMP1)?; // dst (in RAM)
+    e.load_operand(src_offset_val, TEMP2)?; // src offset (relative to segment start)
+    e.load_operand(len_val, TEMP_RESULT)?; // len (counter)
+
+    // Bounds checks: trap if src_offset + len > segment_length or dst + len > memory_size
+    let bounds_ok_label = e.alloc_label();
+
+    // Get segment length
+    let seg_len = *ctx
+        .data_segment_lengths
+        .get(&seg_idx)
+        .ok_or_else(|| Error::Internal(format!("no length for data segment {seg_idx}")))?;
+
+    // Check 1: src_offset + len <= segment_length
+    // Calculate src_end = src_offset + len (use SCRATCH1)
+    e.emit(Instruction::Add64 {
+        dst: SCRATCH1,
+        src1: TEMP2,
+        src2: TEMP_RESULT,
+    });
+    // If src_end > seg_len, trap (use 64-bit immediate for full range)
+    e.emit(Instruction::LoadImm64 {
+        reg: TEMP2,
+        value: u64::from(seg_len),
+    });
+    // Use SetLtU: src_end > seg_len  ⟺  seg_len < src_end
+    e.emit(Instruction::SetLtU {
+        dst: SCRATCH1,
+        src1: TEMP2,
+        src2: SCRATCH1,
+    });
+    // If result != 0, trap
+    e.emit_branch_eq_imm_to_label(SCRATCH1, 0, bounds_ok_label);
+    e.emit(Instruction::Trap);
+    e.define_label(bounds_ok_label);
+
+    // Check 2: dst + len <= memory_size (runtime)
+    let bounds_ok_label2 = e.alloc_label();
+    // Load runtime memory size (in pages) from the global used by memory.size/memory.grow
+    let global_addr = abi::memory_size_global_offset(ctx.num_globals);
+    e.emit(Instruction::LoadImm {
+        reg: TEMP2,
+        value: global_addr,
+    });
+    e.emit(Instruction::LoadIndU32 {
+        dst: TEMP2,
+        base: TEMP2,
+        offset: 0,
+    });
+    // Convert pages to bytes: memory_size_bytes = pages << 16 (= pages * 64KB)
+    // Use 64-bit shift to avoid wrapping at 4 GiB (65536 pages)
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH1,
+        value: 16,
+    });
+    e.emit(Instruction::ShloL64 {
+        dst: TEMP2,
+        src1: TEMP2,
+        src2: SCRATCH1,
+    });
+    // Calculate dst_end = dst + len (use SCRATCH1)
+    e.emit(Instruction::Add64 {
+        dst: SCRATCH1,
+        src1: TEMP1,
+        src2: TEMP_RESULT,
+    });
+    // If dst_end > memory_size, trap
+    e.emit(Instruction::SetLtU {
+        dst: SCRATCH1,
+        src1: TEMP2,
+        src2: SCRATCH1,
+    });
+    e.emit_branch_eq_imm_to_label(SCRATCH1, 0, bounds_ok_label2);
+    e.emit(Instruction::Trap);
+    e.define_label(bounds_ok_label2);
+
+    // Reload src_offset and len (clobbered by bounds checks)
+    e.load_operand(src_offset_val, TEMP2)?;
+    e.load_operand(len_val, TEMP_RESULT)?;
+
+    // Calculate src_addr = RO_DATA_BASE + ro_offset + src_offset
+    // Use TEMP2 for source address
+    e.emit(Instruction::AddImm32 {
+        dst: TEMP2,
+        src: TEMP2,
+        value: (RO_DATA_BASE as u32 + ro_offset) as i32,
+    });
+
+    // Calculate dst_addr = wasm_memory_base + dst
+    // Use TEMP1 for dest address
+    e.emit(Instruction::AddImm32 {
+        dst: TEMP1,
+        src: TEMP1,
+        value: ctx.wasm_memory_base,
+    });
+
+    // TODO: This byte-by-byte copy is correct but slow for large segments.
+    // Consider word-at-a-time copy with remainder handling for optimization.
+    // Loop: while size > 0: dst++ = src++
+    let loop_start = e.alloc_label();
+    let loop_end = e.alloc_label();
+
+    e.emit_branch_eq_imm_to_label(TEMP_RESULT, 0, loop_end);
+    e.define_label(loop_start);
+
+    e.emit(Instruction::LoadIndU8 {
+        dst: SCRATCH1,
+        base: TEMP2,
+        offset: 0,
+    });
+    e.emit(Instruction::StoreIndU8 {
+        base: TEMP1,
+        src: SCRATCH1,
+        offset: 0,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP1,
+        src: TEMP1,
+        value: 1,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP2,
+        src: TEMP2,
+        value: 1,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP_RESULT,
+        src: TEMP_RESULT,
+        value: -1,
+    });
+    e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, loop_start);
+
+    e.define_label(loop_end);
+    Ok(())
+}

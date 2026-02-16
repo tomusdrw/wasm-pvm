@@ -37,6 +37,49 @@ pub enum BinaryOp {
     AShr,
 }
 
+fn emit_div_zero_check(e: &mut PvmEmitter, rhs_reg: u8) {
+    let ok_label = e.alloc_label();
+    e.emit_branch_ne_imm_to_label(rhs_reg, 0, ok_label);
+    e.emit(Instruction::Trap);
+    e.define_label(ok_label);
+}
+
+fn emit_signed_overflow_check(e: &mut PvmEmitter, lhs_reg: u8, rhs_reg: u8, is_32bit: bool) {
+    let ok_label = e.alloc_label();
+
+    // 1. Check rhs != -1
+    e.emit_branch_ne_imm_to_label(rhs_reg, -1, ok_label);
+
+    // 2. Check lhs == INT_MIN
+    if is_32bit {
+        // INT_MIN_32 = -2147483648 (fits in i32)
+        // If lhs != INT_MIN, jump to ok
+        e.emit_branch_ne_imm_to_label(lhs_reg, i32::MIN, ok_label);
+    } else {
+        // INT_MIN_64 = 0x8000000000000000
+        // Load INT_MIN_64 to SCRATCH1
+        e.emit(Instruction::LoadImm64 {
+            reg: SCRATCH1,
+            value: i64::MIN as u64,
+        });
+        // Check if lhs != SCRATCH1
+        // Xor lhs, SCRATCH1 -> SCRATCH1 (clobbers SCRATCH1)
+        e.emit(Instruction::Xor {
+            dst: SCRATCH1,
+            src1: lhs_reg,
+            src2: SCRATCH1,
+        });
+        // If result != 0, then lhs != INT_MIN
+        e.emit_branch_ne_imm_to_label(SCRATCH1, 0, ok_label);
+    }
+
+    // 3. Trap if we are here (rhs == -1 AND lhs == INT_MIN)
+    e.emit(Instruction::Trap);
+
+    // 4. Label
+    e.define_label(ok_label);
+}
+
 pub fn lower_binary_arith<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -81,46 +124,79 @@ pub fn lower_binary_arith<'ctx>(
             src1: TEMP1,
             src2: TEMP2,
         }),
-        (BinaryOp::UDiv, true) => e.emit(Instruction::DivU32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
-        }),
-        (BinaryOp::UDiv, false) => e.emit(Instruction::DivU64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
-        }),
-        (BinaryOp::SDiv, true) => e.emit(Instruction::DivS32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
-        }),
-        (BinaryOp::SDiv, false) => e.emit(Instruction::DivS64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
-        }),
-        (BinaryOp::URem, true) => e.emit(Instruction::RemU32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
-        }),
-        (BinaryOp::URem, false) => e.emit(Instruction::RemU64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
-        }),
-        (BinaryOp::SRem, true) => e.emit(Instruction::RemS32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
-        }),
-        (BinaryOp::SRem, false) => e.emit(Instruction::RemS64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
-        }),
+        (BinaryOp::UDiv, true) => {
+            emit_div_zero_check(e, TEMP2);
+            e.emit(Instruction::DivU32 {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
+        (BinaryOp::UDiv, false) => {
+            emit_div_zero_check(e, TEMP2);
+            e.emit(Instruction::DivU64 {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
+        (BinaryOp::SDiv, true) => {
+            emit_div_zero_check(e, TEMP2);
+            emit_signed_overflow_check(e, TEMP1, TEMP2, true);
+            e.emit(Instruction::DivS32 {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
+        (BinaryOp::SDiv, false) => {
+            emit_div_zero_check(e, TEMP2);
+            emit_signed_overflow_check(e, TEMP1, TEMP2, false);
+            e.emit(Instruction::DivS64 {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
+        (BinaryOp::URem, true) => {
+            emit_div_zero_check(e, TEMP2);
+            e.emit(Instruction::RemU32 {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
+        (BinaryOp::URem, false) => {
+            emit_div_zero_check(e, TEMP2);
+            e.emit(Instruction::RemU64 {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
+        (BinaryOp::SRem, true) => {
+            emit_div_zero_check(e, TEMP2);
+            // SRem overflow check?
+            // "The sign of the result equals the sign of the dividend."
+            // "If the divisor is 0, then a trap occurs."
+            // "If the dividend is the most negative value and the divisor is -1, then the result is 0." (No trap for rem)
+            // WASM spec: "Signed remainder ... trap if divisor is 0."
+            // "Overflow: If n1 is the minimum signed integer and n2 is -1, the result is 0." (No trap)
+            // So NO signed overflow check for Rem.
+            e.emit(Instruction::RemS32 {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
+        (BinaryOp::SRem, false) => {
+            emit_div_zero_check(e, TEMP2);
+            e.emit(Instruction::RemS64 {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
         (BinaryOp::And, _) => e.emit(Instruction::And {
             dst: TEMP_RESULT,
             src1: TEMP1,

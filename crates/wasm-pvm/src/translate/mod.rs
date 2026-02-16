@@ -47,6 +47,23 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
     let context = Context::create();
     let llvm_module = llvm_frontend::translate_wasm_to_llvm(&context, module)?;
 
+    // Calculate RO_DATA offsets for passive data segments
+    let mut data_segment_offsets = std::collections::HashMap::new();
+    let mut data_segment_lengths = std::collections::HashMap::new();
+    let mut current_ro_offset = if module.function_table.is_empty() {
+        1 // dummy byte if no function table
+    } else {
+        module.function_table.len() * 8 // jump_ref + type_idx per entry
+    };
+
+    for (idx, seg) in module.data_segments.iter().enumerate() {
+        if seg.offset.is_none() {
+            data_segment_offsets.insert(idx as u32, current_ro_offset as u32);
+            data_segment_lengths.insert(idx as u32, seg.data.len() as u32);
+            current_ro_offset += seg.data.len();
+        }
+    }
+
     // Phase 2: Build lowering context
     let ctx = LoweringContext {
         wasm_memory_base: module.wasm_memory_base,
@@ -59,6 +76,8 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         initial_memory_pages: module.memory_limits.initial_pages,
         max_memory_pages: module.max_memory_pages,
         stack_size: memory_layout::DEFAULT_STACK_SIZE,
+        data_segment_offsets,
+        data_segment_lengths,
     };
 
     // Phase 3: LLVM IR → PVM bytecode for each function
@@ -246,6 +265,13 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         }
     }
 
+    // Append passive data segments to RO_DATA
+    for seg in &module.data_segments {
+        if seg.offset.is_none() {
+            ro_data.extend_from_slice(&seg.data);
+        }
+    }
+
     let blob = crate::pvm::ProgramBlob::new(all_instructions).with_jump_table(jump_table);
     let rw_data_section = build_rw_data(
         &module.data_segments,
@@ -276,7 +302,10 @@ pub(crate) fn build_rw_data(
 
     let data_end = data_segments
         .iter()
-        .map(|seg| wasm_to_rw_offset + seg.offset + seg.data.len() as u32)
+        .filter_map(|seg| {
+            seg.offset
+                .map(|off| wasm_to_rw_offset + off + seg.data.len() as u32)
+        })
         .max()
         .unwrap_or(0) as usize;
 
@@ -305,9 +334,11 @@ pub(crate) fn build_rw_data(
 
     // Copy data segments to their WASM memory locations
     for seg in data_segments {
-        let rw_offset = (wasm_to_rw_offset + seg.offset) as usize;
-        if rw_offset + seg.data.len() <= rw_data.len() {
-            rw_data[rw_offset..rw_offset + seg.data.len()].copy_from_slice(&seg.data);
+        if let Some(offset) = seg.offset {
+            let rw_offset = (wasm_to_rw_offset + offset) as usize;
+            if rw_offset + seg.data.len() <= rw_data.len() {
+                rw_data[rw_offset..rw_offset + seg.data.len()].copy_from_slice(&seg.data);
+            }
         }
     }
 
