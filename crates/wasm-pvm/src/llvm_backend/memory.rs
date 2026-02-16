@@ -759,5 +759,6 @@ pub fn emit_pvm_memory_init<'ctx>(
     e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, loop_start);
 
     e.define_label(loop_end);
+
     Ok(())
 }
