@@ -397,7 +397,8 @@ self.resolve_fixups()?;
 ## Entry 3: LLVM PHI Node Validation Error (2026-02-16)
 
 **Symptom**: Compilation fails with LLVM verification error when compiling complex WASM programs (e.g., anan-as compiler):
-```
+
+```text
 PHINode should have one entry for each predecessor of its parent basic block!
   %fn_result = phi i64 [ undef, %fn_return ]
 ```
