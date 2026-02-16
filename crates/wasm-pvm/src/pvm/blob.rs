@@ -176,8 +176,8 @@ mod tests {
             .collect();
 
         assert!(mask_bits[0], "PC 0 should be instruction start");
-        for pc in 1..10 {
-            assert!(!mask_bits[pc], "PC {} should NOT be instruction start", pc);
+        for (pc, &is_start) in mask_bits.iter().enumerate().take(10).skip(1) {
+            assert!(!is_start, "PC {pc} should NOT be instruction start");
         }
         assert!(mask_bits[10], "PC 10 should be instruction start (Trap)");
     }
