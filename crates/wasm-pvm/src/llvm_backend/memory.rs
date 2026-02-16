@@ -598,10 +598,10 @@ pub fn emit_pvm_memory_init<'ctx>(
         src1: TEMP2,
         src2: TEMP_RESULT,
     });
-    // If src_end > seg_len, trap
-    e.emit(Instruction::LoadImm {
+    // If src_end > seg_len, trap (use 64-bit immediate for full range)
+    e.emit(Instruction::LoadImm64 {
         reg: TEMP2,
-        value: seg_len as i32,
+        value: seg_len as u64,
     });
     // Use SetLtU: src_end > seg_len  ⟺  seg_len < src_end
     e.emit(Instruction::SetLtU {
@@ -628,11 +628,12 @@ pub fn emit_pvm_memory_init<'ctx>(
         offset: 0,
     });
     // Convert pages to bytes: memory_size_bytes = pages << 16 (= pages * 64KB)
+    // Use 64-bit shift to avoid wrapping at 4 GiB (65536 pages)
     e.emit(Instruction::LoadImm {
         reg: SCRATCH1,
         value: 16,
     });
-    e.emit(Instruction::ShloL32 {
+    e.emit(Instruction::ShloL64 {
         dst: TEMP2,
         src1: TEMP2,
         src2: SCRATCH1,
