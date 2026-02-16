@@ -5,7 +5,6 @@
     clippy::cast_sign_loss
 )]
 
-use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::BuilderError;
 use inkwell::context::Context;
@@ -15,6 +14,7 @@ use inkwell::types::{BasicMetadataTypeEnum, IntType};
 use inkwell::values::{
     BasicMetadataValueEnum, FunctionValue, GlobalValue, IntValue, PhiValue, PointerValue,
 };
+use inkwell::IntPredicate;
 use wasmparser::{FunctionBody, Operator};
 
 use crate::translate::wasm_module::WasmModule;
@@ -666,14 +666,13 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
             // === Control flow ===
             Operator::Nop => Ok(()),
-            Operator::DataDrop { data_index } => {
-                let wasm_seg_idx = self.i64_type.const_int(u64::from(*data_index), false);
-                llvm_err(self.builder.build_call(
-                    self.pvm_intrinsics.data_drop,
-                    &[wasm_seg_idx.into()],
-                    "datadrop",
-                ))?;
-                Ok(())
+            Operator::DataDrop { .. } => {
+                // DataDrop is not yet fully supported - would require tracking dropped segments
+                // to ensure subsequent memory.init operations trap as required by WASM spec.
+                // For now, reject compilation to avoid silent incorrect behavior.
+                Err(crate::Error::Unsupported(
+                    "data.drop operator is not yet supported".to_string(),
+                ))
             }
 
             Operator::Unreachable => {
