@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 // Reproduction script for issue #22 - inner interpreter PANIC
 // This is a specialized debugging script, not a test file.
