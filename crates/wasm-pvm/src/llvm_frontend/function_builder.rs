@@ -136,6 +136,7 @@ struct PvmIntrinsics<'ctx> {
     memory_fill: FunctionValue<'ctx>,
     memory_copy: FunctionValue<'ctx>,
     memory_init: FunctionValue<'ctx>,
+    data_drop: FunctionValue<'ctx>,
     call_indirect: FunctionValue<'ctx>,
 }
 
@@ -228,6 +229,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
             memory_fill: decl("__pvm_memory_fill", ternary_void_sig),
             memory_copy: decl("__pvm_memory_copy", ternary_void_sig),
             memory_init: decl("__pvm_memory_init", quad_void_sig),
+            // (segment_idx: i64) -> void
+            data_drop: decl(
+                "__pvm_data_drop",
+                void_type.fn_type(&[i64_type.into()], false),
+            ),
             call_indirect: decl("__pvm_call_indirect", call_indirect_sig),
         }
     }
@@ -659,7 +665,16 @@ impl<'ctx> WasmToLlvm<'ctx> {
             }
 
             // === Control flow ===
-            Operator::Nop | Operator::DataDrop { .. } => Ok(()),
+            Operator::Nop => Ok(()),
+            Operator::DataDrop { data_index } => {
+                let wasm_seg_idx = self.i64_type.const_int(u64::from(*data_index), false);
+                llvm_err(self.builder.build_call(
+                    self.pvm_intrinsics.data_drop,
+                    &[wasm_seg_idx.into()],
+                    "datadrop",
+                ))?;
+                Ok(())
+            }
 
             Operator::Unreachable => {
                 if !self.unreachable {
@@ -1192,13 +1207,18 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 Ok(())
             }
             Operator::MemoryInit { data_index, .. } => {
-                let len = self.pop()?;
-                let src_offset = self.pop()?;
-                let dst = self.pop()?;
-                let seg_idx = self.i64_type.const_int(u64::from(*data_index), false);
+                let wasm_len = self.pop()?;
+                let wasm_src_offset = self.pop()?;
+                let wasm_dst = self.pop()?;
+                let wasm_seg_idx = self.i64_type.const_int(u64::from(*data_index), false);
                 llvm_err(self.builder.build_call(
                     self.pvm_intrinsics.memory_init,
-                    &[seg_idx.into(), dst.into(), src_offset.into(), len.into()],
+                    &[
+                        wasm_seg_idx.into(),
+                        wasm_dst.into(),
+                        wasm_src_offset.into(),
+                        wasm_len.into(),
+                    ],
                     "meminit",
                 ))?;
                 Ok(())

@@ -18,8 +18,9 @@ use crate::pvm::Instruction;
 
 use super::emitter::{LoweringContext, PvmEmitter, get_operand, operand_bit_width, result_slot};
 use super::memory::{
-    PvmLoadKind, PvmStoreKind, emit_pvm_load, emit_pvm_memory_copy, emit_pvm_memory_fill,
-    emit_pvm_memory_grow, emit_pvm_memory_init, emit_pvm_memory_size, emit_pvm_store,
+    PvmLoadKind, PvmStoreKind, emit_pvm_data_drop, emit_pvm_load, emit_pvm_memory_copy,
+    emit_pvm_memory_fill, emit_pvm_memory_grow, emit_pvm_memory_init, emit_pvm_memory_size,
+    emit_pvm_store,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -56,6 +57,7 @@ pub fn lower_pvm_intrinsic<'ctx>(
         "__pvm_memory_fill" => emit_pvm_memory_fill(e, instr, ctx),
         "__pvm_memory_copy" => emit_pvm_memory_copy(e, instr, ctx),
         "__pvm_memory_init" => emit_pvm_memory_init(e, instr, ctx),
+        "__pvm_data_drop" => emit_pvm_data_drop(e, instr, ctx),
 
         // ── Indirect calls ──
         "__pvm_call_indirect" => super::calls::lower_pvm_call_indirect(e, instr, ctx),

@@ -541,21 +541,69 @@ pub fn emit_pvm_memory_copy<'ctx>(
     Ok(())
 }
 
-/// Emit memory.init operation.
+/// Emit data.drop operation (zero the segment's effective length).
+pub fn emit_pvm_data_drop<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+    ctx: &LoweringContext,
+) -> Result<()> {
+    let seg_idx_val = get_operand(instr, 0)?;
+    let seg_idx = match seg_idx_val {
+        BasicValueEnum::IntValue(iv) => iv
+            .get_zero_extended_constant()
+            .map(|v| v as u32)
+            .ok_or_else(|| {
+                Error::Internal("data.drop segment index must be constant".into())
+            })?,
+        _ => {
+            return Err(Error::Internal(
+                "data.drop segment index must be int".into(),
+            ));
+        }
+    };
+
+    let length_addr = *ctx
+        .data_segment_length_addrs
+        .get(&seg_idx)
+        .ok_or_else(|| Error::Internal(format!("unknown passive data segment index {seg_idx}")))?;
+
+    // Store 0 to the segment's effective length address.
+    e.emit(Instruction::LoadImm {
+        reg: TEMP1,
+        value: length_addr,
+    });
+    e.emit(Instruction::LoadImm {
+        reg: TEMP2,
+        value: 0,
+    });
+    e.emit(Instruction::StoreIndU32 {
+        base: TEMP1,
+        src: TEMP2,
+        offset: 0,
+    });
+
+    Ok(())
+}
+
+/// Emit memory.init operation with runtime bounds checking.
+///
+/// Traps if:
+/// - `src_offset + len > effective_segment_length` (out of bounds read from passive segment)
+/// - `dst + len > memory_size_bytes` (out of bounds write to WASM memory)
 pub fn emit_pvm_memory_init<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
     ctx: &LoweringContext,
 ) -> Result<()> {
-    use crate::abi::{RO_DATA_BASE, SCRATCH1};
+    use crate::abi::{RO_DATA_BASE, SCRATCH1, SCRATCH2};
 
     // __pvm_memory_init(segment_idx, dst, src_offset, len)
-    let seg_idx_val = get_operand(instr, 0)?;
-    let dst_addr = get_operand(instr, 1)?;
-    let src_offset_val = get_operand(instr, 2)?;
-    let len_val = get_operand(instr, 3)?;
+    let wasm_seg_idx_val = get_operand(instr, 0)?;
+    let wasm_dst = get_operand(instr, 1)?;
+    let wasm_src_offset = get_operand(instr, 2)?;
+    let wasm_len = get_operand(instr, 3)?;
 
-    let seg_idx = match seg_idx_val {
+    let wasm_seg_idx = match wasm_seg_idx_val {
         BasicValueEnum::IntValue(iv) => {
             if let Some(val) = iv.get_zero_extended_constant() {
                 val as u32
@@ -572,18 +620,101 @@ pub fn emit_pvm_memory_init<'ctx>(
         }
     };
 
-    let ro_offset = *ctx
-        .data_segment_offsets
-        .get(&seg_idx)
-        .ok_or_else(|| Error::Internal(format!("unknown passive data segment index {seg_idx}")))?;
+    let ro_offset = *ctx.data_segment_offsets.get(&wasm_seg_idx).ok_or_else(|| {
+        Error::Internal(format!(
+            "unknown passive data segment index {wasm_seg_idx}"
+        ))
+    })?;
 
-    // Load operands
-    e.load_operand(dst_addr, TEMP1)?; // dst (in RAM)
-    e.load_operand(src_offset_val, TEMP2)?; // src offset (relative to segment start)
-    e.load_operand(len_val, TEMP_RESULT)?; // len (counter)
+    let length_addr = *ctx
+        .data_segment_length_addrs
+        .get(&wasm_seg_idx)
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "unknown passive data segment length addr {wasm_seg_idx}"
+            ))
+        })?;
+
+    // Load operands: TEMP1=dst, TEMP2=src_offset, TEMP_RESULT=len
+    e.load_operand(wasm_dst, TEMP1)?;
+    e.load_operand(wasm_src_offset, TEMP2)?;
+    e.load_operand(wasm_len, TEMP_RESULT)?;
+
+    // ── Bounds check 1: src_offset + len <= effective_segment_length ──
+    // SCRATCH1 = src_offset + len
+    e.emit(Instruction::Add32 {
+        dst: SCRATCH1,
+        src1: TEMP2,
+        src2: TEMP_RESULT,
+    });
+    // SCRATCH2 = effective_segment_length (from runtime address)
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH2,
+        value: length_addr,
+    });
+    e.emit(Instruction::LoadIndU32 {
+        dst: SCRATCH2,
+        base: SCRATCH2,
+        offset: 0,
+    });
+    // Trap if SCRATCH1 > SCRATCH2 (i.e. src_offset + len > effective_length)
+    // BranchGeU branches when reg2 >= reg1, so we want "branch to ok if SCRATCH1 <= SCRATCH2"
+    // which is "branch if SCRATCH1 <= SCRATCH2" i.e. BranchGeU(reg1=SCRATCH1, reg2=SCRATCH2)
+    let src_ok_label = e.alloc_label();
+    let fixup_idx = e.instructions.len();
+    e.fixups.push((fixup_idx, src_ok_label));
+    e.emit(Instruction::BranchGeU {
+        reg1: SCRATCH1,
+        reg2: SCRATCH2,
+        offset: 0,
+    });
+    e.emit(Instruction::Trap);
+    e.define_label(src_ok_label);
+
+    // ── Bounds check 2: dst + len <= memory_size * 65536 ──
+    // SCRATCH1 = dst + len
+    e.emit(Instruction::Add32 {
+        dst: SCRATCH1,
+        src1: TEMP1,
+        src2: TEMP_RESULT,
+    });
+    // SCRATCH2 = memory_size (in pages)
+    let mem_size_addr = crate::abi::memory_size_global_offset(ctx.num_globals);
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH2,
+        value: mem_size_addr,
+    });
+    e.emit(Instruction::LoadIndU32 {
+        dst: SCRATCH2,
+        base: SCRATCH2,
+        offset: 0,
+    });
+    // SCRATCH2 = memory_size * 65536 (shift left by 16)
+    e.emit(Instruction::LoadImm {
+        reg: TEMP2, // temporarily reuse TEMP2 for shift amount
+        value: 16,
+    });
+    e.emit(Instruction::ShloL32 {
+        dst: SCRATCH2,
+        src1: SCRATCH2,
+        src2: TEMP2,
+    });
+    // Trap if SCRATCH1 > SCRATCH2 (dst + len > memory_size_bytes)
+    let dst_ok_label = e.alloc_label();
+    let fixup_idx = e.instructions.len();
+    e.fixups.push((fixup_idx, dst_ok_label));
+    e.emit(Instruction::BranchGeU {
+        reg1: SCRATCH1,
+        reg2: SCRATCH2,
+        offset: 0,
+    });
+    e.emit(Instruction::Trap);
+    e.define_label(dst_ok_label);
+
+    // ── Reload src_offset into TEMP2 (was clobbered by shift amount) ──
+    e.load_operand(wasm_src_offset, TEMP2)?;
 
     // Calculate src_addr = RO_DATA_BASE + ro_offset + src_offset
-    // Use TEMP2 for source address
     e.emit(Instruction::AddImm32 {
         dst: TEMP2,
         src: TEMP2,
@@ -591,7 +722,6 @@ pub fn emit_pvm_memory_init<'ctx>(
     });
 
     // Calculate dst_addr = wasm_memory_base + dst
-    // Use TEMP1 for dest address
     e.emit(Instruction::AddImm32 {
         dst: TEMP1,
         src: TEMP1,

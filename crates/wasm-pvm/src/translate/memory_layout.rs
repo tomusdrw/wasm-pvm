@@ -82,6 +82,14 @@ pub fn memory_size_global_offset(num_globals: usize) -> i32 {
     GLOBAL_MEMORY_BASE + (num_globals as i32 * 4)
 }
 
+/// Offset within `GLOBAL_MEMORY_BASE` for a passive data segment's effective length.
+/// Stored after the memory size global: `memory_size_offset + 4 + ordinal * 4`.
+/// Used for bounds checking in `memory.init` and zeroed by `data.drop`.
+#[must_use]
+pub fn data_segment_length_offset(num_globals: usize, ordinal: usize) -> i32 {
+    memory_size_global_offset(num_globals) + 4 + (ordinal as i32 * 4)
+}
+
 /// Compute the spilled local address for a given function and local index.
 #[must_use]
 pub fn spilled_local_addr(func_idx: usize, local_offset: i32) -> i32 {
