@@ -43,7 +43,7 @@ function runJam(jamFile: string, argsHex: string) {
         console.log("Execution finished successfully");
         console.log(fs.readFileSync(logFile, 'utf8').slice(-1000));
     } catch (e) {
-        console.error("Execution failed");
+        console.error("Execution failed:", e instanceof Error ? e.message : e);
         if (fs.existsSync(logFile)) {
             console.log(fs.readFileSync(logFile, 'utf8').slice(-1000));
         } else {

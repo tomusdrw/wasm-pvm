@@ -277,7 +277,9 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         }
     }
 
-    // Append passive data segments to RO_DATA
+    // Append passive data segments to RO_DATA.
+    // NOTE: This loop must iterate data_segments in the same order as the offset
+    // calculation loop above, since data_segment_offsets indices depend on it.
     for seg in &module.data_segments {
         if seg.offset.is_none() {
             ro_data.extend_from_slice(&seg.data);
