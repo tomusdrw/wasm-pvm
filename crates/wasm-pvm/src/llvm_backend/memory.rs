@@ -601,7 +601,7 @@ pub fn emit_pvm_memory_init<'ctx>(
     // If src_end > seg_len, trap (use 64-bit immediate for full range)
     e.emit(Instruction::LoadImm64 {
         reg: TEMP2,
-        value: seg_len as u64,
+        value: u64::from(seg_len),
     });
     // Use SetLtU: src_end > seg_len  ⟺  seg_len < src_end
     e.emit(Instruction::SetLtU {
