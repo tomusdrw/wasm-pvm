@@ -385,7 +385,7 @@ self.resolve_fixups()?;
 
 **Fix**: Add backward copy path when `dest > src` (like `memmove`).
 
-**Current Status**: Fix applied but PVM-in-PVM still PANICs. Investigation ongoing.
+**Current Status**: Fixed. The remaining PANIC was caused by a separate LLVM PHI validation issue (see Entry 3).
 
 **Lesson**:
 - Memory operations are critical - any bug causes cascading failures
@@ -394,7 +394,33 @@ self.resolve_fixups()?;
 
 ---
 
-## Entry 3: Local Variable Zero-Init (2026-02-06)
+## Entry 3: LLVM PHI Node Validation Error (2026-02-16)
+
+**Symptom**: Compilation fails with LLVM verification error when compiling complex WASM programs (e.g., anan-as compiler):
+```
+PHINode should have one entry for each predecessor of its parent basic block!
+  %fn_result = phi i64 [ undef, %fn_return ]
+```
+
+**Root Cause**: A workaround in `function_builder.rs` attempted to add an `undef` value to the function return PHI when it had no incoming values. However, it incorrectly used `merge_bb` (the block containing the PHI) as the "from" block, which is invalid LLVM IR.
+
+**LLVM PHI Semantics**:
+- A PHI node's incoming entries must reference actual predecessor basic blocks
+- The "from" block in `phi.add_incoming(&[(&value, from_bb)])` must be a block that branches TO the PHI's block
+- You cannot use the PHI's own block as a "from" block
+
+**Fix**: Removed the broken workaround code. The WASM-to-LLVM translation already correctly adds values to the PHI for all code paths that need them, so the workaround was unnecessary.
+
+**Code Location**: `crates/wasm-pvm/src/llvm_frontend/function_builder.rs`, lines 893-897 (removed)
+
+**Lesson**:
+- Workarounds for edge cases can introduce worse bugs than the original issue
+- LLVM IR validation errors often indicate semantic misunderstandings, not just syntax issues
+- The WASM-to-LLVM control flow translation was already correct; the "fix" was the bug
+
+---
+
+## Entry 4: Local Variable Zero-Init (2026-02-06)
 
 **Symptom**: Loop counters start with garbage values, loops don't execute.
 
