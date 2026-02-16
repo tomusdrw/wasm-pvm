@@ -547,7 +547,7 @@ pub fn emit_pvm_memory_init<'ctx>(
     instr: InstructionValue<'ctx>,
     ctx: &LoweringContext,
 ) -> Result<()> {
-    use crate::abi::{RO_DATA_BASE, SCRATCH1};
+    use crate::abi::{self, RO_DATA_BASE, SCRATCH1};
 
     // __pvm_memory_init(segment_idx, dst, src_offset, len)
     let seg_idx_val = get_operand(instr, 0)?;
@@ -614,19 +614,34 @@ pub fn emit_pvm_memory_init<'ctx>(
     e.emit(Instruction::Trap);
     e.define_label(bounds_ok_label);
 
-    // Check 2: dst + len <= memory_size
+    // Check 2: dst + len <= memory_size (runtime)
     let bounds_ok_label2 = e.alloc_label();
+    // Load runtime memory size (in pages) from the global used by memory.size/memory.grow
+    let global_addr = abi::memory_size_global_offset(ctx.num_globals);
+    e.emit(Instruction::LoadImm {
+        reg: TEMP2,
+        value: global_addr,
+    });
+    e.emit(Instruction::LoadIndU32 {
+        dst: TEMP2,
+        base: TEMP2,
+        offset: 0,
+    });
+    // Convert pages to bytes: memory_size_bytes = pages << 16 (= pages * 64KB)
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH1,
+        value: 16,
+    });
+    e.emit(Instruction::ShloL32 {
+        dst: TEMP2,
+        src1: TEMP2,
+        src2: SCRATCH1,
+    });
     // Calculate dst_end = dst + len (use SCRATCH1)
     e.emit(Instruction::Add64 {
         dst: SCRATCH1,
         src1: TEMP1,
         src2: TEMP_RESULT,
-    });
-    // Memory size = initial_memory_pages * 64KB
-    let memory_size = i64::from(ctx.initial_memory_pages) * 64 * 1024;
-    e.emit(Instruction::LoadImm64 {
-        reg: TEMP2,
-        value: memory_size as u64,
     });
     // If dst_end > memory_size, trap
     e.emit(Instruction::SetLtU {
@@ -658,6 +673,8 @@ pub fn emit_pvm_memory_init<'ctx>(
         value: ctx.wasm_memory_base,
     });
 
+    // TODO: This byte-by-byte copy is correct but slow for large segments.
+    // Consider word-at-a-time copy with remainder handling for optimization.
     // Loop: while size > 0: dst++ = src++
     let loop_start = e.alloc_label();
     let loop_end = e.alloc_label();

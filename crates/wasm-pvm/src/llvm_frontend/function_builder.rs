@@ -659,6 +659,9 @@ impl<'ctx> WasmToLlvm<'ctx> {
             }
 
             // === Control flow ===
+            // DataDrop is intentionally a no-op: full spec compliance would require
+            // tracking dropped segments at runtime so that subsequent memory.init calls
+            // on dropped segments trap. This is deferred as a simplification.
             Operator::Nop | Operator::DataDrop { .. } => Ok(()),
 
             Operator::Unreachable => {
