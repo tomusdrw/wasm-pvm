@@ -552,9 +552,7 @@ pub fn emit_pvm_data_drop<'ctx>(
         BasicValueEnum::IntValue(iv) => iv
             .get_zero_extended_constant()
             .map(|v| v as u32)
-            .ok_or_else(|| {
-                Error::Internal("data.drop segment index must be constant".into())
-            })?,
+            .ok_or_else(|| Error::Internal("data.drop segment index must be constant".into()))?,
         _ => {
             return Err(Error::Internal(
                 "data.drop segment index must be int".into(),
@@ -621,9 +619,7 @@ pub fn emit_pvm_memory_init<'ctx>(
     };
 
     let ro_offset = *ctx.data_segment_offsets.get(&wasm_seg_idx).ok_or_else(|| {
-        Error::Internal(format!(
-            "unknown passive data segment index {wasm_seg_idx}"
-        ))
+        Error::Internal(format!("unknown passive data segment index {wasm_seg_idx}"))
     })?;
 
     let length_addr = *ctx
