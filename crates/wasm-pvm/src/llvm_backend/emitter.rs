@@ -40,8 +40,11 @@ pub struct LoweringContext {
     pub stack_size: u32,
     /// Map from data segment index to offset in `RO_DATA` (for passive segments).
     pub data_segment_offsets: HashMap<u32, u32>,
-    /// Map from data segment index to length (for passive segments).
+    /// Map from data segment index to byte length (for passive segments bounds checking).
     pub data_segment_lengths: HashMap<u32, u32>,
+    /// Map from data segment index to PVM address storing the effective length at runtime.
+    /// Used by `memory.init` for bounds checking and by `data.drop` to zero the length.
+    pub data_segment_length_addrs: HashMap<u32, i32>,
 }
 
 /// Result of lowering one LLVM function to PVM instructions.

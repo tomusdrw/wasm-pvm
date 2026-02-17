@@ -33,6 +33,9 @@ pub struct IndirectCallFixup {
 
 const ENTRY_HEADER_SIZE: usize = 10;
 
+/// `RO_DATA` region size is 64KB (0x10000 to 0x1FFFF)
+const RO_DATA_SIZE: usize = 64 * 1024;
+
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     let module = WasmModule::parse(wasm)?;
     compile_via_llvm(&module)
@@ -56,11 +59,29 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         module.function_table.len() * 8 // jump_ref + type_idx per entry
     };
 
+    let mut data_segment_length_addrs = std::collections::HashMap::new();
+    let mut passive_ordinal = 0usize;
+
     for (idx, seg) in module.data_segments.iter().enumerate() {
         if seg.offset.is_none() {
+            // Check that segment fits within RO_DATA region
+            if current_ro_offset + seg.data.len() > RO_DATA_SIZE {
+                return Err(Error::Internal(format!(
+                    "passive data segment {} (size {}) would overflow RO_DATA region ({} bytes used of {})",
+                    idx,
+                    seg.data.len(),
+                    current_ro_offset,
+                    RO_DATA_SIZE
+                )));
+            }
             data_segment_offsets.insert(idx as u32, current_ro_offset as u32);
             data_segment_lengths.insert(idx as u32, seg.data.len() as u32);
+            data_segment_length_addrs.insert(
+                idx as u32,
+                memory_layout::data_segment_length_offset(module.globals.len(), passive_ordinal),
+            );
             current_ro_offset += seg.data.len();
+            passive_ordinal += 1;
         }
     }
 
@@ -78,6 +99,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         stack_size: memory_layout::DEFAULT_STACK_SIZE,
         data_segment_offsets,
         data_segment_lengths,
+        data_segment_length_addrs,
     };
 
     // Phase 3: LLVM IR → PVM bytecode for each function
@@ -265,7 +287,9 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         }
     }
 
-    // Append passive data segments to RO_DATA
+    // Append passive data segments to RO_DATA.
+    // NOTE: This loop must iterate data_segments in the same order as the offset
+    // calculation loop above, since data_segment_offsets indices depend on it.
     for seg in &module.data_segments {
         if seg.offset.is_none() {
             ro_data.extend_from_slice(&seg.data);
@@ -278,6 +302,8 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         &module.global_init_values,
         module.memory_limits.initial_pages,
         module.wasm_memory_base,
+        &ctx.data_segment_length_addrs,
+        &ctx.data_segment_lengths,
     );
 
     Ok(SpiProgram::new(blob)
@@ -292,10 +318,13 @@ pub(crate) fn build_rw_data(
     global_init_values: &[i32],
     initial_memory_pages: u32,
     wasm_memory_base: i32,
+    data_segment_length_addrs: &std::collections::HashMap<u32, i32>,
+    data_segment_lengths: &std::collections::HashMap<u32, u32>,
 ) -> Vec<u8> {
     // Calculate the minimum size needed for globals
-    // +1 for the compiler-managed memory size global
-    let globals_end = (global_init_values.len() + 1) * 4;
+    // +1 for the compiler-managed memory size global, plus passive segment lengths
+    let num_passive_segments = data_segment_length_addrs.len();
+    let globals_end = (global_init_values.len() + 1 + num_passive_segments) * 4;
 
     // Calculate the size needed for data segments
     let wasm_to_rw_offset = wasm_memory_base as u32 - 0x30000;
@@ -330,6 +359,18 @@ pub(crate) fn build_rw_data(
     if mem_size_offset + 4 <= rw_data.len() {
         rw_data[mem_size_offset..mem_size_offset + 4]
             .copy_from_slice(&initial_memory_pages.to_le_bytes());
+    }
+
+    // Initialize passive data segment effective lengths (right after memory size global).
+    // These are used by memory.init for bounds checking and zeroed by data.drop.
+    for (&seg_idx, &addr) in data_segment_length_addrs {
+        if let Some(&length) = data_segment_lengths.get(&seg_idx) {
+            // addr is absolute PVM address; convert to rw_data offset
+            let rw_offset = (addr - memory_layout::GLOBAL_MEMORY_BASE) as usize;
+            if rw_offset + 4 <= rw_data.len() {
+                rw_data[rw_offset..rw_offset + 4].copy_from_slice(&length.to_le_bytes());
+            }
+        }
     }
 
     // Copy data segments to their WASM memory locations

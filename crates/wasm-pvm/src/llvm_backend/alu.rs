@@ -37,40 +37,69 @@ pub enum BinaryOp {
     AShr,
 }
 
-fn emit_div_zero_check(e: &mut PvmEmitter, rhs_reg: u8) {
+/// Emit a WASM-style trap if the divisor is zero.
+fn emit_wasm_div_zero_trap(e: &mut PvmEmitter, rhs_reg: u8) {
     let ok_label = e.alloc_label();
     e.emit_branch_ne_imm_to_label(rhs_reg, 0, ok_label);
     e.emit(Instruction::Trap);
     e.define_label(ok_label);
 }
 
-fn emit_signed_overflow_check(e: &mut PvmEmitter, lhs_reg: u8, rhs_reg: u8, is_32bit: bool) {
+/// Emit a WASM-style trap for signed overflow (`INT_MIN` / -1).
+/// For 32-bit operations, operands are first sign-extended from 32 to 64 bits
+/// because `load_operand` uses unsigned loads which zero-extend.
+fn emit_wasm_signed_overflow_trap(e: &mut PvmEmitter, lhs_reg: u8, rhs_reg: u8, is_32bit: bool) {
     let ok_label = e.alloc_label();
 
+    // For 32-bit operands, we need to sign-extend them first because
+    // load_operand uses LoadIndU64 which zero-extends.
+    let lhs = if is_32bit {
+        // Sign-extend lhs from 32 to 64 bits
+        e.emit(Instruction::AddImm32 {
+            dst: TEMP_RESULT,
+            src: lhs_reg,
+            value: 0,
+        });
+        TEMP_RESULT
+    } else {
+        lhs_reg
+    };
+
+    let rhs = if is_32bit {
+        // Sign-extend rhs from 32 to 64 bits into SCRATCH1
+        e.emit(Instruction::AddImm32 {
+            dst: SCRATCH1,
+            src: rhs_reg,
+            value: 0,
+        });
+        SCRATCH1
+    } else {
+        rhs_reg
+    };
+
     // 1. Check rhs != -1
-    e.emit_branch_ne_imm_to_label(rhs_reg, -1, ok_label);
+    e.emit_branch_ne_imm_to_label(rhs, -1, ok_label);
 
     // 2. Check lhs == INT_MIN
     if is_32bit {
-        // INT_MIN_32 = -2147483648 (fits in i32)
-        // If lhs != INT_MIN, jump to ok
-        e.emit_branch_ne_imm_to_label(lhs_reg, i32::MIN, ok_label);
+        // INT_MIN_32 = -2147483648 (already sign-extended in 64-bit register)
+        e.emit_branch_ne_imm_to_label(lhs, i32::MIN, ok_label);
     } else {
         // INT_MIN_64 = 0x8000000000000000
-        // Load INT_MIN_64 to SCRATCH1
+        // Load INT_MIN_64 to TEMP_RESULT
         e.emit(Instruction::LoadImm64 {
-            reg: SCRATCH1,
+            reg: TEMP_RESULT,
             value: i64::MIN as u64,
         });
-        // Check if lhs != SCRATCH1
-        // Xor lhs, SCRATCH1 -> SCRATCH1 (clobbers SCRATCH1)
+        // Check if lhs != TEMP_RESULT
+        // Xor lhs, TEMP_RESULT -> TEMP_RESULT (clobbers TEMP_RESULT)
         e.emit(Instruction::Xor {
-            dst: SCRATCH1,
-            src1: lhs_reg,
-            src2: SCRATCH1,
+            dst: TEMP_RESULT,
+            src1: lhs,
+            src2: TEMP_RESULT,
         });
         // If result != 0, then lhs != INT_MIN
-        e.emit_branch_ne_imm_to_label(SCRATCH1, 0, ok_label);
+        e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, ok_label);
     }
 
     // 3. Trap if we are here (rhs == -1 AND lhs == INT_MIN)
@@ -125,7 +154,7 @@ pub fn lower_binary_arith<'ctx>(
             src2: TEMP2,
         }),
         (BinaryOp::UDiv, true) => {
-            emit_div_zero_check(e, TEMP2);
+            emit_wasm_div_zero_trap(e, TEMP2);
             e.emit(Instruction::DivU32 {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
@@ -133,7 +162,7 @@ pub fn lower_binary_arith<'ctx>(
             });
         }
         (BinaryOp::UDiv, false) => {
-            emit_div_zero_check(e, TEMP2);
+            emit_wasm_div_zero_trap(e, TEMP2);
             e.emit(Instruction::DivU64 {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
@@ -141,8 +170,8 @@ pub fn lower_binary_arith<'ctx>(
             });
         }
         (BinaryOp::SDiv, true) => {
-            emit_div_zero_check(e, TEMP2);
-            emit_signed_overflow_check(e, TEMP1, TEMP2, true);
+            emit_wasm_div_zero_trap(e, TEMP2);
+            emit_wasm_signed_overflow_trap(e, TEMP1, TEMP2, true);
             e.emit(Instruction::DivS32 {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
@@ -150,8 +179,8 @@ pub fn lower_binary_arith<'ctx>(
             });
         }
         (BinaryOp::SDiv, false) => {
-            emit_div_zero_check(e, TEMP2);
-            emit_signed_overflow_check(e, TEMP1, TEMP2, false);
+            emit_wasm_div_zero_trap(e, TEMP2);
+            emit_wasm_signed_overflow_trap(e, TEMP1, TEMP2, false);
             e.emit(Instruction::DivS64 {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
@@ -159,7 +188,7 @@ pub fn lower_binary_arith<'ctx>(
             });
         }
         (BinaryOp::URem, true) => {
-            emit_div_zero_check(e, TEMP2);
+            emit_wasm_div_zero_trap(e, TEMP2);
             e.emit(Instruction::RemU32 {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
@@ -167,7 +196,7 @@ pub fn lower_binary_arith<'ctx>(
             });
         }
         (BinaryOp::URem, false) => {
-            emit_div_zero_check(e, TEMP2);
+            emit_wasm_div_zero_trap(e, TEMP2);
             e.emit(Instruction::RemU64 {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
@@ -175,7 +204,7 @@ pub fn lower_binary_arith<'ctx>(
             });
         }
         (BinaryOp::SRem, true) => {
-            emit_div_zero_check(e, TEMP2);
+            emit_wasm_div_zero_trap(e, TEMP2);
             // SRem overflow check?
             // "The sign of the result equals the sign of the dividend."
             // "If the divisor is 0, then a trap occurs."
@@ -190,7 +219,7 @@ pub fn lower_binary_arith<'ctx>(
             });
         }
         (BinaryOp::SRem, false) => {
-            emit_div_zero_check(e, TEMP2);
+            emit_wasm_div_zero_trap(e, TEMP2);
             e.emit(Instruction::RemS64 {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
