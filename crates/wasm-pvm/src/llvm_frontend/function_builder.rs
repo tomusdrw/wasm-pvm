@@ -136,6 +136,7 @@ struct PvmIntrinsics<'ctx> {
     memory_fill: FunctionValue<'ctx>,
     memory_copy: FunctionValue<'ctx>,
     memory_init: FunctionValue<'ctx>,
+    #[allow(dead_code)] // Infrastructure ready for when data.drop is fully supported
     data_drop: FunctionValue<'ctx>,
     call_indirect: FunctionValue<'ctx>,
 }
