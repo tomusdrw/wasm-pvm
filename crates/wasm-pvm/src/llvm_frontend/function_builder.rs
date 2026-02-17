@@ -136,6 +136,7 @@ struct PvmIntrinsics<'ctx> {
     memory_fill: FunctionValue<'ctx>,
     memory_copy: FunctionValue<'ctx>,
     memory_init: FunctionValue<'ctx>,
+    #[allow(dead_code)] // Infrastructure ready for when data.drop is fully supported
     data_drop: FunctionValue<'ctx>,
     call_indirect: FunctionValue<'ctx>,
 }
@@ -666,14 +667,13 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
             // === Control flow ===
             Operator::Nop => Ok(()),
-            Operator::DataDrop { data_index } => {
-                let wasm_seg_idx = self.i64_type.const_int(u64::from(*data_index), false);
-                llvm_err(self.builder.build_call(
-                    self.pvm_intrinsics.data_drop,
-                    &[wasm_seg_idx.into()],
-                    "datadrop",
-                ))?;
-                Ok(())
+            Operator::DataDrop { .. } => {
+                // DataDrop is not yet fully supported - would require tracking dropped segments
+                // to ensure subsequent memory.init operations trap as required by WASM spec.
+                // For now, reject compilation to avoid silent incorrect behavior.
+                Err(crate::Error::Unsupported(
+                    "data.drop operator is not yet supported".to_string(),
+                ))
             }
 
             Operator::Unreachable => {
@@ -905,11 +905,6 @@ impl<'ctx> WasmToLlvm<'ctx> {
                             // Position at merge block and emit actual return
                             self.builder.position_at_end(merge_bb);
                             if let Some(phi) = result_phi {
-                                // Ensure phi has at least one incoming; if not, add undef
-                                if phi.count_incoming() == 0 {
-                                    let undef = self.i64_type.get_undef();
-                                    phi.add_incoming(&[(&undef, merge_bb)]);
-                                }
                                 let ret_val = phi.as_basic_value().into_int_value();
                                 llvm_err(self.builder.build_return(Some(&ret_val)))?;
                             } else {

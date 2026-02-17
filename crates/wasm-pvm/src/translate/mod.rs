@@ -50,7 +50,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
     let context = Context::create();
     let llvm_module = llvm_frontend::translate_wasm_to_llvm(&context, module)?;
 
-    // Calculate RO_DATA offsets for passive data segments
+    // Calculate RO_DATA offsets and lengths for passive data segments
     let mut data_segment_offsets = std::collections::HashMap::new();
     let mut data_segment_lengths = std::collections::HashMap::new();
     let mut current_ro_offset = if module.function_table.is_empty() {
