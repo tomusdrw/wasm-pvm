@@ -1,12 +1,12 @@
 // Array test: Test creating arrays from args and reading from them
 // This simulates what index-compiler.ts does
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   let out_offset: u32 = 0;
   
   // Store args info
@@ -85,6 +85,6 @@ export function main(args_ptr: i32, args_len: i32): void {
     }
   }
   
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = out_offset as i32;
 }

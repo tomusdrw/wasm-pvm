@@ -6,12 +6,12 @@
  * Bug: Values appear at wrong indices after push()
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   // Create an empty array
   const arr: u8[] = [];
 
@@ -35,6 +35,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, sum);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

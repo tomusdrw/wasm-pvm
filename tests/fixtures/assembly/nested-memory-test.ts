@@ -1,13 +1,13 @@
 // Nested memory test: Simulate what happens in PVM-in-PVM
 // This tests reading from computed addresses and writing to buffers
 
-const RESULT_HEAP: u32 = 0x30100;
 const BUFFER: u32 = 0x100;  // Same as RESULT_BUFFER in index-compiler.ts
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   // This simulates what index-compiler.ts does:
   // 1. Read header fields from args
   // 2. Copy data to a buffer
@@ -68,6 +68,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   store<u32>(RESULT_HEAP + out_offset, data_sum);
   out_offset += 4;
   
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = out_offset as i32;
 }

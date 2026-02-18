@@ -6,12 +6,12 @@
  * Bug: subarray() doesn't work correctly, causes panic or wrong values
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   // Create a Uint8Array with known values
   const arr = new Uint8Array(5);
   arr[0] = 10;
@@ -27,6 +27,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   const value: i32 = sub[0];
 
   store<i32>(RESULT_HEAP, value);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

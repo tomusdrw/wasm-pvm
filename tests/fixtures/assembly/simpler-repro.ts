@@ -4,7 +4,6 @@
  * returns 0 instead of 1.
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
@@ -18,6 +17,7 @@ function createArray(len: i32): u8[] {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   const arr = createArray(10);
 
   // This ternary determines if we take THEN (memory load) or ELSE (constant)
@@ -40,6 +40,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

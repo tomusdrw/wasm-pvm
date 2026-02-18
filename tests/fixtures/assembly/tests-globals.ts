@@ -1,5 +1,5 @@
 // Memory addresses
-const RESULT_HEAP: u32 = 0x30100;
+let RESULT_HEAP: usize = 0;
 
 // Globals
 export let result_ptr: i32 = 0;
@@ -11,7 +11,7 @@ let globalCounter: i32 = 0;
 
 function writeResult(val: i32): void {
   store<i32>(RESULT_HEAP, val);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }
 
@@ -24,6 +24,7 @@ function modifyGlobal(val: i32): void {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  RESULT_HEAP = heap.alloc(256);
   incrementGlobal();
   incrementGlobal();
 

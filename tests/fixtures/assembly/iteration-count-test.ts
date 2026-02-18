@@ -2,7 +2,6 @@
  * Test to find at what iteration count the second loop stops working.
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
@@ -16,6 +15,7 @@ function createArray(len: i32): u8[] {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   // Use args to control number of iterations in loop 1
   // args[0] = step (0-4 for different tests)
   // args[1] = iteration count for loop 1 (if applicable)
@@ -106,6 +106,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

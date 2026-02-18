@@ -32,8 +32,8 @@ pub const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 pub const PARAM_OVERFLOW_BASE: i32 = 0x3FF00;
 
 /// Base address for spilled locals in memory.
-/// Layout: 0x30000-0x300FF globals, 0x30100+ user heap, 0x40000+ spilled locals.
-/// User heap can use up to ~64KB (0x30100 to 0x3FFFF) before colliding with spilled locals.
+/// Layout: 0x30000+ globals, 0x40000+ spilled locals.
+/// User programs should use `heap.alloc()` (AS) or `memory.grow` (WASM) for dynamic allocation.
 pub const SPILLED_LOCALS_BASE: i32 = 0x40000;
 
 /// Bytes allocated per function for spilled locals (64 locals * 8 bytes).
