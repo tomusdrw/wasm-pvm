@@ -1,0 +1,3 @@
+# Import map for console-log-test.ts
+# Maps console.log to ecalli:3 with pointer conversion (WASM ptr -> PVM addr)
+console.log = ecalli:3:ptr

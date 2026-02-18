@@ -24,7 +24,9 @@ pub enum ImportAction {
     Nop,
     /// Emit an ecalli instruction with the given index.
     /// Arguments from the WASM call are loaded into r7-r11 (up to 5 args).
-    Ecalli { index: u32 },
+    /// When `ptr_params` is true, all arguments are treated as WASM memory pointers
+    /// and are converted to PVM addresses (by adding `wasm_memory_base`).
+    Ecalli { index: u32, ptr_params: bool },
 }
 
 /// Options for compilation.

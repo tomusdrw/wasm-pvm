@@ -130,18 +130,22 @@ fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
             ImportAction::Trap
         } else if action_str == "nop" {
             ImportAction::Nop
-        } else if let Some(idx_str) = action_str.strip_prefix("ecalli:") {
-            let index: u32 = idx_str.trim().parse().with_context(|| {
+        } else if let Some(rest) = action_str.strip_prefix("ecalli:") {
+            // Parse "ecalli:N" or "ecalli:N:ptr"
+            let parts: Vec<&str> = rest.splitn(2, ':').collect();
+            let idx_str = parts[0].trim();
+            let index: u32 = idx_str.parse().with_context(|| {
                 format!(
                     "{}:{}: invalid ecalli index '{idx_str}'",
                     path.display(),
                     line_num + 1
                 )
             })?;
-            ImportAction::Ecalli { index }
+            let ptr_params = parts.get(1).is_some_and(|s| s.trim() == "ptr");
+            ImportAction::Ecalli { index, ptr_params }
         } else {
             anyhow::bail!(
-                "{}:{}: unknown action '{action_str}', expected 'trap', 'nop', or 'ecalli:N'",
+                "{}:{}: unknown action '{action_str}', expected 'trap', 'nop', or 'ecalli:N[:ptr]'",
                 path.display(),
                 line_num + 1
             );

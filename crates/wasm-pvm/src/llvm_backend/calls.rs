@@ -139,7 +139,7 @@ pub fn lower_import_call<'ctx>(
     if let Some(import_map) = &ctx.import_map {
         if let Some(name) = import_name {
             if let Some(action) = import_map.get(name) {
-                return lower_mapped_import(e, instr, action, has_return);
+                return lower_mapped_import(e, instr, action, has_return, ctx);
             }
         }
         // If import map is provided but this import isn't in it, it should have
@@ -184,6 +184,7 @@ fn lower_mapped_import<'ctx>(
     instr: InstructionValue<'ctx>,
     action: &crate::translate::ImportAction,
     has_return: bool,
+    ctx: &LoweringContext,
 ) -> Result<()> {
     use crate::translate::ImportAction;
 
@@ -210,13 +211,37 @@ fn lower_mapped_import<'ctx>(
                 e.store_to_slot(slot, TEMP_RESULT);
             }
         }
-        ImportAction::Ecalli { index } => {
+        ImportAction::Ecalli { index, ptr_params } => {
             // Load call arguments into r7-r11 (up to 5 args).
             let num_args = (instr.get_num_operands() - 1) as usize;
             for i in 0..num_args.min(5) {
                 let arg = get_operand(instr, i as u32)?;
                 let target_reg = abi::RETURN_VALUE_REG + i as u8;
                 e.load_operand(arg, target_reg)?;
+
+                // Convert WASM pointers to PVM addresses when ptr_params is set.
+                if *ptr_params {
+                    // Zero-extend 32-bit WASM address to 64 bits, then add wasm_memory_base.
+                    e.emit(Instruction::LoadImm {
+                        reg: TEMP1,
+                        value: 32,
+                    });
+                    e.emit(Instruction::ShloL64 {
+                        dst: target_reg,
+                        src1: target_reg,
+                        src2: TEMP1,
+                    });
+                    e.emit(Instruction::ShloR64 {
+                        dst: target_reg,
+                        src1: target_reg,
+                        src2: TEMP1,
+                    });
+                    e.emit(Instruction::AddImm64 {
+                        dst: target_reg,
+                        src: target_reg,
+                        value: ctx.wasm_memory_base,
+                    });
+                }
             }
 
             e.emit(Instruction::Ecalli { index: *index });

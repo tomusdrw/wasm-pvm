@@ -38,7 +38,7 @@ export function compileAS(
   return wasmFile;
 }
 
-export function compileToJAM(inputPath: string, outputName: string): string {
+export function compileToJAM(inputPath: string, outputName: string, importsPath?: string): string {
   const jamFile = path.join(
     TESTS_DIR,
     "build",
@@ -46,8 +46,10 @@ export function compileToJAM(inputPath: string, outputName: string): string {
     `${outputName}.jam`
   );
 
-
-  const cmd = `${CLI_BINARY} compile ${inputPath} -o ${jamFile}`;
+  let cmd = `${CLI_BINARY} compile ${inputPath} -o ${jamFile}`;
+  if (importsPath) {
+    cmd += ` --imports ${importsPath}`;
+  }
   execSync(cmd, {
     cwd: PROJECT_ROOT,
     encoding: "utf8",

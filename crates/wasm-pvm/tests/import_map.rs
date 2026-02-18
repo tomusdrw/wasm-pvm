@@ -72,7 +72,7 @@ fn test_import_map_ecalli() {
     "#;
 
     let mut map = HashMap::new();
-    map.insert("console.log".to_string(), ImportAction::Ecalli { index: 2 });
+    map.insert("console.log".to_string(), ImportAction::Ecalli { index: 2, ptr_params: false });
 
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
     let instructions = extract_instructions(&program);
@@ -198,8 +198,8 @@ fn test_import_map_multiple_ecalli() {
 
     let mut map = HashMap::new();
     map.insert("abort".to_string(), ImportAction::Trap);
-    map.insert("log".to_string(), ImportAction::Ecalli { index: 2 });
-    map.insert("read".to_string(), ImportAction::Ecalli { index: 5 });
+    map.insert("log".to_string(), ImportAction::Ecalli { index: 2, ptr_params: false });
+    map.insert("read".to_string(), ImportAction::Ecalli { index: 5, ptr_params: false });
 
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
     let instructions = extract_instructions(&program);
@@ -216,4 +216,41 @@ fn test_import_map_multiple_ecalli() {
             index: Pat::Exact(5),
         }],
     );
+}
+
+#[test]
+fn test_import_map_ecalli_with_ptr_params() {
+    let wat = r#"
+        (module
+            (import "env" "log" (func $log (param i32)))
+            (memory (export "memory") 1)
+            (func (export "main") (param i32 i32) (result i32)
+                (call $log (i32.const 100))
+                (i32.const 0)
+            )
+        )
+    "#;
+
+    let mut map = HashMap::new();
+    map.insert(
+        "log".to_string(),
+        ImportAction::Ecalli {
+            index: 3,
+            ptr_params: true,
+        },
+    );
+
+    let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
+    let instructions = extract_instructions(&program);
+
+    // Should have Ecalli with index 3.
+    assert_has_pattern(
+        &instructions,
+        &[InstructionPattern::Ecalli {
+            index: Pat::Exact(3),
+        }],
+    );
+
+    // Should have AddImm64 for pointer conversion (adding wasm_memory_base).
+    assert!(has_opcode(&instructions, Opcode::AddImm64));
 }
