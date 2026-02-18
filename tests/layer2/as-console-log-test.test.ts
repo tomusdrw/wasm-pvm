@@ -27,7 +27,7 @@ describe("as-console-log-test", () => {
 
   test("program returns expected result (42)", () => {
     const result = runJamWithOutput(jamFile, "0000000000000000");
-    // Result should be 42 as little-endian u32 = 0x2a000000
+    // Result should be 42
     expect(result.exitValue).toBe(42);
   });
 });

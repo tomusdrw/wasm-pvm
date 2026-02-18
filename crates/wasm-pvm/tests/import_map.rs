@@ -56,7 +56,7 @@ fn test_import_map_nop() {
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
-    // Should not have Trap or Ecalli for a nop import.
+    // Should not have Ecalli for a nop import.
     assert!(!has_opcode(&instructions, Opcode::Ecalli));
 }
 

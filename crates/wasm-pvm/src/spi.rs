@@ -158,10 +158,15 @@ mod tests {
         let spi = SpiProgram::new(code).with_metadata(metadata_str.as_bytes().to_vec());
         let encoded = spi.encode();
 
-        let meta_len = metadata_str.len();
-        assert_eq!(encoded[0], meta_len as u8);
+        let meta_len = metadata_str.len() as u32;
+        let varint = crate::pvm::encode_var_u32(meta_len);
         assert_eq!(
-            &encoded[1..1 + meta_len],
+            &encoded[..varint.len()],
+            &varint,
+            "metadata length varint"
+        );
+        assert_eq!(
+            &encoded[varint.len()..varint.len() + meta_len as usize],
             metadata_str.as_bytes(),
             "metadata should contain the string"
         );

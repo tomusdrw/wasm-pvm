@@ -25,7 +25,6 @@ function writeDiagnostics(offset: u32, msg_code: u32, val1: u32, val2: u32, val3
 }
 
 export function main(argsPtr: i32, argsLen: i32): void {
-  const RESULT_HEAP = heap.alloc(256);
   // Input format from index-compiler.ts:
   // 8 (gas) + 4 (pc) + 4 (spi-program-len) + 4 (inner-args-len) + ? (spi-program) + ? (inner-args)
   
