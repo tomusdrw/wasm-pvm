@@ -160,11 +160,7 @@ mod tests {
 
         let meta_len = metadata_str.len() as u32;
         let varint = crate::pvm::encode_var_u32(meta_len);
-        assert_eq!(
-            &encoded[..varint.len()],
-            &varint,
-            "metadata length varint"
-        );
+        assert_eq!(&encoded[..varint.len()], &varint, "metadata length varint");
         assert_eq!(
             &encoded[varint.len()..varint.len() + meta_len as usize],
             metadata_str.as_bytes(),
