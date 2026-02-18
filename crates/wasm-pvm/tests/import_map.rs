@@ -111,7 +111,8 @@ fn test_import_map_host_call_not_required() {
     let mut map = HashMap::new();
     map.insert("abort".to_string(), ImportAction::Trap);
 
-    let program = compile_wat_with_imports(wat, map).expect("Should compile - intrinsics don't need mapping");
+    let program =
+        compile_wat_with_imports(wat, map).expect("Should compile - intrinsics don't need mapping");
     let _ = extract_instructions(&program);
 }
 
@@ -148,11 +149,13 @@ fn test_no_import_map_unknown_import_fails() {
 
     let wasm = wat_to_wasm(wat).expect("Failed to parse WAT");
     let result = wasm_pvm::compile(&wasm);
-    assert!(result.is_err(), "Unknown imports should fail without an import map");
+    assert!(
+        result.is_err(),
+        "Unknown imports should fail without an import map"
+    );
     let err = result.err().unwrap();
     assert!(
         err.to_string().contains("console.log"),
         "Error should mention the unresolved import name: {err}"
     );
 }
-

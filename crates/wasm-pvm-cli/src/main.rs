@@ -69,8 +69,9 @@ fn main() -> Result<()> {
             };
 
             let adapter_wat = if let Some(adapter_path) = adapter {
-                let content = fs::read_to_string(&adapter_path)
-                    .with_context(|| format!("Failed to read adapter {}", adapter_path.display()))?;
+                let content = fs::read_to_string(&adapter_path).with_context(|| {
+                    format!("Failed to read adapter {}", adapter_path.display())
+                })?;
                 Some(content)
             } else {
                 None

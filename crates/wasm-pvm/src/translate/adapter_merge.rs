@@ -49,10 +49,12 @@ pub fn merge_adapter(main_wasm: &[u8], adapter_wat: &str) -> Result<Vec<u8>> {
     for (i, imp) in main.func_imports.iter().enumerate() {
         if let Some(&adapter_local_idx) = adapter_export_map.get(imp.name.as_str()) {
             // Validate type signatures match.
-            let main_type = main
-                .types
-                .get(imp.type_idx as usize)
-                .ok_or_else(|| Error::Internal(format!("main import type index {} out of range", imp.type_idx)))?;
+            let main_type = main.types.get(imp.type_idx as usize).ok_or_else(|| {
+                Error::Internal(format!(
+                    "main import type index {} out of range",
+                    imp.type_idx
+                ))
+            })?;
             let adapter_global_idx = adapter.num_imported_funcs + adapter_local_idx;
             let adapter_type_idx = adapter
                 .func_type_indices
@@ -72,7 +74,11 @@ pub fn merge_adapter(main_wasm: &[u8], adapter_wat: &str) -> Result<Vec<u8>> {
             {
                 return Err(Error::Internal(format!(
                     "type mismatch for import '{}': main expects {:?} -> {:?}, adapter provides {:?} -> {:?}",
-                    imp.name, main_type.params, main_type.results, adapter_type.params, adapter_type.results
+                    imp.name,
+                    main_type.params,
+                    main_type.results,
+                    adapter_type.params,
+                    adapter_type.results
                 )));
             }
 
@@ -194,8 +200,8 @@ impl<'a> ParsedModule<'a> {
                 }
                 wasmparser::Payload::ImportSection(reader) => {
                     for import in reader {
-                        let import = import
-                            .map_err(|e| Error::Internal(format!("{label} import: {e}")))?;
+                        let import =
+                            import.map_err(|e| Error::Internal(format!("{label} import: {e}")))?;
                         match import.ty {
                             wasmparser::TypeRef::Func(type_idx) => {
                                 func_imports.push(FuncImport {
@@ -224,8 +230,8 @@ impl<'a> ParsedModule<'a> {
                 }
                 wasmparser::Payload::GlobalSection(reader) => {
                     for global in reader {
-                        let g = global
-                            .map_err(|e| Error::Internal(format!("{label} global: {e}")))?;
+                        let g =
+                            global.map_err(|e| Error::Internal(format!("{label} global: {e}")))?;
                         globals.push(RawGlobal {
                             ty: g.ty,
                             init_expr: g.init_expr,
@@ -234,8 +240,7 @@ impl<'a> ParsedModule<'a> {
                 }
                 wasmparser::Payload::MemorySection(reader) => {
                     for mem in reader {
-                        let m =
-                            mem.map_err(|e| Error::Internal(format!("{label} memory: {e}")))?;
+                        let m = mem.map_err(|e| Error::Internal(format!("{label} memory: {e}")))?;
                         memories.push(m);
                     }
                 }
@@ -248,8 +253,8 @@ impl<'a> ParsedModule<'a> {
                 }
                 wasmparser::Payload::ExportSection(reader) => {
                     for export in reader {
-                        let e = export
-                            .map_err(|e| Error::Internal(format!("{label} export: {e}")))?;
+                        let e =
+                            export.map_err(|e| Error::Internal(format!("{label} export: {e}")))?;
                         match e.kind {
                             wasmparser::ExternalKind::Func => {
                                 func_exports.push((e.name.to_string(), e.index));
@@ -294,8 +299,7 @@ impl<'a> ParsedModule<'a> {
                 }
                 wasmparser::Payload::DataSection(reader) => {
                     for data in reader {
-                        let d =
-                            data.map_err(|e| Error::Internal(format!("{label} data: {e}")))?;
+                        let d = data.map_err(|e| Error::Internal(format!("{label} data: {e}")))?;
                         data_segments.push(RawData { raw: d });
                     }
                 }
@@ -339,9 +343,9 @@ fn build_merged_module(
 
     for adapter_type in &adapter.types {
         // Look for an existing matching type in merged_types.
-        let existing = merged_types.iter().position(|t| {
-            t.params == adapter_type.params && t.results == adapter_type.results
-        });
+        let existing = merged_types
+            .iter()
+            .position(|t| t.params == adapter_type.params && t.results == adapter_type.results);
         if let Some(idx) = existing {
             adapter_type_remap.push(idx as u32);
         } else {
@@ -474,10 +478,7 @@ fn build_merged_module(
     if !main.globals.is_empty() {
         let mut global_section = GlobalSection::new();
         for g in &main.globals {
-            global_section.global(
-                encode_global_type(g.ty),
-                &encode_const_expr(&g.init_expr)?,
-            );
+            global_section.global(encode_global_type(g.ty), &encode_const_expr(&g.init_expr)?);
         }
         module.section(&global_section);
     }
@@ -485,7 +486,11 @@ fn build_merged_module(
     // Export section (from main, with remapped function indices)
     let mut export_section = ExportSection::new();
     for (name, func_idx) in &main.func_exports {
-        export_section.export(name, wasm_encoder::ExportKind::Func, main_func_remap(*func_idx));
+        export_section.export(
+            name,
+            wasm_encoder::ExportKind::Func,
+            main_func_remap(*func_idx),
+        );
     }
     for exp in &main.other_exports {
         export_section.export(&exp.name, encode_export_kind(exp.kind), exp.index);
@@ -651,9 +656,8 @@ fn encode_element(
                 wasmparser::ElementItems::Functions(reader) => {
                     let mut indices = Vec::new();
                     for idx in reader.clone() {
-                        let idx = idx.map_err(|e| {
-                            Error::Internal(format!("element func index: {e}"))
-                        })?;
+                        let idx =
+                            idx.map_err(|e| Error::Internal(format!("element func index: {e}")))?;
                         indices.push(func_remap(idx));
                     }
                     indices
@@ -661,9 +665,8 @@ fn encode_element(
                 wasmparser::ElementItems::Expressions(_, reader) => {
                     let mut indices = Vec::new();
                     for expr in reader.clone() {
-                        let expr = expr.map_err(|e| {
-                            Error::Internal(format!("element expression: {e}"))
-                        })?;
+                        let expr =
+                            expr.map_err(|e| Error::Internal(format!("element expression: {e}")))?;
                         if let Some(idx) = eval_const_ref(&expr) {
                             indices.push(func_remap(idx));
                         } else {
@@ -682,9 +685,8 @@ fn encode_element(
                 wasmparser::ElementItems::Functions(reader) => {
                     let mut indices = Vec::new();
                     for idx in reader.clone() {
-                        let idx = idx.map_err(|e| {
-                            Error::Internal(format!("element func index: {e}"))
-                        })?;
+                        let idx =
+                            idx.map_err(|e| Error::Internal(format!("element func index: {e}")))?;
                         indices.push(func_remap(idx));
                     }
                     indices
@@ -695,7 +697,9 @@ fn encode_element(
                     ));
                 }
             };
-            section.passive(wasm_encoder::Elements::Functions(std::borrow::Cow::Owned(func_indices)));
+            section.passive(wasm_encoder::Elements::Functions(std::borrow::Cow::Owned(
+                func_indices,
+            )));
         }
         wasmparser::ElementKind::Declared => {
             // Declared elements are for reference types; skip for now.
@@ -1035,9 +1039,7 @@ fn encode_passthrough_operator(
 fn encode_block_type(bt: wasmparser::BlockType) -> wasm_encoder::BlockType {
     match bt {
         wasmparser::BlockType::Empty => wasm_encoder::BlockType::Empty,
-        wasmparser::BlockType::Type(vt) => {
-            wasm_encoder::BlockType::Result(encode_val_type(vt))
-        }
+        wasmparser::BlockType::Type(vt) => wasm_encoder::BlockType::Result(encode_val_type(vt)),
         wasmparser::BlockType::FuncType(idx) => wasm_encoder::BlockType::FunctionType(idx),
     }
 }
@@ -1100,8 +1102,15 @@ mod tests {
 
         // Parse merged module and verify: no imports, 2 functions.
         let merged_mod = ParsedModule::parse(&merged, "merged").expect("parse merged");
-        assert_eq!(merged_mod.num_imported_funcs, 0, "abort import should be resolved");
-        assert_eq!(merged_mod.func_type_indices.len(), 2, "adapter + main local funcs");
+        assert_eq!(
+            merged_mod.num_imported_funcs, 0,
+            "abort import should be resolved"
+        );
+        assert_eq!(
+            merged_mod.func_type_indices.len(),
+            2,
+            "adapter + main local funcs"
+        );
     }
 
     #[test]
@@ -1136,7 +1145,10 @@ mod tests {
 
         let merged_mod = ParsedModule::parse(&merged, "merged").expect("parse merged");
         // host_call is retained from main + host_call from adapter = 2 imports
-        assert_eq!(merged_mod.num_imported_funcs, 2, "host_call retained from main + adapter");
+        assert_eq!(
+            merged_mod.num_imported_funcs, 2,
+            "host_call retained from main + adapter"
+        );
         // console.log is resolved, so 2 local funcs: adapter's console.log body + main
         assert_eq!(merged_mod.func_type_indices.len(), 2);
     }
@@ -1163,7 +1175,10 @@ mod tests {
         let result = merge_adapter(&main_wasm, adapter_wat);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("type mismatch"), "Expected type mismatch error, got: {err}");
+        assert!(
+            err.contains("type mismatch"),
+            "Expected type mismatch error, got: {err}"
+        );
     }
 
     #[test]
@@ -1259,6 +1274,10 @@ mod tests {
 
         // Compile the merged module.
         let result = crate::compile(&merged);
-        assert!(result.is_ok(), "merged module should compile: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "merged module should compile: {:?}",
+            result.err()
+        );
     }
 }
