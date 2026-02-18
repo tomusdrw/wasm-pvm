@@ -36,36 +36,11 @@ interface InnerResult {
 }
 
 /**
- * Strip the metadata prefix from a JAM/SPI buffer.
- * Format: varint(metadata_len) + metadata_bytes + raw_spi
- * Returns the raw SPI portion (after metadata).
- */
-function stripMetadata(buf: Buffer): Buffer {
-  let offset = 0;
-  // Decode varint: if first byte < 128, it's a 1-byte length
-  const firstByte = buf[offset];
-  let metadataLen = 0;
-  if (firstByte < 128) {
-    metadataLen = firstByte;
-    offset = 1;
-  } else {
-    // Multi-byte varint (same encoding as PVM blob varint)
-    // For typical metadata sizes this is sufficient
-    const leadingOnes = Math.clz32(~(firstByte << 24));
-    const extraBytes = leadingOnes;
-    const mask = (1 << (8 - leadingOnes)) - 1;
-    metadataLen = firstByte & mask;
-    for (let i = 1; i <= extraBytes; i++) {
-      metadataLen = metadataLen * 256 + buf[offset + i];
-    }
-    offset = 1 + extraBytes;
-  }
-  return buf.subarray(offset + metadataLen);
-}
-
-/**
  * Build the args buffer for the anan-as compiler.jam.
  * Format: gas(8LE) + pc(4LE) + program_len(4LE) + inner_args_len(4LE) + program + inner_args
+ *
+ * The inner program is passed as the full SPI blob (including metadata prefix).
+ * The anan-as interpreter handles metadata stripping internally.
  */
 function buildCompilerArgs(
   innerJamPath: string,
@@ -73,9 +48,7 @@ function buildCompilerArgs(
   gas: bigint = INNER_GAS,
   pc: number = 0,
 ): string {
-  // Strip metadata prefix: inner programs are passed as raw SPI to the anan-as
-  // interpreter running inside PVM, which expects raw SPI format.
-  const programBytes = stripMetadata(fs.readFileSync(innerJamPath));
+  const programBytes = fs.readFileSync(innerJamPath);
   const innerArgs = innerArgsHex
     ? Buffer.from(innerArgsHex, "hex")
     : Buffer.alloc(0);
