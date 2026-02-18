@@ -24,7 +24,7 @@ cd tests && bun build.ts                      # REQUIRED before running integrat
 cd tests && bun run test                      # Full test suite
 
 # Quick development check (Layer 1 tests only - fastest)
-cd tests && bun test layer1/                  # ~140 tests, quick validation
+cd tests && bun test layer1/                  # ~50 tests, quick validation
 
 # Compile WASM → JAM
 cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o dist/add.jam
@@ -165,7 +165,7 @@ crates/
 | Fix adapter merge | `translate/adapter_merge.rs` | WAT adapter → merged WASM binary |
 | Add test case | `tests/layer{1,2,3}/*.test.ts` | Each file calls `defineSuite()` with hex args, little-endian |
 | Add/modify import adapter | `tests/fixtures/imports/*.adapter.wat` | WAT adapter files for complex import resolution |
-| Add/modify import map | `tests/fixtures/imports/*.imports` | Text-based import maps (simple: trap, nop, ecalli) |
+| Add/modify import map | `tests/fixtures/imports/*.imports` | Text-based import maps (simple: trap, nop) |
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` |
 | Fix test build | `tests/build.ts` + `tests/helpers/compile.ts` | Build orchestrator + compilation helpers |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |

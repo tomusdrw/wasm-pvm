@@ -565,7 +565,10 @@ fn encode_ref_type(rt: wasmparser::RefType) -> wasm_encoder::RefType {
     } else if rt == wasmparser::RefType::EXTERNREF {
         wasm_encoder::RefType::EXTERNREF
     } else {
-        // Fallback to funcref for other ref types.
+        // PVM only supports funcref and externref. Other ref types (GC
+        // proposals, etc.) would fail during PVM lowering, so this
+        // fallback is only reached for WASM modules we cannot compile.
+        tracing::warn!("unsupported ref type in adapter merge, falling back to funcref");
         wasm_encoder::RefType::FUNCREF
     }
 }
