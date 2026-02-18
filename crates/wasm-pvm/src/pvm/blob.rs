@@ -85,7 +85,7 @@ fn pack_mask(bits: &[bool]) -> Vec<u8> {
     packed
 }
 
-fn encode_var_u32(value: u32) -> Vec<u8> {
+pub(crate) fn encode_var_u32(value: u32) -> Vec<u8> {
     if value == 0 {
         return vec![0];
     }

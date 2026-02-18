@@ -9,7 +9,7 @@ export interface RunResult {
 }
 
 function buildRunCmd(jamFile: string, args: string, pc?: number, logs = false): string {
-  let cmd = `node ${ANAN_AS_CLI} run --spi --no-metadata`;
+  let cmd = `node ${ANAN_AS_CLI} run --spi`;
 
   if (!logs) {
     cmd += ` --no-logs`;
