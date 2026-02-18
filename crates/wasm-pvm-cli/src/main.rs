@@ -28,7 +28,7 @@ enum Commands {
         #[arg(
             short,
             long,
-            help = "Import map file mapping import names to actions (trap, nop, ecalli:N)"
+            help = "Import map file mapping import names to actions (trap, nop)"
         )]
         imports: Option<PathBuf>,
 
@@ -118,7 +118,6 @@ fn read_wasm(path: &PathBuf) -> Result<Vec<u8>> {
 /// # Comments start with #
 /// abort = trap
 /// console.log = nop
-/// some_func = ecalli:5
 /// ```
 fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
     let contents =
@@ -147,22 +146,9 @@ fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
             ImportAction::Trap
         } else if action_str == "nop" {
             ImportAction::Nop
-        } else if let Some(rest) = action_str.strip_prefix("ecalli:") {
-            // Parse "ecalli:N" or "ecalli:N:ptr"
-            let parts: Vec<&str> = rest.splitn(2, ':').collect();
-            let idx_str = parts[0].trim();
-            let index: u32 = idx_str.parse().with_context(|| {
-                format!(
-                    "{}:{}: invalid ecalli index '{idx_str}'",
-                    path.display(),
-                    line_num + 1
-                )
-            })?;
-            let ptr_params = parts.get(1).is_some_and(|s| s.trim() == "ptr");
-            ImportAction::Ecalli { index, ptr_params }
         } else {
             anyhow::bail!(
-                "{}:{}: unknown action '{action_str}', expected 'trap', 'nop', or 'ecalli:N[:ptr]'",
+                "{}:{}: unknown action '{action_str}', expected 'trap' or 'nop'",
                 path.display(),
                 line_num + 1
             );

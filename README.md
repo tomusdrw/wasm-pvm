@@ -27,7 +27,7 @@ The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with
 
 **Type Conversions**: i32.wrap_i64, i64.extend_i32_s/u, sign extensions (i32.extend8_s, i32.extend16_s, i64.extend8_s/16_s/32_s)
 
-**Import Handling**: Text-based import maps (`--imports`) for simple mappings (trap, nop, ecalli), and WAT adapter files (`--adapter`) for complex import resolution with arbitrary WASM logic (pointer conversion, memory reads, multi-arg host calls)
+**Import Handling**: Text-based import maps (`--imports`) for simple mappings (trap, nop), and WAT adapter files (`--adapter`) for complex import resolution with arbitrary WASM logic (pointer conversion, memory reads, multi-arg host calls)
 
 ### Not Yet Implemented
 - Floating point (rejected by design — PVM has no FP)
@@ -132,7 +132,6 @@ A text file mapping import names to simple actions. Use for straightforward case
 # my-imports.txt
 abort = trap
 console.log = nop
-my_host_func = ecalli:5
 ```
 
 **Available actions**:
@@ -141,8 +140,6 @@ my_host_func = ecalli:5
 |--------|--------|
 | `trap` | Emit an `unreachable` (panic) when called |
 | `nop` | Do nothing and return zero |
-| `ecalli:N` | Emit PVM `ecalli N` host call instruction |
-| `ecalli:N:ptr` | Like `ecalli:N` but first converts WASM pointer args to PVM addresses |
 
 **Usage**:
 ```bash
