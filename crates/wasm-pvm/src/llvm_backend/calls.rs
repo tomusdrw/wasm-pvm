@@ -104,7 +104,8 @@ pub fn lower_wasm_call<'ctx>(
 /// Emit code for calling an imported function.
 ///
 /// Recognizes special imports (`host_call`, `pvm_ptr`) and emits appropriate
-/// PVM instructions. All other imports emit `Trap`.
+/// PVM instructions. Uses the import map from `LoweringContext` when available;
+/// otherwise falls back to default behavior (abort → trap, others → nop).
 pub fn lower_import_call<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -134,9 +135,29 @@ pub fn lower_import_call<'ctx>(
         return lower_pvm_ptr(e, instr, ctx, has_return);
     }
 
-    // Check if this is a known-safe import that can be stubbed as a no-op.
-    // Imports like console.log, trace, etc. are safe to ignore in PVM.
-    // abort() should still trap since it indicates unrecoverable errors.
+    // Check user-provided import map first.
+    if let Some(import_map) = &ctx.import_map {
+        if let Some(name) = import_name {
+            if let Some(action) = import_map.get(name) {
+                return lower_mapped_import(e, instr, action, has_return);
+            }
+        }
+        // If import map is provided but this import isn't in it, it should have
+        // been caught during validation. Emit trap as a safety fallback.
+        e.emit(Instruction::Trap);
+        if has_return {
+            let slot = result_slot(e, instr)?;
+            e.emit(Instruction::LoadImm {
+                reg: TEMP_RESULT,
+                value: 0,
+            });
+            e.store_to_slot(slot, TEMP_RESULT);
+        }
+        return Ok(());
+    }
+
+    // Default behavior when no import map is provided:
+    // abort() → trap, everything else → nop.
     let is_abort = import_name == Some("abort");
 
     if is_abort {
@@ -151,6 +172,59 @@ pub fn lower_import_call<'ctx>(
             value: 0,
         });
         e.store_to_slot(slot, TEMP_RESULT);
+    }
+
+    Ok(())
+}
+
+/// Emit code for an import with a user-configured action.
+fn lower_mapped_import<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+    action: &crate::translate::ImportAction,
+    has_return: bool,
+) -> Result<()> {
+    use crate::translate::ImportAction;
+
+    match action {
+        ImportAction::Trap => {
+            e.emit(Instruction::Trap);
+            // Emit dummy return value (dead code after trap) to keep stack consistent.
+            if has_return {
+                let slot = result_slot(e, instr)?;
+                e.emit(Instruction::LoadImm {
+                    reg: TEMP_RESULT,
+                    value: 0,
+                });
+                e.store_to_slot(slot, TEMP_RESULT);
+            }
+        }
+        ImportAction::Nop => {
+            if has_return {
+                let slot = result_slot(e, instr)?;
+                e.emit(Instruction::LoadImm {
+                    reg: TEMP_RESULT,
+                    value: 0,
+                });
+                e.store_to_slot(slot, TEMP_RESULT);
+            }
+        }
+        ImportAction::Ecalli { index } => {
+            // Load call arguments into r7-r11 (up to 5 args).
+            let num_args = (instr.get_num_operands() - 1) as usize;
+            for i in 0..num_args.min(5) {
+                let arg = get_operand(instr, i as u32)?;
+                let target_reg = abi::RETURN_VALUE_REG + i as u8;
+                e.load_operand(arg, target_reg)?;
+            }
+
+            e.emit(Instruction::Ecalli { index: *index });
+
+            if has_return {
+                let slot = result_slot(e, instr)?;
+                e.store_to_slot(slot, abi::RETURN_VALUE_REG);
+            }
+        }
     }
 
     Ok(())

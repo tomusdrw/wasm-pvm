@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+
+use wasm_pvm::{CompileOptions, ImportAction};
 
 #[derive(Parser)]
 #[command(name = "wasm-pvm")]
@@ -19,6 +22,13 @@ enum Commands {
 
         #[arg(short, long, help = "Output SPI file")]
         output: PathBuf,
+
+        #[arg(
+            short,
+            long,
+            help = "Import map file mapping import names to actions (trap, nop, ecalli:N)"
+        )]
+        imports: Option<PathBuf>,
     },
 }
 
@@ -30,9 +40,24 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { input, output } => {
+        Commands::Compile {
+            input,
+            output,
+            imports,
+        } => {
             let wasm = read_wasm(&input)?;
-            let spi = wasm_pvm::compile(&wasm).context("Compilation failed")?;
+
+            let options = if let Some(imports_path) = imports {
+                let import_map = parse_import_map(&imports_path)?;
+                CompileOptions {
+                    import_map: Some(import_map),
+                }
+            } else {
+                CompileOptions::default()
+            };
+
+            let spi =
+                wasm_pvm::compile_with_options(&wasm, &options).context("Compilation failed")?;
             let encoded = spi.encode();
             fs::write(&output, &encoded)
                 .with_context(|| format!("Failed to write output to {}", output.display()))?;
@@ -58,4 +83,63 @@ fn read_wasm(path: &PathBuf) -> Result<Vec<u8>> {
     } else {
         Ok(contents)
     }
+}
+
+/// Parse an import map file.
+///
+/// Format (one mapping per line):
+/// ```text
+/// # Comments start with #
+/// abort = trap
+/// console.log = nop
+/// some_func = ecalli:5
+/// ```
+fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
+    let contents =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+
+    let mut map = HashMap::new();
+
+    for (line_num, line) in contents.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let (name, action) = line.split_once('=').ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}:{}: invalid format, expected 'name = action'",
+                path.display(),
+                line_num + 1
+            )
+        })?;
+
+        let name = name.trim().to_string();
+        let action_str = action.trim();
+
+        let action = if action_str == "trap" {
+            ImportAction::Trap
+        } else if action_str == "nop" {
+            ImportAction::Nop
+        } else if let Some(idx_str) = action_str.strip_prefix("ecalli:") {
+            let index: u32 = idx_str.trim().parse().with_context(|| {
+                format!(
+                    "{}:{}: invalid ecalli index '{idx_str}'",
+                    path.display(),
+                    line_num + 1
+                )
+            })?;
+            ImportAction::Ecalli { index }
+        } else {
+            anyhow::bail!(
+                "{}:{}: unknown action '{action_str}', expected 'trap', 'nop', or 'ecalli:N'",
+                path.display(),
+                line_num + 1
+            );
+        };
+
+        map.insert(name, action);
+    }
+
+    Ok(map)
 }

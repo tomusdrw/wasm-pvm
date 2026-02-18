@@ -8,10 +8,33 @@
 pub mod memory_layout;
 pub mod wasm_module;
 
+use std::collections::HashMap;
+
 use crate::pvm::Instruction;
 use crate::{Error, Result, SpiProgram};
 
 pub use wasm_module::WasmModule;
+
+/// Action to take when a WASM import is called.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportAction {
+    /// Emit a trap (unreachable) instruction.
+    Trap,
+    /// Emit a no-op (return 0 for functions with return values).
+    Nop,
+    /// Emit an ecalli instruction with the given index.
+    /// Arguments from the WASM call are loaded into r7-r11 (up to 5 args).
+    Ecalli { index: u32 },
+}
+
+/// Options for compilation.
+#[derive(Debug, Clone, Default)]
+pub struct CompileOptions {
+    /// Mapping from import function names to actions.
+    /// When provided, all imports (except known intrinsics like `host_call` and `pvm_ptr`)
+    /// must have a mapping or compilation will fail with `UnresolvedImport`.
+    pub import_map: Option<HashMap<String, ImportAction>>,
+}
 
 // Re-export register constants from abi module
 pub use crate::abi::{ARGS_LEN_REG, ARGS_PTR_REG, RETURN_ADDR_REG, STACK_PTR_REG};
@@ -37,11 +60,28 @@ const ENTRY_HEADER_SIZE: usize = 10;
 const RO_DATA_SIZE: usize = 64 * 1024;
 
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
-    let module = WasmModule::parse(wasm)?;
-    compile_via_llvm(&module)
+    compile_with_options(wasm, &CompileOptions::default())
 }
 
-pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
+pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<SpiProgram> {
+    let module = WasmModule::parse(wasm)?;
+
+    // Validate that all imports are resolved when an import map is provided.
+    if let Some(import_map) = &options.import_map {
+        let known_intrinsics = ["host_call", "pvm_ptr"];
+        for name in &module.imported_func_names {
+            if !known_intrinsics.contains(&name.as_str()) && !import_map.contains_key(name) {
+                return Err(Error::UnresolvedImport(format!(
+                    "import '{name}' has no mapping. Provide a mapping via --imports or add it to the import map."
+                )));
+            }
+        }
+    }
+
+    compile_via_llvm(&module, options)
+}
+
+pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<SpiProgram> {
     use crate::llvm_backend::{self, LoweringContext};
     use crate::llvm_frontend;
     use inkwell::context::Context;
@@ -100,6 +140,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         data_segment_offsets,
         data_segment_lengths,
         data_segment_length_addrs,
+        import_map: options.import_map.clone(),
     };
 
     // Phase 3: LLVM IR → PVM bytecode for each function
