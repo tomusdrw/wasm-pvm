@@ -2,17 +2,17 @@
 
 A Rust compiler that translates WebAssembly (WASM) bytecode to PolkaVM (PVM) bytecode for execution on the JAM (Join-Accumulate Machine) protocol.
 
-## Status: Active Development (360 integration tests passing)
+## Status: Active Development (370+ integration tests passing)
 
 **Project Goal**: Enable writing JAM programs in AssemblyScript (TypeScript-like) or hand-written WAT, compiled to PVM bytecode.
 
-**Architecture**: `WASM → [inkwell] → LLVM IR → [mem2reg] → [Rust PVM backend] → PVM bytecode`
+**Architecture**: `WASM → [adapter merge] → [inkwell] → LLVM IR → [mem2reg] → [Rust PVM backend] → PVM bytecode`
 
 The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with a custom Rust-based PVM backend that reads LLVM IR and emits PVM bytecode. This gives us LLVM's SSA/CFG representation and optimization passes without requiring a native LLVM C++ target backend. PVM-specific intrinsic functions (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) are used for memory operations to avoid `unsafe` code.
 
 **Current State**:
-- All 360 TypeScript integration tests and all Rust unit tests pass
-- anan-as (PVM interpreter in AssemblyScript) compiles to a 423KB JAM file
+- All 370+ TypeScript integration tests and all Rust unit tests pass
+- anan-as (PVM interpreter in AssemblyScript) compiles to a ~441KB JAM file
 - `unsafe_code = "deny"` enforced at workspace level
 
 ### Working Features
@@ -27,12 +27,9 @@ The compiler uses LLVM 18 (via inkwell) as its intermediate representation, with
 
 **Type Conversions**: i32.wrap_i64, i64.extend_i32_s/u, sign extensions (i32.extend8_s, i32.extend16_s, i64.extend8_s/16_s/32_s)
 
-**Import Handling**: Imported functions are stubbed (abort → TRAP, others → no-op with return value)
+**Import Handling**: Text-based import maps (`--imports`) for simple mappings (trap, nop, ecalli), and WAT adapter files (`--adapter`) for complex import resolution with arbitrary WASM logic (pointer conversion, memory reads, multi-arg host calls)
 
 ### Not Yet Implemented
-- Division-by-zero and signed overflow trap sequences
-- Multi-value returns (`entry_returns_ptr_len` convention)
-- Host calls via `ecalli` instruction
 - Floating point (rejected by design — PVM has no FP)
 - Register allocator (currently uses stack-slot approach)
 
@@ -54,6 +51,10 @@ cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o output.ja
 
 # From WASM binary
 cargo run -p wasm-pvm-cli -- compile input.wasm -o output.jam
+
+# With import map and adapter (see "Import Handling" below)
+cargo run -p wasm-pvm-cli -- compile input.wasm -o output.jam \
+  --imports imports.txt --adapter adapter.wat
 ```
 
 ### Run on PVM Interpreter
@@ -72,32 +73,154 @@ cd tests && bun utils/run-jam.ts output.jam --args=0500000007000000
 
 ## WASM Program Convention
 
-WASM programs follow the SPI entrypoint convention. The entry function returns `(i32, i32)` for `(ptr, len)`:
+WASM programs follow the SPI entrypoint convention. The entry function receives `(args_ptr, args_len)` and communicates results via exported globals `result_ptr` and `result_len`:
 
 ```wat
 (module
   (memory 1)
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
-    (i32.const 0x30100)  ;; result pointer
-    (i32.const 4)        ;; result length
+  (global $result_ptr (export "result_ptr") (mut i32) (i32.const 0))
+  (global $result_len (export "result_len") (mut i32) (i32.const 0))
+  (func (export "main") (param $args_ptr i32) (param $args_len i32)
+    ;; Use memory.grow or heap.alloc (in AS) for result buffers.
+    ;; Do NOT hardcode addresses — use dynamic allocation.
   )
 )
+```
+
+In AssemblyScript, use `heap.alloc(size)` to allocate result buffers:
+
+```typescript
+export let result_ptr: i32 = 0;
+export let result_len: i32 = 0;
+
+export function main(args_ptr: i32, args_len: i32): void {
+  const buf = heap.alloc(256);
+  const a = load<i32>(args_ptr);
+  const b = load<i32>(args_ptr + 4);
+  store<i32>(buf, a + b);
+  result_ptr = buf as i32;
+  result_len = 4;
+}
 ```
 
 ### Memory Layout
 
 | Address | Region |
 |---------|--------|
-| `0x00010000` | Read-only data (dispatch table for `call_indirect`) |
-| `0x00030000` | Globals storage (compiler-managed) |
-| `0x00030100` | User heap |
+| `0x00010000` | Read-only data (dispatch table, passive segments) |
+| `0x00030000` | Globals storage (compiler-managed, 4 bytes per global) |
+| `0x0003FF00` | Parameter overflow area (5th+ args for `call_indirect`) |
 | `0x00040000` | Spilled locals (512 bytes per function) |
-| `0x00050000+` | WASM linear memory base (data sections placed here) |
-| `0xFEFE0000` | Stack segment end |
+| `0x00050000+` | WASM linear memory base (computed dynamically) |
+| `0xFEFE0000` | Stack segment end (stack grows downward) |
 | `0xFEFF0000` | Arguments (input data) |
 | `0xFFFF0000` | EXIT address (HALT) |
 
-See `crates/wasm-pvm/src/translate/memory_layout.rs` for the full layout with ASCII art diagram.
+User programs should use `heap.alloc()` (AssemblyScript) or `memory.grow` (WASM) for dynamic memory allocation. See `crates/wasm-pvm/src/translate/memory_layout.rs` for the full layout.
+
+## Import Handling
+
+WASM modules that import external functions (e.g., `abort`, `console.log`) need those imports resolved before compilation. The compiler provides two mechanisms that can be used independently or together.
+
+### Import Map (`--imports`)
+
+A text file mapping import names to simple actions. Use for straightforward cases like trapping or firing a host call.
+
+**Format**: one mapping per line, `name = action`. Lines starting with `#` are comments.
+
+```text
+# my-imports.txt
+abort = trap
+console.log = nop
+my_host_func = ecalli:5
+```
+
+**Available actions**:
+
+| Action | Effect |
+|--------|--------|
+| `trap` | Emit an `unreachable` (panic) when called |
+| `nop` | Do nothing and return zero |
+| `ecalli:N` | Emit PVM `ecalli N` host call instruction |
+| `ecalli:N:ptr` | Like `ecalli:N` but first converts WASM pointer args to PVM addresses |
+
+**Usage**:
+```bash
+wasm-pvm compile input.wasm -o output.jam --imports my-imports.txt
+```
+
+### Adapter WAT (`--adapter`)
+
+A WAT (WebAssembly Text) module whose exported functions replace matching imports in the main module. The adapter is merged into the main WASM at the binary level before compilation, enabling arbitrary WASM logic for import resolution.
+
+Use adapters when you need to:
+- Convert WASM pointers to PVM addresses
+- Read memory (e.g., string lengths from object headers)
+- Compute derived values or restructure arguments
+- Map one import to a multi-register host call
+
+**Adapter format**:
+
+```wat
+(module
+  ;; Import compiler intrinsics (recognized automatically):
+  (import "env" "host_call" (func $host_call (param i64 i64 i64 i64 i64 i64)))
+  (import "env" "pvm_ptr" (func $pvm_ptr (param i64) (result i64)))
+
+  ;; Each export replaces the matching import in the main module.
+  ;; The export name must match the import name, and the type signature
+  ;; must match the original import's signature.
+
+  (func (export "abort") (param i32 i32 i32 i32)
+    unreachable
+  )
+
+  (func (export "console.log") (param i32)
+    ;; Map to JIP-1 logging host call (ecalli 100)
+    (call $host_call
+      (i64.const 100)                                    ;; ecalli index
+      (i64.const 3)                                      ;; r7: log level
+      (i64.const 0)                                      ;; r8: target pointer
+      (i64.const 0)                                      ;; r9: target length
+      (call $pvm_ptr (i64.extend_i32_u (local.get 0)))   ;; r10: PVM message pointer
+      (i64.extend_i32_u (i32.load offset=0               ;; r11: message byte length
+        (i32.sub (local.get 0) (i32.const 4))))           ;;   read from AS header at ptr-4
+    )
+  )
+)
+```
+
+**Available intrinsics** (imported by adapters from `"env"`):
+
+| Intrinsic | Signature | Effect |
+|-----------|-----------|--------|
+| `host_call` | `(i64, i64, i64, i64, i64, i64) → void` | First arg = ecalli index, remaining 5 args map to registers r7–r11 |
+| `pvm_ptr` | `(i64) → i64` | Converts a WASM address to a PVM address (adds `wasm_memory_base`) |
+
+**Usage**:
+```bash
+wasm-pvm compile input.wasm -o output.jam --adapter my-adapter.wat
+```
+
+### Composing Both Mechanisms
+
+When both `--imports` and `--adapter` are provided, the adapter merge runs first (resolving some imports), then the import map handles any remaining unresolved imports. This lets you use adapters for complex cases and simple text mappings for everything else.
+
+```bash
+wasm-pvm compile input.wasm -o output.jam \
+  --adapter adapter.wat \
+  --imports remaining.txt
+```
+
+**Import validation**: The compiler requires all imports to be resolved. Any import not handled by an adapter, an import map, or a known intrinsic (`host_call`, `pvm_ptr`) will produce a compilation error. The sole exception is `abort`, which is mapped to `trap` by default when no explicit import map is provided.
+
+### Auto-discovery in Tests
+
+The test build system (`tests/build.ts`) automatically discovers import files for AssemblyScript sources:
+- `tests/fixtures/imports/<name>.adapter.wat` → passed as `--adapter`
+- `tests/fixtures/imports/<name>.imports` → passed as `--imports`
+
+where `<name>` matches the AS source filename (without `.ts`).
 
 ## Project Structure
 
@@ -117,6 +240,7 @@ crates/
         intrinsics.rs    # PVM + LLVM intrinsic lowering
       translate/         # Compilation orchestration
         mod.rs           # Pipeline dispatch + SPI assembly
+        adapter_merge.rs # WAT adapter merge into WASM before compilation
         wasm_module.rs   # WASM section parsing
         memory_layout.rs # PVM memory address constants
       pvm/               # PVM instruction definitions
@@ -125,9 +249,10 @@ crates/
 tests/                   # Integration tests & tooling
   fixtures/
     wat/                 # WAT test programs (43 fixtures)
-    assembly/            # AssemblyScript examples
+    assembly/            # AssemblyScript examples (~64 files)
+    imports/             # Import maps (.imports) and adapter WAT files (.adapter.wat)
   utils/                 # Utility scripts (run-jam, verify-jam)
-  helpers/               # Test helpers
+  helpers/               # Test helpers (compile.ts, run.ts)
   data/                  # Test definitions
 vendor/
   anan-as/               # PVM reference interpreter (submodule)
@@ -153,11 +278,11 @@ cargo clippy -- -D warnings
 # IMPORTANT: Build test artifacts first!
 cd tests && bun build.ts
 
-# Run full integration test suite (360 tests)
+# Run full integration test suite (370+ tests)
 # Use `bun run test` (builds then tests), NOT `bun test` (tests only)
 cd tests && bun run test
 
-# Quick development check - Layer 1 tests only (~140 tests, ~15 seconds)
+# Quick development check - Layer 1 tests only (~50 tests, fast)
 cd tests && bun test layer1/
 
 # Test a single example
@@ -169,18 +294,18 @@ cd tests && bun utils/run-jam.ts /tmp/test.jam --args=05000000
 
 The test suite is organized into three layers:
 
-- **Layer 1** (`layer1/`): Core/smoke tests (~140 tests) - Fast, run these during development
-- **Layer 2** (`layer2/`): Feature tests (~80 tests) - Extended functionality
-- **Layer 3** (`layer3/`): Regression/edge cases (~140 tests) - Bug fixes and edge cases
+- **Layer 1** (`layer1/`): Core/smoke tests (~50 tests) - Fast, run these during development
+- **Layer 2** (`layer2/`): Feature tests (~100 tests) - Extended functionality
+- **Layer 3** (`layer3/`): Regression/edge cases (~220 tests) - Bug fixes and edge cases
 
 **Development workflow**:
 1. Make your changes to the Rust code
 2. Run Rust unit tests: `cargo test`
 3. Build test artifacts: `cd tests && bun build.ts`
-4. Quick validation: `cd tests && bun test layer1/` (~15 seconds)
-5. Full validation before committing: `cd tests && bun run test` (~60 seconds)
+4. Quick validation: `cd tests && bun test layer1/` (fast)
+5. Full validation before committing: `cd tests && bun run test` (~20 seconds)
 
-**Note**: `bun run test` from the `tests/` directory runs `bun build.ts && bun test`, ensuring JAM files are always up-to-date. `bun test` alone will fail if the test artifacts haven't been built.
+**Note**: `bun run test` from the `tests/` directory runs `bun build.ts && bun test`, ensuring JAM files are always up-to-date. `bun test` alone will fail if the test artifacts haven't been built. If you've changed AS fixture source files (`.ts`), delete cached WASM first: `rm -f tests/build/wasm/*.wasm`.
 
 ## License
 
