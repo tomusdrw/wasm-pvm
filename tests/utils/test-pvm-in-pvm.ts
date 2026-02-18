@@ -23,7 +23,7 @@ const projectRoot = path.join(__dirname, '../..');
 const testsDir = path.join(__dirname, '..');
 
 // Paths for compiled artifacts
-const ANAN_AS_COMPILER_WASM = path.join(projectRoot, 'vendor/anan-as/build/compiler.wasm');
+const ANAN_AS_COMPILER_WASM = path.join(projectRoot, 'vendor/anan-as/dist/build/compiler.wasm');
 const ANAN_AS_COMPILER_JAM = '/tmp/anan-as-compiler.jam';
 
 function compileAnanAsToPvm(): void {

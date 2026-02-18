@@ -198,6 +198,20 @@ async function main() {
     `  JAM: ${jamCompiled} compiled`
   );
 
+  // Phase 3: Compile anan-as compiler WASM -> JAM (for PVM-in-PVM tests)
+  const ananAsCompilerWasm = path.join(PROJECT_ROOT, "vendor/anan-as/dist/build/compiler.wasm");
+  if (fs.existsSync(ananAsCompilerWasm)) {
+    console.log("\nCompiling anan-as compiler WASM -> JAM...");
+    try {
+      compileToJAM(ananAsCompilerWasm, "anan-as-compiler");
+      console.log("  anan-as-compiler.jam compiled.");
+    } catch (err: any) {
+      console.error(`  FAIL: anan-as-compiler: ${err.message}`);
+    }
+  } else {
+    console.log("\nSkipping anan-as compiler (WASM not found at vendor/anan-as/dist/build/compiler.wasm).");
+  }
+
   console.log("\nBuild complete.");
 }
 

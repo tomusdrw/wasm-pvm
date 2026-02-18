@@ -134,11 +134,16 @@ pub fn lower_import_call<'ctx>(
         return lower_pvm_ptr(e, instr, ctx, has_return);
     }
 
-    // All other import stubs emit Trap (the function is not available).
-    e.emit(Instruction::Trap);
+    // Check if this is a known-safe import that can be stubbed as a no-op.
+    // Imports like console.log, trace, etc. are safe to ignore in PVM.
+    // abort() should still trap since it indicates unrecoverable errors.
+    let is_abort = import_name == Some("abort");
 
-    // If the import has a return value, push a dummy 0 so the rest of the code
-    // can still type-check (dead code after the trap).
+    if is_abort {
+        e.emit(Instruction::Trap);
+    }
+
+    // Return a dummy 0 for functions with return values.
     if has_return {
         let slot = result_slot(e, instr)?;
         e.emit(Instruction::LoadImm {
