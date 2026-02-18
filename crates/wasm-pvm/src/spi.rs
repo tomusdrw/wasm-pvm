@@ -80,38 +80,30 @@ impl SpiProgram {
         &self.metadata
     }
 
-    /// Encode the full SPI program with metadata prefix.
+    /// Encode the SPI program with metadata prefix.
     ///
     /// Format: `[varint: metadata_len][metadata_bytes][SPI header + data + code]`
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let spi = self.encode_spi();
-
-        let mut output = Vec::new();
-        output.extend(crate::pvm::encode_var_u32(self.metadata.len() as u32));
-        output.extend(&self.metadata);
-        output.extend(spi);
-
-        output
-    }
-
-    /// Encode just the raw SPI program without the metadata prefix.
-    #[must_use]
-    pub fn encode_spi(&self) -> Vec<u8> {
         let code_blob = self.code.encode();
 
-        let mut spi = Vec::new();
+        let mut output = Vec::new();
 
-        spi.extend(encode_u24(self.ro_data.len() as u32));
-        spi.extend(encode_u24(self.rw_data.len() as u32));
-        spi.extend(self.heap_pages.to_le_bytes());
-        spi.extend(encode_u24(self.stack_size));
-        spi.extend(&self.ro_data);
-        spi.extend(&self.rw_data);
-        spi.extend((code_blob.len() as u32).to_le_bytes());
-        spi.extend(code_blob);
+        // Metadata prefix
+        output.extend(crate::pvm::encode_var_u32(self.metadata.len() as u32));
+        output.extend(&self.metadata);
 
-        spi
+        // SPI header
+        output.extend(encode_u24(self.ro_data.len() as u32));
+        output.extend(encode_u24(self.rw_data.len() as u32));
+        output.extend(self.heap_pages.to_le_bytes());
+        output.extend(encode_u24(self.stack_size));
+        output.extend(&self.ro_data);
+        output.extend(&self.rw_data);
+        output.extend((code_blob.len() as u32).to_le_bytes());
+        output.extend(code_blob);
+
+        output
     }
 }
 
@@ -160,15 +152,18 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_spi_no_metadata() {
+    fn test_spi_encode_with_string_metadata() {
         let code = ProgramBlob::new(vec![Instruction::Trap]);
-        let spi = SpiProgram::new(code);
+        let metadata_str = "test.wasm (wasm-pvm 0.1.0)";
+        let spi = SpiProgram::new(code).with_metadata(metadata_str.as_bytes().to_vec());
+        let encoded = spi.encode();
 
-        let raw_spi = spi.encode_spi();
-        let with_meta = spi.encode();
-
-        // encode() should be encode_spi() prefixed with varint(0).
-        assert_eq!(with_meta[0], 0);
-        assert_eq!(&with_meta[1..], &raw_spi[..]);
+        let meta_len = metadata_str.len();
+        assert_eq!(encoded[0], meta_len as u8);
+        assert_eq!(
+            &encoded[1..1 + meta_len],
+            metadata_str.as_bytes(),
+            "metadata should contain the string"
+        );
     }
 }

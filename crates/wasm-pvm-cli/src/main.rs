@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 use wasm_pvm::{CompileOptions, ImportAction};
 
+const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Parser)]
 #[command(name = "wasm-pvm")]
 #[command(about = "WASM to PVM (PolkaVM) recompiler")]
@@ -47,13 +49,20 @@ fn main() -> Result<()> {
         } => {
             let wasm = read_wasm(&input)?;
 
-            let options = if let Some(imports_path) = imports {
-                let import_map = parse_import_map(&imports_path)?;
-                CompileOptions {
-                    import_map: Some(import_map),
-                }
+            let filename = input
+                .file_name()
+                .map_or_else(|| input.to_string_lossy(), |f| f.to_string_lossy());
+            let metadata = format!("{filename} (wasm-pvm {COMPILER_VERSION})");
+
+            let import_map = if let Some(imports_path) = imports {
+                Some(parse_import_map(&imports_path)?)
             } else {
-                CompileOptions::default()
+                None
+            };
+
+            let options = CompileOptions {
+                import_map,
+                metadata: metadata.into_bytes(),
             };
 
             let spi =

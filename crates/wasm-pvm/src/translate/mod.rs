@@ -34,6 +34,9 @@ pub struct CompileOptions {
     /// When provided, all imports (except known intrinsics like `host_call` and `pvm_ptr`)
     /// must have a mapping or compilation will fail with `UnresolvedImport`.
     pub import_map: Option<HashMap<String, ImportAction>>,
+    /// Metadata blob to prepend to the SPI output.
+    /// Typically contains the source filename and compiler version.
+    pub metadata: Vec<u8>,
 }
 
 // Re-export register constants from abi module
@@ -66,16 +69,26 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<SpiProgram> {
     let module = WasmModule::parse(wasm)?;
 
-    // Validate that all imports are resolved when an import map is provided.
-    if let Some(import_map) = &options.import_map {
-        let known_intrinsics = ["host_call", "pvm_ptr"];
-        for name in &module.imported_func_names {
-            if !known_intrinsics.contains(&name.as_str()) && !import_map.contains_key(name) {
-                return Err(Error::UnresolvedImport(format!(
-                    "import '{name}' has no mapping. Provide a mapping via --imports or add it to the import map."
-                )));
-            }
+    // Known intrinsics that don't need import mappings.
+    const KNOWN_INTRINSICS: &[&str] = &["host_call", "pvm_ptr"];
+    // Default mappings applied when no explicit import map is provided.
+    const DEFAULT_MAPPINGS: &[&str] = &["abort"];
+
+    // Validate that all imports are resolved.
+    for name in &module.imported_func_names {
+        if KNOWN_INTRINSICS.contains(&name.as_str()) {
+            continue;
         }
+        if let Some(import_map) = &options.import_map {
+            if import_map.contains_key(name) {
+                continue;
+            }
+        } else if DEFAULT_MAPPINGS.contains(&name.as_str()) {
+            continue;
+        }
+        return Err(Error::UnresolvedImport(format!(
+            "import '{name}' has no mapping. Provide a mapping via --imports or add it to the import map."
+        )));
     }
 
     compile_via_llvm(&module, options)
@@ -350,7 +363,8 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
     Ok(SpiProgram::new(blob)
         .with_heap_pages(module.heap_pages)
         .with_ro_data(ro_data)
-        .with_rw_data(rw_data_section))
+        .with_rw_data(rw_data_section)
+        .with_metadata(options.metadata.clone()))
 }
 
 /// Build the `rw_data` section from WASM data segments and global initializers.

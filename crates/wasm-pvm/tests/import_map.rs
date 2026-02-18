@@ -12,6 +12,7 @@ fn compile_wat_with_imports(
         &wasm,
         &CompileOptions {
             import_map: Some(import_map),
+            ..CompileOptions::default()
         },
     )
 }
@@ -56,7 +57,6 @@ fn test_import_map_nop() {
     let instructions = extract_instructions(&program);
 
     // Should not have Trap or Ecalli for a nop import.
-    // The import is a no-op, so only the main function code should be present.
     assert!(!has_opcode(&instructions, Opcode::Ecalli));
 }
 
@@ -107,6 +107,7 @@ fn test_import_map_unresolved_import_fails() {
         &wasm,
         &CompileOptions {
             import_map: Some(map),
+            ..CompileOptions::default()
         },
     );
 
@@ -141,13 +142,11 @@ fn test_import_map_host_call_not_required() {
 }
 
 #[test]
-fn test_no_import_map_preserves_default_behavior() {
-    // Without an import map, the default behavior should be preserved:
-    // abort → trap, unknown → nop
+fn test_no_import_map_abort_resolves_by_default() {
+    // Without an import map, abort is resolved as trap by default.
     let wat = r#"
         (module
             (import "env" "abort" (func $abort (param i32 i32 i32 i32)))
-            (import "env" "console.log" (func $log (param i32)))
             (func (export "main") (param i32 i32) (result i32)
                 (call $abort (i32.const 1) (i32.const 2) (i32.const 3) (i32.const 4))
                 (i32.const 0)
@@ -155,10 +154,32 @@ fn test_no_import_map_preserves_default_behavior() {
         )
     "#;
 
-    // Compile without import map (default behavior).
+    let wasm = wat_to_wasm(wat).expect("Failed to parse WAT");
+    let program = wasm_pvm::compile(&wasm).expect("abort should be resolved by default");
+    let instructions = extract_instructions(&program);
+    assert!(has_opcode(&instructions, Opcode::Trap));
+}
+
+#[test]
+fn test_no_import_map_unknown_import_fails() {
+    // Without an import map, unknown imports should fail.
+    let wat = r#"
+        (module
+            (import "env" "console.log" (func $log (param i32)))
+            (func (export "main") (param i32 i32) (result i32)
+                (i32.const 0)
+            )
+        )
+    "#;
+
     let wasm = wat_to_wasm(wat).expect("Failed to parse WAT");
     let result = wasm_pvm::compile(&wasm);
-    assert!(result.is_ok(), "Should compile without import map");
+    assert!(result.is_err(), "Unknown imports should fail without an import map");
+    let err = result.err().unwrap();
+    assert!(
+        err.to_string().contains("console.log"),
+        "Error should mention the unresolved import name: {err}"
+    );
 }
 
 #[test]

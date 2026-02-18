@@ -157,24 +157,25 @@ pub fn lower_import_call<'ctx>(
     }
 
     // Default behavior when no import map is provided:
-    // abort() → trap, everything else → nop.
-    let is_abort = import_name == Some("abort");
-
-    if is_abort {
+    // abort() → trap. All other imports should have been caught during validation.
+    if import_name == Some("abort") {
         e.emit(Instruction::Trap);
+        if has_return {
+            let slot = result_slot(e, instr)?;
+            e.emit(Instruction::LoadImm {
+                reg: TEMP_RESULT,
+                value: 0,
+            });
+            e.store_to_slot(slot, TEMP_RESULT);
+        }
+        return Ok(());
     }
 
-    // Return a dummy 0 for functions with return values.
-    if has_return {
-        let slot = result_slot(e, instr)?;
-        e.emit(Instruction::LoadImm {
-            reg: TEMP_RESULT,
-            value: 0,
-        });
-        e.store_to_slot(slot, TEMP_RESULT);
-    }
-
-    Ok(())
+    // Should not reach here — validation catches unresolved imports.
+    Err(Error::Internal(format!(
+        "unresolved import '{}' reached code generation",
+        import_name.unwrap_or("<unknown>")
+    )))
 }
 
 /// Emit code for an import with a user-configured action.
