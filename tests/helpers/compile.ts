@@ -38,7 +38,7 @@ export function compileAS(
   return wasmFile;
 }
 
-export function compileToJAM(inputPath: string, outputName: string, importsPath?: string): string {
+export function compileToJAM(inputPath: string, outputName: string, importsPath?: string, adapterPath?: string): string {
   const jamFile = path.join(
     TESTS_DIR,
     "build",
@@ -47,6 +47,9 @@ export function compileToJAM(inputPath: string, outputName: string, importsPath?
   );
 
   let cmd = `${CLI_BINARY} compile ${inputPath} -o ${jamFile}`;
+  if (adapterPath) {
+    cmd += ` --adapter ${adapterPath}`;
+  }
   if (importsPath) {
     cmd += ` --imports ${importsPath}`;
   }

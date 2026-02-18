@@ -1,3 +1,2 @@
 # Import map for anan-as compiler.wasm
-abort = trap
-console.log = nop
+# abort and console.log are handled by anan-as-compiler.adapter.wat

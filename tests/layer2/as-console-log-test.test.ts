@@ -3,34 +3,31 @@ import { describe, test, expect } from "bun:test";
 import { JAM_DIR } from "../helpers/paths";
 import { runJamWithOutput } from "../helpers/run";
 
-// Tests that console.log import is mapped via import map (ecalli:3:ptr).
-// The anan-as runner halts at unhandled ecalli with "Finished with status: 3",
-// where 3 is the PVM host-call status. We verify:
-// 1. The program compiles successfully (JAM file exists)
-// 2. When run, it halts at ecalli with status 3
-// 3. r7 contains a PVM address (>= 0x50000 wasm_memory_base), proving ptr conversion works
+// Tests that console.log import is mapped via adapter WAT to JIP-1 log (ecalli 100).
+// The anan-as runner handles ecalli 100 as JIP-1 logging and continues execution.
+// We verify:
+// 1. The program compiles and runs successfully
+// 2. The JIP-1 log message appears in output
+// 3. The program returns the expected result (42)
 describe("as-console-log-test", () => {
   const jamFile = path.join(JAM_DIR, "as-console-log-test.jam");
 
-  test("console.log mapped to ecalli:3 via import map", () => {
+  test("console.log mapped to ecalli:100 (JIP-1 log) via adapter", () => {
     const result = runJamWithOutput(jamFile, "0000000000000000");
-    // The PVM runner halts at ecalli with status 3 (host-call).
-    expect(result.stdout).toContain("Finished with status: 3");
+    // The program should complete successfully (status 0) since the runner
+    // handles ecalli 100 as JIP-1 logging.
+    expect(result.stdout).toContain("Exit code: 0");
   });
 
-  test("ecalli receives PVM-converted pointer (>= 0x50000)", () => {
+  test("JIP-1 log message appears in output", () => {
     const result = runJamWithOutput(jamFile, "0000000000000000");
-    // At the time of ecalli, r7 should contain a PVM address (wasm_memory_base + wasm_ptr).
-    // wasm_memory_base is 0x50000, so r7 should be >= 0x50000.
-    // The final registers show r7's value. Parse it from the output.
-    const finalRegsMatch = result.stdout.match(
-      /Registers: \[(\d+(?:, \d+)*)\]/
-    );
-    expect(finalRegsMatch).not.toBeNull();
-    if (finalRegsMatch) {
-      const regs = finalRegsMatch[1].split(", ").map(Number);
-      // r7 is index 7
-      expect(regs[7]).toBeGreaterThanOrEqual(0x50000);
-    }
+    // The runner decodes the JIP-1 log and prints the AS UTF-16 string.
+    expect(result.stdout).toMatch(/H.?e.?l.?l.?o/);
+  });
+
+  test("program returns expected result (42)", () => {
+    const result = runJamWithOutput(jamFile, "0000000000000000");
+    // Result should be 42 as little-endian u32 = 0x2a000000
+    expect(result.exitValue).toBe(42);
   });
 });

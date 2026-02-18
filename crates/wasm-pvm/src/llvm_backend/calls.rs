@@ -137,10 +137,8 @@ pub fn lower_import_call<'ctx>(
 
     // Check user-provided import map first.
     if let Some(import_map) = &ctx.import_map {
-        if let Some(name) = import_name {
-            if let Some(action) = import_map.get(name) {
-                return lower_mapped_import(e, instr, action, has_return, ctx);
-            }
+        if let Some(action) = import_name.and_then(|name| import_map.get(name)) {
+            return lower_mapped_import(e, instr, action, has_return, ctx);
         }
         // If import map is provided but this import isn't in it, it should have
         // been caught during validation. Emit trap as a safety fallback.

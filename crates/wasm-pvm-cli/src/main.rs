@@ -31,6 +31,13 @@ enum Commands {
             help = "Import map file mapping import names to actions (trap, nop, ecalli:N)"
         )]
         imports: Option<PathBuf>,
+
+        #[arg(
+            short,
+            long,
+            help = "Adapter WAT file whose exports replace matching imports"
+        )]
+        adapter: Option<PathBuf>,
     },
 }
 
@@ -46,6 +53,7 @@ fn main() -> Result<()> {
             input,
             output,
             imports,
+            adapter,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -60,8 +68,17 @@ fn main() -> Result<()> {
                 None
             };
 
+            let adapter_wat = if let Some(adapter_path) = adapter {
+                let content = fs::read_to_string(&adapter_path)
+                    .with_context(|| format!("Failed to read adapter {}", adapter_path.display()))?;
+                Some(content)
+            } else {
+                None
+            };
+
             let options = CompileOptions {
                 import_map,
+                adapter: adapter_wat,
                 metadata: metadata.into_bytes(),
             };
 

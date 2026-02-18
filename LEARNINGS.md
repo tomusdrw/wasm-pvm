@@ -550,6 +550,30 @@ The current architecture is a **direct translator**, not a real compiler:
 
 ---
 
+## JIP-1: Logging Host Call (ecalli 100)
+
+**Source**: https://github.com/polkadot-fellows/JIPs/blob/main/JIP-1.md
+
+Standard logging ecalli for PVM programs. Ecalli number **100**, gas cost **10**.
+
+**Register arguments (input):**
+| Register | Purpose |
+|----------|---------|
+| r7 | Log level: 0=fatal, 1=warning, 2=info, 3=helpful, 4=pedantic |
+| r8 | Target string pointer (PVM address) |
+| r9 | Target string length (bytes) |
+| r10 | Message string pointer (PVM address) |
+| r11 | Message string length (bytes) |
+
+**Output:** r7 is always set to `WHAT` constant.
+
+**Notes:**
+- Target is empty when both r8 and r9 are zero.
+- No side-effects on invalid memory access.
+- Console format: `<timestamp> <LEVEL>[@<CORE>]?[#<SERVICE_ID>]? [<TARGET>]? <MESSAGE>`
+
+---
+
 ## References
 
 - Original: LEARNINGS.md (technical details)

@@ -5,6 +5,7 @@
     clippy::cast_sign_loss
 )]
 
+pub mod adapter_merge;
 pub mod memory_layout;
 pub mod wasm_module;
 
@@ -36,6 +37,9 @@ pub struct CompileOptions {
     /// When provided, all imports (except known intrinsics like `host_call` and `pvm_ptr`)
     /// must have a mapping or compilation will fail with `UnresolvedImport`.
     pub import_map: Option<HashMap<String, ImportAction>>,
+    /// WAT source for an adapter module whose exports replace matching main imports.
+    /// Applied before the text-based import map, so the two compose.
+    pub adapter: Option<String>,
     /// Metadata blob to prepend to the SPI output.
     /// Typically contains the source filename and compiler version.
     pub metadata: Vec<u8>,
@@ -69,12 +73,21 @@ pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
 }
 
 pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<SpiProgram> {
-    let module = WasmModule::parse(wasm)?;
-
     // Known intrinsics that don't need import mappings.
     const KNOWN_INTRINSICS: &[&str] = &["host_call", "pvm_ptr"];
     // Default mappings applied when no explicit import map is provided.
     const DEFAULT_MAPPINGS: &[&str] = &["abort"];
+
+    // Apply adapter merge if provided (produces a new WASM binary with fewer imports).
+    let merged_wasm;
+    let wasm = if let Some(adapter_wat) = &options.adapter {
+        merged_wasm = adapter_merge::merge_adapter(wasm, adapter_wat)?;
+        &merged_wasm
+    } else {
+        wasm
+    };
+
+    let module = WasmModule::parse(wasm)?;
 
     // Validate that all imports are resolved.
     for name in &module.imported_func_names {

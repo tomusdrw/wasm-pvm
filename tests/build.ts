@@ -80,6 +80,7 @@ interface JAMBuildTarget {
   inputPath: string;
   outputName: string;
   importsPath?: string;
+  adapterPath?: string;
 }
 
 function collectBuildTargets(): {
@@ -172,13 +173,16 @@ async function main() {
   for (const asTarget of asTargets) {
     const wasmFile = path.join(WASM_DIR, `${asTarget.outputName}.wasm`);
     if (fs.existsSync(wasmFile)) {
-      // Check for a matching import map file.
+      // Check for a matching adapter WAT file and/or import map file.
+      const adapterFile = path.join(IMPORTS_DIR, `${asTarget.outputName}.adapter.wat`);
+      const adapterPath = fs.existsSync(adapterFile) ? adapterFile : undefined;
       const importsFile = path.join(IMPORTS_DIR, `${asTarget.outputName}.imports`);
       const importsPath = fs.existsSync(importsFile) ? importsFile : undefined;
       allJamTargets.push({
         inputPath: wasmFile,
         outputName: `as-${asTarget.outputName}`,
         importsPath,
+        adapterPath,
       });
     }
   }
@@ -190,7 +194,7 @@ async function main() {
     allJamTargets,
     (target) => {
       try {
-        compileToJAM(target.inputPath, target.outputName, target.importsPath);
+        compileToJAM(target.inputPath, target.outputName, target.importsPath, target.adapterPath);
         jamCompiled++;
       } catch (err: any) {
         console.error(
@@ -207,11 +211,13 @@ async function main() {
   // Phase 3: Compile anan-as compiler WASM -> JAM (for PVM-in-PVM tests)
   const ananAsCompilerWasm = path.join(PROJECT_ROOT, "vendor/anan-as/dist/build/compiler.wasm");
   const ananAsCompilerImports = path.join(IMPORTS_DIR, "anan-as-compiler.imports");
+  const ananAsCompilerAdapter = path.join(IMPORTS_DIR, "anan-as-compiler.adapter.wat");
   if (fs.existsSync(ananAsCompilerWasm)) {
     console.log("\nCompiling anan-as compiler WASM -> JAM...");
     const imports = fs.existsSync(ananAsCompilerImports) ? ananAsCompilerImports : undefined;
+    const adapter = fs.existsSync(ananAsCompilerAdapter) ? ananAsCompilerAdapter : undefined;
     try {
-      compileToJAM(ananAsCompilerWasm, "anan-as-compiler", imports);
+      compileToJAM(ananAsCompilerWasm, "anan-as-compiler", imports, adapter);
       console.log("  anan-as-compiler.jam compiled.");
     } catch (err: any) {
       console.error(`  FAIL: anan-as-compiler: ${err.message}`);
