@@ -2,10 +2,12 @@
  * Test to check what values are returned from array accesses.
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
+
+// Allocate once at module scope to avoid leaking on repeated main() calls.
+const RESULT_HEAP = heap.alloc(256);
 
 function createArray(len: i32): u8[] {
   const r = new Array<u8>(len);
@@ -68,6 +70,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

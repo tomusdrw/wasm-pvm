@@ -4,7 +4,6 @@
  * This is the exact pattern from largebuf-subarray-test step 5 that fails.
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
@@ -18,6 +17,7 @@ function lowerBytes(data: Uint8Array): u8[] {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   const step: i32 = args_len > 0 ? load<u8>(args_ptr) : 0;
 
   // Create large buffer [0,1,2,...,255]
@@ -95,6 +95,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

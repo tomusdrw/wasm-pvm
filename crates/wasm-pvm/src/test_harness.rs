@@ -39,11 +39,15 @@
     clippy::must_use_candidate,
     clippy::manual_assert,
     clippy::missing_panics_doc,
-    clippy::uninlined_format_args
+    clippy::uninlined_format_args,
+    clippy::implicit_hasher
 )]
 
+use std::collections::HashMap;
+
 use crate::pvm::{Instruction, Opcode};
-use crate::{Error, Result, SpiProgram, compile};
+use crate::translate::ImportAction;
+use crate::{CompileOptions, Error, Result, SpiProgram, compile, compile_with_options};
 
 /// Parse WAT (WebAssembly Text) format to WASM binary
 pub fn wat_to_wasm(wat: &str) -> Result<Vec<u8>> {
@@ -54,6 +58,21 @@ pub fn wat_to_wasm(wat: &str) -> Result<Vec<u8>> {
 pub fn compile_wat(wat: &str) -> Result<SpiProgram> {
     let wasm = wat_to_wasm(wat)?;
     compile(&wasm)
+}
+
+/// Compile WAT with an import map to a SPI program
+pub fn compile_wat_with_imports(
+    wat: &str,
+    import_map: HashMap<String, ImportAction>,
+) -> Result<SpiProgram> {
+    let wasm = wat_to_wasm(wat)?;
+    compile_with_options(
+        &wasm,
+        &CompileOptions {
+            import_map: Some(import_map),
+            ..CompileOptions::default()
+        },
+    )
 }
 
 /// Extract the instruction sequence from a SPI program

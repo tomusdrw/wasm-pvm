@@ -1,16 +1,14 @@
-// SPI Convention: args_ptr=0xFEFF0000, result heap=0x30100
 // Input: u32 steps
 // Output encoding: [u32 width][u32 height][u8 cells...], row-major, 1=alive, 0=dead
-
-const RESULT_HEAP: u32 = 0x30100;
 
 const WIDTH: i32 = 16;
 const HEIGHT: i32 = 16;
 const CELL_COUNT: i32 = WIDTH * HEIGHT;
 
-const BUF_A: u32 = RESULT_HEAP;
-const BUF_B: u32 = BUF_A + CELL_COUNT as u32;
-const OUTPUT_BASE: u32 = BUF_B + CELL_COUNT as u32;
+// Two cell buffers + output area, all dynamically allocated
+let BUF_A: u32 = 0;
+let BUF_B: u32 = 0;
+let OUTPUT_BASE: u32 = 0;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
@@ -108,6 +106,13 @@ function encode_result(src: u32): void {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  // Allocate working buffers: 2 cell buffers + output (width + height + cells)
+  const alloc_size = CELL_COUNT * 2 + 8 + CELL_COUNT;
+  const base = heap.alloc(alloc_size) as u32;
+  BUF_A = base;
+  BUF_B = base + CELL_COUNT as u32;
+  OUTPUT_BASE = BUF_B + CELL_COUNT as u32;
+
   const steps = load<i32>(args_ptr);
 
   seed_world(BUF_A);

@@ -15,6 +15,7 @@ export const ANAN_AS_CLI = path.join(
   PROJECT_ROOT,
   "vendor/anan-as/dist/bin/index.js"
 );
+export const IMPORTS_DIR = path.join(FIXTURES_DIR, "imports");
 export const CLI_BINARY = path.join(
   PROJECT_ROOT,
   "target/release/wasm-pvm"

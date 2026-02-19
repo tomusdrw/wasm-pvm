@@ -15,6 +15,9 @@ pub enum Error {
     #[error("Function index {0} not found")]
     FunctionNotFound(u32),
 
+    #[error("Unresolved import: {0}")]
+    UnresolvedImport(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

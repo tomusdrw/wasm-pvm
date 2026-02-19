@@ -21,4 +21,4 @@ pub mod test_harness;
 pub use error::{Error, Result};
 pub use pvm::{Instruction, Opcode, ProgramBlob};
 pub use spi::SpiProgram;
-pub use translate::compile;
+pub use translate::{CompileOptions, ImportAction, compile, compile_with_options};

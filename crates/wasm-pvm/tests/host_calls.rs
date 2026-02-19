@@ -55,7 +55,7 @@ fn test_host_call_with_return_value() {
 }
 
 #[test]
-fn test_non_host_call_import_still_traps() {
+fn test_unknown_import_fails_compilation() {
     let wat = r#"
         (module
             (import "env" "unknown_func" (func $unknown (param i32)))
@@ -66,11 +66,20 @@ fn test_non_host_call_import_still_traps() {
         )
     "#;
 
-    let program = compile_wat(wat).expect("Failed to compile");
-    let instructions = extract_instructions(&program);
-
-    assert!(has_opcode(&instructions, Opcode::Trap));
-    assert!(!has_opcode(&instructions, Opcode::Ecalli));
+    let wasm = wat_to_wasm(wat).expect("Failed to parse WAT");
+    let result = wasm_pvm::compile(&wasm);
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("Unknown imports should fail compilation"),
+    };
+    assert!(
+        matches!(err, wasm_pvm::Error::UnresolvedImport(_)),
+        "Expected UnresolvedImport error, got: {err}"
+    );
+    assert!(
+        err.to_string().contains("unknown_func"),
+        "Error should mention the import name: {err}"
+    );
 }
 
 #[test]

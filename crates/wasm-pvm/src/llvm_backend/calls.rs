@@ -104,7 +104,8 @@ pub fn lower_wasm_call<'ctx>(
 /// Emit code for calling an imported function.
 ///
 /// Recognizes special imports (`host_call`, `pvm_ptr`) and emits appropriate
-/// PVM instructions. All other imports emit `Trap`.
+/// PVM instructions. Uses the import map from `LoweringContext` when available;
+/// otherwise falls back to default behavior (abort → trap, others → nop).
 pub fn lower_import_call<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -134,18 +135,79 @@ pub fn lower_import_call<'ctx>(
         return lower_pvm_ptr(e, instr, ctx, has_return);
     }
 
-    // All other import stubs emit Trap (the function is not available).
-    e.emit(Instruction::Trap);
+    // Check user-provided import map first.
+    if let Some(import_map) = &ctx.wasm_import_map {
+        if let Some(action) = import_name.and_then(|name| import_map.get(name)) {
+            return lower_mapped_import(e, instr, action, has_return);
+        }
+        // If import map is provided but this import isn't in it, it should have
+        // been caught during validation. Emit trap as a safety fallback.
+        e.emit(Instruction::Trap);
+        if has_return {
+            let slot = result_slot(e, instr)?;
+            e.emit(Instruction::LoadImm {
+                reg: TEMP_RESULT,
+                value: 0,
+            });
+            e.store_to_slot(slot, TEMP_RESULT);
+        }
+        return Ok(());
+    }
 
-    // If the import has a return value, push a dummy 0 so the rest of the code
-    // can still type-check (dead code after the trap).
-    if has_return {
-        let slot = result_slot(e, instr)?;
-        e.emit(Instruction::LoadImm {
-            reg: TEMP_RESULT,
-            value: 0,
-        });
-        e.store_to_slot(slot, TEMP_RESULT);
+    // Default behavior when no import map is provided:
+    // abort() → trap. All other imports should have been caught during validation.
+    if import_name == Some("abort") {
+        e.emit(Instruction::Trap);
+        if has_return {
+            let slot = result_slot(e, instr)?;
+            e.emit(Instruction::LoadImm {
+                reg: TEMP_RESULT,
+                value: 0,
+            });
+            e.store_to_slot(slot, TEMP_RESULT);
+        }
+        return Ok(());
+    }
+
+    // Should not reach here — validation catches unresolved imports.
+    Err(Error::Internal(format!(
+        "unresolved import '{}' reached code generation",
+        import_name.unwrap_or("<unknown>")
+    )))
+}
+
+/// Emit code for an import with a user-configured action.
+fn lower_mapped_import<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+    action: &crate::translate::ImportAction,
+    has_return: bool,
+) -> Result<()> {
+    use crate::translate::ImportAction;
+
+    match action {
+        ImportAction::Trap => {
+            e.emit(Instruction::Trap);
+            // Emit dummy return value (dead code after trap) to keep stack consistent.
+            if has_return {
+                let slot = result_slot(e, instr)?;
+                e.emit(Instruction::LoadImm {
+                    reg: TEMP_RESULT,
+                    value: 0,
+                });
+                e.store_to_slot(slot, TEMP_RESULT);
+            }
+        }
+        ImportAction::Nop => {
+            if has_return {
+                let slot = result_slot(e, instr)?;
+                e.emit(Instruction::LoadImm {
+                    reg: TEMP_RESULT,
+                    value: 0,
+                });
+                e.store_to_slot(slot, TEMP_RESULT);
+            }
+        }
     }
 
     Ok(())

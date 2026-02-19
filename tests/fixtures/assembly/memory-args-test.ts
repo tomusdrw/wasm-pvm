@@ -1,13 +1,13 @@
 // Memory test: Verify we can read arguments correctly and detect issues
 // This test reads the first 8 bytes of args and echoes them back, plus some diagnostics
 
-const RESULT_HEAP: u32 = 0x30100;
 
 // Export mutable globals for result pointer and length
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   // Output format:
   // [0-3]: args_ptr value (what we received)
   // [4-7]: args_len value (what we received)
@@ -48,6 +48,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   store<u32>(RESULT_HEAP + offset, (args_ptr + 4) as u32);
   offset += 4;
   
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = offset as i32;
 }

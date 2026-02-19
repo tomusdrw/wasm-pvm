@@ -2,7 +2,6 @@
 // This mimics the exact input parsing that index-compiler does
 
 const RESULT_BUFFER: u32 = 0x100;
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;

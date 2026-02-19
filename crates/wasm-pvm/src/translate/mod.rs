@@ -5,13 +5,40 @@
     clippy::cast_sign_loss
 )]
 
+pub mod adapter_merge;
 pub mod memory_layout;
 pub mod wasm_module;
+
+use std::collections::HashMap;
 
 use crate::pvm::Instruction;
 use crate::{Error, Result, SpiProgram};
 
 pub use wasm_module::WasmModule;
+
+/// Action to take when a WASM import is called.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportAction {
+    /// Emit a trap (unreachable) instruction.
+    Trap,
+    /// Emit a no-op (return 0 for functions with return values).
+    Nop,
+}
+
+/// Options for compilation.
+#[derive(Debug, Clone, Default)]
+pub struct CompileOptions {
+    /// Mapping from import function names to actions.
+    /// When provided, all imports (except known intrinsics like `host_call` and `pvm_ptr`)
+    /// must have a mapping or compilation will fail with `UnresolvedImport`.
+    pub import_map: Option<HashMap<String, ImportAction>>,
+    /// WAT source for an adapter module whose exports replace matching main imports.
+    /// Applied before the text-based import map, so the two compose.
+    pub adapter: Option<String>,
+    /// Metadata blob to prepend to the SPI output.
+    /// Typically contains the source filename and compiler version.
+    pub metadata: Vec<u8>,
+}
 
 // Re-export register constants from abi module
 pub use crate::abi::{ARGS_LEN_REG, ARGS_PTR_REG, RETURN_ADDR_REG, STACK_PTR_REG};
@@ -37,11 +64,47 @@ const ENTRY_HEADER_SIZE: usize = 10;
 const RO_DATA_SIZE: usize = 64 * 1024;
 
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
-    let module = WasmModule::parse(wasm)?;
-    compile_via_llvm(&module)
+    compile_with_options(wasm, &CompileOptions::default())
 }
 
-pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
+pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<SpiProgram> {
+    // Known intrinsics that don't need import mappings.
+    const KNOWN_INTRINSICS: &[&str] = &["host_call", "pvm_ptr"];
+    // Default mappings applied when no explicit import map is provided.
+    const DEFAULT_MAPPINGS: &[&str] = &["abort"];
+
+    // Apply adapter merge if provided (produces a new WASM binary with fewer imports).
+    let merged_wasm;
+    let wasm = if let Some(adapter_wat) = &options.adapter {
+        merged_wasm = adapter_merge::merge_adapter(wasm, adapter_wat)?;
+        &merged_wasm
+    } else {
+        wasm
+    };
+
+    let module = WasmModule::parse(wasm)?;
+
+    // Validate that all imports are resolved.
+    for name in &module.imported_func_names {
+        if KNOWN_INTRINSICS.contains(&name.as_str()) {
+            continue;
+        }
+        if let Some(import_map) = &options.import_map {
+            if import_map.contains_key(name) {
+                continue;
+            }
+        } else if DEFAULT_MAPPINGS.contains(&name.as_str()) {
+            continue;
+        }
+        return Err(Error::UnresolvedImport(format!(
+            "import '{name}' has no mapping. Provide a mapping via --imports or add it to the import map."
+        )));
+    }
+
+    compile_via_llvm(&module, options)
+}
+
+pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<SpiProgram> {
     use crate::llvm_backend::{self, LoweringContext};
     use crate::llvm_frontend;
     use inkwell::context::Context;
@@ -100,6 +163,7 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
         data_segment_offsets,
         data_segment_lengths,
         data_segment_length_addrs,
+        wasm_import_map: options.import_map.clone(),
     };
 
     // Phase 3: LLVM IR → PVM bytecode for each function
@@ -309,7 +373,8 @@ pub fn compile_via_llvm(module: &WasmModule) -> Result<SpiProgram> {
     Ok(SpiProgram::new(blob)
         .with_heap_pages(module.heap_pages)
         .with_ro_data(ro_data)
-        .with_rw_data(rw_data_section))
+        .with_rw_data(rw_data_section)
+        .with_metadata(options.metadata.clone()))
 }
 
 /// Build the `rw_data` section from WASM data segments and global initializers.

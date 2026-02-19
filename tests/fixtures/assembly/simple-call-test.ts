@@ -2,7 +2,6 @@
  * Simplest possible test to check if arr[1] returns correct value after ternary.
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
@@ -16,6 +15,7 @@ function createArray(len: i32): u8[] {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   const step: i32 = args_len > 0 ? load<u8>(args_ptr) : 0;
 
   const arr1 = createArray(10);
@@ -75,6 +75,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

@@ -8,7 +8,6 @@
  * Expected: Checksum of operations
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
@@ -73,6 +72,7 @@ function lowerBytes(data: Uint8Array): u8[] {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   // Step 1: Create a Uint8Array from args (like liftBytes)
   const inputData = new Uint8Array(args_len);
   for (let i: i32 = 0; i < args_len; i++) {
@@ -138,6 +138,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   // Total: 45 + 190 + 45 + 15 + 795 = 1090
 
   store<i32>(RESULT_HEAP, sum);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

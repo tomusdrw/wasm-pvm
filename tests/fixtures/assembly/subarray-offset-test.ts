@@ -8,12 +8,12 @@
  * Expected: Sum of specific slice values
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   // Create buffer [0,1,2,3,4,5,6,7,8,9]
   const buffer = new Uint8Array(10);
   for (let i: i32 = 0; i < 10; i++) {
@@ -56,6 +56,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   // Total: 1045 + 400 + 3+4+5+6 = 1463
 
   store<i32>(RESULT_HEAP, sum);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

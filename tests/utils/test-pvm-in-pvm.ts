@@ -23,7 +23,7 @@ const projectRoot = path.join(__dirname, '../..');
 const testsDir = path.join(__dirname, '..');
 
 // Paths for compiled artifacts
-const ANAN_AS_COMPILER_WASM = path.join(projectRoot, 'vendor/anan-as/build/compiler.wasm');
+const ANAN_AS_COMPILER_WASM = path.join(projectRoot, 'vendor/anan-as/dist/build/compiler.wasm');
 const ANAN_AS_COMPILER_JAM = '/tmp/anan-as-compiler.jam';
 
 function compileAnanAsToPvm(): void {
@@ -58,6 +58,35 @@ async function discoverSuites(): Promise<SuiteSpec[]> {
   return getRegisteredSuites();
 }
 
+/**
+ * Strip the metadata prefix from a JAM/SPI buffer.
+ * Format: varint(metadata_len) + metadata_bytes + raw_spi
+ */
+function stripMetadata(buf: Buffer): Buffer {
+  const firstByte = buf[0];
+  let offset: number;
+  let metadataLen: number;
+  if (firstByte < 128) {
+    metadataLen = firstByte;
+    offset = 1;
+  } else {
+    // Custom varint (PolkaVM/Gray Paper format, NOT LEB128):
+    // Leading 1-bits in the first byte indicate the number of extra bytes.
+    // Remaining bits of the first byte are the high part of the value.
+    // Extra bytes are stored in little-endian order.
+    const leadingOnes = Math.clz32(~(firstByte << 24));
+    const mask = (1 << (8 - leadingOnes)) - 1;
+    const high = firstByte & mask;
+    let low = 0;
+    for (let i = 1; i <= leadingOnes; i++) {
+      low += buf[i] * (1 << (8 * (i - 1)));
+    }
+    metadataLen = high * (1 << (8 * leadingOnes)) + low;
+    offset = 1 + leadingOnes;
+  }
+  return buf.subarray(offset + metadataLen);
+}
+
 function runTestThroughAnanAsInPvm(testName: string, args: string, innerPc?: number, verbose = false): number {
   const jamDir = path.join(__dirname, '../build/jam');
   const jamFile = path.join(jamDir, `${testName}.jam`);
@@ -66,7 +95,9 @@ function runTestThroughAnanAsInPvm(testName: string, args: string, innerPc?: num
     throw new Error(`Test JAM file not found: ${jamFile}`);
   }
 
-  const innerProgram = fs.readFileSync(jamFile);
+  // Strip metadata prefix: inner programs are passed as raw SPI to the anan-as
+  // interpreter running inside PVM, which expects raw SPI format.
+  const innerProgram = stripMetadata(fs.readFileSync(jamFile));
   const innerArgs = args ? Buffer.from(args, 'hex') : Buffer.alloc(0);
 
   const gas = BigInt(100_000_000);
@@ -95,7 +126,7 @@ function runTestThroughAnanAsInPvm(testName: string, args: string, innerPc?: num
   const inputHex = inputBuffer.toString('hex');
 
   const ananAsCli = path.join(projectRoot, 'vendor/anan-as/dist/bin/index.js');
-  const cmd = `node ${ananAsCli} run --spi --no-metadata --no-logs --gas=10000000000 ${ANAN_AS_COMPILER_JAM} 0x${inputHex}`;
+  const cmd = `node ${ananAsCli} run --spi --no-logs --gas=10000000000 ${ANAN_AS_COMPILER_JAM} 0x${inputHex}`;
 
   if (verbose) {
     console.log(`    Input: gas=${gas}, pc=${pc}, prog_len=${innerProgram.length}, args_len=${innerArgs.length}`);

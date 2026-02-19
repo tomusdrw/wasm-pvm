@@ -6,5 +6,6 @@ mod instruction;
 mod opcode;
 
 pub use blob::ProgramBlob;
+pub(crate) use blob::encode_var_u32;
 pub use instruction::Instruction;
 pub use opcode::Opcode;

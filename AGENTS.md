@@ -19,12 +19,12 @@ cargo test                                    # Unit tests (Rust)
 # Build integration test artifacts (WASM + JAM files)
 cd tests && bun build.ts                      # REQUIRED before running integration tests
 
-# Run integration tests (360 tests)
+# Run integration tests
 # IMPORTANT: Always use `bun run test` NOT `bun test` from the tests/ directory
 cd tests && bun run test                      # Full test suite
 
 # Quick development check (Layer 1 tests only - fastest)
-cd tests && bun test layer1/                  # ~140 tests, quick validation
+cd tests && bun test layer1/                  # Quick validation
 
 # Compile WASM → JAM
 cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o dist/add.jam
@@ -35,16 +35,32 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 
 ### Important Testing Notes
 
-1. **Always build first**: Integration tests require compiled WASM and JAM files. Run `bun build.ts` in the `tests/` directory before running tests.
+1. **Always do a FULL rebuild before starting work**: Before beginning any task, delete cached WASM files and rebuild everything from scratch. This ensures you are working against the latest source, not stale artifacts:
+   ```bash
+   rm -f tests/build/wasm/*.wasm           # Delete cached WASM files
+   cd tests && bun build.ts                # Full rebuild: AS→WASM, WAT/WASM→JAM, anan-as compiler
+   ```
+   This is critical because `bun build.ts` skips AS→WASM compilation if the `.wasm` file already exists, so changes to `.ts` fixtures won't be picked up without deleting the cache first.
 
 2. **Use `bun run test` NOT `bun test`**: From the `tests/` directory, use `bun run test` which runs `bun build.ts && bun test`. Running `bun test` directly without building will fail because the JAM files won't exist.
 
-3. **Development workflow**: For quick iteration, run Layer 1 tests only (`bun test layer1/`). These 140 tests cover core functionality and complete in ~15 seconds. Run the full suite (`bun run test`) before committing.
+3. **Development workflow**: For quick iteration, run Layer 1 tests only (`bun test layer1/`). These cover core functionality and complete in seconds. Run the full suite (`bun run test`) before committing.
 
 4. **Test organization**:
-   - **Layer 1**: Core/smoke tests (~140 tests) - Run these for quick validation
-   - **Layer 2**: Feature tests (~80 tests)
-   - **Layer 3**: Regression/edge cases (~140 tests)
+   - **Layer 1**: Core/smoke tests - Run these for quick validation
+   - **Layer 2**: Feature tests
+   - **Layer 3**: Regression/edge cases
+
+### Documentation Update Policy
+
+**After every task or commit**, update all relevant documentation files:
+- **`AGENTS.md`** — Update if you added new modules, changed the build process, modified memory layout, or changed conventions
+- **`LEARNINGS.md`** — Update with any new technical knowledge discovered (PVM behaviors, WASM edge cases, compiler quirks, external specs like JIP-1)
+- **`ARCHITECTURE.md`** — Update if ABI, calling conventions, or SPI format changed
+- **Subdirectory `AGENTS.md` files** (`crates/wasm-pvm/src/translate/AGENTS.md`, `crates/wasm-pvm/src/pvm/AGENTS.md`) — Update if the relevant module's internals changed
+- **`todo.md`** — Mark completed tasks as `[x]`, add new discovered tasks
+
+This is not optional. Stale documentation causes repeated mistakes and wasted investigation time.
 
 ---
 
@@ -67,6 +83,7 @@ crates/
 │       │   └── intrinsics.rs    # PVM + LLVM intrinsic lowering (~170 lines)
 │       ├── translate/     # Compilation orchestration
 │       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
+│       │   ├── adapter_merge.rs (WAT adapter merge into WASM before compilation)
 │       │   ├── wasm_module.rs (WASM section parsing)
 │       │   └── memory_layout.rs (PVM memory address constants)
 │       ├── pvm/           # PVM instruction definitions
@@ -84,17 +101,18 @@ crates/
 ## Domain Knowledge
 
 ### Compiler Pipeline
-1. **WASM parsing**: `wasm_module.rs` parses all WASM sections into `WasmModule` struct
-2. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell
-3. **mem2reg pass**: LLVM's `mem2reg` promotes alloca'd locals to SSA registers
-4. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
+1. **Adapter merge** (optional): `adapter_merge.rs` merges a WAT adapter module into the main WASM, replacing matching imports with adapter function bodies. Uses `wasm-encoder` to build merged binary.
+2. **WASM parsing**: `wasm_module.rs` parses all WASM sections into `WasmModule` struct
+3. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell
+4. **mem2reg pass**: LLVM's `mem2reg` promotes alloca'd locals to SSA registers
+5. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
    - `emitter.rs`: Core PvmEmitter with value slot management
    - `alu.rs`: Arithmetic, logic, comparisons, conversions
    - `memory.rs`: Load/store and memory intrinsics
    - `control_flow.rs`: Branches, phi nodes, switch, return
    - `calls.rs`: Direct/indirect function calls
    - `intrinsics.rs`: PVM and LLVM intrinsic lowering
-5. **SPI assembly**: `translate/mod.rs` builds entry header, dispatch tables, ro_data/rw_data
+6. **SPI assembly**: `translate/mod.rs` builds entry header, dispatch tables, ro_data/rw_data
 
 ### PVM (Target)
 - Register-based (13 × 64-bit registers)
@@ -144,8 +162,12 @@ crates/
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
 | Fix compilation pipeline | `translate/mod.rs` | `compile()` |
+| Fix adapter merge | `translate/adapter_merge.rs` | WAT adapter → merged WASM binary |
 | Add test case | `tests/layer{1,2,3}/*.test.ts` | Each file calls `defineSuite()` with hex args, little-endian |
+| Add/modify import adapter | `tests/fixtures/imports/*.adapter.wat` | WAT adapter files for complex import resolution |
+| Add/modify import map | `tests/fixtures/imports/*.imports` | Text-based import maps (simple: trap, nop) |
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` |
+| Fix test build | `tests/build.ts` + `tests/helpers/compile.ts` | Build orchestrator + compilation helpers |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
 | Verify JAM file | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
 
@@ -161,17 +183,20 @@ crates/
 
 ---
 
-## Memory Layout (Hardcoded)
+## Memory Layout
 
 | Address | Purpose |
 |---------|---------|
-| `0x10000` | Read-only data (dispatch table) |
-| `0x30000` | Globals storage |
-| `0x30100` | User heap (results) |
-| `0x40000` | Spilled locals |
-| `0x50000+` | WASM linear memory base |
+| `0x10000` | Read-only data (dispatch table, passive segments) |
+| `0x30000` | Globals storage (each global = 4 bytes) |
+| `0x3FF00` | Parameter overflow area (5th+ args for call_indirect) |
+| `0x40000` | Spilled locals (512 bytes per function) |
+| `0x50000+` | WASM linear memory base (computed dynamically based on function count) |
+| `0xFEFE0000` | Stack segment end (stack grows downward) |
 | `0xFEFF0000` | Arguments (`args_ptr`) |
 | `0xFFFF0000` | EXIT address (HALT) |
+
+**Dynamic allocation**: User programs should use `heap.alloc()` (AssemblyScript) or `memory.grow` (WASM) for result buffers and scratch memory. Do NOT hardcode addresses like `0x30100`.
 
 ---
 

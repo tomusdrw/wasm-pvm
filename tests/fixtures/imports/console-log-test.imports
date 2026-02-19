@@ -1,0 +1,2 @@
+# Import map for console-log-test.ts
+# abort and console.log are handled by console-log-test.adapter.wat

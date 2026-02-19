@@ -1,7 +1,7 @@
 // Decoder test: Simulate what index-compiler.ts and decodeSpi do
 // This tests the exact pattern that fails in PVM-in-PVM
 
-const RESULT_HEAP: u32 = 0x30100;
+let RESULT_HEAP: usize = 0;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
@@ -61,6 +61,7 @@ function liftBytes(data: u8[]): Uint8Array {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  RESULT_HEAP = heap.alloc(256);
   let out_offset: u32 = 0;
   
   // Store input info
@@ -135,6 +136,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   store<u32>(RESULT_HEAP + out_offset, decoder.getLength() as u32);
   out_offset += 4;
   
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = out_offset as i32;
 }

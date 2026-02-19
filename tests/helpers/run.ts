@@ -9,7 +9,7 @@ export interface RunResult {
 }
 
 function buildRunCmd(jamFile: string, args: string, pc?: number, logs = false): string {
-  let cmd = `node ${ANAN_AS_CLI} run --spi --no-metadata`;
+  let cmd = `node ${ANAN_AS_CLI} run --spi`;
 
   if (!logs) {
     cmd += ` --no-logs`;
@@ -78,8 +78,15 @@ export function runJamWithOutput(jamFile: string, args: string, pc?: number): Ru
       stdio: ["pipe", "pipe", "pipe"],
     });
 
+    let exitValue: number;
+    try {
+      exitValue = parseExitValue(stdout);
+    } catch {
+      exitValue = -1;
+    }
+
     return {
-      exitValue: parseExitValue(stdout),
+      exitValue,
       exitCode: 0,
       stdout,
       stderr: "",
@@ -97,9 +104,14 @@ export function runJamWithOutput(jamFile: string, args: string, pc?: number): Ru
         stderr,
       };
     } catch {
-      throw new Error(`Execution failed: ${error.message.split("\n")[0]}`, {
-        cause: error,
-      });
+      // If we can't parse the result, return -1 as exitValue but still
+      // provide stdout/stderr so callers can inspect the output.
+      return {
+        exitValue: -1,
+        exitCode: error.status ?? 1,
+        stdout,
+        stderr,
+      };
     }
   }
 }

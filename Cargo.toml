@@ -10,6 +10,7 @@ repository = "https://github.com/fluffylabs/wasm-pvm"
 
 [workspace.dependencies]
 wasm-pvm = { path = "crates/wasm-pvm" }
+wasm-encoder = "0.219"
 wasmparser = "0.219"
 wat = "1"
 thiserror = "2"

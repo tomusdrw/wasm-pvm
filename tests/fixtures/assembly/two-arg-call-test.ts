@@ -3,7 +3,6 @@
  * The function uses memory access to prevent inlining/constant-folding.
  */
 
-const RESULT_HEAP: u32 = 0x30100;
 const DATA_HEAP: u32 = 0x30200;
 
 export let result_ptr: i32 = 0;
@@ -24,6 +23,7 @@ function addWithMem(a: i32, b: i32): i32 {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
+  const RESULT_HEAP = heap.alloc(256);
   // Initialize data: DATA_HEAP[0]=10, DATA_HEAP[1]=20, DATA_HEAP[2]=30
   store<u8>(DATA_HEAP, 10);
   store<u8>(DATA_HEAP + 1, 20);
@@ -68,6 +68,6 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP;
+  result_ptr = RESULT_HEAP as i32;
   result_len = 4;
 }

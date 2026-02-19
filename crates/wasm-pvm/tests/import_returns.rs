@@ -3,6 +3,8 @@
 //! When an imported function has a return value, the compiler must push
 //! a dummy value (0) to maintain stack balance.
 
+use std::collections::HashMap;
+use wasm_pvm::ImportAction;
 use wasm_pvm::Opcode;
 use wasm_pvm::test_harness::*;
 
@@ -19,7 +21,10 @@ fn test_import_with_return_pushes_dummy_value() {
         )
     "#;
 
-    let program = compile_wat(wat).expect("Failed to compile");
+    let mut map = HashMap::new();
+    map.insert("get_value".to_string(), ImportAction::Nop);
+
+    let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
     // Should have an Add32 instruction (proving we got past the import call)
@@ -50,8 +55,11 @@ fn test_import_without_return_no_extra_push() {
         )
     "#;
 
+    let mut map = HashMap::new();
+    map.insert("log".to_string(), ImportAction::Nop);
+
     // Should compile without error (no stack imbalance)
-    let _program = compile_wat(wat).expect("Failed to compile");
+    let _program = compile_wat_with_imports(wat, map).expect("Failed to compile");
 }
 
 #[test]
@@ -90,6 +98,9 @@ fn test_import_with_args_and_return() {
         )
     "#;
 
+    let mut map = HashMap::new();
+    map.insert("compute".to_string(), ImportAction::Nop);
+
     // Should compile without error (stack: push 2 args, pop 2 for import, push 1 return)
-    let _program = compile_wat(wat).expect("Failed to compile");
+    let _program = compile_wat_with_imports(wat, map).expect("Failed to compile");
 }
