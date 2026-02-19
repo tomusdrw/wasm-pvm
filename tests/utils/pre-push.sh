@@ -44,7 +44,7 @@ if [ ! -d "node_modules" ]; then
     bun install
 fi
 rm -rf build
-bun run test:ci
+bun run test
 cd ..
 echo "Integration tests OK"
 
