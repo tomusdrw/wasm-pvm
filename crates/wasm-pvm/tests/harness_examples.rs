@@ -130,15 +130,17 @@ fn test_memory_load_store() {
 
 #[test]
 fn test_bitwise_operations() {
+    // Use a 3-param function so LLVM can't algebraically simplify away any ops.
+    // (a & b) | c exercises And and Or independently.
     let wat = r#"
         (module
-            (func (export "main") (param i32 i32) (result i32)
+            (func (export "main") (param i32 i32 i32) (result i32)
                 local.get 0
                 local.get 1
                 i32.and
-                local.get 0
-                local.get 1
+                local.get 2
                 i32.or
+                local.get 0
                 i32.xor
             )
         )
@@ -201,13 +203,14 @@ fn test_comparison_operations() {
 
 #[test]
 fn test_i64_arithmetic() {
+    // Use 3 params so LLVM can't simplify (a + b) - c (not algebraically reducible).
     let wat = r#"
         (module
-            (func (export "main") (param i64 i64) (result i64)
+            (func (export "main") (param i64 i64 i64) (result i64)
                 local.get 0
                 local.get 1
                 i64.add
-                local.get 1
+                local.get 2
                 i64.sub
             )
         )

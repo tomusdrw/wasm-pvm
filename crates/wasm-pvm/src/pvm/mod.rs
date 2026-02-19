@@ -4,6 +4,7 @@
 mod blob;
 mod instruction;
 mod opcode;
+pub(crate) mod peephole;
 
 pub use blob::ProgramBlob;
 pub(crate) use blob::encode_var_u32;

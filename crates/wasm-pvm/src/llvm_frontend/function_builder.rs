@@ -267,7 +267,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
             )?;
         }
 
-        self.run_mem2reg()?;
+        self.run_optimization_passes()?;
 
         self.module
             .verify()
@@ -1624,7 +1624,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
     // ── Optimization passes ──
 
-    fn run_mem2reg(&self) -> Result<()> {
+    fn run_optimization_passes(&self) -> Result<()> {
         use inkwell::passes::PassBuilderOptions;
         use inkwell::targets::{InitializationConfig, Target, TargetMachine};
 
@@ -1646,8 +1646,12 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
         let opts = PassBuilderOptions::create();
         self.module
-            .run_passes("mem2reg", &machine, opts)
-            .map_err(|e| Error::Internal(format!("mem2reg pass failed: {e}")))?;
+            .run_passes(
+                "mem2reg,instcombine,simplifycfg,gvn,simplifycfg,dce",
+                &machine,
+                opts,
+            )
+            .map_err(|e| Error::Internal(format!("LLVM optimization passes failed: {e}")))?;
 
         Ok(())
     }
