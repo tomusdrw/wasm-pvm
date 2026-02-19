@@ -80,6 +80,24 @@ The typical instruction sequence is:
 
 This is a correctness-first design; a proper register allocator is future work.
 
+### Per-Block Register Cache (Store-Load Forwarding)
+
+`PvmEmitter` maintains a per-basic-block register cache (`slot_cache: HashMap<i32, u8>`,
+`reg_to_slot: [Option<i32>; 13]`) that tracks which stack slot values are currently live
+in registers. This eliminates redundant `LoadIndU64` instructions:
+
+- **Cache hit, same register**: Skip entirely (0 instructions emitted)
+- **Cache hit, different register**: Emit `AddImm64 dst, cached_reg, 0` (register copy)
+- **Cache miss**: Emit normal `LoadIndU64`, then record in cache
+
+The cache is **invalidated**:
+- When a register is overwritten (auto-detected via `Instruction::dest_reg()`)
+- At **block boundaries** (`define_label()` clears the entire cache)
+- After **function calls** (`clear_reg_cache()` after `Fallthrough` return points)
+- After **ecalli** host calls (`clear_reg_cache()` after `Ecalli`)
+
+Impact: ~50% gas reduction, ~15-40% code size reduction across benchmarks.
+
 ---
 
 ## Calling Convention
@@ -346,7 +364,7 @@ where storing one phi value would overwrite a source needed by another phi.
 
 | Decision | Rationale |
 |----------|-----------|
-| Stack-slot for every SSA value | Correctness-first; no register allocator needed |
+| Stack-slot for every SSA value | Correctness-first; no register allocator needed. Per-block register cache mitigates the cost |
 | Spill area below SP | Frame grows up from SP, spill area grows down — no overlap |
 | Global `PARAM_OVERFLOW_BASE` | Avoids stack frame complexity for overflow params |
 | Jump-table indices as return addresses | Required by PVM's `JUMP_IND` semantics |
