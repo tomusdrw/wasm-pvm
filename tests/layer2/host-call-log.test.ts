@@ -7,6 +7,8 @@ import { JAM_DIR } from "../helpers/paths";
 // Standard suite test (result value check).
 defineSuite({
   name: "host-call-log",
+  // Uses ecalli 100 (JIP-1 logging) which the inner pvm-in-pvm interpreter can't handle.
+  skipPvmInPvm: true,
   tests: [
     {
       args: "00000000",

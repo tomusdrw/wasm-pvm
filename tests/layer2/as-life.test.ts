@@ -8,5 +8,7 @@ const tests = [
 
 defineSuite({
   name: "as-life",
+  // Game of Life is too computationally intensive for pvm-in-pvm (>300s timeout).
+  skipPvmInPvm: true,
   tests: tests,
 });
