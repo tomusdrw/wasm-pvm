@@ -392,6 +392,11 @@ impl<'a> WasmModule<'a> {
 
 /// Calculate heap pages needed and the maximum memory pages available.
 /// Returns (`heap_pages`, `max_memory_pages`).
+///
+/// `heap_pages` determines how many zero-initialized writable pages are pre-allocated
+/// in the SPI output. This covers the initial WASM linear memory, globals, and spilled
+/// locals. Programs that need more memory at runtime can grow via `memory.grow` / `sbrk`,
+/// which allocates pages on demand up to `max_memory_pages`.
 fn calculate_heap_pages(
     num_functions: usize,
     data_segments: &[DataSegment],
@@ -401,18 +406,29 @@ fn calculate_heap_pages(
     let spilled_locals_end = memory_layout::SPILLED_LOCALS_BASE as usize
         + num_functions * memory_layout::SPILLED_LOCALS_PER_FUNC as usize;
 
+    // max_memory_pages is the runtime limit for memory.grow (hardcoded in PVM code).
     let default_max_pages: u32 = if data_segments.is_empty() { 256 } else { 1024 };
     let max_memory_pages = match memory_limits.max_pages {
         Some(declared_max) => declared_max,
         None => default_max_pages,
     };
 
-    let wasm_memory_end = wasm_memory_base as usize + (max_memory_pages as usize) * 64 * 1024;
+    // heap_pages uses initial_pages (not max) — only pre-allocate what the program
+    // needs at startup. Additional memory is allocated on demand via sbrk/memory.grow.
+    // We use a minimum of 16 WASM pages (1MB) for programs that declare (memory 0)
+    // but access memory without calling memory.grow first (common in AssemblyScript
+    // programs compiled with --runtime stub).
+    let initial_pages = if memory_limits.initial_pages == 0 {
+        16
+    } else {
+        memory_limits.initial_pages
+    };
+    let wasm_memory_initial_end =
+        wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
 
-    let end = spilled_locals_end.max(wasm_memory_end);
+    let end = spilled_locals_end.max(wasm_memory_initial_end);
     let total_bytes = end - 0x30000;
     let heap_pages = total_bytes.div_ceil(4096);
-    let heap_pages = heap_pages.max(1024);
     let heap_pages = u16::try_from(heap_pages).map_err(|_| {
         Error::Internal(format!(
             "heap size {heap_pages} pages exceeds u16::MAX ({}) — module too large",
