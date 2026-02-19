@@ -32,9 +32,18 @@ pub enum Instruction {
 Instructions that end a basic block:
 ```rust
 pub fn is_terminating(&self) -> bool {
-    matches!(self, 
-        Trap | Fallthrough | Jump {..} | JumpInd {..} | 
+    matches!(self,
+        Trap | Fallthrough | Jump {..} | JumpInd {..} |
         BranchNeImm {..} | BranchEqImm {..} | ...)
+}
+```
+
+### Destination Register Query
+Used by the register cache in `emitter.rs` to auto-invalidate stale cache entries:
+```rust
+pub fn dest_reg(&self) -> Option<u8> {
+    // Returns Some(reg) for instructions that write to a register
+    // Returns None for stores, branches, traps, ecalli
 }
 ```
 

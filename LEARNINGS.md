@@ -600,6 +600,33 @@ Standard logging ecalli for PVM programs. Ecalli number **100**, gas cost **10**
 
 ---
 
+## Entry 5: Per-Block Register Cache (Store-Load Forwarding) (2026-02-19)
+
+**Problem**: The stack-slot approach generates massive load/store traffic. Every ALU operation stores its result to a stack slot, then the next instruction reloads it. For `d = (a+b) - c`, the intermediate result of `a+b` is stored then immediately reloaded.
+
+**Solution**: Added a per-block register cache to `PvmEmitter` that tracks which stack slots are currently live in registers (`slot_cache: HashMap<i32, u8>`, `reg_to_slot: [Option<i32>; 13]`).
+
+**Key mechanisms**:
+1. `emit()` auto-invalidates the destination register via `Instruction::dest_reg()`
+2. `load_operand()` checks cache before emitting `LoadIndU64` — hit → register copy or skip
+3. `store_to_slot()` records the register in the cache after `StoreIndU64`
+4. `define_label()` clears the entire cache (block boundary)
+5. `clear_reg_cache()` called after `Fallthrough` (call return) and `Ecalli`
+
+**Impact** (measured across 25 representative tests):
+- Code size: -15.2% average (up to -64% for `i64-ops`)
+- Gas usage: -49.9% average (up to -79.9% for `memory-grow-test`)
+- `anan-as-compiler.jam`: 441KB → 362KB (-17.9%)
+
+**Corner cases**:
+- `Ecalli` has no `dest_reg()` but clobbers registers externally → explicit `clear_reg_cache()`
+- Constants (inlined by `load_operand`) bypass the cache since they don't have slots
+- Branch instructions don't write registers, so cache survives through them (correct: branches don't modify register state at the branch point)
+
+**Lesson**: Even without a full register allocator, a simple per-block cache dramatically reduces the cost of the stack-slot approach. The key insight is that most values are consumed within the same basic block they're produced in.
+
+---
+
 ## References
 
 - Original: LEARNINGS.md (technical details)

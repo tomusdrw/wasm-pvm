@@ -103,6 +103,11 @@ pub struct PvmEmitter<'ctx> {
 
     /// Current byte offset of the emitted code (for O(1) offset calculations).
     pub(crate) byte_offset: usize,
+
+    /// Maps stack slot offset → register that currently holds this slot's value.
+    slot_cache: HashMap<i32, u8>,
+    /// Reverse: register → slot offset it holds (for fast invalidation).
+    reg_to_slot: [Option<i32>; 13],
 }
 
 /// Wrapper key for LLVM values in the slot map.
@@ -138,6 +143,8 @@ impl<'ctx> PvmEmitter<'ctx> {
             entry_returns_ptr_len: false,
             wasm_memory_base: 0,
             byte_offset: 0,
+            slot_cache: HashMap::new(),
+            reg_to_slot: [None; 13],
         }
     }
 
@@ -156,6 +163,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             self.emit(Instruction::Fallthrough);
         }
         self.labels[label] = Some(self.current_offset());
+        self.clear_reg_cache();
     }
 
     pub fn current_offset(&self) -> usize {
@@ -163,6 +171,9 @@ impl<'ctx> PvmEmitter<'ctx> {
     }
 
     pub fn emit(&mut self, instr: Instruction) {
+        if let Some(reg) = instr.dest_reg() {
+            self.invalidate_reg(reg);
+        }
         self.byte_offset += instr.encode().len();
         self.instructions.push(instr);
     }
@@ -232,11 +243,25 @@ impl<'ctx> PvmEmitter<'ctx> {
                     // Fallback for unsigned constants.
                     self.emit_load_const(temp_reg, const_val);
                 } else if let Some(slot) = self.get_slot(val_key_int(iv)) {
-                    self.emit(Instruction::LoadIndU64 {
-                        dst: temp_reg,
-                        base: STACK_PTR_REG,
-                        offset: slot,
-                    });
+                    // Check register cache: skip load if value is already in a register.
+                    if let Some(&cached_reg) = self.slot_cache.get(&slot) {
+                        if cached_reg != temp_reg {
+                            // Emit a register copy (cheaper than memory load).
+                            self.emit(Instruction::AddImm64 {
+                                dst: temp_reg,
+                                src: cached_reg,
+                                value: 0,
+                            });
+                        }
+                        // If cached_reg == temp_reg, skip entirely (0 instructions).
+                    } else {
+                        self.emit(Instruction::LoadIndU64 {
+                            dst: temp_reg,
+                            base: STACK_PTR_REG,
+                            offset: slot,
+                        });
+                        self.cache_slot(slot, temp_reg);
+                    }
                 } else if iv.is_poison() || iv.is_undef() {
                     // Poison/undef values can be materialized as any value; use 0.
                     self.emit(Instruction::LoadImm {
@@ -280,6 +305,35 @@ impl<'ctx> PvmEmitter<'ctx> {
             src: src_reg,
             offset: slot_offset,
         });
+        self.cache_slot(slot_offset, src_reg);
+    }
+
+    // ── Register cache ──
+
+    /// Record that `reg` now holds the value of `slot`.
+    fn cache_slot(&mut self, slot: i32, reg: u8) {
+        // Remove any previous slot cached in this register.
+        if let Some(old_slot) = self.reg_to_slot[reg as usize].take() {
+            self.slot_cache.remove(&old_slot);
+        }
+        // Remove any previous register caching this slot.
+        if let Some(old_reg) = self.slot_cache.insert(slot, reg) {
+            self.reg_to_slot[old_reg as usize] = None;
+        }
+        self.reg_to_slot[reg as usize] = Some(slot);
+    }
+
+    /// Invalidate a register's cache entry (called when the register is overwritten).
+    fn invalidate_reg(&mut self, reg: u8) {
+        if let Some(slot) = self.reg_to_slot[reg as usize].take() {
+            self.slot_cache.remove(&slot);
+        }
+    }
+
+    /// Clear the entire register cache (at block boundaries and after calls).
+    pub fn clear_reg_cache(&mut self) {
+        self.slot_cache.clear();
+        self.reg_to_slot = [None; 13];
     }
 
     // ── Fixup resolution ──
