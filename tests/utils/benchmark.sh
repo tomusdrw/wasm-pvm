@@ -4,7 +4,7 @@
 # Usage:
 #   ./tests/utils/benchmark.sh [--base <branch>] [--current <branch>]
 #
-# Without arguments, benchmarks the current build.
+# Without arguments, builds and benchmarks the current code.
 # With --base/--current, compares two branches side by side.
 #
 # Prerequisites: cargo, bun, node must be in PATH.
@@ -14,7 +14,6 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ANAN_CLI="$PROJECT_ROOT/vendor/anan-as/dist/bin/index.js"
-CLI_BIN="$PROJECT_ROOT/target/release/wasm-pvm"
 JAM_DIR="$PROJECT_ROOT/tests/build/jam"
 GAS_BUDGET=100000000
 
@@ -54,18 +53,29 @@ benchmark_one() {
   # Run 3 times and take the median time
   local times=()
   local gas_remaining=""
+  local run_failed=false
   for i in 1 2 3; do
-    local start_ns end_ns elapsed_ms output
+    local start_ns end_ns elapsed_ms output exit_code
     start_ns=$(python3 -c "import time; print(int(time.time_ns()))")
-    output=$(node "$ANAN_CLI" run --spi --no-logs --gas=$GAS_BUDGET "$jam_file" "0x$args" 2>&1) || true
+    exit_code=0
+    output=$(node "$ANAN_CLI" run --spi --no-logs --gas=$GAS_BUDGET "$jam_file" "0x$args" 2>&1) || exit_code=$?
     end_ns=$(python3 -c "import time; print(int(time.time_ns()))")
     elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
     times+=("$elapsed_ms")
+
+    if [ "$exit_code" -ne 0 ] && ! echo "$output" | grep -q 'Gas remaining:'; then
+      run_failed=true
+    fi
 
     if [ -z "$gas_remaining" ]; then
       gas_remaining=$(echo "$output" | grep -o 'Gas remaining: [0-9]*' | grep -o '[0-9]*' || echo "")
     fi
   done
+
+  if [ "$run_failed" = true ] && [ -z "$gas_remaining" ]; then
+    echo "SKIP|$desc|$size (run failed)"
+    return
+  fi
 
   # Sort and pick median
   IFS=$'\n' sorted=($(sort -n <<<"${times[*]}")); unset IFS
@@ -106,9 +116,9 @@ run_benchmarks() {
 build_and_benchmark() {
   local label="$1"
   echo "Building $label..." >&2
-  cargo build --release --quiet 2>&1 >&2
+  cargo build --release --quiet >&2
   rm -rf "$PROJECT_ROOT/tests/build/wasm"
-  (cd "$PROJECT_ROOT/tests" && bun build.ts 2>&1 >&2)
+  (cd "$PROJECT_ROOT/tests" && bun build.ts >&2)
   run_benchmarks "$label"
 }
 
@@ -203,7 +213,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       echo "Usage: $0 [--base <branch>] [--current <branch>]"
       echo ""
-      echo "Without arguments: benchmark current build"
+      echo "Without arguments: build and benchmark current code"
       echo "With --base/--current: compare two branches"
       exit 0
       ;;
