@@ -13,5 +13,7 @@ const tests = [
 
 defineSuite({
   name: "as-array-length-loop-test",
+  // slow
+  skipPvmInPvm: true,
   tests: tests,
 });
