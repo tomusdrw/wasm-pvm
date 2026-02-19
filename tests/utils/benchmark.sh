@@ -117,6 +117,7 @@ compare_branches() {
   local current_branch="$2"
   local orig_branch
   orig_branch=$(git rev-parse --abbrev-ref HEAD)
+  trap 'git checkout "$orig_branch" --quiet 2>/dev/null || true' EXIT
 
   local base_output current_output
 
@@ -130,9 +131,7 @@ compare_branches() {
   git checkout "$current_branch" --quiet
   current_output=$(build_and_benchmark "Current ($current_branch)")
 
-  # Restore original branch
-  git checkout "$orig_branch" --quiet 2>/dev/null || true
-
+  # Restore handled by EXIT trap
   echo "$base_output"
   echo "$current_output"
 
