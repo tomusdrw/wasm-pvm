@@ -2,7 +2,7 @@ import path from "node:path";
 import { describe, test, expect } from "bun:test";
 import { JAM_DIR } from "./paths";
 import { runJam } from "./run";
-import { runJamPvmInPvm, PvmInPvmTimeout } from "./pvm-in-pvm";
+import { runJamPvmInPvm } from "./pvm-in-pvm";
 
 export interface TestSpec {
   args: string;
