@@ -150,10 +150,7 @@ mod tests {
         assert!(matches!(instrs[0], Instruction::Fallthrough));
         assert!(matches!(
             instrs[1],
-            Instruction::LoadImm {
-                reg: 0,
-                value: 42
-            }
+            Instruction::LoadImm { reg: 0, value: 42 }
         ));
     }
 
@@ -209,7 +206,7 @@ mod tests {
             Instruction::Fallthrough,
             Instruction::Fallthrough,
             Instruction::LoadImm { reg: 0, value: 0 }, // return_addr_instr
-            Instruction::Jump { offset: 0 },            // jump_instr
+            Instruction::Jump { offset: 0 },           // jump_instr
         ];
         let mut fixups = vec![];
         let mut call_fixups = vec![LlvmCallFixup {

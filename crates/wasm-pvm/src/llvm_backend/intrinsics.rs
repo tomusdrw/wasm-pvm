@@ -85,7 +85,11 @@ pub fn lower_llvm_intrinsic<'ctx>(
 
     // llvm.smax / llvm.smin / llvm.umax / llvm.umin — integer min/max intrinsics.
     // Lowered as: compare + conditional select via branch.
-    if name.contains("smax") || name.contains("smin") || name.contains("umax") || name.contains("umin") {
+    if name.contains("smax")
+        || name.contains("smin")
+        || name.contains("umax")
+        || name.contains("umin")
+    {
         let a = get_operand(instr, 0)?;
         let b = get_operand(instr, 1)?;
         e.load_operand(a, TEMP1)?;
@@ -160,7 +164,10 @@ pub fn lower_llvm_intrinsic<'ctx>(
 
         // We'll build the result byte-by-byte using shifts and masks.
         // Use TEMP_RESULT as accumulator, TEMP2 as scratch for each byte.
-        e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: 0 });
+        e.emit(Instruction::LoadImm {
+            reg: TEMP_RESULT,
+            value: 0,
+        });
 
         if bits == 32 {
             // Byte 0 (bits 0-7) → bits 24-31
@@ -176,7 +183,15 @@ pub fn lower_llvm_intrinsic<'ctx>(
             for i in 0..8u32 {
                 let src_shift = i * 8;
                 let dst_shift = (7 - i) * 8;
-                emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, src_shift, dst_shift);
+                emit_extract_and_place_byte(
+                    e,
+                    TEMP1,
+                    TEMP2,
+                    SCRATCH1,
+                    TEMP_RESULT,
+                    src_shift,
+                    dst_shift,
+                );
             }
         }
 
@@ -365,20 +380,49 @@ fn emit_extract_and_place_byte(
 ) {
     // tmp = src >> src_shift
     if src_shift > 0 {
-        e.emit(Instruction::LoadImm { reg: mask_reg, value: src_shift as i32 });
-        e.emit(Instruction::ShloR64 { dst: tmp_reg, src1: src_reg, src2: mask_reg });
+        e.emit(Instruction::LoadImm {
+            reg: mask_reg,
+            value: src_shift as i32,
+        });
+        e.emit(Instruction::ShloR64 {
+            dst: tmp_reg,
+            src1: src_reg,
+            src2: mask_reg,
+        });
     } else {
         // Just copy
-        e.emit(Instruction::AddImm64 { dst: tmp_reg, src: src_reg, value: 0 });
+        e.emit(Instruction::AddImm64 {
+            dst: tmp_reg,
+            src: src_reg,
+            value: 0,
+        });
     }
     // tmp &= 0xFF
-    e.emit(Instruction::LoadImm { reg: mask_reg, value: 0xFF });
-    e.emit(Instruction::And { dst: tmp_reg, src1: tmp_reg, src2: mask_reg });
+    e.emit(Instruction::LoadImm {
+        reg: mask_reg,
+        value: 0xFF,
+    });
+    e.emit(Instruction::And {
+        dst: tmp_reg,
+        src1: tmp_reg,
+        src2: mask_reg,
+    });
     // tmp <<= dst_shift
     if dst_shift > 0 {
-        e.emit(Instruction::LoadImm { reg: mask_reg, value: dst_shift as i32 });
-        e.emit(Instruction::ShloL64 { dst: tmp_reg, src1: tmp_reg, src2: mask_reg });
+        e.emit(Instruction::LoadImm {
+            reg: mask_reg,
+            value: dst_shift as i32,
+        });
+        e.emit(Instruction::ShloL64 {
+            dst: tmp_reg,
+            src1: tmp_reg,
+            src2: mask_reg,
+        });
     }
     // acc |= tmp
-    e.emit(Instruction::Or { dst: acc_reg, src1: acc_reg, src2: tmp_reg });
+    e.emit(Instruction::Or {
+        dst: acc_reg,
+        src1: acc_reg,
+        src2: tmp_reg,
+    });
 }
