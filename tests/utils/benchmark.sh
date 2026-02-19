@@ -53,33 +53,34 @@ benchmark_one() {
   # Run 3 times and take the median time
   local times=()
   local gas_remaining=""
-  local run_failed=false
-  for i in 1 2 3; do
+  for _i in 1 2 3; do
     local start_ns end_ns elapsed_ms output exit_code
     start_ns=$(python3 -c "import time; print(int(time.time_ns()))")
     exit_code=0
     output=$(node "$ANAN_CLI" run --spi --no-logs --gas=$GAS_BUDGET "$jam_file" "0x$args" 2>&1) || exit_code=$?
     end_ns=$(python3 -c "import time; print(int(time.time_ns()))")
     elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
-    times+=("$elapsed_ms")
 
     if [ "$exit_code" -ne 0 ] && ! echo "$output" | grep -q 'Gas remaining:'; then
-      run_failed=true
+      continue
     fi
+
+    times+=("$elapsed_ms")
 
     if [ -z "$gas_remaining" ]; then
       gas_remaining=$(echo "$output" | grep -o 'Gas remaining: [0-9]*' | grep -o '[0-9]*' || echo "")
     fi
   done
 
-  if [ "$run_failed" = true ] && [ -z "$gas_remaining" ]; then
+  if [ "${#times[@]}" -eq 0 ]; then
     echo "SKIP|$desc|$size (run failed)"
     return
   fi
 
-  # Sort and pick median
+  # Sort and pick median (middle element)
   IFS=$'\n' sorted=($(sort -n <<<"${times[*]}")); unset IFS
-  time_ms="${sorted[1]}"
+  local mid=$(( ${#sorted[@]} / 2 ))
+  time_ms="${sorted[$mid]}"
 
   if [ -n "$gas_remaining" ]; then
     gas_used=$((GAS_BUDGET - gas_remaining))
