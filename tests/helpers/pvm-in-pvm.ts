@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { JAM_DIR, PROJECT_ROOT, ANAN_AS_CLI } from "./paths";
@@ -62,7 +63,13 @@ export class PvmInPvmTimeout extends Error {
 }
 
 export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult {
-  const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=${OUTER_GAS} ${COMPILER_JAM} 0x${argsHex}`;
+  // Write args to a temp binary file to avoid E2BIG (arg list too long) on Linux
+  // when the inner JAM program is large. The anan-as CLI accepts a file path as args.
+  const argsBuf = Buffer.from(argsHex, "hex");
+  const tmpFile = path.join(os.tmpdir(), `pvm-in-pvm-args-${process.pid}-${Date.now()}.bin`);
+  fs.writeFileSync(tmpFile, argsBuf);
+
+  const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=${OUTER_GAS} ${COMPILER_JAM} ${tmpFile}`;
 
   let stdout: string;
   try {
@@ -74,6 +81,7 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
       timeout: timeoutMs,
     });
   } catch (error: any) {
+    fs.rmSync(tmpFile, { force: true });
     if (error.killed || error.signal === "SIGTERM") {
       throw new PvmInPvmTimeout(timeoutMs ?? 0);
     }
@@ -87,6 +95,7 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
       );
     }
   }
+  fs.rmSync(tmpFile, { force: true });
 
   // Check if the outer interpreter itself panicked
   const statusMatch = stdout.match(/Status:\s*(\d+)/);
