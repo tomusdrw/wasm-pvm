@@ -83,8 +83,9 @@ pub fn lower_wasm_call<'ctx>(
         offset: 0, // patched during fixup resolution
     });
 
-    // Return point.
+    // Return point: callee clobbers all caller-saved registers.
     e.emit(Instruction::Fallthrough);
+    e.clear_reg_cache();
 
     e.call_fixups.push(LlvmCallFixup {
         return_addr_instr,
@@ -267,6 +268,8 @@ fn lower_host_call<'ctx>(
     e.emit(Instruction::Ecalli {
         index: ecalli_index,
     });
+    // Ecalli clobbers registers externally.
+    e.clear_reg_cache();
 
     if has_return {
         let slot = result_slot(e, instr)?;
@@ -450,7 +453,9 @@ pub fn lower_pvm_call_indirect<'ctx>(
         offset: 0,
     });
 
+    // Callee clobbers all caller-saved registers.
     e.emit(Instruction::Fallthrough);
+    e.clear_reg_cache();
 
     e.indirect_call_fixups.push(LlvmIndirectCallFixup {
         return_addr_instr,

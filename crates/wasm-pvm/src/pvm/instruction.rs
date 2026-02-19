@@ -283,6 +283,75 @@ impl Instruction {
         }
     }
 
+    /// Returns the destination register written by this instruction, if any.
+    /// Used by the register cache to invalidate stale entries.
+    #[must_use]
+    pub const fn dest_reg(&self) -> Option<u8> {
+        match self {
+            Self::Add32 { dst, .. }
+            | Self::Add64 { dst, .. }
+            | Self::Sub32 { dst, .. }
+            | Self::Sub64 { dst, .. }
+            | Self::Mul32 { dst, .. }
+            | Self::Mul64 { dst, .. }
+            | Self::DivU32 { dst, .. }
+            | Self::DivS32 { dst, .. }
+            | Self::DivU64 { dst, .. }
+            | Self::DivS64 { dst, .. }
+            | Self::RemU32 { dst, .. }
+            | Self::RemS32 { dst, .. }
+            | Self::RemU64 { dst, .. }
+            | Self::RemS64 { dst, .. }
+            | Self::ShloL32 { dst, .. }
+            | Self::ShloR32 { dst, .. }
+            | Self::SharR32 { dst, .. }
+            | Self::ShloL64 { dst, .. }
+            | Self::ShloR64 { dst, .. }
+            | Self::SharR64 { dst, .. }
+            | Self::And { dst, .. }
+            | Self::Or { dst, .. }
+            | Self::Xor { dst, .. }
+            | Self::SetLtU { dst, .. }
+            | Self::SetLtS { dst, .. }
+            | Self::SetLtUImm { dst, .. }
+            | Self::SetLtSImm { dst, .. }
+            | Self::CountSetBits32 { dst, .. }
+            | Self::CountSetBits64 { dst, .. }
+            | Self::LeadingZeroBits32 { dst, .. }
+            | Self::LeadingZeroBits64 { dst, .. }
+            | Self::TrailingZeroBits32 { dst, .. }
+            | Self::TrailingZeroBits64 { dst, .. }
+            | Self::SignExtend8 { dst, .. }
+            | Self::SignExtend16 { dst, .. }
+            | Self::ZeroExtend16 { dst, .. }
+            | Self::Sbrk { dst, .. }
+            | Self::LoadIndU8 { dst, .. }
+            | Self::LoadIndI8 { dst, .. }
+            | Self::LoadIndU16 { dst, .. }
+            | Self::LoadIndI16 { dst, .. }
+            | Self::LoadIndU32 { dst, .. }
+            | Self::LoadIndU64 { dst, .. }
+            | Self::AddImm32 { dst, .. }
+            | Self::AddImm64 { dst, .. } => Some(*dst),
+            Self::LoadImm { reg, .. } | Self::LoadImm64 { reg, .. } => Some(*reg),
+            // No destination register:
+            Self::Trap
+            | Self::Fallthrough
+            | Self::Jump { .. }
+            | Self::JumpInd { .. }
+            | Self::BranchNeImm { .. }
+            | Self::BranchEqImm { .. }
+            | Self::BranchGeSImm { .. }
+            | Self::BranchGeU { .. }
+            | Self::BranchLtU { .. }
+            | Self::StoreIndU8 { .. }
+            | Self::StoreIndU16 { .. }
+            | Self::StoreIndU32 { .. }
+            | Self::StoreIndU64 { .. }
+            | Self::Ecalli { .. } => None,
+        }
+    }
+
     #[must_use]
     pub const fn is_terminating(&self) -> bool {
         matches!(

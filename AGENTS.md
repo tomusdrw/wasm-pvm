@@ -79,7 +79,7 @@ crates/
 │       │   └── mod.rs
 │       ├── llvm_backend/  # LLVM IR → PVM bytecode
 │       │   ├── mod.rs           # Public API + main lowering dispatch
-│       │   ├── emitter.rs       # PvmEmitter struct + value management (~400 lines)
+│       │   ├── emitter.rs       # PvmEmitter struct + value management + register cache (~450 lines)
 │       │   ├── alu.rs           # Arithmetic, logic, comparisons, conversions (~380 lines)
 │       │   ├── memory.rs        # Load/store, memory intrinsics (~340 lines)
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
@@ -108,9 +108,9 @@ crates/
 1. **Adapter merge** (optional): `adapter_merge.rs` merges a WAT adapter module into the main WASM, replacing matching imports with adapter function bodies. Uses `wasm-encoder` to build merged binary.
 2. **WASM parsing**: `wasm_module.rs` parses all WASM sections into `WasmModule` struct
 3. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell
-4. **mem2reg pass**: LLVM's `mem2reg` promotes alloca'd locals to SSA registers
+4. **LLVM optimization passes**: `mem2reg` (SSA promotion), `instcombine` (strength reduction), `simplifycfg` (block merging), `gvn` (redundancy elimination), `dce` (dead code removal)
 5. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
-   - `emitter.rs`: Core PvmEmitter with value slot management
+   - `emitter.rs`: Core PvmEmitter with value slot management and **per-block register cache** (store-load forwarding)
    - `alu.rs`: Arithmetic, logic, comparisons, conversions
    - `memory.rs`: Load/store and memory intrinsics
    - `control_flow.rs`: Branches, phi nodes, switch, return
@@ -127,6 +127,7 @@ crates/
 ### Key Design Decisions
 - **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
 - **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first, register allocator is future work)
+- **Per-block register cache**: `PvmEmitter` tracks which stack slots are live in registers via `slot_cache`/`reg_to_slot`. Eliminates redundant `LoadIndU64` when a value is used shortly after being computed. Cache is cleared at block boundaries and after calls/ecalli. (~50% gas reduction, ~15-40% code size reduction)
 - **All values as i64**: PVM registers are 64-bit; simplifies translation
 - **LLVM backend**: inkwell (LLVM 18 bindings) is a required dependency
 
