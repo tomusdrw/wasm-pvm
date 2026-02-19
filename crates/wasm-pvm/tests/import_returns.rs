@@ -4,9 +4,9 @@
 //! a dummy value (0) to maintain stack balance.
 
 use std::collections::HashMap;
+use wasm_pvm::ImportAction;
 use wasm_pvm::Opcode;
 use wasm_pvm::test_harness::*;
-use wasm_pvm::{ImportAction};
 
 #[test]
 fn test_import_with_return_pushes_dummy_value() {
