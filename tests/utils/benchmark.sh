@@ -7,7 +7,7 @@
 # Without arguments, builds and benchmarks the current code.
 # With --base/--current, compares two branches side by side.
 #
-# Prerequisites: cargo, bun, node must be in PATH.
+# Prerequisites: cargo, bun, node, python3 must be in PATH.
 # Run from the project root directory.
 
 set -euo pipefail
