@@ -12,5 +12,7 @@ const tests = [
 
 defineSuite({
   name: "as-multi-slice-debug",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });

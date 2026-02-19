@@ -2,7 +2,7 @@ import path from "node:path";
 import { describe, test, expect } from "bun:test";
 import { JAM_DIR } from "./paths";
 import { runJam } from "./run";
-import { runJamPvmInPvm } from "./pvm-in-pvm";
+import { runJamPvmInPvm, PvmInPvmTimeout } from "./pvm-in-pvm";
 
 export interface TestSpec {
   args: string;
@@ -21,8 +21,8 @@ export interface SuiteSpec {
 /** Global registry of all defined suites (populated at import time). */
 const suiteRegistry: SuiteSpec[] = [];
 
-/** PVM-in-PVM timeout: these tests are slow (~30-120s each). */
-const PVM_IN_PVM_TIMEOUT = 300_000;
+/** Bun test timeout for pvm-in-pvm tests. */
+const PVM_IN_PVM_TEST_TIMEOUT = 300_000;
 
 /** Register a suite and create normal (non-pvm-in-pvm) test cases. */
 export function defineSuite(suite: SuiteSpec) {
@@ -52,7 +52,7 @@ export function definePvmInPvmSuite(suite: SuiteSpec) {
           const actual = runJamPvmInPvm(jamFile, t.args, t.pc);
           expect(actual).toBe(t.expected);
         },
-        PVM_IN_PVM_TIMEOUT,
+        PVM_IN_PVM_TEST_TIMEOUT,
       );
     }
   });

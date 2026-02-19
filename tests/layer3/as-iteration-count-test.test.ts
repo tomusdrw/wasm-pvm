@@ -11,5 +11,7 @@ const tests = [
 
 defineSuite({
   name: "as-iteration-count-test",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });

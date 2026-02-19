@@ -24,6 +24,10 @@ impl Default for MemoryLimits {
     }
 }
 
+/// Minimum WASM pages (64KB each) to pre-allocate for programs declaring (memory 0).
+/// 16 pages = 1MB, sufficient for `AssemblyScript` programs compiled with --runtime stub.
+const MIN_INITIAL_WASM_PAGES: u32 = 16;
+
 /// Represents a data segment parsed from WASM.
 pub struct DataSegment {
     /// Offset in WASM linear memory (active only). None for passive segments.
@@ -415,16 +419,15 @@ fn calculate_heap_pages(
 
     // heap_pages uses initial_pages (not max) — only pre-allocate what the program
     // needs at startup. Additional memory is allocated on demand via sbrk/memory.grow.
-    // We use a minimum of 16 WASM pages (1MB) for programs that declare (memory 0)
+    // We use a minimum of MIN_INITIAL_WASM_PAGES (1MB) for programs that declare (memory 0)
     // but access memory without calling memory.grow first (common in AssemblyScript
     // programs compiled with --runtime stub).
     let initial_pages = if memory_limits.initial_pages == 0 {
-        16
+        MIN_INITIAL_WASM_PAGES
     } else {
         memory_limits.initial_pages
     };
-    let wasm_memory_initial_end =
-        wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
+    let wasm_memory_initial_end = wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
 
     let end = spilled_locals_end.max(wasm_memory_initial_end);
     let total_bytes = end - 0x30000;

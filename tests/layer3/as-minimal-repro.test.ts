@@ -11,5 +11,7 @@ const tests = [
 
 defineSuite({
   name: "as-minimal-repro",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });

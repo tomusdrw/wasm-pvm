@@ -54,7 +54,14 @@ export function buildCompilerArgs(
  * Run the compiler.jam with the given args through the outer anan-as CLI.
  * Returns the parsed inner result.
  */
-export function runCompilerJam(argsHex: string): InnerResult {
+export class PvmInPvmTimeout extends Error {
+  constructor(ms: number) {
+    super(`PVM-in-PVM execution timed out after ${ms}ms`);
+    this.name = "PvmInPvmTimeout";
+  }
+}
+
+export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult {
   const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=${OUTER_GAS} ${COMPILER_JAM} 0x${argsHex}`;
 
   let stdout: string;
@@ -64,8 +71,12 @@ export function runCompilerJam(argsHex: string): InnerResult {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
       maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs,
     });
   } catch (error: any) {
+    if (error.killed || error.signal === "SIGTERM") {
+      throw new PvmInPvmTimeout(timeoutMs ?? 0);
+    }
     const errStdout = error.stdout?.toString() ?? "";
     const errStderr = error.stderr?.toString() ?? "";
     if (errStdout) {
@@ -125,6 +136,7 @@ export function runJamPvmInPvm(
   jamFile: string,
   args: string,
   pc?: number,
+  timeoutMs?: number,
 ): number {
   const argsHex = buildCompilerArgs(
     jamFile,
@@ -132,7 +144,7 @@ export function runJamPvmInPvm(
     INNER_GAS,
     pc ?? 0,
   );
-  const result = runCompilerJam(argsHex);
+  const result = runCompilerJam(argsHex, timeoutMs);
 
   if (result.status !== 0) {
     throw new Error(

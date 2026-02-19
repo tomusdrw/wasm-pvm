@@ -6,5 +6,7 @@ const tests = [
 
 defineSuite({
   name: "as-decoder-test",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });

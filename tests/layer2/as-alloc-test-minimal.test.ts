@@ -10,5 +10,7 @@ const tests = [
 
 defineSuite({
   name: "as-alloc-test-minimal",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });

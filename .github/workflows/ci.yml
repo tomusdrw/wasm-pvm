@@ -88,5 +88,5 @@ jobs:
       - name: Install tests dependencies
         run: cd tests && bun install
 
-      - name: Run integration tests (layers 1-4 in parallel)
+      - name: Run integration tests (layers 1-5)
         run: cd tests && bun run test

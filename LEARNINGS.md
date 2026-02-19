@@ -578,8 +578,8 @@ Standard logging ecalli for PVM programs. Ecalli number **100**, gas cost **10**
 ### PVM-in-PVM Limitations
 
 - **ecalli host calls**: The inner anan-as interpreter returns HOST status when the inner program uses ecalli. Tests using ecalli 100 (JIP-1 logging) cannot complete in pvm-in-pvm since the host call is unhandled.
-- **Performance**: Each pvm-in-pvm test runs ~500M+ outer PVM instructions. Typical wall time is 30-120s per test. i64 operations and Game of Life are especially slow (>300s).
-- **Outer gas budget**: The outer interpreter needs ~10 billion gas to execute the inner interpreter for most programs.
+- **Performance (post-optimization)**: After the heap_pages + dumpMemory optimizations (see Entry 6), most pvm-in-pvm tests complete in 1-5 seconds. Game of Life (`as-life`) and i64-ops remain slow due to computational intensity and are skipped.
+- **Outer gas budget**: The outer interpreter needs ~10 billion gas, but typical tests consume only 1-5M gas after optimizations.
 
 ---
 
@@ -607,6 +607,54 @@ Standard logging ecalli for PVM programs. Ecalli number **100**, gas cost **10**
 - Branch instructions don't write registers, so cache survives through them (correct: branches don't modify register state at the branch point)
 
 **Lesson**: Even without a full register allocator, a simple per-block cache dramatically reduces the cost of the stack-slot approach. The key insight is that most values are consumed within the same basic block they're produced in.
+
+---
+
+## Entry 6: PVM-in-PVM Gas Profiling & Optimization (2026-02-19)
+
+**Problem**: Running a minimal inner program (just `TRAP` — 1 instruction) through pvm-in-pvm required ~525M outer gas and took ~32 seconds. Layer 4 smoke tests took ~180s total.
+
+**Profiling Methodology**: Added `console.log` instrumentation (ecalli 100) at key phases in `index-compiler.ts`, `api-utils.ts`, `api-internal.ts`, `spi.ts`, and `program.ts`. Created a profiling script that captures gas remaining at each HOST call and computes gas deltas per phase.
+
+**Root Cause #1: Memory dump in `vmDestroy()`** (96.26% of gas)
+- `vmRunOnce()` called `vmDestroy(int, true)` with `dumpMemory=true`
+- `getOutputChunks()` iterates byte-by-byte over every memory page (4128 pages = 17MB)
+- `runProgram()` never uses this memory dump — only `test-w3f.ts` needs it
+
+**Fix #1**: Added `dumpMemory` parameter to `vmRunOnce()` (via `VmRunOptions` class), `runProgram()` passes `false` by default. `index-compiler.ts` passes `false`, `test-w3f.ts` passes `true`.
+- **Result**: 32s → 1.2s, 525M → 21.4M gas
+
+**Root Cause #2: Excessive `heap_pages` in SPI format** (remaining bottleneck)
+- `calculate_heap_pages()` in `wasm_module.rs` used `max_memory_pages` (256 WASM pages = 16MB for no-max programs) instead of `initial_pages`
+- Had a `max(1024)` floor on PVM page count
+- `trap.jam` with `(memory 1)` got 4128 PVM pages (16.9MB) instead of 48 (192KB)
+- `decodeSpi()` in anan-as pre-allocates all these pages via `builder.setEmpty()`, costing 19.4M gas
+
+**Fix #2**: Changed `calculate_heap_pages()` to use `initial_pages` instead of `max_memory_pages`. Removed `max(1024)` floor. Added minimum of 16 WASM pages (1MB) when `initial_pages == 0` for AS programs that declare `(memory 0)` but access memory without `memory.grow`.
+- **Result**: 1.2s → 88ms, 21.4M → 1.49M gas
+
+**Combined improvement**: 525M gas / 32s → 1.49M gas / 88ms (352x improvement). Layer 4: 180s → ~1.9s.
+
+**Key insight**: `heap_pages` should reflect initial memory needs, not maximum. Additional memory is allocated on demand via `sbrk`/`memory.grow`. Over-allocating heap pages wastes gas in the PVM runtime's page initialization.
+
+**Lesson**: Profile before optimizing. The obvious suspect (interpreter execution) was only 0.0004% of the total cost. The real bottlenecks were in setup/teardown code that seemed "free".
+
+---
+
+## Entry 7: SPI `heap_pages` Semantics (2026-02-19)
+
+**What `heap_pages` means**: The number of 4KB PVM pages pre-allocated as zero-initialized writable memory at program start. This covers the read-write data region (globals + WASM linear memory initial data) plus any zero-init heap space.
+
+**How it's computed** (in `calculate_heap_pages()`):
+1. Calculate `spilled_locals_end = 0x40000 + num_functions * 512`
+2. Calculate `wasm_memory_initial_end = wasm_memory_base + initial_pages * 64KB`
+3. `end = max(spilled_locals_end, wasm_memory_initial_end)`
+4. `heap_pages = ceil((end - 0x30000) / 4096)`
+
+**Important distinctions**:
+- `initial_pages`: WASM memory declared at start (e.g., `(memory 1)` → 1 page = 64KB). Used for `heap_pages`.
+- `max_memory_pages`: Runtime limit for `memory.grow`. Hardcoded in PVM code as `max_memory_pages` constant. NOT used for `heap_pages`.
+- Programs declaring `(memory 0)`: Need minimum 16 WASM pages (1MB) because AS runtime accesses memory at 0x40000+ without calling `memory.grow`.
 
 ---
 
