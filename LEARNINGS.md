@@ -575,6 +575,14 @@ Standard logging ecalli for PVM programs. Ecalli number **100**, gas cost **10**
 
 ---
 
+### PVM-in-PVM Limitations
+
+- **ecalli host calls**: The inner anan-as interpreter returns HOST status when the inner program uses ecalli. Tests using ecalli 100 (JIP-1 logging) cannot complete in pvm-in-pvm since the host call is unhandled.
+- **Performance**: Each pvm-in-pvm test runs ~500M+ outer PVM instructions. Typical wall time is 30-120s per test. i64 operations and Game of Life are especially slow (>300s).
+- **Outer gas budget**: The outer interpreter needs ~10 billion gas to execute the inner interpreter for most programs.
+
+---
+
 ## References
 
 - Original: LEARNINGS.md (technical details)

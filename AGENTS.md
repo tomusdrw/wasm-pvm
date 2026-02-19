@@ -47,9 +47,13 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 3. **Development workflow**: For quick iteration, run Layer 1 tests only (`bun test layer1/`). These cover core functionality and complete in seconds. Run the full suite (`bun run test`) before committing.
 
 4. **Test organization**:
-   - **Layer 1**: Core/smoke tests - Run these for quick validation
-   - **Layer 2**: Feature tests
-   - **Layer 3**: Regression/edge cases
+   - **Layer 1**: Core/smoke tests (~50 tests) - Run these for quick validation
+   - **Layer 2**: Feature tests (~100 tests)
+   - **Layer 3**: Regression/edge cases (~220 tests)
+   - **Layer 4**: PVM-in-PVM smoke tests (3 tests) - Quick pvm-in-pvm sanity check
+   - **Layer 5**: Comprehensive PVM-in-PVM tests (all suites) - Very slow, run sparingly
+     - Run with: `bun test layer5/ --test-name-pattern "pvm-in-pvm"`
+     - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): host-call-log (ecalli 100), as-life (timeout), i64-ops (timeout)
 
 ### Documentation Update Policy
 

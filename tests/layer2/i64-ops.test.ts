@@ -14,5 +14,7 @@ const tests = [
 
 defineSuite({
   name: "i64-ops",
+  // i64 operations are very slow in pvm-in-pvm (>300s per test case).
+  skipPvmInPvm: true,
   tests: tests,
 });
