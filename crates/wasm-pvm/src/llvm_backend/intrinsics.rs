@@ -105,6 +105,23 @@ pub fn lower_llvm_intrinsic<'ctx>(
         // Then branch on result to select.
         let is_signed = name.contains("smax") || name.contains("smin");
         let is_max = name.contains("max");
+        let bits = operand_bit_width(instr);
+
+        // For i32 signed comparisons, load_operand zero-extends, so negative
+        // i32 values appear as large positive i64 values. We must sign-extend
+        // before using SetLtS. AddImm32 with value 0 sign-extends in PVM.
+        if is_signed && bits == 32 {
+            e.emit(Instruction::AddImm32 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 0,
+            });
+            e.emit(Instruction::AddImm32 {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 0,
+            });
+        }
 
         // For max: SetLt(a, b) → 1 if a < b → pick b; else pick a
         // For min: SetLt(b, a) → 1 if b < a → pick b; else pick a (which is smaller)
@@ -178,7 +195,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
             emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 16, 8);
             // Byte 3 (bits 24-31) → bits 0-7
             emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 24, 0);
-        } else {
+        } else if bits == 64 {
             // i64: 8 bytes to swap
             for i in 0..8u32 {
                 let src_shift = i * 8;
@@ -193,6 +210,10 @@ pub fn lower_llvm_intrinsic<'ctx>(
                     dst_shift,
                 );
             }
+        } else {
+            return Err(crate::Error::Unsupported(format!(
+                "bswap with unsupported bit width: {bits}"
+            )));
         }
 
         e.store_to_slot(slot, TEMP_RESULT);

@@ -450,7 +450,7 @@ PHINode should have one entry for each predecessor of its parent basic block!
 
 ---
 
-## Entry 4: AS u8 Arithmetic (2026-02-06)
+## Entry 6: AS u8 Arithmetic (2026-02-06)
 
 **Symptom**: AS tests fail with 256-byte difference when values >= 128.
 

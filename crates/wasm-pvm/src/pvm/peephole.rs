@@ -22,12 +22,15 @@ pub fn optimize(
         return;
     }
 
+    // Cache encoded length per instruction to avoid repeated encode() calls.
+    let encoded_lengths: Vec<usize> = instructions.iter().map(|i| i.encode().len()).collect();
+
     // Compute byte offset for each instruction before optimization.
     let mut byte_offsets = Vec::with_capacity(len + 1);
     let mut running = 0usize;
-    for instr in instructions.iter() {
+    for &enc_len in &encoded_lengths {
         byte_offsets.push(running);
-        running += instr.encode().len();
+        running += enc_len;
     }
     // Sentinel: byte offset after the last instruction.
     byte_offsets.push(running);
@@ -90,12 +93,14 @@ pub fn optimize(
     }
     instructions.truncate(write);
 
-    // Recompute byte offsets for the compacted instruction stream.
+    // Recompute byte offsets for the compacted stream using cached lengths.
     let mut new_byte_offsets = Vec::with_capacity(instructions.len() + 1);
     let mut new_running = 0usize;
-    for instr in instructions.iter() {
-        new_byte_offsets.push(new_running);
-        new_running += instr.encode().len();
+    for (old_idx, &kept) in keep.iter().enumerate() {
+        if kept {
+            new_byte_offsets.push(new_running);
+            new_running += encoded_lengths[old_idx];
+        }
     }
     new_byte_offsets.push(new_running);
 
