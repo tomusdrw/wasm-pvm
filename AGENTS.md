@@ -21,10 +21,13 @@ cd tests && bun build.ts                      # REQUIRED before running integrat
 
 # Run integration tests
 # IMPORTANT: Always use `bun run test` NOT `bun test` from the tests/ directory
-cd tests && bun run test                      # Full test suite
+cd tests && bun run test                      # Full test suite (layers 1-5)
 
 # Quick development check (Layer 1 tests only - fastest)
 cd tests && bun test layer1/                  # Quick validation
+
+# PVM-in-PVM tests (layers 4-5)
+cd tests && bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"
 
 # Compile WASM → JAM
 cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o dist/add.jam
@@ -51,10 +54,10 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
    - **Layer 2**: Feature tests (~100 tests)
    - **Layer 3**: Regression/edge cases (~220 tests)
    - **Layer 4**: PVM-in-PVM smoke tests (3 tests) - Quick pvm-in-pvm sanity check
-   - **Layer 5**: Comprehensive PVM-in-PVM tests (all suites) - Runs in CI and pre-push
-     - Run with: `bun test layer5/ --test-name-pattern "pvm-in-pvm"`
+   - **Layer 5**: Comprehensive PVM-in-PVM tests (all compatible suites) - Runs in CI after regular tests pass
+     - Run with: `bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"`
      - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): host-call-log (ecalli 100 unhandled), as-life (timeout), i64-ops (timeout)
-   - **All layers (1-5) run in CI and pre-push hooks by default**
+   - **CI runs**: Layer 1-3 first (integration job), then Layer 4-5 in separate PVM-in-PVM job (only if integration passes)
 
 ### Documentation Update Policy
 
