@@ -16,6 +16,8 @@ export interface SuiteSpec {
   tests: TestSpec[];
   /** Skip pvm-in-pvm variants (e.g. tests using unhandled ecalli host calls). */
   skipPvmInPvm?: boolean;
+  /** Custom timeout in ms for normal (non-pvm-in-pvm) tests. */
+  timeout?: number;
 }
 
 /** Global registry of all defined suites (populated at import time). */
@@ -31,10 +33,14 @@ export function defineSuite(suite: SuiteSpec) {
   const jamFile = path.join(JAM_DIR, `${suite.name}.jam`);
   describe(suite.name, () => {
     for (const t of suite.tests) {
-      test(t.description, () => {
-        const actual = runJam(jamFile, t.args, t.pc);
-        expect(actual).toBe(t.expected);
-      });
+      test(
+        t.description,
+        () => {
+          const actual = runJam(jamFile, t.args, t.pc);
+          expect(actual).toBe(t.expected);
+        },
+        suite.timeout,
+      );
     }
   });
 }
