@@ -186,7 +186,11 @@ pub fn lower_llvm_intrinsic<'ctx>(
             value: 0,
         });
 
-        if bits == 32 {
+        if bits == 16 {
+            // i16: swap 2 bytes
+            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 0, 8);
+            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 8, 0);
+        } else if bits == 32 {
             // Byte 0 (bits 0-7) → bits 24-31
             emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 0, 24);
             // Byte 1 (bits 8-15) → bits 16-23
