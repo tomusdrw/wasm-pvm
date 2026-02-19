@@ -3,7 +3,11 @@
  * Stores intermediate values to memory for inspection.
  */
 
-const DEBUG_HEAP: u32 = 0x30200;  // For debug values
+// Hardcoded address in globals storage area (0x30000+) for debug values.
+// We use a fixed address here (instead of heap.alloc) so debug stores don't
+// interfere with the heap allocator being tested, and so addresses are
+// deterministic for inspection.
+const DEBUG_HEAP: u32 = 0x30200;
 
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;

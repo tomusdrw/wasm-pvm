@@ -6,21 +6,7 @@
 use std::collections::HashMap;
 use wasm_pvm::Opcode;
 use wasm_pvm::test_harness::*;
-use wasm_pvm::{CompileOptions, ImportAction};
-
-fn compile_wat_with_imports(
-    wat: &str,
-    import_map: HashMap<String, ImportAction>,
-) -> wasm_pvm::Result<wasm_pvm::SpiProgram> {
-    let wasm = wat_to_wasm(wat)?;
-    wasm_pvm::compile_with_options(
-        &wasm,
-        &CompileOptions {
-            import_map: Some(import_map),
-            ..CompileOptions::default()
-        },
-    )
-}
+use wasm_pvm::{ImportAction};
 
 #[test]
 fn test_import_with_return_pushes_dummy_value() {

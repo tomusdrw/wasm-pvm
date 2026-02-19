@@ -19,12 +19,12 @@ cargo test                                    # Unit tests (Rust)
 # Build integration test artifacts (WASM + JAM files)
 cd tests && bun build.ts                      # REQUIRED before running integration tests
 
-# Run integration tests (360 tests)
+# Run integration tests
 # IMPORTANT: Always use `bun run test` NOT `bun test` from the tests/ directory
 cd tests && bun run test                      # Full test suite
 
 # Quick development check (Layer 1 tests only - fastest)
-cd tests && bun test layer1/                  # ~50 tests, quick validation
+cd tests && bun test layer1/                  # Quick validation
 
 # Compile WASM → JAM
 cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o dist/add.jam
@@ -44,12 +44,12 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 
 2. **Use `bun run test` NOT `bun test`**: From the `tests/` directory, use `bun run test` which runs `bun build.ts && bun test`. Running `bun test` directly without building will fail because the JAM files won't exist.
 
-3. **Development workflow**: For quick iteration, run Layer 1 tests only (`bun test layer1/`). These ~50 tests cover core functionality and complete in seconds. Run the full suite (`bun run test`) before committing.
+3. **Development workflow**: For quick iteration, run Layer 1 tests only (`bun test layer1/`). These cover core functionality and complete in seconds. Run the full suite (`bun run test`) before committing.
 
 4. **Test organization**:
-   - **Layer 1**: Core/smoke tests (~50 tests) - Run these for quick validation
-   - **Layer 2**: Feature tests (~100 tests)
-   - **Layer 3**: Regression/edge cases (~220 tests)
+   - **Layer 1**: Core/smoke tests - Run these for quick validation
+   - **Layer 2**: Feature tests
+   - **Layer 3**: Regression/edge cases
 
 ### Documentation Update Policy
 

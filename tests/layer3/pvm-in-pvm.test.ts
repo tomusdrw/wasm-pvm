@@ -7,8 +7,13 @@ import { JAM_DIR, PROJECT_ROOT, ANAN_AS_CLI } from "../helpers/paths";
 /**
  * PVM-in-PVM tests (Issue #23).
  *
- * Runs inner JAM programs through the anan-as PVM interpreter that is itself
- * compiled to PVM bytecode. The pipeline is:
+ * NOTE: These tests cannot use defineSuite() because they run a different
+ * execution pipeline — inner JAM programs are executed through the anan-as PVM
+ * interpreter (itself compiled to PVM). This requires custom arg encoding
+ * (gas + pc + program + inner_args) and multi-field result parsing (status,
+ * exitCode, gasLeft, pc, resultBytes), which defineSuite() does not support.
+ *
+ * Pipeline:
  *   inner.wat → inner.jam  (compiled by wasm-pvm)
  *   compiler.wasm → compiler.jam  (anan-as interpreter compiled to PVM)
  *   compiler.jam receives: gas + pc + program_len + inner_args_len + program + inner_args

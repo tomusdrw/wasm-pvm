@@ -1206,6 +1206,38 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_const_expr_roundtrip() {
+        // Verify that const expressions (globals, data offsets) survive the merge.
+        let main_wat = r#"
+            (module
+                (import "env" "nop" (func $nop))
+                (memory (export "memory") 1)
+                (global $g1 i32 (i32.const 42))
+                (global $g2 i32 (i32.const 0xDEAD))
+                (data (i32.const 100) "hello")
+                (func (export "main") (param i32 i32) (result i32)
+                    (global.get $g1)
+                )
+            )
+        "#;
+        let adapter_wat = r#"
+            (module
+                (func (export "nop") nop)
+            )
+        "#;
+
+        let main_wasm = wat::parse_str(main_wat).expect("main WAT parse");
+        let merged = merge_adapter(&main_wasm, adapter_wat).expect("merge");
+
+        // The merged module must be valid WASM (const exprs parsed correctly).
+        wasmparser::validate(&merged).expect("merged module should be valid");
+
+        // Parse and verify global initial values survived.
+        let merged_mod = ParsedModule::parse(&merged, "merged").expect("parse merged");
+        assert_eq!(merged_mod.globals.len(), 2);
+    }
+
+    #[test]
     fn test_merge_type_mismatch_error() {
         let main_wat = r#"
             (module

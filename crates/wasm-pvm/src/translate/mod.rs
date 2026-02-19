@@ -163,7 +163,7 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         data_segment_offsets,
         data_segment_lengths,
         data_segment_length_addrs,
-        import_map: options.import_map.clone(),
+        wasm_import_map: options.import_map.clone(),
     };
 
     // Phase 3: LLVM IR → PVM bytecode for each function

@@ -45,8 +45,8 @@ pub struct LoweringContext {
     /// Map from data segment index to PVM address storing the effective length at runtime.
     /// Used by `memory.init` for bounds checking and by `data.drop` to zero the length.
     pub data_segment_length_addrs: HashMap<u32, i32>,
-    /// User-provided mapping from import names to actions (trap, nop).
-    pub import_map: Option<HashMap<String, crate::translate::ImportAction>>,
+    /// User-provided mapping from WASM import names to actions (trap, nop).
+    pub wasm_import_map: Option<HashMap<String, crate::translate::ImportAction>>,
 }
 
 /// Result of lowering one LLVM function to PVM instructions.

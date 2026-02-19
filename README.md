@@ -277,11 +277,11 @@ cargo clippy -- -D warnings
 # IMPORTANT: Build test artifacts first!
 cd tests && bun build.ts
 
-# Run full integration test suite (370+ tests)
+# Run full integration test suite
 # Use `bun run test` (builds then tests), NOT `bun test` (tests only)
 cd tests && bun run test
 
-# Quick development check - Layer 1 tests only (~50 tests, fast)
+# Quick development check - Layer 1 tests only (fast)
 cd tests && bun test layer1/
 
 # Test a single example
@@ -293,9 +293,9 @@ cd tests && bun utils/run-jam.ts /tmp/test.jam --args=05000000
 
 The test suite is organized into three layers:
 
-- **Layer 1** (`layer1/`): Core/smoke tests (~50 tests) - Fast, run these during development
-- **Layer 2** (`layer2/`): Feature tests (~100 tests) - Extended functionality
-- **Layer 3** (`layer3/`): Regression/edge cases (~220 tests) - Bug fixes and edge cases
+- **Layer 1** (`layer1/`): Core/smoke tests - Fast, run these during development
+- **Layer 2** (`layer2/`): Feature tests - Extended functionality
+- **Layer 3** (`layer3/`): Regression/edge cases - Bug fixes and edge cases
 
 **Development workflow**:
 1. Make your changes to the Rust code

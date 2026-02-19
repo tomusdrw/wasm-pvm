@@ -70,12 +70,18 @@ function stripMetadata(buf: Buffer): Buffer {
     metadataLen = firstByte;
     offset = 1;
   } else {
+    // Custom varint (PolkaVM/Gray Paper format, NOT LEB128):
+    // Leading 1-bits in the first byte indicate the number of extra bytes.
+    // Remaining bits of the first byte are the high part of the value.
+    // Extra bytes are stored in little-endian order.
     const leadingOnes = Math.clz32(~(firstByte << 24));
     const mask = (1 << (8 - leadingOnes)) - 1;
-    metadataLen = firstByte & mask;
+    const high = firstByte & mask;
+    let low = 0;
     for (let i = 1; i <= leadingOnes; i++) {
-      metadataLen = metadataLen * 256 + buf[i];
+      low += buf[i] * (1 << (8 * (i - 1)));
     }
+    metadataLen = high * (1 << (8 * leadingOnes)) + low;
     offset = 1 + leadingOnes;
   }
   return buf.subarray(offset + metadataLen);

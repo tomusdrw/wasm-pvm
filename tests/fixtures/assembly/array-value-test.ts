@@ -6,6 +6,9 @@
 export let result_ptr: i32 = 0;
 export let result_len: i32 = 0;
 
+// Allocate once at module scope to avoid leaking on repeated main() calls.
+const RESULT_HEAP = heap.alloc(256);
+
 function createArray(len: i32): u8[] {
   const r = new Array<u8>(len);
   for (let i: i32 = 0; i < len; i++) {
@@ -15,7 +18,6 @@ function createArray(len: i32): u8[] {
 }
 
 export function main(args_ptr: i32, args_len: i32): void {
-  const RESULT_HEAP = heap.alloc(256);
   const step: i32 = args_len > 0 ? load<u8>(args_ptr) : 0;
 
   const arr1 = createArray(10);
