@@ -89,4 +89,4 @@ jobs:
         run: cd tests && bun install
 
       - name: Run integration tests (layers 1-4 in parallel)
-        run: cd tests && bun run test -- layer1/ layer2/ layer3/ layer4/
+        run: cd tests && bun run test
