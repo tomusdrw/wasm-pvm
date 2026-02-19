@@ -421,7 +421,24 @@ PHINode should have one entry for each predecessor of its parent basic block!
 
 ---
 
-## Entry 4: Local Variable Zero-Init (2026-02-06)
+## Entry 4: LLVM Optimization Passes and New Intrinsics (2026-02-19)
+
+**Change**: Expanded LLVM pass pipeline from `mem2reg` to `mem2reg,instcombine,simplifycfg,gvn,simplifycfg,dce`.
+
+**New intrinsics introduced by optimizer**: LLVM's `instcombine` pass generates intrinsics not present in the original WASM→LLVM IR translation:
+- `llvm.assume` — optimizer hint, safe to ignore (no-op)
+- `llvm.smax.i32/i64`, `llvm.smin.i32/i64`, `llvm.umax.i32/i64`, `llvm.umin.i32/i64` — integer min/max, lowered as compare + branch-select
+- `llvm.bswap.i32/i64` — byte swap, lowered as shift-mask-OR sequence (4 iterations for i32, 8 for i64)
+
+**Impact on unit tests**: Some tests checked for specific opcodes (e.g., `Add64`, `Or`) in compiled output. With `instcombine` and `gvn`, LLVM constant-folds and simplifies algebraically-reducible expressions (e.g., `(a+b)-b → a`, `(a&b)^(a|b) → a^b`). Tests were updated to use non-reducible expressions.
+
+**Peephole optimizer**: A post-codegen pass (`pvm/peephole.rs`) runs before fixup resolution to remove redundant `Fallthrough` instructions. Must update both instruction index fixups and label byte offsets.
+
+**Key learning**: When adding LLVM optimization passes, be prepared for the optimizer to introduce LLVM intrinsics that weren't in the original IR. Always test with the full integration suite, not just unit tests.
+
+---
+
+## Entry 5: Local Variable Zero-Init (2026-02-06)
 
 **Symptom**: Loop counters start with garbage values, loops don't execute.
 

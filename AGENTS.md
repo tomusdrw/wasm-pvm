@@ -80,7 +80,7 @@ crates/
 │       │   ├── memory.rs        # Load/store, memory intrinsics (~340 lines)
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
 │       │   ├── calls.rs         # Direct/indirect calls, import stubs (~190 lines)
-│       │   └── intrinsics.rs    # PVM + LLVM intrinsic lowering (~170 lines)
+│       │   └── intrinsics.rs    # PVM + LLVM intrinsic lowering (~280 lines)
 │       ├── translate/     # Compilation orchestration
 │       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
 │       │   ├── adapter_merge.rs (WAT adapter merge into WASM before compilation)
@@ -89,7 +89,8 @@ crates/
 │       ├── pvm/           # PVM instruction definitions
 │       │   ├── instruction.rs  # Instruction enum + encoding
 │       │   ├── opcode.rs       # Opcode constants
-│       │   └── blob.rs         # Program blob format
+│       │   ├── blob.rs         # Program blob format
+│       │   └── peephole.rs     # Post-codegen peephole optimizer
 │       ├── spi.rs         # JAM/SPI format encoder
 │       └── error.rs       # Error types (thiserror)
 └── wasm-pvm-cli/          # CLI binary
@@ -104,7 +105,7 @@ crates/
 1. **Adapter merge** (optional): `adapter_merge.rs` merges a WAT adapter module into the main WASM, replacing matching imports with adapter function bodies. Uses `wasm-encoder` to build merged binary.
 2. **WASM parsing**: `wasm_module.rs` parses all WASM sections into `WasmModule` struct
 3. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell
-4. **mem2reg pass**: LLVM's `mem2reg` promotes alloca'd locals to SSA registers
+4. **LLVM optimization passes**: `mem2reg` (SSA promotion), `instcombine` (strength reduction), `simplifycfg` (block merging), `gvn` (redundancy elimination), `dce` (dead code removal)
 5. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
    - `emitter.rs`: Core PvmEmitter with value slot management
    - `alu.rs`: Arithmetic, logic, comparisons, conversions
@@ -160,6 +161,7 @@ crates/
 | Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` | PVM + LLVM intrinsic lowering |
 | Modify emitter core | `llvm_backend/emitter.rs` | PvmEmitter struct, value management |
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
+| Modify peephole optimizer | `pvm/peephole.rs` | Add patterns, update fixup remapping |
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
 | Fix compilation pipeline | `translate/mod.rs` | `compile()` |
 | Fix adapter merge | `translate/adapter_merge.rs` | WAT adapter → merged WASM binary |

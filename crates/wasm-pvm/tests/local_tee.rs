@@ -80,17 +80,18 @@ fn test_local_tee_spilled_local_deep_stack() {
 /// This tests the semantic correctness: tee writes to local AND leaves value on stack.
 #[test]
 fn test_local_tee_preserves_stack_value() {
+    // Use a parameter so LLVM can't constant-fold the add away.
     let program = compile_wat(
         r#"
         (module
-            (func (export "main") (result i32)
+            (func (export "main") (param i32) (result i32)
                 (local i32)
-                i32.const 77
-                local.tee 0
-                ;; Stack still has 77, and local 0 is 77
                 local.get 0
+                local.tee 1
+                ;; Stack still has param, and local 1 is param
+                local.get 1
                 i32.add
-                ;; Result should be 154
+                ;; Result should be param * 2
             )
         )
         "#,

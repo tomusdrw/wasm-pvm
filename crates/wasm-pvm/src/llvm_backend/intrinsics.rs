@@ -68,7 +68,7 @@ pub fn lower_pvm_intrinsic<'ctx>(
     }
 }
 
-/// Lower an LLVM intrinsic call (ctlz, cttz, ctpop, fshl, fshr).
+/// Lower an LLVM intrinsic call (ctlz, cttz, ctpop, fshl, fshr, assume).
 pub fn lower_llvm_intrinsic<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -76,7 +76,113 @@ pub fn lower_llvm_intrinsic<'ctx>(
 ) -> Result<()> {
     use crate::abi::{SCRATCH1, SCRATCH2};
 
+    // llvm.assume is a no-op hint inserted by instcombine; safe to ignore.
+    if name.contains("assume") {
+        return Ok(());
+    }
+
     let slot = result_slot(e, instr)?;
+
+    // llvm.smax / llvm.smin / llvm.umax / llvm.umin — integer min/max intrinsics.
+    // Lowered as: compare + conditional select via branch.
+    if name.contains("smax") || name.contains("smin") || name.contains("umax") || name.contains("umin") {
+        let a = get_operand(instr, 0)?;
+        let b = get_operand(instr, 1)?;
+        e.load_operand(a, TEMP1)?;
+        e.load_operand(b, TEMP2)?;
+
+        // Determine which comparison to use and which operand is the "winner".
+        // For smax: result = a >= b ? a : b → if a < b (signed), result = b, else a
+        // For smin: result = a <= b ? a : b → if b < a (signed), result = b, else a
+        // For umax: result = a >= b ? a : b → if a < b (unsigned), result = b, else a
+        // For umin: result = a <= b ? a : b → if b < a (unsigned), result = b, else a
+        //
+        // Strategy: SetLt(S/U) dst, src1, src2 → dst = (src1 < src2) ? 1 : 0
+        // Then branch on result to select.
+        let is_signed = name.contains("smax") || name.contains("smin");
+        let is_max = name.contains("max");
+
+        // For max: SetLt(a, b) → 1 if a < b → pick b; else pick a
+        // For min: SetLt(b, a) → 1 if b < a → pick b; else pick a (which is smaller)
+        // Wait, for min: we want the smaller one. SetLt(a, b) → 1 if a < b → pick a; else pick b
+        // Let's use: SetLt(a, b) and then:
+        //   max: if a < b → result = b, else result = a
+        //   min: if a < b → result = a, else result = b
+
+        if is_signed {
+            e.emit(Instruction::SetLtS {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        } else {
+            e.emit(Instruction::SetLtU {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+        }
+
+        // TEMP_RESULT = 1 if a < b, 0 otherwise
+        let done_label = e.alloc_label();
+        let pick_second_label = e.alloc_label();
+
+        // Branch if a < b (TEMP_RESULT != 0)
+        e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, pick_second_label);
+
+        if is_max {
+            // a >= b: pick a
+            e.store_to_slot(slot, TEMP1);
+        } else {
+            // a >= b: pick b (for min)
+            e.store_to_slot(slot, TEMP2);
+        }
+        e.emit_jump_to_label(done_label);
+
+        e.define_label(pick_second_label);
+        if is_max {
+            // a < b: pick b
+            e.store_to_slot(slot, TEMP2);
+        } else {
+            // a < b: pick a (for min)
+            e.store_to_slot(slot, TEMP1);
+        }
+
+        e.define_label(done_label);
+        return Ok(());
+    }
+
+    // llvm.bswap — byte swap (reverse byte order).
+    if name.contains("bswap") {
+        let val = get_operand(instr, 0)?;
+        e.load_operand(val, TEMP1)?;
+        let bits = operand_bit_width(instr);
+
+        // We'll build the result byte-by-byte using shifts and masks.
+        // Use TEMP_RESULT as accumulator, TEMP2 as scratch for each byte.
+        e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: 0 });
+
+        if bits == 32 {
+            // Byte 0 (bits 0-7) → bits 24-31
+            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 0, 24);
+            // Byte 1 (bits 8-15) → bits 16-23
+            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 8, 16);
+            // Byte 2 (bits 16-23) → bits 8-15
+            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 16, 8);
+            // Byte 3 (bits 24-31) → bits 0-7
+            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 24, 0);
+        } else {
+            // i64: 8 bytes to swap
+            for i in 0..8u32 {
+                let src_shift = i * 8;
+                let dst_shift = (7 - i) * 8;
+                emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, src_shift, dst_shift);
+            }
+        }
+
+        e.store_to_slot(slot, TEMP_RESULT);
+        return Ok(());
+    }
 
     if name.contains("ctlz") {
         let val = get_operand(instr, 0)?;
@@ -244,4 +350,35 @@ pub fn lower_llvm_intrinsic<'ctx>(
     Err(crate::Error::Unsupported(format!(
         "unsupported LLVM intrinsic: {name}"
     )))
+}
+
+/// Extract a byte at `src_shift` bit position from `src_reg`, shift it to `dst_shift`,
+/// and OR it into `acc_reg`. Uses `tmp_reg` and `mask_reg` as scratch.
+fn emit_extract_and_place_byte(
+    e: &mut PvmEmitter<'_>,
+    src_reg: u8,
+    tmp_reg: u8,
+    mask_reg: u8,
+    acc_reg: u8,
+    src_shift: u32,
+    dst_shift: u32,
+) {
+    // tmp = src >> src_shift
+    if src_shift > 0 {
+        e.emit(Instruction::LoadImm { reg: mask_reg, value: src_shift as i32 });
+        e.emit(Instruction::ShloR64 { dst: tmp_reg, src1: src_reg, src2: mask_reg });
+    } else {
+        // Just copy
+        e.emit(Instruction::AddImm64 { dst: tmp_reg, src: src_reg, value: 0 });
+    }
+    // tmp &= 0xFF
+    e.emit(Instruction::LoadImm { reg: mask_reg, value: 0xFF });
+    e.emit(Instruction::And { dst: tmp_reg, src1: tmp_reg, src2: mask_reg });
+    // tmp <<= dst_shift
+    if dst_shift > 0 {
+        e.emit(Instruction::LoadImm { reg: mask_reg, value: dst_shift as i32 });
+        e.emit(Instruction::ShloL64 { dst: tmp_reg, src1: tmp_reg, src2: mask_reg });
+    }
+    // acc |= tmp
+    e.emit(Instruction::Or { dst: acc_reg, src1: acc_reg, src2: tmp_reg });
 }

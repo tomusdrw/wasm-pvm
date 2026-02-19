@@ -71,6 +71,15 @@ pub fn lower_function(
         }
     }
 
+    // Peephole optimization: remove redundant instructions before fixup resolution.
+    crate::pvm::peephole::optimize(
+        &mut emitter.instructions,
+        &mut emitter.fixups,
+        &mut emitter.call_fixups,
+        &mut emitter.indirect_call_fixups,
+        &mut emitter.labels,
+    );
+
     emitter.resolve_fixups()?;
 
     Ok(LlvmFunctionTranslation {
