@@ -218,5 +218,5 @@ elif [ -n "$BASE_BRANCH" ] || [ -n "$CURRENT_BRANCH" ]; then
   echo "Error: must specify both --base and --current, or neither"
   exit 1
 else
-  run_benchmarks "Current Build"
+  build_and_benchmark "Current Build"
 fi
