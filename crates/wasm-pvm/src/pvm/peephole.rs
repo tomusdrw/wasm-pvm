@@ -12,9 +12,9 @@ use crate::llvm_backend::{LlvmCallFixup, LlvmIndirectCallFixup};
 /// and remaps all fixup indices and label byte offsets accordingly.
 pub fn optimize(
     instructions: &mut Vec<Instruction>,
-    fixups: &mut Vec<(usize, usize)>,
-    call_fixups: &mut Vec<LlvmCallFixup>,
-    indirect_call_fixups: &mut Vec<LlvmIndirectCallFixup>,
+    fixups: &mut [(usize, usize)],
+    call_fixups: &mut [LlvmCallFixup],
+    indirect_call_fixups: &mut [LlvmIndirectCallFixup],
     labels: &mut [Option<usize>],
 ) {
     let len = instructions.len();
