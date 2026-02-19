@@ -1,8 +1,7 @@
 import path from "node:path";
 import { describe, test, expect } from "bun:test";
 import { JAM_DIR } from "../helpers/paths";
-import { runCompilerJam, runJamPvmInPvm } from "../helpers/pvm-in-pvm";
-import fs from "node:fs";
+import { buildCompilerArgs, runCompilerJam, runJamPvmInPvm } from "../helpers/pvm-in-pvm";
 
 /**
  * PVM-in-PVM smoke tests (layer 4).
@@ -12,30 +11,6 @@ import fs from "node:fs";
  */
 
 const PVM_IN_PVM_TIMEOUT = 180_000;
-
-function buildCompilerArgs(
-  innerJamPath: string,
-  innerArgsHex: string = "",
-  gas: bigint = BigInt(100_000_000),
-  pc: number = 0,
-): string {
-  const programBytes = fs.readFileSync(innerJamPath);
-  const innerArgs = innerArgsHex
-    ? Buffer.from(innerArgsHex, "hex")
-    : Buffer.alloc(0);
-
-  const header = Buffer.alloc(20);
-  let offset = 0;
-  header.writeBigUInt64LE(gas, offset);
-  offset += 8;
-  header.writeUInt32LE(pc, offset);
-  offset += 4;
-  header.writeUInt32LE(programBytes.length, offset);
-  offset += 4;
-  header.writeUInt32LE(innerArgs.length, offset);
-
-  return Buffer.concat([header, programBytes, innerArgs]).toString("hex");
-}
 
 describe("pvm-in-pvm smoke tests", () => {
   test("trap.jam -> inner program panics", () => {

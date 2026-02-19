@@ -26,7 +26,7 @@ export interface InnerResult {
  * The inner program is passed as the full SPI blob (including metadata prefix).
  * The anan-as interpreter handles metadata stripping internally.
  */
-function buildCompilerArgs(
+export function buildCompilerArgs(
   innerJamPath: string,
   innerArgsHex: string = "",
   gas: bigint = INNER_GAS,
