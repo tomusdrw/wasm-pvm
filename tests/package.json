@@ -4,13 +4,13 @@
   "type": "module",
   "scripts": {
     "build": "bun build.ts",
-    "test": "bun run build && bun run test:ci",
-    "test:ci": "bun test --concurrent layer1/ layer2/ layer3/ layer4/ layer5/",
+    "test": "bun run build && bun run test:light",
+    "test:light": "bun test --concurrent layer1/ layer2 layer3/",
     "test:layer1": "bun run build && bun test layer1/",
     "test:layer2": "bun run build && bun test layer2/",
     "test:layer3": "bun run build && bun test layer3/",
     "test:layer4": "bun run build && bun test layer4/",
-    "test:layer5": "bun run build && bun test --concurrent layer5/"
+    "test:layer5": "bun run build && bun test layer5/"
   },
   "devDependencies": {
     "@types/bun": "^1.3.8",
