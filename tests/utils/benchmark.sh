@@ -78,7 +78,7 @@ benchmark_one() {
   fi
 
   # Sort and pick median (middle element)
-  IFS=$'\n' sorted=($(sort -n <<<"${times[*]}")); unset IFS
+  IFS=$'\n' read -r -d '' -a sorted < <(printf '%s\n' "${times[@]}" | sort -n; printf '\0') || true
   local mid=$(( ${#sorted[@]} / 2 ))
   time_ms="${sorted[$mid]}"
 
