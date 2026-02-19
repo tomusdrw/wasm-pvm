@@ -34,8 +34,20 @@ pub enum Instruction {
     BranchNeImm { reg: u8, value: i32, offset: i32 },
     BranchEqImm { reg: u8, value: i32, offset: i32 },
     BranchGeSImm { reg: u8, value: i32, offset: i32 },
+    BranchLtUImm { reg: u8, value: i32, offset: i32 },
+    BranchLeUImm { reg: u8, value: i32, offset: i32 },
+    BranchGeUImm { reg: u8, value: i32, offset: i32 },
+    BranchGtUImm { reg: u8, value: i32, offset: i32 },
+    BranchLtSImm { reg: u8, value: i32, offset: i32 },
+    BranchLeSImm { reg: u8, value: i32, offset: i32 },
+    BranchGtSImm { reg: u8, value: i32, offset: i32 },
+    MoveReg { dst: u8, src: u8 },
+    BranchEq { reg1: u8, reg2: u8, offset: i32 },
+    BranchNe { reg1: u8, reg2: u8, offset: i32 },
     BranchGeU { reg1: u8, reg2: u8, offset: i32 },
     BranchLtU { reg1: u8, reg2: u8, offset: i32 },
+    BranchLtS { reg1: u8, reg2: u8, offset: i32 },
+    BranchGeS { reg1: u8, reg2: u8, offset: i32 },
     SetLtU { dst: u8, src1: u8, src2: u8 },
     SetLtS { dst: u8, src1: u8, src2: u8 },
     And { dst: u8, src1: u8, src2: u8 },
@@ -190,11 +202,45 @@ impl Instruction {
             Self::BranchGeSImm { reg, value, offset } => {
                 encode_one_reg_one_imm_one_off(Opcode::BranchGeSImm, *reg, *value, *offset)
             }
+            Self::BranchLtUImm { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::BranchLtUImm, *reg, *value, *offset)
+            }
+            Self::BranchLeUImm { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::BranchLeUImm, *reg, *value, *offset)
+            }
+            Self::BranchGeUImm { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::BranchGeUImm, *reg, *value, *offset)
+            }
+            Self::BranchGtUImm { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::BranchGtUImm, *reg, *value, *offset)
+            }
+            Self::BranchLtSImm { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::BranchLtSImm, *reg, *value, *offset)
+            }
+            Self::BranchLeSImm { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::BranchLeSImm, *reg, *value, *offset)
+            }
+            Self::BranchGtSImm { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::BranchGtSImm, *reg, *value, *offset)
+            }
+            Self::MoveReg { dst, src } => encode_two_reg(Opcode::MoveReg, *dst, *src),
+            Self::BranchEq { reg1, reg2, offset } => {
+                encode_two_reg_one_off(Opcode::BranchEq, *reg1, *reg2, *offset)
+            }
+            Self::BranchNe { reg1, reg2, offset } => {
+                encode_two_reg_one_off(Opcode::BranchNe, *reg1, *reg2, *offset)
+            }
             Self::BranchGeU { reg1, reg2, offset } => {
                 encode_two_reg_one_off(Opcode::BranchGeU, *reg1, *reg2, *offset)
             }
             Self::BranchLtU { reg1, reg2, offset } => {
                 encode_two_reg_one_off(Opcode::BranchLtU, *reg1, *reg2, *offset)
+            }
+            Self::BranchLtS { reg1, reg2, offset } => {
+                encode_two_reg_one_off(Opcode::BranchLtS, *reg1, *reg2, *offset)
+            }
+            Self::BranchGeS { reg1, reg2, offset } => {
+                encode_two_reg_one_off(Opcode::BranchGeS, *reg1, *reg2, *offset)
             }
             Self::SetLtUImm { dst, src, value } => {
                 let mut bytes = vec![Opcode::SetLtUImm as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
@@ -332,7 +378,8 @@ impl Instruction {
             | Self::LoadIndU32 { dst, .. }
             | Self::LoadIndU64 { dst, .. }
             | Self::AddImm32 { dst, .. }
-            | Self::AddImm64 { dst, .. } => Some(*dst),
+            | Self::AddImm64 { dst, .. }
+            | Self::MoveReg { dst, .. } => Some(*dst),
             Self::LoadImm { reg, .. } | Self::LoadImm64 { reg, .. } => Some(*reg),
             // No destination register:
             Self::Trap
@@ -342,8 +389,19 @@ impl Instruction {
             | Self::BranchNeImm { .. }
             | Self::BranchEqImm { .. }
             | Self::BranchGeSImm { .. }
+            | Self::BranchLtUImm { .. }
+            | Self::BranchLeUImm { .. }
+            | Self::BranchGeUImm { .. }
+            | Self::BranchGtUImm { .. }
+            | Self::BranchLtSImm { .. }
+            | Self::BranchLeSImm { .. }
+            | Self::BranchGtSImm { .. }
+            | Self::BranchEq { .. }
+            | Self::BranchNe { .. }
             | Self::BranchGeU { .. }
             | Self::BranchLtU { .. }
+            | Self::BranchLtS { .. }
+            | Self::BranchGeS { .. }
             | Self::StoreIndU8 { .. }
             | Self::StoreIndU16 { .. }
             | Self::StoreIndU32 { .. }
@@ -363,8 +421,19 @@ impl Instruction {
                 | Self::BranchNeImm { .. }
                 | Self::BranchEqImm { .. }
                 | Self::BranchGeSImm { .. }
+                | Self::BranchLtUImm { .. }
+                | Self::BranchLeUImm { .. }
+                | Self::BranchGeUImm { .. }
+                | Self::BranchGtUImm { .. }
+                | Self::BranchLtSImm { .. }
+                | Self::BranchLeSImm { .. }
+                | Self::BranchGtSImm { .. }
+                | Self::BranchEq { .. }
+                | Self::BranchNe { .. }
                 | Self::BranchGeU { .. }
                 | Self::BranchLtU { .. }
+                | Self::BranchLtS { .. }
+                | Self::BranchGeS { .. }
         )
     }
 }

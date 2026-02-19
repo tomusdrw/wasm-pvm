@@ -6,7 +6,7 @@
 
 | File | Lines | Role |
 |------|-------|------|
-| `instruction.rs` | 332 | Instruction enum, encoding logic |
+| `instruction.rs` | ~530 | Instruction enum, encoding logic |
 | `opcode.rs` | 114 | Opcode constants (84 opcodes) |
 | `blob.rs` | 143 | Program blob format with jump table |
 | `peephole.rs` | ~210 | Post-codegen peephole optimizer (removes redundant Fallthroughs) |
@@ -18,7 +18,10 @@
 pub enum Instruction {
     Add32 { dst: u8, src1: u8, src2: u8 },
     LoadIndU32 { dst: u8, base: u8, offset: i32 },
-    // ... 64 variants total
+    MoveReg { dst: u8, src: u8 },
+    BranchLtUImm { reg: u8, value: i32, offset: i32 },
+    BranchEq { reg1: u8, reg2: u8, offset: i32 },
+    // ... 76 variants total
 }
 ```
 

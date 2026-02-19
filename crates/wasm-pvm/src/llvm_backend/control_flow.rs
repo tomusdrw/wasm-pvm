@@ -11,6 +11,7 @@
     clippy::cast_sign_loss
 )]
 
+use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{BasicValueEnum, InstructionOpcode, InstructionValue, PhiValue};
 
@@ -58,16 +59,29 @@ pub fn lower_br<'ctx>(
         let then_has_phis = has_phi_from(current_bb, then_bb);
         let else_has_phis = has_phi_from(current_bb, else_bb);
 
-        e.load_operand(cond, TEMP1)?;
+        // Check for fused ICmp: emit a direct comparison+branch instead of
+        // loading a boolean result and testing against 0.
+        let fused = e.pending_fused_icmp.take();
 
         if !then_has_phis && !else_has_phis {
-            // No phi copies needed — simple branch.
-            e.emit_branch_ne_imm_to_label(TEMP1, 0, then_label);
-            e.emit_jump_to_label(else_label);
+            if let Some(fused) = fused {
+                // Emit fused comparison+branch to then_label, fallthrough to else.
+                emit_fused_branch(e, &fused, then_label)?;
+                e.emit_jump_to_label(else_label);
+            } else {
+                e.load_operand(cond, TEMP1)?;
+                e.emit_branch_ne_imm_to_label(TEMP1, 0, then_label);
+                e.emit_jump_to_label(else_label);
+            }
         } else {
             // Need per-edge phi copies. Create trampolines.
             let then_trampoline = e.alloc_label();
-            e.emit_branch_ne_imm_to_label(TEMP1, 0, then_trampoline);
+            if let Some(fused) = fused {
+                emit_fused_branch(e, &fused, then_trampoline)?;
+            } else {
+                e.load_operand(cond, TEMP1)?;
+                e.emit_branch_ne_imm_to_label(TEMP1, 0, then_trampoline);
+            }
 
             // Else path: phi copies + jump to else.
             emit_phi_copies(e, current_bb, else_bb)?;
@@ -279,6 +293,71 @@ fn emit_epilogue(e: &mut PvmEmitter<'_>, is_main: bool) {
             offset: 0,
         });
     }
+}
+
+/// Emit a fused comparison+branch for a deferred `ICmp`.
+///
+/// Loads the `ICmp` operands into TEMP1/TEMP2 and emits a single PVM branch
+/// instruction to `true_label` if the predicate is satisfied.
+/// Falls through otherwise.
+fn emit_fused_branch<'a>(
+    e: &mut PvmEmitter<'a>,
+    fused: &super::emitter::FusedIcmp<'a>,
+    true_label: usize,
+) -> Result<()> {
+    e.load_operand(fused.lhs, TEMP1)?;
+    e.load_operand(fused.rhs, TEMP2)?;
+
+    // PVM convention: Branch_op { reg1: a, reg2: b } branches if b op a.
+    // So to test "TEMP1 op TEMP2" we pass reg1=TEMP2, reg2=TEMP1.
+    match fused.predicate {
+        // EQ: branch if TEMP1 == TEMP2 (symmetric)
+        IntPredicate::EQ => {
+            e.emit_branch_eq_to_label(TEMP1, TEMP2, true_label);
+        }
+        // NE: branch if TEMP1 != TEMP2 (symmetric)
+        IntPredicate::NE => {
+            e.emit_branch_ne_to_label(TEMP1, TEMP2, true_label);
+        }
+        // ULT: branch if lhs < rhs → TEMP1 < TEMP2
+        // Need: reg2 < reg1, so reg2=TEMP1, reg1=TEMP2
+        IntPredicate::ULT => {
+            e.emit_branch_lt_u_to_label(TEMP2, TEMP1, true_label);
+        }
+        // UGE: branch if lhs >= rhs → TEMP1 >= TEMP2
+        // Need: reg2 >= reg1, so reg2=TEMP1, reg1=TEMP2
+        IntPredicate::UGE => {
+            e.emit_branch_ge_u_to_label(TEMP2, TEMP1, true_label);
+        }
+        // UGT: branch if lhs > rhs → TEMP2 < TEMP1
+        // Need: reg2 < reg1, so reg2=TEMP2, reg1=TEMP1
+        IntPredicate::UGT => {
+            e.emit_branch_lt_u_to_label(TEMP1, TEMP2, true_label);
+        }
+        // ULE: branch if lhs <= rhs → TEMP2 >= TEMP1
+        // Need: reg2 >= reg1, so reg2=TEMP2, reg1=TEMP1
+        IntPredicate::ULE => {
+            e.emit_branch_ge_u_to_label(TEMP1, TEMP2, true_label);
+        }
+        // SLT: branch if lhs < rhs (signed) → TEMP1 < TEMP2
+        IntPredicate::SLT => {
+            e.emit_branch_lt_s_to_label(TEMP2, TEMP1, true_label);
+        }
+        // SGE: branch if lhs >= rhs (signed) → TEMP1 >= TEMP2
+        IntPredicate::SGE => {
+            e.emit_branch_ge_s_to_label(TEMP2, TEMP1, true_label);
+        }
+        // SGT: branch if lhs > rhs (signed) → TEMP2 < TEMP1
+        IntPredicate::SGT => {
+            e.emit_branch_lt_s_to_label(TEMP1, TEMP2, true_label);
+        }
+        // SLE: branch if lhs <= rhs (signed) → TEMP2 >= TEMP1
+        IntPredicate::SLE => {
+            e.emit_branch_ge_s_to_label(TEMP1, TEMP2, true_label);
+        }
+    }
+
+    Ok(())
 }
 
 /// Emit copies for phi nodes in `target_bb` that have incoming values from `current_bb`.
