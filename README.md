@@ -142,6 +142,7 @@ console.log = nop
 | `nop` | Do nothing and return zero |
 
 **Usage**:
+
 ```bash
 wasm-pvm compile input.wasm -o output.jam --imports my-imports.txt
 ```
@@ -195,6 +196,7 @@ Use adapters when you need to:
 | `pvm_ptr` | `(i64) → i64` | Converts a WASM address to a PVM address (adds `wasm_memory_base`) |
 
 **Usage**:
+
 ```bash
 wasm-pvm compile input.wasm -o output.jam --adapter my-adapter.wat
 ```

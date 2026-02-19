@@ -580,7 +580,7 @@ fn encode_type_ref(tr: &wasmparser::TypeRef) -> wasm_encoder::EntityType {
         wasmparser::TypeRef::Memory(m) => wasm_encoder::EntityType::Memory(encode_memory_type(m)),
         wasmparser::TypeRef::Global(g) => wasm_encoder::EntityType::Global(encode_global_type(*g)),
         wasmparser::TypeRef::Tag(_) => {
-            // Tags aren't used in our WASM subset.
+            tracing::warn!("unsupported Tag import in adapter merge, falling back to Function(0)");
             wasm_encoder::EntityType::Function(0)
         }
     }
@@ -1068,7 +1068,13 @@ fn encode_heap_type(hty: wasmparser::HeapType) -> wasm_encoder::HeapType {
             },
         },
         wasmparser::HeapType::Concrete(idx) => {
-            wasm_encoder::HeapType::Concrete(idx.as_module_index().unwrap_or(0))
+            let module_idx = idx.as_module_index().unwrap_or_else(|| {
+                tracing::warn!(
+                    "concrete heap type without module index in adapter merge, falling back to 0"
+                );
+                0
+            });
+            wasm_encoder::HeapType::Concrete(module_idx)
         }
     }
 }
