@@ -14,6 +14,8 @@ export interface TestSpec {
 export interface SuiteSpec {
   name: string;
   tests: TestSpec[];
+  /** Skip pvm-in-pvm variants (e.g. tests using unhandled ecalli host calls). */
+  skipPvmInPvm?: boolean;
 }
 
 /** Global registry of all defined suites (populated at import time). */
@@ -22,6 +24,7 @@ const suiteRegistry: SuiteSpec[] = [];
 /** PVM-in-PVM timeout: these tests are slow (~30-120s each). */
 const PVM_IN_PVM_TIMEOUT = 300_000;
 
+/** Register a suite and create normal (non-pvm-in-pvm) test cases. */
 export function defineSuite(suite: SuiteSpec) {
   suiteRegistry.push(suite);
 
@@ -34,8 +37,13 @@ export function defineSuite(suite: SuiteSpec) {
       });
     }
   });
+}
 
-  // Also register pvm-in-pvm variants
+/** Create pvm-in-pvm test variants for a suite. Used by layer5. */
+export function definePvmInPvmSuite(suite: SuiteSpec) {
+  if (suite.skipPvmInPvm) return;
+
+  const jamFile = path.join(JAM_DIR, `${suite.name}.jam`);
   describe(`pvm-in-pvm: ${suite.name}`, () => {
     for (const t of suite.tests) {
       test(
