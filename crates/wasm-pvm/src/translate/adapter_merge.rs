@@ -627,8 +627,16 @@ fn encode_const_expr(expr: &wasmparser::ConstExpr) -> Result<wasm_encoder::Const
         }
         let end = reader.current_position();
         // Get the raw bytes of this operator from the binary reader.
-        let raw = &expr.get_binary_reader().read_bytes(end).unwrap_or_default();
-        // We need the bytes from start..end
+        let raw = expr
+            .get_binary_reader()
+            .read_bytes(end)
+            .map_err(|e| Error::Internal(format!("const expr byte read error: {e}")))?;
+        if end > raw.len() || start > end {
+            return Err(Error::Internal(format!(
+                "const expr byte range out of bounds: {start}..{end} (len {})",
+                raw.len()
+            )));
+        }
         bytes.extend_from_slice(&raw[start..end]);
     }
     Ok(wasm_encoder::ConstExpr::raw(bytes))
@@ -673,6 +681,12 @@ fn encode_element(
                         if let Some(idx) = eval_const_ref(&expr) {
                             indices.push(func_remap(idx));
                         } else {
+                            // Non-ref.func expressions (e.g., ref.null) get a
+                            // sentinel value that triggers a trap if the slot
+                            // is ever used in call_indirect.
+                            tracing::warn!(
+                                "non-ref.func element expression, using u32::MAX sentinel"
+                            );
                             indices.push(u32::MAX);
                         }
                     }
