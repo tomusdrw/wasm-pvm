@@ -690,13 +690,9 @@ fn encode_element(
                         if let Some(idx) = eval_const_ref(&expr) {
                             indices.push(func_remap(idx));
                         } else {
-                            // Non-ref.func expressions (e.g., ref.null) get a
-                            // sentinel value that triggers a trap if the slot
-                            // is ever used in call_indirect.
-                            tracing::warn!(
-                                "non-ref.func element expression, using u32::MAX sentinel"
-                            );
-                            indices.push(u32::MAX);
+                            return Err(Error::Unsupported(
+                                "element expressions other than ref.func are not supported in merge".into(),
+                            ));
                         }
                     }
                     indices
