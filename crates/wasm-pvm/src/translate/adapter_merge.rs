@@ -187,13 +187,18 @@ impl<'a> ParsedModule<'a> {
                         let rec_group =
                             rec_group.map_err(|e| Error::Internal(format!("{label} type: {e}")))?;
                         for sub_type in rec_group.into_types() {
-                            if let wasmparser::CompositeInnerType::Func(f) =
-                                &sub_type.composite_type.inner
-                            {
-                                types.push(FuncSig {
-                                    params: f.params().to_vec(),
-                                    results: f.results().to_vec(),
-                                });
+                            match &sub_type.composite_type.inner {
+                                wasmparser::CompositeInnerType::Func(f) => {
+                                    types.push(FuncSig {
+                                        params: f.params().to_vec(),
+                                        results: f.results().to_vec(),
+                                    });
+                                }
+                                other => {
+                                    return Err(Error::Unsupported(format!(
+                                        "{label} non-function type in type section: {other:?}"
+                                    )));
+                                }
                             }
                         }
                     }
@@ -552,6 +557,10 @@ fn encode_val_type(vt: wasmparser::ValType) -> wasm_encoder::ValType {
     match vt {
         wasmparser::ValType::I32 => wasm_encoder::ValType::I32,
         wasmparser::ValType::I64 => wasm_encoder::ValType::I64,
+        // PVM has no floating-point support, but we pass F32/F64 through
+        // during the merge phase because the WASM-to-LLVM frontend rejects
+        // float ops later with a clear error. The merge is a structural
+        // transformation that shouldn't second-guess the main compiler.
         wasmparser::ValType::F32 => wasm_encoder::ValType::F32,
         wasmparser::ValType::F64 => wasm_encoder::ValType::F64,
         wasmparser::ValType::V128 => wasm_encoder::ValType::V128,
@@ -866,6 +875,16 @@ fn encode_operator_with_remap(
                 table_index: *table_index,
             });
         }
+        // Block/Loop/If may contain FuncType block types that reference type indices.
+        O::Block { blockty } => {
+            func.instruction(&I::Block(encode_block_type(*blockty, type_remap)));
+        }
+        O::Loop { blockty } => {
+            func.instruction(&I::Loop(encode_block_type(*blockty, type_remap)));
+        }
+        O::If { blockty } => {
+            func.instruction(&I::If(encode_block_type(*blockty, type_remap)));
+        }
         // All other operators: pass through without remapping.
         // Use the raw encoding approach for efficiency.
         _ => {
@@ -888,9 +907,7 @@ fn encode_passthrough_operator(
     let instr = match op {
         O::Unreachable => I::Unreachable,
         O::Nop => I::Nop,
-        O::Block { blockty } => I::Block(encode_block_type(*blockty)),
-        O::Loop { blockty } => I::Loop(encode_block_type(*blockty)),
-        O::If { blockty } => I::If(encode_block_type(*blockty)),
+        // Block/Loop/If are handled in encode_operator_with_remap (need type_remap).
         O::Else => I::Else,
         O::End => I::End,
         O::Br { relative_depth } => I::Br(*relative_depth),
@@ -920,8 +937,11 @@ fn encode_passthrough_operator(
         // Memory instructions
         O::I32Load { memarg } => I::I32Load(encode_memarg(memarg)),
         O::I64Load { memarg } => I::I64Load(encode_memarg(memarg)),
-        O::F32Load { memarg } => I::F32Load(encode_memarg(memarg)),
-        O::F64Load { memarg } => I::F64Load(encode_memarg(memarg)),
+        O::F32Load { .. } | O::F64Load { .. } => {
+            return Err(Error::Unsupported(
+                "floating point loads are not supported by PVM".into(),
+            ));
+        }
         O::I32Load8S { memarg } => I::I32Load8S(encode_memarg(memarg)),
         O::I32Load8U { memarg } => I::I32Load8U(encode_memarg(memarg)),
         O::I32Load16S { memarg } => I::I32Load16S(encode_memarg(memarg)),
@@ -934,8 +954,11 @@ fn encode_passthrough_operator(
         O::I64Load32U { memarg } => I::I64Load32U(encode_memarg(memarg)),
         O::I32Store { memarg } => I::I32Store(encode_memarg(memarg)),
         O::I64Store { memarg } => I::I64Store(encode_memarg(memarg)),
-        O::F32Store { memarg } => I::F32Store(encode_memarg(memarg)),
-        O::F64Store { memarg } => I::F64Store(encode_memarg(memarg)),
+        O::F32Store { .. } | O::F64Store { .. } => {
+            return Err(Error::Unsupported(
+                "floating point stores are not supported by PVM".into(),
+            ));
+        }
         O::I32Store8 { memarg } => I::I32Store8(encode_memarg(memarg)),
         O::I32Store16 { memarg } => I::I32Store16(encode_memarg(memarg)),
         O::I64Store8 { memarg } => I::I64Store8(encode_memarg(memarg)),
@@ -957,8 +980,11 @@ fn encode_passthrough_operator(
         // Constants
         O::I32Const { value } => I::I32Const(*value),
         O::I64Const { value } => I::I64Const(*value),
-        O::F32Const { value } => I::F32Const(f32::from_bits(value.bits())),
-        O::F64Const { value } => I::F64Const(f64::from_bits(value.bits())),
+        O::F32Const { .. } | O::F64Const { .. } => {
+            return Err(Error::Unsupported(
+                "floating point constants are not supported by PVM".into(),
+            ));
+        }
 
         // Comparison operators
         O::I32Eqz => I::I32Eqz,
@@ -1053,11 +1079,18 @@ fn encode_passthrough_operator(
     Ok(())
 }
 
-fn encode_block_type(bt: wasmparser::BlockType) -> wasm_encoder::BlockType {
+fn encode_block_type(bt: wasmparser::BlockType, type_remap: &[u32]) -> wasm_encoder::BlockType {
     match bt {
         wasmparser::BlockType::Empty => wasm_encoder::BlockType::Empty,
         wasmparser::BlockType::Type(vt) => wasm_encoder::BlockType::Result(encode_val_type(vt)),
-        wasmparser::BlockType::FuncType(idx) => wasm_encoder::BlockType::FunctionType(idx),
+        wasmparser::BlockType::FuncType(idx) => {
+            let remapped = if (idx as usize) < type_remap.len() {
+                type_remap[idx as usize]
+            } else {
+                idx
+            };
+            wasm_encoder::BlockType::FunctionType(remapped)
+        }
     }
 }
 
