@@ -10,5 +10,7 @@ const tests = [
 
 defineSuite({
   name: "as-alloc-test-incremental",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });

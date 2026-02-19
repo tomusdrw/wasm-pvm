@@ -12,5 +12,9 @@ const tests = [
 
 defineSuite({
   name: "as-multi-slice-debug",
+  // too slow
+  skipPvmInPvm: true,
+  // Can exceed default 5s timeout when running concurrently
+  timeout: 30_000,
   tests: tests,
 });

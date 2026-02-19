@@ -321,6 +321,12 @@ Offset  Size    Field
 15+N+M  K       code        (PVM program blob)
 ```
 
+**`heap_pages`** is computed from the WASM module's `initial_pages` (not `max_pages`).
+It represents the number of 4KB PVM pages pre-allocated as zero-initialized writable memory
+at program start. Additional memory beyond this is allocated on demand via `sbrk`/`memory.grow`.
+Programs declaring `(memory 0)` get a minimum of 16 WASM pages (1MB) to accommodate
+AssemblyScript runtime memory accesses.
+
 ### PVM Code Blob
 
 Inside the `code` section, the PVM blob format is:

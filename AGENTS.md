@@ -21,10 +21,13 @@ cd tests && bun build.ts                      # REQUIRED before running integrat
 
 # Run integration tests
 # IMPORTANT: Always use `bun run test` NOT `bun test` from the tests/ directory
-cd tests && bun run test                      # Full test suite
+cd tests && bun run test                      # Full test suite (layers 1-5)
 
 # Quick development check (Layer 1 tests only - fastest)
 cd tests && bun test layer1/                  # Quick validation
+
+# PVM-in-PVM tests (layers 4-5)
+cd tests && bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"
 
 # Compile WASM → JAM
 cargo run -p wasm-pvm-cli -- compile tests/fixtures/wat/add.jam.wat -o dist/add.jam
@@ -51,9 +54,10 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
    - **Layer 2**: Feature tests (~100 tests)
    - **Layer 3**: Regression/edge cases (~220 tests)
    - **Layer 4**: PVM-in-PVM smoke tests (3 tests) - Quick pvm-in-pvm sanity check
-   - **Layer 5**: Comprehensive PVM-in-PVM tests (all suites) - Very slow, run sparingly
-     - Run with: `bun test layer5/ --test-name-pattern "pvm-in-pvm"`
-     - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): host-call-log (ecalli 100), as-life (timeout), i64-ops (timeout)
+   - **Layer 5**: Comprehensive PVM-in-PVM tests (all compatible suites) - Runs in CI after regular tests pass
+     - Run with: `bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"`
+     - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): host-call-log (ecalli 100 unhandled), as-life (timeout), i64-ops (timeout)
+   - **CI runs**: Layer 1-3 first (integration job), then Layer 4-5 in separate PVM-in-PVM job (only if integration passes)
 
 ### Documentation Update Policy
 
@@ -129,6 +133,7 @@ crates/
 - **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
 - **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first, register allocator is future work)
 - **Per-block register cache**: `PvmEmitter` tracks which stack slots are live in registers via `slot_cache`/`reg_to_slot`. Eliminates redundant `LoadIndU64` when a value is used shortly after being computed. Cache is cleared at block boundaries and after calls/ecalli. (~50% gas reduction, ~15-40% code size reduction)
+- **heap_pages uses initial_pages**: SPI `heap_pages` reflects WASM `initial_pages` (not `max_pages`). Additional memory is allocated on demand via `sbrk`/`memory.grow`. Programs declaring `(memory 0)` get a minimum of 16 WASM pages (1MB).
 - **All values as i64**: PVM registers are 64-bit; simplifies translation
 - **LLVM backend**: inkwell (LLVM 18 bindings) is a required dependency
 
@@ -151,6 +156,7 @@ crates/
 - No `lib/` folder in crates — flat src structure
 - Integration tests in TypeScript (`tests/`)
 - Rust unit tests in `crates/wasm-pvm/tests/`
+- Pre-push hook: `.githooks/pre-push` (install with `git config core.hooksPath .githooks`)
 
 ---
 

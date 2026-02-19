@@ -9,5 +9,7 @@ const tests = [
 
 defineSuite({
   name: "as-minimal-fail",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });

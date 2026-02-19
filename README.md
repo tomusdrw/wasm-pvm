@@ -291,11 +291,13 @@ cd tests && bun utils/run-jam.ts /tmp/test.jam --args=05000000
 
 ### Test Organization & Workflow
 
-The test suite is organized into three layers:
+The test suite is organized into five layers:
 
-- **Layer 1** (`layer1/`): Core/smoke tests - Fast, run these during development
-- **Layer 2** (`layer2/`): Feature tests - Extended functionality
-- **Layer 3** (`layer3/`): Regression/edge cases - Bug fixes and edge cases
+- **Layer 1** (`layer1/`): Core/smoke tests (~50 tests) - Fast, run these during development
+- **Layer 2** (`layer2/`): Feature tests (~100 tests) - Extended functionality
+- **Layer 3** (`layer3/`): Regression/edge cases (~220 tests) - Bug fixes and edge cases
+- **Layer 4** (`layer4/`): PVM-in-PVM smoke tests (3 tests) - Quick pvm-in-pvm sanity check
+- **Layer 5** (`layer5/`): Comprehensive PVM-in-PVM tests - Full test suite running inside the PVM interpreter
 
 **Development workflow**:
 1. Make your changes to the Rust code
@@ -305,6 +307,12 @@ The test suite is organized into three layers:
 5. Full validation before committing: `cd tests && bun run test` (~20 seconds)
 
 **Note**: `bun run test` from the `tests/` directory runs `bun build.ts && bun test`, ensuring JAM files are always up-to-date. `bun test` alone will fail if the test artifacts haven't been built. If you've changed AS fixture source files (`.ts`), delete cached WASM first: `rm -f tests/build/wasm/*.wasm`.
+
+**PVM-in-PVM Testing**:
+- Layer 4 runs a quick sanity check (3 tests) to verify the PVM interpreter works when compiled to PVM
+- Layer 5 runs all compatible tests inside the PVM interpreter (some suites are skipped due to timeouts or unhandled host calls)
+- Run with: `cd tests && bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"`
+- In CI, PVM-in-PVM tests run in a separate job after regular integration tests pass
 
 ## License
 

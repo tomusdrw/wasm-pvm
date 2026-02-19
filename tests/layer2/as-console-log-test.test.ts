@@ -10,6 +10,8 @@ import { runJamWithOutput } from "../helpers/run";
 // Return value test via defineSuite (program returns 42).
 defineSuite({
   name: "as-console-log-test",
+  // pvm-in-pvm does not support host calls yet
+  skipPvmInPvm: true,
   tests: [
     { args: "0000000000000000", expected: 42, description: "program returns expected result (42)" },
   ],

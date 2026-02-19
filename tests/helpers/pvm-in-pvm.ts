@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { JAM_DIR, PROJECT_ROOT, ANAN_AS_CLI } from "./paths";
@@ -54,8 +55,21 @@ export function buildCompilerArgs(
  * Run the compiler.jam with the given args through the outer anan-as CLI.
  * Returns the parsed inner result.
  */
-export function runCompilerJam(argsHex: string): InnerResult {
-  const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=${OUTER_GAS} ${COMPILER_JAM} 0x${argsHex}`;
+export class PvmInPvmTimeout extends Error {
+  constructor(ms: number) {
+    super(`PVM-in-PVM execution timed out after ${ms}ms`);
+    this.name = "PvmInPvmTimeout";
+  }
+}
+
+export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult {
+  // Write args to a temp binary file to avoid E2BIG (arg list too long) on Linux
+  // when the inner JAM program is large. The anan-as CLI accepts a file path as args.
+  const argsBuf = Buffer.from(argsHex, "hex");
+  const tmpFile = path.join(os.tmpdir(), `pvm-in-pvm-args-${process.pid}-${Date.now()}.bin`);
+  fs.writeFileSync(tmpFile, argsBuf);
+
+  const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=${OUTER_GAS} ${COMPILER_JAM} ${tmpFile}`;
 
   let stdout: string;
   try {
@@ -64,8 +78,13 @@ export function runCompilerJam(argsHex: string): InnerResult {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
       maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs,
     });
   } catch (error: any) {
+    fs.rmSync(tmpFile, { force: true });
+    if (error.killed || error.signal === "SIGTERM") {
+      throw new PvmInPvmTimeout(timeoutMs ?? 0);
+    }
     const errStdout = error.stdout?.toString() ?? "";
     const errStderr = error.stderr?.toString() ?? "";
     if (errStdout) {
@@ -76,6 +95,7 @@ export function runCompilerJam(argsHex: string): InnerResult {
       );
     }
   }
+  fs.rmSync(tmpFile, { force: true });
 
   // Check if the outer interpreter itself panicked
   const statusMatch = stdout.match(/Status:\s*(\d+)/);
@@ -125,6 +145,7 @@ export function runJamPvmInPvm(
   jamFile: string,
   args: string,
   pc?: number,
+  timeoutMs?: number,
 ): number {
   const argsHex = buildCompilerArgs(
     jamFile,
@@ -132,7 +153,7 @@ export function runJamPvmInPvm(
     INNER_GAS,
     pc ?? 0,
   );
-  const result = runCompilerJam(argsHex);
+  const result = runCompilerJam(argsHex, timeoutMs);
 
   if (result.status !== 0) {
     throw new Error(

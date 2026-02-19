@@ -6,5 +6,7 @@ const tests = [
 
 defineSuite({
   name: "as-complex-alloc-test",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });

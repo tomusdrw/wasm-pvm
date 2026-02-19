@@ -14,5 +14,7 @@ const tests = [
 
 defineSuite({
   name: "as-trace-loop-test",
+  // slow
+  skipPvmInPvm: true,
   tests: tests,
 });

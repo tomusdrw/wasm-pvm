@@ -16,13 +16,15 @@ export interface SuiteSpec {
   tests: TestSpec[];
   /** Skip pvm-in-pvm variants (e.g. tests using unhandled ecalli host calls). */
   skipPvmInPvm?: boolean;
+  /** Custom timeout in ms for normal (non-pvm-in-pvm) tests. */
+  timeout?: number;
 }
 
 /** Global registry of all defined suites (populated at import time). */
 const suiteRegistry: SuiteSpec[] = [];
 
-/** PVM-in-PVM timeout: these tests are slow (~30-120s each). */
-const PVM_IN_PVM_TIMEOUT = 300_000;
+/** Bun test timeout for pvm-in-pvm tests. */
+const PVM_IN_PVM_TEST_TIMEOUT = 300_000;
 
 /** Register a suite and create normal (non-pvm-in-pvm) test cases. */
 export function defineSuite(suite: SuiteSpec) {
@@ -31,10 +33,14 @@ export function defineSuite(suite: SuiteSpec) {
   const jamFile = path.join(JAM_DIR, `${suite.name}.jam`);
   describe(suite.name, () => {
     for (const t of suite.tests) {
-      test(t.description, () => {
-        const actual = runJam(jamFile, t.args, t.pc);
-        expect(actual).toBe(t.expected);
-      });
+      test(
+        t.description,
+        () => {
+          const actual = runJam(jamFile, t.args, t.pc);
+          expect(actual).toBe(t.expected);
+        },
+        suite.timeout,
+      );
     }
   });
 }
@@ -52,7 +58,7 @@ export function definePvmInPvmSuite(suite: SuiteSpec) {
           const actual = runJamPvmInPvm(jamFile, t.args, t.pc);
           expect(actual).toBe(t.expected);
         },
-        PVM_IN_PVM_TIMEOUT,
+        PVM_IN_PVM_TEST_TIMEOUT,
       );
     }
   });

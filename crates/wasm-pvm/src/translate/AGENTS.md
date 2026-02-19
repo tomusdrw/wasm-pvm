@@ -18,10 +18,15 @@
 4. `llvm_backend/lowering.rs` reads LLVM IR → emits PVM bytecode
 5. `mod.rs` builds entry header, dispatch tables, ro_data/rw_data → `SpiProgram`
 
-## Key Functions in `mod.rs`
+## Key Functions
 
+### `mod.rs`
 - `compile()` — Full compilation pipeline
 - Entry header emission, data segment copying, dispatch table construction
+
+### `wasm_module.rs`
+- `WasmModule::parse()` — Parse all WASM sections
+- `calculate_heap_pages()` — Compute SPI `heap_pages` from `initial_pages` (not `max_pages`). Uses minimum 16 WASM pages for `(memory 0)` programs. Returns `(heap_pages, max_memory_pages)` tuple.
 
 ## Memory Layout (from `memory_layout.rs`)
 

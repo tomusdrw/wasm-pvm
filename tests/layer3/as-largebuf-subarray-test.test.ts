@@ -11,5 +11,7 @@ const tests = [
 
 defineSuite({
   name: "as-largebuf-subarray-test",
+  // too slow
+  skipPvmInPvm: true,
   tests: tests,
 });
