@@ -53,6 +53,9 @@ enum Commands {
 
         #[arg(long, help = "Disable callee-save shrink wrapping")]
         no_shrink_wrap: bool,
+
+        #[arg(long, help = "Disable dead store elimination")]
+        no_dead_store_elim: bool,
     },
 }
 
@@ -74,6 +77,7 @@ fn main() -> Result<()> {
             no_register_cache,
             no_icmp_fusion,
             no_shrink_wrap,
+            no_dead_store_elim,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -107,6 +111,7 @@ fn main() -> Result<()> {
                     register_cache: !no_register_cache,
                     icmp_branch_fusion: !no_icmp_fusion,
                     shrink_wrap_callee_saves: !no_shrink_wrap,
+                    dead_store_elimination: !no_dead_store_elim,
                 },
             };
 

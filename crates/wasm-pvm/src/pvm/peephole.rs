@@ -3,70 +3,46 @@
 // Runs before fixup resolution to remove redundant instructions.
 // Builds an index remap table to update fixup references and label byte offsets.
 
+use std::collections::HashSet;
+
 use super::Instruction;
 use crate::llvm_backend::{LlvmCallFixup, LlvmIndirectCallFixup};
 
-/// Run peephole optimizations on a function's instruction stream.
+/// Compact the instruction stream by removing entries where `keep[i]` is false.
 ///
-/// Must be called **before** `resolve_fixups()` since it removes instructions
-/// and remaps all fixup indices and label byte offsets accordingly.
-pub fn optimize(
+/// Updates all fixup indices and label byte offsets to match the compacted stream.
+/// Returns early (no-op) if nothing was removed.
+fn compact_instructions(
     instructions: &mut Vec<Instruction>,
+    keep: &[bool],
     fixups: &mut [(usize, usize)],
     call_fixups: &mut [LlvmCallFixup],
     indirect_call_fixups: &mut [LlvmIndirectCallFixup],
     labels: &mut [Option<usize>],
 ) {
-    let len = instructions.len();
-    if len == 0 {
-        return;
-    }
+    let len = keep.len();
+    debug_assert_eq!(len, instructions.len());
 
     // Cache encoded length per instruction to avoid repeated encode() calls.
     let encoded_lengths: Vec<usize> = instructions.iter().map(|i| i.encode().len()).collect();
 
-    // Compute byte offset for each instruction before optimization.
+    // Compute byte offset for each instruction before compaction.
     let mut byte_offsets = Vec::with_capacity(len + 1);
     let mut running = 0usize;
     for &enc_len in &encoded_lengths {
         byte_offsets.push(running);
         running += enc_len;
     }
-    // Sentinel: byte offset after the last instruction.
     byte_offsets.push(running);
 
     // Build reverse map: byte_offset → instruction_index for label resolution.
-    // Labels point to instruction boundaries, so we map each boundary to its index.
     let mut byte_to_idx = std::collections::HashMap::new();
     for (idx, &off) in byte_offsets.iter().enumerate() {
         byte_to_idx.entry(off).or_insert(idx);
     }
 
-    // Mark instructions for removal (true = keep, false = remove).
-    let mut keep = vec![true; len];
-
-    for i in 0..len {
-        if !keep[i] {
-            continue;
-        }
-        if !matches!(instructions[i], Instruction::Fallthrough) {
-            continue;
-        }
-
-        // Pattern 1: Consecutive Fallthroughs — remove all but the last.
-        // Pattern 2: Fallthrough followed by Jump or Trap — remove the Fallthrough.
-        if i + 1 < len {
-            match &instructions[i + 1] {
-                Instruction::Fallthrough | Instruction::Jump { .. } | Instruction::Trap => {
-                    keep[i] = false;
-                }
-                _ => {}
-            }
-        }
-    }
-
     // Build old→new index remap.
-    let mut remap = vec![0usize; len + 1]; // +1 for sentinel
+    let mut remap = vec![0usize; len + 1];
     let mut new_idx = 0;
     for (old_idx, &kept) in keep.iter().enumerate() {
         remap[old_idx] = new_idx;
@@ -74,7 +50,7 @@ pub fn optimize(
             new_idx += 1;
         }
     }
-    remap[len] = new_idx; // sentinel maps to new end
+    remap[len] = new_idx;
 
     // If nothing was removed, skip the rest.
     if new_idx == len {
@@ -124,6 +100,113 @@ pub fn optimize(
         fixup.return_addr_instr = remap[fixup.return_addr_instr];
         fixup.jump_ind_instr = remap[fixup.jump_ind_instr];
     }
+}
+
+/// Eliminate dead SP-relative stores.
+///
+/// A `StoreIndU64` with `base == STACK_PTR_REG` is dead if no instruction in the
+/// function loads from the same SP-relative offset. Only `StoreIndU64` is targeted
+/// because the compiler always uses it for stack slot writes (`store_to_slot`).
+///
+/// Must be called **before** `resolve_fixups()`.
+pub fn eliminate_dead_stores(
+    instructions: &mut Vec<Instruction>,
+    fixups: &mut [(usize, usize)],
+    call_fixups: &mut [LlvmCallFixup],
+    indirect_call_fixups: &mut [LlvmIndirectCallFixup],
+    labels: &mut [Option<usize>],
+) {
+    let len = instructions.len();
+    if len == 0 {
+        return;
+    }
+
+    const SP: u8 = crate::abi::STACK_PTR_REG;
+
+    // Pass 1: Collect all SP-relative load offsets (the "read" set).
+    let mut read_offsets = HashSet::new();
+    for instr in instructions.iter() {
+        match instr {
+            Instruction::LoadIndU64 { base: SP, offset, .. }
+            | Instruction::LoadIndU32 { base: SP, offset, .. }
+            | Instruction::LoadIndU8 { base: SP, offset, .. }
+            | Instruction::LoadIndU16 { base: SP, offset, .. } => {
+                read_offsets.insert(*offset);
+            }
+            _ => {}
+        }
+    }
+
+    // Pass 2: Mark SP-relative StoreIndU64 to unread offsets for removal.
+    let mut keep = vec![true; len];
+    for (i, instr) in instructions.iter().enumerate() {
+        if let Instruction::StoreIndU64 {
+            base: SP, offset, ..
+        } = instr
+        {
+            if !read_offsets.contains(offset) {
+                keep[i] = false;
+            }
+        }
+    }
+
+    compact_instructions(
+        instructions,
+        &keep,
+        fixups,
+        call_fixups,
+        indirect_call_fixups,
+        labels,
+    );
+}
+
+/// Run peephole optimizations on a function's instruction stream.
+///
+/// Must be called **before** `resolve_fixups()` since it removes instructions
+/// and remaps all fixup indices and label byte offsets accordingly.
+pub fn optimize(
+    instructions: &mut Vec<Instruction>,
+    fixups: &mut [(usize, usize)],
+    call_fixups: &mut [LlvmCallFixup],
+    indirect_call_fixups: &mut [LlvmIndirectCallFixup],
+    labels: &mut [Option<usize>],
+) {
+    let len = instructions.len();
+    if len == 0 {
+        return;
+    }
+
+    // Mark instructions for removal (true = keep, false = remove).
+    let mut keep = vec![true; len];
+
+    for i in 0..len {
+        if !keep[i] {
+            continue;
+        }
+        if !matches!(instructions[i], Instruction::Fallthrough) {
+            continue;
+        }
+
+        // Pattern 1: Consecutive Fallthroughs — remove all but the last.
+        // Pattern 2: Fallthrough followed by Jump or Trap — remove the Fallthrough.
+        if i + 1 < len {
+            match &instructions[i + 1] {
+                Instruction::Fallthrough | Instruction::Jump { .. } | Instruction::Trap => {
+                    keep[i] = false;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    compact_instructions(
+        instructions,
+        &keep,
+        fixups,
+        call_fixups,
+        indirect_call_fixups,
+        labels,
+    );
 }
 
 #[cfg(test)]
@@ -290,5 +373,196 @@ mod tests {
         assert_eq!(instrs.len(), 2);
         // Label should now point to byte offset 1 (start of LoadImm after one Fallthrough)
         assert_eq!(labels[0], Some(1));
+    }
+
+    // ── Dead store elimination tests ──
+
+    const SP: u8 = crate::abi::STACK_PTR_REG;
+
+    #[test]
+    fn dse_removes_unread_sp_store() {
+        // Store to SP+16 but never load from SP+16 → dead store removed.
+        let mut instrs = vec![
+            Instruction::LoadImm { reg: 2, value: 42 },
+            Instruction::StoreIndU64 {
+                base: SP,
+                src: 2,
+                offset: 16,
+            },
+            Instruction::LoadImm { reg: 3, value: 99 },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_stores(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 2);
+        assert!(matches!(
+            instrs[0],
+            Instruction::LoadImm { reg: 2, value: 42 }
+        ));
+        assert!(matches!(
+            instrs[1],
+            Instruction::LoadImm { reg: 3, value: 99 }
+        ));
+    }
+
+    #[test]
+    fn dse_keeps_read_sp_store() {
+        // Store to SP+8 and load from SP+8 → store is kept.
+        let mut instrs = vec![
+            Instruction::StoreIndU64 {
+                base: SP,
+                src: 2,
+                offset: 8,
+            },
+            Instruction::LoadIndU64 {
+                dst: 3,
+                base: SP,
+                offset: 8,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_stores(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 2);
+    }
+
+    #[test]
+    fn dse_ignores_non_sp_stores() {
+        // Store to reg 5 (not SP) at offset 16, never loaded → NOT removed (memory side effect).
+        let mut instrs = vec![
+            Instruction::StoreIndU64 {
+                base: 5,
+                src: 2,
+                offset: 16,
+            },
+            Instruction::LoadImm { reg: 3, value: 0 },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_stores(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 2);
+    }
+
+    #[test]
+    fn dse_remaps_fixups_correctly() {
+        // Dead store at index 1, fixup at index 3 → remapped to 2.
+        let mut instrs = vec![
+            Instruction::LoadImm { reg: 2, value: 1 },
+            Instruction::StoreIndU64 {
+                base: SP,
+                src: 2,
+                offset: 24,
+            },
+            Instruction::LoadImm { reg: 0, value: 0 },
+            Instruction::Jump { offset: 0 },
+        ];
+        let mut fixups = vec![(3, 0)];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_stores(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 3);
+        assert_eq!(fixups[0].0, 2);
+    }
+
+    #[test]
+    fn dse_no_op_when_nothing_to_eliminate() {
+        let mut instrs = vec![
+            Instruction::StoreIndU64 {
+                base: SP,
+                src: 2,
+                offset: 8,
+            },
+            Instruction::LoadIndU64 {
+                dst: 3,
+                base: SP,
+                offset: 8,
+            },
+            Instruction::LoadImm { reg: 0, value: 0 },
+        ];
+        let original_len = instrs.len();
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_stores(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), original_len);
+    }
+
+    #[test]
+    fn dse_keeps_store_if_smaller_load_reads_same_offset() {
+        // Store u64 to SP+8, load u32 from SP+8 → store is kept (offset is in read set).
+        let mut instrs = vec![
+            Instruction::StoreIndU64 {
+                base: SP,
+                src: 2,
+                offset: 8,
+            },
+            Instruction::LoadIndU32 {
+                dst: 3,
+                base: SP,
+                offset: 8,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_stores(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 2);
     }
 }

@@ -74,6 +74,17 @@ pub fn lower_function(
         }
     }
 
+    // Dead store elimination: remove SP-relative stores that are never loaded from.
+    if ctx.optimizations.dead_store_elimination {
+        crate::pvm::peephole::eliminate_dead_stores(
+            &mut emitter.instructions,
+            &mut emitter.fixups,
+            &mut emitter.call_fixups,
+            &mut emitter.indirect_call_fixups,
+            &mut emitter.labels,
+        );
+    }
+
     // Peephole optimization: remove redundant instructions before fixup resolution.
     if ctx.optimizations.peephole {
         crate::pvm::peephole::optimize(
