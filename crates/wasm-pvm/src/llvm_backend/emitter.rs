@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 
+use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{
     AnyValue, AsValueRef, BasicValueEnum, FunctionValue, InstructionValue, IntValue, PhiValue,
@@ -108,6 +109,18 @@ pub struct PvmEmitter<'ctx> {
     slot_cache: HashMap<i32, u8>,
     /// Reverse: register → slot offset it holds (for fast invalidation).
     reg_to_slot: [Option<i32>; 13],
+
+    /// Pending fused `ICmp`: when an `ICmp` has a single use (by a branch), we defer
+    /// it and store the predicate + operands here. The branch will emit a fused
+    /// branch instruction instead of loading the boolean result.
+    pub(crate) pending_fused_icmp: Option<FusedIcmp<'ctx>>,
+}
+
+/// Deferred `ICmp` info for branch fusion.
+pub struct FusedIcmp<'ctx> {
+    pub predicate: IntPredicate,
+    pub lhs: BasicValueEnum<'ctx>,
+    pub rhs: BasicValueEnum<'ctx>,
 }
 
 /// Wrapper key for LLVM values in the slot map.
@@ -145,6 +158,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             byte_offset: 0,
             slot_cache: HashMap::new(),
             reg_to_slot: [None; 13],
+            pending_fused_icmp: None,
         }
     }
 
@@ -204,6 +218,66 @@ impl<'ctx> PvmEmitter<'ctx> {
         });
     }
 
+    pub fn emit_branch_lt_u_to_label(&mut self, reg1: u8, reg2: u8, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchLtU {
+            reg1,
+            reg2,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_ge_u_to_label(&mut self, reg1: u8, reg2: u8, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchGeU {
+            reg1,
+            reg2,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_eq_to_label(&mut self, reg1: u8, reg2: u8, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchEq {
+            reg1,
+            reg2,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_ne_to_label(&mut self, reg1: u8, reg2: u8, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchNe {
+            reg1,
+            reg2,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_lt_s_to_label(&mut self, reg1: u8, reg2: u8, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchLtS {
+            reg1,
+            reg2,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_ge_s_to_label(&mut self, reg1: u8, reg2: u8, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchGeS {
+            reg1,
+            reg2,
+            offset: 0,
+        });
+    }
+
     // ── Slot allocation ──
 
     pub fn alloc_slot_for_key(&mut self, key: ValKey) -> i32 {
@@ -247,10 +321,9 @@ impl<'ctx> PvmEmitter<'ctx> {
                     if let Some(&cached_reg) = self.slot_cache.get(&slot) {
                         if cached_reg != temp_reg {
                             // Emit a register copy (cheaper than memory load).
-                            self.emit(Instruction::AddImm64 {
+                            self.emit(Instruction::MoveReg {
                                 dst: temp_reg,
                                 src: cached_reg,
-                                value: 0,
                             });
                         }
                         // If cached_reg == temp_reg, skip entirely (0 instructions).
@@ -360,8 +433,19 @@ impl<'ctx> PvmEmitter<'ctx> {
                 | Instruction::BranchNeImm { offset, .. }
                 | Instruction::BranchEqImm { offset, .. }
                 | Instruction::BranchGeSImm { offset, .. }
+                | Instruction::BranchLtUImm { offset, .. }
+                | Instruction::BranchLeUImm { offset, .. }
+                | Instruction::BranchGeUImm { offset, .. }
+                | Instruction::BranchGtUImm { offset, .. }
+                | Instruction::BranchLtSImm { offset, .. }
+                | Instruction::BranchLeSImm { offset, .. }
+                | Instruction::BranchGtSImm { offset, .. }
+                | Instruction::BranchEq { offset, .. }
+                | Instruction::BranchNe { offset, .. }
                 | Instruction::BranchGeU { offset, .. }
-                | Instruction::BranchLtU { offset, .. } => {
+                | Instruction::BranchLtU { offset, .. }
+                | Instruction::BranchLtS { offset, .. }
+                | Instruction::BranchGeS { offset, .. } => {
                     *offset = relative_offset;
                 }
                 _ => {

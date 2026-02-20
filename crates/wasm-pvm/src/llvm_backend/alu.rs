@@ -12,12 +12,14 @@
 )]
 
 use inkwell::IntPredicate;
-use inkwell::values::{AnyValue, AnyValueEnum, InstructionValue};
+use inkwell::values::{AnyValue, AnyValueEnum, InstructionOpcode, InstructionValue};
 
 use crate::Result;
 use crate::pvm::Instruction;
 
-use super::emitter::{PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot};
+use super::emitter::{
+    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot,
+};
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 #[derive(Clone, Copy)]
@@ -277,6 +279,23 @@ pub fn lower_binary_arith<'ctx>(
     Ok(())
 }
 
+/// Check if an instruction has exactly one use and that use is a branch instruction.
+fn is_single_use_by_branch(instr: InstructionValue<'_>) -> bool {
+    let first_use = instr.get_first_use();
+    let Some(use_val) = first_use else {
+        return false;
+    };
+    // Must be single use.
+    if use_val.get_next_use().is_some() {
+        return false;
+    }
+    // The user must be a Br instruction.
+    if let inkwell::values::AnyValueEnum::InstructionValue(user) = use_val.get_user() {
+        return user.get_opcode() == InstructionOpcode::Br;
+    }
+    false
+}
+
 pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let lhs = get_operand(instr, 0)?;
     let rhs = get_operand(instr, 1)?;
@@ -285,6 +304,18 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     let pred = instr
         .get_icmp_predicate()
         .ok_or_else(|| crate::Error::Internal("ICmp without predicate".into()))?;
+
+    // Optimization: if this ICmp is only used by a single branch instruction,
+    // defer it for fusion — the branch will emit a single fused PVM branch
+    // instead of computing a boolean and branching on it.
+    if is_single_use_by_branch(instr) {
+        e.pending_fused_icmp = Some(FusedIcmp {
+            predicate: pred,
+            lhs,
+            rhs,
+        });
+        return Ok(());
+    }
 
     e.load_operand(lhs, TEMP1)?;
     e.load_operand(rhs, TEMP2)?;

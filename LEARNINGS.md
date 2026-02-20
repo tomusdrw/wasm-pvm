@@ -675,6 +675,33 @@ Standard logging ecalli for PVM programs. Ecalli number **100**, gas cost **10**
 
 ---
 
+## Entry 8: Missing PVM Instruction Variants & ICmp+Branch Fusion (2026-02-19)
+
+**Problem**: Many PVM opcodes defined in `opcode.rs` had no corresponding `Instruction` enum variant, making them inaccessible to the code generator. The backend synthesized these operations from 2-3 instructions where 1 would suffice.
+
+**Added instruction variants**:
+- `MoveReg` (opcode 100) — register-to-register copy, replacing `AddImm64 { value: 0 }`
+- Branch-with-immediate: `BranchLtUImm`, `BranchLeUImm`, `BranchGeUImm`, `BranchGtUImm`, `BranchLtSImm`, `BranchLeSImm`, `BranchGtSImm`
+- Two-register branches: `BranchEq`, `BranchNe`, `BranchLtS`, `BranchGeS`
+
+**ICmp+Branch fusion optimization**: When an LLVM ICmp instruction has exactly one use (a branch), the backend now defers the ICmp and emits a single fused PVM branch instruction instead of:
+1. `SetLtU/SetLtS` + `StoreIndU64` (compute and save boolean)
+2. `LoadIndU64` + `BranchNeImm reg, 0` (load and test boolean)
+
+The fused path emits just: load two operands + `BranchLtU`/`BranchGeU`/`BranchEq`/etc.
+
+**PVM two-register branch semantics**: `Branch_op { reg1: a, reg2: b }` branches if **b op a** (not a op b). This is because the encoding format `(reg1 << 4) | reg2` maps to `(rB << 4) | rA` in the PVM spec, and the semantics is `rA op rB`.
+
+**Implementation details**:
+- `FusedIcmp` struct on `PvmEmitter` stores deferred predicate + operands
+- `lower_icmp()` checks `is_single_use_by_branch()` via inkwell's `get_first_use()`/`get_next_use()`
+- `lower_br()` checks for `pending_fused_icmp` and calls `emit_fused_branch()`
+- All 10 ICmp predicates mapped to 4 PVM branch types (EQ, NE, LtU, GeU, LtS, GeS) with operand swapping for GT/LE
+
+**Lesson**: The register order convention for PVM two-register branches is easy to get wrong. Always verify against existing usage (e.g., `BranchGeU` in prologue stack overflow check).
+
+---
+
 ## References
 
 - Original: LEARNINGS.md (technical details)
