@@ -119,8 +119,16 @@ pub struct PvmEmitter<'ctx> {
     /// branch instruction instead of loading the boolean result.
     pub(crate) pending_fused_icmp: Option<FusedIcmp<'ctx>>,
 
+    /// Maps register → known constant value currently held (for constant propagation).
+    /// When a `LoadImm`/`LoadImm64` is about to be emitted, we check if the target
+    /// register already holds the same constant and skip the load if so.
+    reg_to_const: [Option<u64>; 13],
+
     /// Whether the register cache (store-load forwarding) is enabled.
     pub(crate) register_cache_enabled: bool,
+
+    /// Whether constant propagation (redundant `LoadImm` elimination) is enabled.
+    pub(crate) constant_propagation_enabled: bool,
     /// Whether ICmp+Branch fusion is enabled.
     pub(crate) icmp_fusion_enabled: bool,
     /// Which callee-saved registers (r9-r12) are actually used by this function.
@@ -175,8 +183,10 @@ impl<'ctx> PvmEmitter<'ctx> {
             byte_offset: 0,
             slot_cache: HashMap::new(),
             reg_to_slot: [None; 13],
+            reg_to_const: [None; 13],
             pending_fused_icmp: None,
             register_cache_enabled: true,
+            constant_propagation_enabled: true,
             icmp_fusion_enabled: true,
             used_callee_regs: [true; 4],
             shrink_wrap_enabled: true,
@@ -207,9 +217,42 @@ impl<'ctx> PvmEmitter<'ctx> {
     }
 
     pub fn emit(&mut self, instr: Instruction) {
+        // Constant propagation: skip LoadImm/LoadImm64 if register already holds the value.
+        if self.constant_propagation_enabled {
+            match &instr {
+                Instruction::LoadImm { reg, value } => {
+                    // LoadImm sign-extends i32 → i64, so the 64-bit value is the sign extension.
+                    let val64 = i64::from(*value) as u64;
+                    if self.reg_to_const[*reg as usize] == Some(val64) {
+                        return; // Already holds this constant.
+                    }
+                }
+                Instruction::LoadImm64 { reg, value } => {
+                    if self.reg_to_const[*reg as usize] == Some(*value) {
+                        return; // Already holds this constant.
+                    }
+                }
+                _ => {}
+            }
+        }
+
         if let Some(reg) = instr.dest_reg() {
             self.invalidate_reg(reg);
         }
+
+        // Track constants after emit.
+        if self.constant_propagation_enabled {
+            match &instr {
+                Instruction::LoadImm { reg, value } => {
+                    self.reg_to_const[*reg as usize] = Some(i64::from(*value) as u64);
+                }
+                Instruction::LoadImm64 { reg, value } => {
+                    self.reg_to_const[*reg as usize] = Some(*value);
+                }
+                _ => {}
+            }
+        }
+
         self.byte_offset += instr.encode().len();
         self.instructions.push(instr);
     }
@@ -315,6 +358,17 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     // ── Value load / store ──
 
+    /// Emit a constant load into `reg` (prefer compact `LoadImm` when the value fits i32).
+    /// Constant propagation in `emit()` will skip if the register already holds this value.
+    fn emit_const_to_reg(&mut self, reg: u8, value: u64) {
+        let signed = value as i64;
+        if let Ok(v32) = i32::try_from(signed) {
+            self.emit(Instruction::LoadImm { reg, value: v32 });
+        } else {
+            self.emit(Instruction::LoadImm64 { reg, value });
+        }
+    }
+
     /// Load a value into a temp register. Constants are inlined; SSA values are loaded from slots.
     /// Poison/undef values are materialized as 0 (any value is valid for undefined behavior).
     /// Returns an error for truly unknown values.
@@ -322,22 +376,10 @@ impl<'ctx> PvmEmitter<'ctx> {
         match val {
             BasicValueEnum::IntValue(iv) => {
                 if let Some(signed_val) = iv.get_sign_extended_constant() {
-                    // Try sign-extended first: negative i32 values emit compact
-                    // LoadImm instead of LoadImm64.
-                    if let Ok(v32) = i32::try_from(signed_val) {
-                        self.emit(Instruction::LoadImm {
-                            reg: temp_reg,
-                            value: v32,
-                        });
-                    } else {
-                        self.emit(Instruction::LoadImm64 {
-                            reg: temp_reg,
-                            value: signed_val as u64,
-                        });
-                    }
+                    self.emit_const_to_reg(temp_reg, signed_val as u64);
                 } else if let Some(const_val) = iv.get_zero_extended_constant() {
                     // Fallback for unsigned constants.
-                    self.emit_load_const(temp_reg, const_val);
+                    self.emit_const_to_reg(temp_reg, const_val);
                 } else if let Some(slot) = self.get_slot(val_key_int(iv)) {
                     // Check register cache: skip load if value is already in a register.
                     if let Some(&cached_reg) = self.slot_cache.get(&slot) {
@@ -381,19 +423,6 @@ impl<'ctx> PvmEmitter<'ctx> {
         Ok(())
     }
 
-    pub fn emit_load_const(&mut self, reg: u8, val: u64) {
-        if val == 0 {
-            self.emit(Instruction::LoadImm { reg, value: 0 });
-        } else if i32::try_from(val).is_ok() {
-            self.emit(Instruction::LoadImm {
-                reg,
-                value: val as i32,
-            });
-        } else {
-            self.emit(Instruction::LoadImm64 { reg, value: val });
-        }
-    }
-
     pub fn store_to_slot(&mut self, slot_offset: i32, src_reg: u8) {
         self.emit(Instruction::StoreIndU64 {
             base: STACK_PTR_REG,
@@ -426,12 +455,14 @@ impl<'ctx> PvmEmitter<'ctx> {
         if let Some(slot) = self.reg_to_slot[reg as usize].take() {
             self.slot_cache.remove(&slot);
         }
+        self.reg_to_const[reg as usize] = None;
     }
 
     /// Clear the entire register cache (at block boundaries and after calls).
     pub fn clear_reg_cache(&mut self) {
         self.slot_cache.clear();
         self.reg_to_slot = [None; 13];
+        self.reg_to_const = [None; 13];
     }
 
     // ── Fixup resolution ──

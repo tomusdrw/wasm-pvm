@@ -56,6 +56,12 @@ enum Commands {
 
         #[arg(long, help = "Disable dead store elimination")]
         no_dead_store_elim: bool,
+
+        #[arg(
+            long,
+            help = "Disable constant propagation (redundant LoadImm elimination)"
+        )]
+        no_const_prop: bool,
     },
 }
 
@@ -78,6 +84,7 @@ fn main() -> Result<()> {
             no_icmp_fusion,
             no_shrink_wrap,
             no_dead_store_elim,
+            no_const_prop,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -112,6 +119,7 @@ fn main() -> Result<()> {
                     icmp_branch_fusion: !no_icmp_fusion,
                     shrink_wrap_callee_saves: !no_shrink_wrap,
                     dead_store_elimination: !no_dead_store_elim,
+                    constant_propagation: !no_const_prop,
                 },
             };
 
