@@ -136,6 +136,8 @@ crates/
 - **heap_pages uses initial_pages**: SPI `heap_pages` reflects WASM `initial_pages` (not `max_pages`). Additional memory is allocated on demand via `sbrk`/`memory.grow`. Programs declaring `(memory 0)` get a minimum of 16 WASM pages (1MB).
 - **All values as i64**: PVM registers are 64-bit; simplifies translation
 - **LLVM backend**: inkwell (LLVM 18 bindings) is a required dependency
+- **Callee-save shrink wrapping**: For non-entry functions, only callee-saved registers (r9-r12) that are actually used are saved/restored in prologue/epilogue. A register is "used" if it receives a parameter or the function contains any call instruction. Frame header size is dynamic per-function: `8 (ra) + 8 * num_used_callee_regs`.
+- **Configurable optimizations**: All non-trivial optimizations (LLVM passes, peephole, register cache, ICmp+Branch fusion, shrink wrapping) can be disabled via `OptimizationFlags` / CLI `--no-*` flags. All are enabled by default.
 
 ---
 
@@ -183,6 +185,27 @@ crates/
 | Fix test build | `tests/build.ts` + `tests/helpers/compile.ts` | Build orchestrator + compilation helpers |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
 | Verify JAM file | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
+| Add/modify optimization | `translate/mod.rs` (`OptimizationFlags`) | Add flag + thread through `LoweringContext` → `PvmEmitter` |
+| Toggle optimization in CLI | `wasm-pvm-cli/src/main.rs` | Add `--no-*` flag to `Compile` subcommand |
+
+---
+
+## Optimization Flags
+
+All non-trivial optimizations are controlled by `OptimizationFlags` (in `translate/mod.rs`, re-exported from `lib.rs`).
+Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
+
+| Flag | CLI | What it controls | Where toggled |
+|------|-----|------------------|---------------|
+| `llvm_passes` | `--no-llvm-passes` | LLVM optimization passes (mem2reg, instcombine, etc.) | `llvm_frontend/function_builder.rs` |
+| `peephole` | `--no-peephole` | Post-codegen peephole optimizer | `llvm_backend/mod.rs:lower_function()` |
+| `register_cache` | `--no-register-cache` | Per-block store-load forwarding | `llvm_backend/emitter.rs:cache_slot()` |
+| `icmp_branch_fusion` | `--no-icmp-fusion` | Fuse ICmp+Branch into single PVM branch | `llvm_backend/alu.rs:lower_icmp()` |
+| `shrink_wrap_callee_saves` | `--no-shrink-wrap` | Only save/restore used callee-saved regs | `llvm_backend/emitter.rs:pre_scan_function()` |
+
+**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `PvmEmitter` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`). LLVM passes flag is passed directly to `translate_wasm_to_llvm()`.
+
+**Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `PvmEmitter`, guard the optimization with the flag, add a `--no-*` CLI flag.
 
 ---
 

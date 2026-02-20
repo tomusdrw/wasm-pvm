@@ -26,6 +26,7 @@ use crate::pvm::Instruction;
 use crate::{Error, Result};
 
 use crate::abi::{FRAME_HEADER_SIZE, STACK_PTR_REG};
+use crate::translate::OptimizationFlags;
 
 /// Context for lowering functions from a single WASM module.
 pub struct LoweringContext {
@@ -48,6 +49,8 @@ pub struct LoweringContext {
     pub data_segment_length_addrs: HashMap<u32, i32>,
     /// User-provided mapping from WASM import names to actions (trap, nop).
     pub wasm_import_map: Option<HashMap<String, crate::translate::ImportAction>>,
+    /// Optimization flags controlling which compiler passes are enabled.
+    pub optimizations: OptimizationFlags,
 }
 
 /// Result of lowering one LLVM function to PVM instructions.
@@ -71,6 +74,7 @@ pub struct LlvmIndirectCallFixup {
 }
 
 /// PVM code emitter for a single function.
+#[allow(clippy::struct_excessive_bools)]
 pub struct PvmEmitter<'ctx> {
     pub(crate) instructions: Vec<Instruction>,
     pub(crate) labels: Vec<Option<usize>>,
@@ -114,6 +118,19 @@ pub struct PvmEmitter<'ctx> {
     /// it and store the predicate + operands here. The branch will emit a fused
     /// branch instruction instead of loading the boolean result.
     pub(crate) pending_fused_icmp: Option<FusedIcmp<'ctx>>,
+
+    /// Whether the register cache (store-load forwarding) is enabled.
+    pub(crate) register_cache_enabled: bool,
+    /// Whether ICmp+Branch fusion is enabled.
+    pub(crate) icmp_fusion_enabled: bool,
+    /// Which callee-saved registers (r9-r12) are actually used by this function.
+    /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
+    pub(crate) used_callee_regs: [bool; 4],
+    /// Whether callee-save shrink wrapping is enabled.
+    pub(crate) shrink_wrap_enabled: bool,
+    /// Frame offset for each callee-saved register (r9-r12), if saved.
+    /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
+    pub(crate) callee_save_offsets: [Option<i32>; 4],
 }
 
 /// Deferred `ICmp` info for branch fusion.
@@ -159,6 +176,11 @@ impl<'ctx> PvmEmitter<'ctx> {
             slot_cache: HashMap::new(),
             reg_to_slot: [None; 13],
             pending_fused_icmp: None,
+            register_cache_enabled: true,
+            icmp_fusion_enabled: true,
+            used_callee_regs: [true; 4],
+            shrink_wrap_enabled: true,
+            callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
         }
     }
 
@@ -385,6 +407,9 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     /// Record that `reg` now holds the value of `slot`.
     fn cache_slot(&mut self, slot: i32, reg: u8) {
+        if !self.register_cache_enabled {
+            return;
+        }
         // Remove any previous slot cached in this register.
         if let Some(old_slot) = self.reg_to_slot[reg as usize].take() {
             self.slot_cache.remove(&old_slot);
@@ -529,7 +554,56 @@ pub fn has_phi_from<'ctx>(current_bb: BasicBlock<'ctx>, target_bb: BasicBlock<'c
 }
 
 /// Pre-scan function to allocate labels and slots.
-pub fn pre_scan_function<'ctx>(emitter: &mut PvmEmitter<'ctx>, function: FunctionValue<'ctx>) {
+///
+/// Also determines which callee-saved registers are actually used (for shrink wrapping).
+pub fn pre_scan_function<'ctx>(
+    emitter: &mut PvmEmitter<'ctx>,
+    function: FunctionValue<'ctx>,
+    is_main: bool,
+) {
+    // Determine which callee-saved registers are used (shrink wrapping).
+    if !is_main && emitter.shrink_wrap_enabled {
+        let num_params = function.count_params() as usize;
+        let mut used = [false; 4];
+
+        // Parameters mapped to r9-r12 count as used.
+        for u in used
+            .iter_mut()
+            .take(crate::abi::MAX_LOCAL_REGS.min(num_params))
+        {
+            *u = true;
+        }
+
+        // If the function contains any call instruction, all callee-saved regs are used
+        // (because the callee may clobber them and expects us to preserve them).
+        if !used.iter().all(|&u| u) {
+            'outer: for bb in function.get_basic_blocks() {
+                for instr in bb.get_instructions() {
+                    if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
+                        used = [true; 4];
+                        break 'outer;
+                    }
+                }
+            }
+        }
+
+        emitter.used_callee_regs = used;
+
+        // Compute frame offsets for saved callee-saved registers.
+        // Layout: [ra at offset 0, then used callee-saved regs contiguously].
+        let mut offset = 8i32; // after ra
+        let mut offsets = [None; 4];
+        for i in 0..4 {
+            if used[i] {
+                offsets[i] = Some(offset);
+                offset += 8;
+            }
+        }
+        emitter.callee_save_offsets = offsets;
+        emitter.next_slot_offset = offset;
+    }
+    // When shrink wrapping is disabled or is_main, keep defaults (all regs, FRAME_HEADER_SIZE).
+
     // Allocate slots for function parameters.
     for param in function.get_params() {
         let key = val_key_basic(param);

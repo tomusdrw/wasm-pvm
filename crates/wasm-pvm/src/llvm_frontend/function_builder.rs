@@ -239,7 +239,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
         }
     }
 
-    pub fn translate_module(mut self, wasm_module: &WasmModule) -> Result<Module<'ctx>> {
+    pub fn translate_module(
+        mut self,
+        wasm_module: &WasmModule,
+        run_llvm_passes: bool,
+    ) -> Result<Module<'ctx>> {
         self.declare_functions(wasm_module);
         self.declare_globals(wasm_module);
         self.type_signatures
@@ -267,7 +271,9 @@ impl<'ctx> WasmToLlvm<'ctx> {
             )?;
         }
 
-        self.run_optimization_passes()?;
+        if run_llvm_passes {
+            self.run_optimization_passes()?;
+        }
 
         self.module
             .verify()

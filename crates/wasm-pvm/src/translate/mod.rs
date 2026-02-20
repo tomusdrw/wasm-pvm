@@ -25,6 +25,35 @@ pub enum ImportAction {
     Nop,
 }
 
+/// Flags to enable/disable individual compiler optimizations.
+/// All optimizations are enabled by default.
+#[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct OptimizationFlags {
+    /// Run LLVM optimization passes (mem2reg, instcombine, simplifycfg, gvn, dce).
+    pub llvm_passes: bool,
+    /// Run peephole optimizer (fallthrough removal, dead code elimination).
+    pub peephole: bool,
+    /// Enable per-block register cache (store-load forwarding).
+    pub register_cache: bool,
+    /// Fuse `ICmp` + Branch into a single PVM branch instruction.
+    pub icmp_branch_fusion: bool,
+    /// Only save/restore callee-saved registers (r9-r12) that are actually used.
+    pub shrink_wrap_callee_saves: bool,
+}
+
+impl Default for OptimizationFlags {
+    fn default() -> Self {
+        Self {
+            llvm_passes: true,
+            peephole: true,
+            register_cache: true,
+            icmp_branch_fusion: true,
+            shrink_wrap_callee_saves: true,
+        }
+    }
+}
+
 /// Options for compilation.
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
@@ -38,6 +67,8 @@ pub struct CompileOptions {
     /// Metadata blob to prepend to the SPI output.
     /// Typically contains the source filename and compiler version.
     pub metadata: Vec<u8>,
+    /// Optimization flags controlling which compiler passes are enabled.
+    pub optimizations: OptimizationFlags,
 }
 
 // Re-export register constants from abi module
@@ -111,7 +142,8 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
 
     // Phase 1: WASM → LLVM IR
     let context = Context::create();
-    let llvm_module = llvm_frontend::translate_wasm_to_llvm(&context, module)?;
+    let llvm_module =
+        llvm_frontend::translate_wasm_to_llvm(&context, module, options.optimizations.llvm_passes)?;
 
     // Calculate RO_DATA offsets and lengths for passive data segments
     let mut data_segment_offsets = std::collections::HashMap::new();
@@ -164,6 +196,7 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         data_segment_lengths,
         data_segment_length_addrs,
         wasm_import_map: options.import_map.clone(),
+        optimizations: options.optimizations.clone(),
     };
 
     // Phase 3: LLVM IR → PVM bytecode for each function

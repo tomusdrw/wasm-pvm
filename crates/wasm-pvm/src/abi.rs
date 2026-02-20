@@ -53,8 +53,9 @@ pub const MAX_LOCAL_REGS: usize = 4;
 
 // ── Stack Frame Layout ──
 
-/// Size of the standard stack frame header in bytes.
-/// Format:
+/// Maximum stack frame header size in bytes (used as default when shrink wrapping is disabled).
+///
+/// Layout (all callee-saved registers):
 /// - 0: Saved r0 (ra)
 /// - 8: Saved r9 (l0)
 /// - 16: Saved r10 (l1)
@@ -62,6 +63,10 @@ pub const MAX_LOCAL_REGS: usize = 4;
 /// - 32: Saved r12 (l3)
 ///
 /// Total: 5 * 8 = 40 bytes.
+///
+/// With shrink wrapping enabled, the actual header size is dynamic:
+/// `8 (ra) + 8 * num_used_callee_regs`. Only registers that are actually
+/// used by the function body are saved/restored.
 pub const FRAME_HEADER_SIZE: i32 = 40;
 
 /// Operand stack spill area base offset (relative to SP, negative direction).

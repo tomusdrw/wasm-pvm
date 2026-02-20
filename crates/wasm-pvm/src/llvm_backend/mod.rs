@@ -53,9 +53,12 @@ pub fn lower_function(
     emitter.result_globals = result_globals;
     emitter.entry_returns_ptr_len = entry_returns_ptr_len;
     emitter.wasm_memory_base = ctx.wasm_memory_base;
+    emitter.register_cache_enabled = ctx.optimizations.register_cache;
+    emitter.icmp_fusion_enabled = ctx.optimizations.icmp_branch_fusion;
+    emitter.shrink_wrap_enabled = ctx.optimizations.shrink_wrap_callee_saves;
 
     // Phase 1: Pre-scan — allocate labels for blocks and slots for all SSA values.
-    pre_scan_function(&mut emitter, function);
+    pre_scan_function(&mut emitter, function, is_main);
     emitter.frame_size = emitter.next_slot_offset;
 
     // Phase 2: Emit prologue.
@@ -72,13 +75,15 @@ pub fn lower_function(
     }
 
     // Peephole optimization: remove redundant instructions before fixup resolution.
-    crate::pvm::peephole::optimize(
-        &mut emitter.instructions,
-        &mut emitter.fixups,
-        &mut emitter.call_fixups,
-        &mut emitter.indirect_call_fixups,
-        &mut emitter.labels,
-    );
+    if ctx.optimizations.peephole {
+        crate::pvm::peephole::optimize(
+            &mut emitter.instructions,
+            &mut emitter.fixups,
+            &mut emitter.call_fixups,
+            &mut emitter.indirect_call_fixups,
+            &mut emitter.labels,
+        );
+    }
 
     emitter.resolve_fixups()?;
 
@@ -141,13 +146,15 @@ fn emit_prologue<'ctx>(
             offset: 0,
         });
 
-        // Save callee-saved registers r9-r12.
+        // Save callee-saved registers r9-r12 (only those actually used).
         for i in 0..abi::MAX_LOCAL_REGS {
-            e.emit(Instruction::StoreIndU64 {
-                base: abi::STACK_PTR_REG,
-                src: abi::FIRST_LOCAL_REG + i as u8,
-                offset: (8 + i * 8) as i32,
-            });
+            if let Some(offset) = e.callee_save_offsets[i] {
+                e.emit(Instruction::StoreIndU64 {
+                    base: abi::STACK_PTR_REG,
+                    src: abi::FIRST_LOCAL_REG + i as u8,
+                    offset,
+                });
+            }
         }
     }
 
