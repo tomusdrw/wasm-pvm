@@ -203,8 +203,9 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `icmp_branch_fusion` | `--no-icmp-fusion` | Fuse ICmp+Branch into single PVM branch | `llvm_backend/alu.rs:lower_icmp()` |
 | `shrink_wrap_callee_saves` | `--no-shrink-wrap` | Only save/restore used callee-saved regs | `llvm_backend/emitter.rs:pre_scan_function()` |
 | `dead_store_elimination` | `--no-dead-store-elim` | Remove SP-relative stores never loaded from | `llvm_backend/mod.rs:lower_function()` → `peephole.rs` |
+| `constant_propagation` | `--no-const-prop` | Skip redundant `LoadImm`/`LoadImm64` when register already holds the constant | `llvm_backend/emitter.rs:emit()` |
 
-**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `PvmEmitter` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`). LLVM passes flag is passed directly to `translate_wasm_to_llvm()`.
+**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `PvmEmitter` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`). LLVM passes flag is passed directly to `translate_wasm_to_llvm()`.
 
 **Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `PvmEmitter`, guard the optimization with the flag, add a `--no-*` CLI flag.
 

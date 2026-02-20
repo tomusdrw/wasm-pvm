@@ -56,6 +56,7 @@ pub fn lower_function(
     emitter.register_cache_enabled = ctx.optimizations.register_cache;
     emitter.icmp_fusion_enabled = ctx.optimizations.icmp_branch_fusion;
     emitter.shrink_wrap_enabled = ctx.optimizations.shrink_wrap_callee_saves;
+    emitter.constant_propagation_enabled = ctx.optimizations.constant_propagation;
 
     // Phase 1: Pre-scan — allocate labels for blocks and slots for all SSA values.
     pre_scan_function(&mut emitter, function, is_main);

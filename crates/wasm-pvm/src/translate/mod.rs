@@ -42,6 +42,8 @@ pub struct OptimizationFlags {
     pub shrink_wrap_callee_saves: bool,
     /// Eliminate SP-relative stores whose target offset is never loaded from.
     pub dead_store_elimination: bool,
+    /// Skip redundant `LoadImm`/`LoadImm64` when the register already holds the constant.
+    pub constant_propagation: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -53,6 +55,7 @@ impl Default for OptimizationFlags {
             icmp_branch_fusion: true,
             shrink_wrap_callee_saves: true,
             dead_store_elimination: true,
+            constant_propagation: true,
         }
     }
 }
