@@ -13,11 +13,12 @@ use crate::translate::wasm_module::WasmModule;
 /// Translate a parsed WASM module into an LLVM IR module.
 ///
 /// Creates an LLVM context-scoped module with all functions and globals,
-/// then runs LLVM optimization passes (mem2reg, instcombine, simplifycfg, gvn, dce).
+/// then optionally runs LLVM optimization passes (mem2reg, instcombine, simplifycfg, gvn, dce).
 pub fn translate_wasm_to_llvm<'ctx>(
     context: &'ctx Context,
     wasm_module: &WasmModule,
+    run_llvm_passes: bool,
 ) -> Result<Module<'ctx>> {
     let translator = WasmToLlvm::new(context, "wasm_module");
-    translator.translate_module(wasm_module)
+    translator.translate_module(wasm_module, run_llvm_passes)
 }

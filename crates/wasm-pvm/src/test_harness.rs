@@ -75,6 +75,12 @@ pub fn compile_wat_with_imports(
     )
 }
 
+/// Compile WAT with custom compile options
+pub fn compile_wat_with_options(wat: &str, options: &CompileOptions) -> Result<SpiProgram> {
+    let wasm = wat_to_wasm(wat)?;
+    compile_with_options(&wasm, options)
+}
+
 /// Extract the instruction sequence from a SPI program
 pub fn extract_instructions(program: &SpiProgram) -> Vec<Instruction> {
     program.code().instructions().to_vec()

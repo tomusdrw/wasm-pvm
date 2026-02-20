@@ -552,3 +552,170 @@ fn test_if_else_result_phi_slots() {
         "Expected at least 2 StoreIndU64 for phi values, got {store_count}"
     );
 }
+
+// ── Callee-Save Shrink Wrapping ──
+
+/// Shrink wrapping should produce smaller code for leaf functions.
+/// A leaf function with 0 params and no calls needs no callee-saved register saves.
+#[test]
+fn test_shrink_wrap_reduces_code_size() {
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    let wat = r#"
+        (module
+            (func $leaf (result i32)
+                i32.const 42
+            )
+            (func (export "main") (result i32)
+                call $leaf
+            )
+        )
+    "#;
+
+    let with_shrink = compile_wat(wat).expect("compile with shrink wrap");
+    let without_shrink = compile_wat_with_options(
+        wat,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                shrink_wrap_callee_saves: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile without shrink wrap");
+
+    let size_with = with_shrink.code().instructions().len();
+    let size_without = without_shrink.code().instructions().len();
+
+    // Shrink wrapping should produce fewer instructions for the leaf function
+    // by removing 4 saves + 4 restores = 8 instructions.
+    assert!(
+        size_with < size_without,
+        "Shrink wrapping should produce smaller code: {size_with} >= {size_without}"
+    );
+}
+
+/// With --no-shrink-wrap disabled, a leaf function with 0 params should still
+/// save all 4 callee-saved registers (r9-r12).
+#[test]
+fn test_no_shrink_wrap_saves_all() {
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    let wat = r#"
+        (module
+            (func $leaf (result i32)
+                i32.const 42
+            )
+            (func (export "main") (result i32)
+                call $leaf
+            )
+        )
+    "#;
+
+    let program = compile_wat_with_options(
+        wat,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                shrink_wrap_callee_saves: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // $leaf should save all 4 callee-saved regs (r9=9, r10=10, r11=11, r12=12).
+    // Look for the 4 stores to SP-relative offsets 8, 16, 24, 32.
+    for (i, offset) in [8, 16, 24, 32].iter().enumerate() {
+        let reg = 9 + i as u8;
+        let has_save = instructions.iter().any(|instr| {
+            matches!(
+                instr,
+                Instruction::StoreIndU64 { base: 1, src, offset: o } if *src == reg && *o == *offset
+            )
+        });
+        assert!(
+            has_save,
+            "Expected callee-save store for r{reg} at offset {offset}"
+        );
+    }
+}
+
+/// Shrink wrapping: leaf function with 0 params should NOT save any callee-saved
+/// registers (no StoreIndU64 at offsets 8/16/24/32 with r9-r12 as source).
+#[test]
+fn test_shrink_wrap_leaf_0_params_no_saves() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func $leaf (result i32)
+                i32.const 42
+            )
+            (func (export "main") (result i32)
+                call $leaf
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // $leaf saves ra at offset 0, but should NOT save any callee-saved registers.
+    // Entry function (main) never saves callee-saved registers.
+    // So there should be no StoreIndU64 at offsets 8-32 targeting r9-r12.
+    for (i, offset) in [8i32, 16, 24, 32].iter().enumerate() {
+        let reg = 9 + i as u8;
+        let has_save = instructions.iter().any(|instr| {
+            matches!(
+                instr,
+                Instruction::StoreIndU64 { base: 1, src, offset: o } if *src == reg && *o == *offset
+            )
+        });
+        assert!(
+            !has_save,
+            "Unexpected callee-save store for r{reg} at offset {offset} — shrink wrapping should skip it"
+        );
+    }
+}
+
+/// Shrink wrapping: function that calls another should save all callee-saved regs.
+#[test]
+fn test_shrink_wrap_calling_function_saves_all() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func $leaf (result i32)
+                i32.const 42
+            )
+            (func $caller (result i32)
+                call $leaf
+            )
+            (func (export "main") (result i32)
+                call $caller
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // $caller calls $leaf → must save all 4 callee-saved regs.
+    // Check all 4 stores exist (at consecutive offsets 8, 16, 24, 32).
+    for (i, offset) in [8, 16, 24, 32].iter().enumerate() {
+        let reg = 9 + i as u8;
+        let has_save = instructions.iter().any(|instr| {
+            matches!(
+                instr,
+                Instruction::StoreIndU64 { base: 1, src, offset: o } if *src == reg && *o == *offset
+            )
+        });
+        assert!(
+            has_save,
+            "Expected callee-save store for r{reg} at offset {offset} in calling function"
+        );
+    }
+}

@@ -264,13 +264,15 @@ fn emit_epilogue(e: &mut PvmEmitter<'_>, is_main: bool) {
             offset: 0,
         });
     } else {
-        // Restore callee-saved registers r9-r12.
+        // Restore callee-saved registers r9-r12 (only those actually saved).
         for i in 0..abi::MAX_LOCAL_REGS {
-            e.emit(Instruction::LoadIndU64 {
-                dst: abi::FIRST_LOCAL_REG + i as u8,
-                base: abi::STACK_PTR_REG,
-                offset: (8 + i * 8) as i32,
-            });
+            if let Some(offset) = e.callee_save_offsets[i] {
+                e.emit(Instruction::LoadIndU64 {
+                    dst: abi::FIRST_LOCAL_REG + i as u8,
+                    base: abi::STACK_PTR_REG,
+                    offset,
+                });
+            }
         }
 
         // Restore return address.

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use wasm_pvm::{CompileOptions, ImportAction};
+use wasm_pvm::{CompileOptions, ImportAction, OptimizationFlags};
 
 const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -38,6 +38,21 @@ enum Commands {
             help = "Adapter WAT file whose exports replace matching imports"
         )]
         adapter: Option<PathBuf>,
+
+        #[arg(long, help = "Disable LLVM optimization passes")]
+        no_llvm_passes: bool,
+
+        #[arg(long, help = "Disable peephole optimizer")]
+        no_peephole: bool,
+
+        #[arg(long, help = "Disable register cache (store-load forwarding)")]
+        no_register_cache: bool,
+
+        #[arg(long, help = "Disable ICmp+Branch fusion")]
+        no_icmp_fusion: bool,
+
+        #[arg(long, help = "Disable callee-save shrink wrapping")]
+        no_shrink_wrap: bool,
     },
 }
 
@@ -54,6 +69,11 @@ fn main() -> Result<()> {
             output,
             imports,
             adapter,
+            no_llvm_passes,
+            no_peephole,
+            no_register_cache,
+            no_icmp_fusion,
+            no_shrink_wrap,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -81,6 +101,13 @@ fn main() -> Result<()> {
                 import_map,
                 adapter: adapter_wat,
                 metadata: metadata.into_bytes(),
+                optimizations: OptimizationFlags {
+                    llvm_passes: !no_llvm_passes,
+                    peephole: !no_peephole,
+                    register_cache: !no_register_cache,
+                    icmp_branch_fusion: !no_icmp_fusion,
+                    shrink_wrap_callee_saves: !no_shrink_wrap,
+                },
             };
 
             let spi =
