@@ -275,7 +275,8 @@ fn test_filter_by_opcode() {
     let program = compile_wat(wat).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
-    // Filter for all Add32 instructions
-    let adds = filter_by_opcode(&instructions, Opcode::Add32);
-    assert!(!adds.is_empty(), "Should have Add32 instructions");
+    // With immediate folding, `i32.const N; i32.add` becomes AddImm32,
+    // so we check for AddImm32 instructions instead of Add32.
+    let adds = filter_by_opcode(&instructions, Opcode::AddImm32);
+    assert!(!adds.is_empty(), "Should have AddImm32 instructions");
 }

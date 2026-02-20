@@ -484,6 +484,16 @@ impl<'ctx> PvmEmitter<'ctx> {
     }
 }
 
+/// Try to extract a constant integer value from a `BasicValueEnum` without emitting instructions.
+/// Returns `Some(i64)` for compile-time constants, `None` for SSA values.
+pub fn try_get_constant(val: BasicValueEnum<'_>) -> Option<i64> {
+    if let BasicValueEnum::IntValue(iv) = val {
+        iv.get_sign_extended_constant()
+    } else {
+        None
+    }
+}
+
 /// Get the i-th operand of an instruction as a `BasicValueEnum`.
 pub fn get_operand(instr: InstructionValue<'_>, i: u32) -> Result<BasicValueEnum<'_>> {
     instr

@@ -27,8 +27,9 @@ fn test_import_with_return_pushes_dummy_value() {
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
-    // Should have an Add32 instruction (proving we got past the import call)
-    assert!(has_opcode(&instructions, Opcode::Add32));
+    // Should have an AddImm32 instruction (proving we got past the import call).
+    // With immediate folding, `i32.const 1; i32.add` becomes AddImm32.
+    assert!(has_opcode(&instructions, Opcode::AddImm32));
 
     // The import stub should push a LoadImm 0 for the return value
     let load_zero = InstructionPattern::LoadImm {

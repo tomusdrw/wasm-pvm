@@ -18,7 +18,7 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot,
+    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot, try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -120,6 +120,53 @@ pub fn lower_binary_arith<'ctx>(
     let rhs = get_operand(instr, 1)?;
     let slot = result_slot(e, instr)?;
     let bits = operand_bit_width(instr);
+
+    // Try immediate folding for Add/Sub with constant RHS.
+    if let Some(rhs_const) = try_get_constant(rhs) {
+        match op {
+            BinaryOp::Add if i32::try_from(rhs_const).is_ok() => {
+                e.load_operand(lhs, TEMP1)?;
+                let imm = rhs_const as i32;
+                if bits <= 32 {
+                    e.emit(Instruction::AddImm32 {
+                        dst: TEMP_RESULT,
+                        src: TEMP1,
+                        value: imm,
+                    });
+                } else {
+                    e.emit(Instruction::AddImm64 {
+                        dst: TEMP_RESULT,
+                        src: TEMP1,
+                        value: imm,
+                    });
+                }
+                e.store_to_slot(slot, TEMP_RESULT);
+                return Ok(());
+            }
+            BinaryOp::Sub
+                if i32::try_from(rhs_const).is_ok() && rhs_const != i64::from(i32::MIN) =>
+            {
+                e.load_operand(lhs, TEMP1)?;
+                let imm = -(rhs_const as i32);
+                if bits <= 32 {
+                    e.emit(Instruction::AddImm32 {
+                        dst: TEMP_RESULT,
+                        src: TEMP1,
+                        value: imm,
+                    });
+                } else {
+                    e.emit(Instruction::AddImm64 {
+                        dst: TEMP_RESULT,
+                        src: TEMP1,
+                        value: imm,
+                    });
+                }
+                e.store_to_slot(slot, TEMP_RESULT);
+                return Ok(());
+            }
+            _ => {} // Fall through to two-register path.
+        }
+    }
 
     e.load_operand(lhs, TEMP1)?;
     e.load_operand(rhs, TEMP2)?;
@@ -315,6 +362,36 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
             rhs,
         });
         return Ok(());
+    }
+
+    // Try immediate folding for ULT/SLT with constant RHS.
+    if let Some(rhs_const) = try_get_constant(rhs)
+        && i32::try_from(rhs_const).is_ok()
+    {
+        let imm = rhs_const as i32;
+        match pred {
+            IntPredicate::ULT => {
+                e.load_operand(lhs, TEMP1)?;
+                e.emit(Instruction::SetLtUImm {
+                    dst: TEMP_RESULT,
+                    src: TEMP1,
+                    value: imm,
+                });
+                e.store_to_slot(slot, TEMP_RESULT);
+                return Ok(());
+            }
+            IntPredicate::SLT => {
+                e.load_operand(lhs, TEMP1)?;
+                e.emit(Instruction::SetLtSImm {
+                    dst: TEMP_RESULT,
+                    src: TEMP1,
+                    value: imm,
+                });
+                e.store_to_slot(slot, TEMP_RESULT);
+                return Ok(());
+            }
+            _ => {} // Fall through to two-register path.
+        }
     }
 
     e.load_operand(lhs, TEMP1)?;
