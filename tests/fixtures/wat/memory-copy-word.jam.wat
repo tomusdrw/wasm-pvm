@@ -13,7 +13,7 @@
       (i32.load (local.get $args_ptr))
     )
 
-    ;; Initialize memory with pattern: 0x01..0x20 (32 bytes)
+    ;; Initialize memory with pattern: 0x01..0x18 (24 bytes, positions 0x00-0x17)
     (i32.store8 (i32.const 0x00) (i32.const 0x01))
     (i32.store8 (i32.const 0x01) (i32.const 0x02))
     (i32.store8 (i32.const 0x02) (i32.const 0x03))
@@ -55,8 +55,7 @@
             ;; Test 1: Forward non-overlapping copy, 10 bytes (1 word + 2 byte tail).
             ;; Copy 10 bytes from src=0 to dst=0x40.
             ;; Expected at dst: [01 02 03 04 05 06 07 08 09 0A]
-            ;; Read last 4 bytes at 0x46: 0x0A090807  (wait... 0x46 = dst+6)
-            ;; Actually read 4 at 0x44: [05 06 07 08] = 0x08070605
+            ;; Read 4 bytes at 0x44 (dst+4): [05 06 07 08] = 0x08070605
             (memory.copy (i32.const 0x40) (i32.const 0x0) (i32.const 10))
             (local.set $result (i32.load (i32.const 0x44)))
           )
