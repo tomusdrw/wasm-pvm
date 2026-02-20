@@ -512,7 +512,8 @@ pub fn emit_pvm_memory_copy<'ctx>(
     });
 
     // Check for overlap and direction: if dst > src, copy backwards.
-    // BranchLtU(reg1: dst, reg2: src) checks if src < dst (i.e. dst > src).
+    // PVM branch semantics: BranchLtU{reg1: a, reg2: b} branches if b < a.
+    // So BranchLtU(reg1: dst, reg2: src) branches if src < dst (i.e. dst > src).
     let backward_label = e.alloc_label();
     let forward_label = e.alloc_label();
     let loop_end = e.alloc_label();
