@@ -291,7 +291,7 @@ fn test_param_loaded_from_sp_slot() {
     );
 }
 
-/// Results are stored back to stack slots via SP-relative stores.
+/// Results flow through registers; dead stores to slots are eliminated by DSE.
 #[test]
 fn test_result_stored_to_sp_slot() {
     let program = compile_wat(
@@ -310,21 +310,22 @@ fn test_result_stored_to_sp_slot() {
     .expect("compile");
     let instructions = extract_instructions(&program);
 
-    // After the first add, the result should be stored to a slot.
+    // Both adds produce results; DSE removes any dead intermediate slot stores.
     assert_has_pattern(
         &instructions,
-        &[
-            InstructionPattern::Add32 {
-                dst: Pat::Any,
-                src1: Pat::Any,
-                src2: Pat::Any,
-            },
-            InstructionPattern::StoreIndU64 {
-                base: Pat::Exact(1), // SP register
-                src: Pat::Any,
-                offset: Pat::Any,
-            },
-        ],
+        &[InstructionPattern::Add32 {
+            dst: Pat::Any,
+            src1: Pat::Any,
+            src2: Pat::Any,
+        }],
+    );
+    assert_has_pattern(
+        &instructions,
+        &[InstructionPattern::AddImm32 {
+            dst: Pat::Any,
+            src: Pat::Any,
+            value: Pat::Exact(1),
+        }],
     );
 }
 

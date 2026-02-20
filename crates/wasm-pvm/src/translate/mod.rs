@@ -40,6 +40,8 @@ pub struct OptimizationFlags {
     pub icmp_branch_fusion: bool,
     /// Only save/restore callee-saved registers (r9-r12) that are actually used.
     pub shrink_wrap_callee_saves: bool,
+    /// Eliminate SP-relative stores whose target offset is never loaded from.
+    pub dead_store_elimination: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -50,6 +52,7 @@ impl Default for OptimizationFlags {
             register_cache: true,
             icmp_branch_fusion: true,
             shrink_wrap_callee_saves: true,
+            dead_store_elimination: true,
         }
     }
 }
