@@ -116,21 +116,29 @@ pub fn eliminate_dead_stores(
     indirect_call_fixups: &mut [LlvmIndirectCallFixup],
     labels: &mut [Option<usize>],
 ) {
+    const SP: u8 = crate::abi::STACK_PTR_REG;
+
     let len = instructions.len();
     if len == 0 {
         return;
     }
 
-    const SP: u8 = crate::abi::STACK_PTR_REG;
-
     // Pass 1: Collect all SP-relative load offsets (the "read" set).
     let mut read_offsets = HashSet::new();
     for instr in instructions.iter() {
         match instr {
-            Instruction::LoadIndU64 { base: SP, offset, .. }
-            | Instruction::LoadIndU32 { base: SP, offset, .. }
-            | Instruction::LoadIndU8 { base: SP, offset, .. }
-            | Instruction::LoadIndU16 { base: SP, offset, .. } => {
+            Instruction::LoadIndU64 {
+                base: SP, offset, ..
+            }
+            | Instruction::LoadIndU32 {
+                base: SP, offset, ..
+            }
+            | Instruction::LoadIndU8 {
+                base: SP, offset, ..
+            }
+            | Instruction::LoadIndU16 {
+                base: SP, offset, ..
+            } => {
                 read_offsets.insert(*offset);
             }
             _ => {}
@@ -143,10 +151,9 @@ pub fn eliminate_dead_stores(
         if let Instruction::StoreIndU64 {
             base: SP, offset, ..
         } = instr
+            && !read_offsets.contains(offset)
         {
-            if !read_offsets.contains(offset) {
-                keep[i] = false;
-            }
+            keep[i] = false;
         }
     }
 
