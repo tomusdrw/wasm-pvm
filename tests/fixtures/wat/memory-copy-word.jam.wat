@@ -99,11 +99,65 @@
                             (local.set $result (i32.load (i32.const 0x10)))
                           )
                           (else
-                            ;; Test 6: memory.fill with 16 bytes (word-sized fill test).
-                            ;; Fill 16 bytes at addr 0x40 with value 0xAB.
-                            ;; Expected: [AB AB AB AB] = 0xABABABAB
-                            (memory.fill (i32.const 0x40) (i32.const 0xAB) (i32.const 16))
-                            (local.set $result (i32.load (i32.const 0x40)))
+                            (if (i32.eq (local.get $test_case) (i32.const 6))
+                              (then
+                                ;; Test 6: memory.fill with 16 bytes (word-sized fill test).
+                                ;; Fill 16 bytes at addr 0x40 with value 0xAB.
+                                ;; Expected: [AB AB AB AB] = 0xABABABAB
+                                (memory.fill (i32.const 0x40) (i32.const 0xAB) (i32.const 16))
+                                (local.set $result (i32.load (i32.const 0x40)))
+                              )
+                              (else
+                                (if (i32.eq (local.get $test_case) (i32.const 7))
+                                  (then
+                                    ;; Test 7: memory.copy with len=0 (no-op).
+                                    ;; Memory at 0x40 should remain 0.
+                                    (memory.copy (i32.const 0x40) (i32.const 0x0) (i32.const 0))
+                                    (local.set $result (i32.load (i32.const 0x40)))
+                                  )
+                                  (else
+                                    (if (i32.eq (local.get $test_case) (i32.const 8))
+                                      (then
+                                        ;; Test 8: memory.fill with len=0 (no-op).
+                                        ;; Memory at 0x40 should remain 0.
+                                        (memory.fill (i32.const 0x40) (i32.const 0xFF) (i32.const 0))
+                                        (local.set $result (i32.load (i32.const 0x40)))
+                                      )
+                                      (else
+                                        (if (i32.eq (local.get $test_case) (i32.const 9))
+                                          (then
+                                            ;; Test 9: memory.copy with len=3 (pure byte tail, no word loop).
+                                            ;; Copy 3 bytes from src=0 to dst=0x40.
+                                            ;; Expected at 0x40: [01 02 03 00] = 0x00030201
+                                            (memory.copy (i32.const 0x40) (i32.const 0x0) (i32.const 3))
+                                            (local.set $result (i32.load (i32.const 0x40)))
+                                          )
+                                          (else
+                                            (if (i32.eq (local.get $test_case) (i32.const 10))
+                                              (then
+                                                ;; Test 10: memory.fill with len=5 (pure byte tail, no word loop).
+                                                ;; Fill 5 bytes at 0x40 with 0x42.
+                                                ;; Expected at 0x40: [42 42 42 42] = 0x42424242
+                                                (memory.fill (i32.const 0x40) (i32.const 0x42) (i32.const 5))
+                                                (local.set $result (i32.load (i32.const 0x40)))
+                                              )
+                                              (else
+                                                ;; Test 11: memory.fill with val > 0xFF (masking test).
+                                                ;; WASM spec: fill uses val & 0xFF. So 0x1AB -> 0xAB.
+                                                ;; Fill 8 bytes at 0x40 with 0x1AB (should use 0xAB).
+                                                ;; Expected: [AB AB AB AB] = 0xABABABAB
+                                                (memory.fill (i32.const 0x40) (i32.const 0x1AB) (i32.const 8))
+                                                (local.set $result (i32.load (i32.const 0x40)))
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
                           )
                         )
                       )

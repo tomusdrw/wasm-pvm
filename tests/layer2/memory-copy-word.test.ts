@@ -21,6 +21,21 @@ const tests = [
 
   // Test 6: memory.fill with 16 bytes (word-sized fill).
   { args: "06000000", expected: 0xABABABAB, description: "memory.fill 16 bytes with 0xAB (word-sized)" },
+
+  // Test 7: memory.copy with len=0 (no-op edge case).
+  { args: "07000000", expected: 0x00000000, description: "memory.copy len=0 (no-op)" },
+
+  // Test 8: memory.fill with len=0 (no-op edge case).
+  { args: "08000000", expected: 0x00000000, description: "memory.fill len=0 (no-op)" },
+
+  // Test 9: memory.copy with len=3 (pure byte tail, no word loop).
+  { args: "09000000", expected: 0x00030201, description: "memory.copy 3 bytes (byte-only tail)" },
+
+  // Test 10: memory.fill with len=5 (pure byte tail, no word loop).
+  { args: "0a000000", expected: 0x42424242, description: "memory.fill 5 bytes (byte-only tail)" },
+
+  // Test 11: memory.fill with val > 0xFF (masking test).
+  { args: "0b000000", expected: 0xABABABAB, description: "memory.fill val=0x1AB masks to 0xAB" },
 ];
 
 defineSuite({

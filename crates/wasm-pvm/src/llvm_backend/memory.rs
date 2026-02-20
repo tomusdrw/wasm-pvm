@@ -351,19 +351,22 @@ pub fn emit_pvm_memory_grow<'ctx>(
     Ok(())
 }
 
-/// Emit memory.fill operation.
+/// Emit memory.fill operation using word-sized (64-bit) stores for the bulk,
+/// with a byte-by-byte tail for the remaining 0-7 bytes.
 pub fn emit_pvm_memory_fill<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
     ctx: &LoweringContext,
 ) -> Result<()> {
+    use crate::abi::{SCRATCH1, SCRATCH2};
+
     // __pvm_memory_fill(dst, val, len)
     let dst_addr = get_operand(instr, 0)?;
     let val = get_operand(instr, 1)?;
     let len = get_operand(instr, 2)?;
 
     e.load_operand(dst_addr, TEMP1)?; // dest
-    e.load_operand(val, TEMP2)?; // value
+    e.load_operand(val, TEMP2)?; // value (single byte)
     e.load_operand(len, TEMP_RESULT)?; // size (counter)
 
     // Add wasm_memory_base to dest.
@@ -373,13 +376,84 @@ pub fn emit_pvm_memory_fill<'ctx>(
         value: ctx.wasm_memory_base,
     });
 
-    // Loop: while size > 0, store byte and advance.
-    let loop_start = e.alloc_label();
-    let loop_end = e.alloc_label();
+    let word_loop = e.alloc_label();
+    let byte_loop = e.alloc_label();
+    let end_label = e.alloc_label();
 
-    e.emit_branch_eq_imm_to_label(TEMP_RESULT, 0, loop_end);
-    e.define_label(loop_start);
+    // Skip everything if len == 0.
+    e.emit_branch_eq_imm_to_label(TEMP_RESULT, 0, end_label);
 
+    // Replicate the byte value across all 8 bytes of a 64-bit word.
+    // First mask to low byte (WASM spec: memory.fill uses val & 0xFF),
+    // then multiply by 0x0101010101010101 to broadcast to all byte lanes.
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH1,
+        value: 0xFF,
+    });
+    e.emit(Instruction::And {
+        dst: SCRATCH1,
+        src1: TEMP2,
+        src2: SCRATCH1,
+    });
+    e.emit(Instruction::LoadImm64 {
+        reg: SCRATCH2,
+        value: 0x0101_0101_0101_0101,
+    });
+    e.emit(Instruction::Mul64 {
+        dst: SCRATCH1,
+        src1: SCRATCH1,
+        src2: SCRATCH2,
+    });
+    // SCRATCH1 now holds the 64-bit fill pattern.
+
+    // SCRATCH2 = len >> 3 (number of 8-byte words).
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH2,
+        value: 3,
+    });
+    e.emit(Instruction::ShloR64 {
+        dst: SCRATCH2,
+        src1: TEMP_RESULT,
+        src2: SCRATCH2,
+    });
+
+    // Skip word loop if no full words.
+    e.emit_branch_eq_imm_to_label(SCRATCH2, 0, byte_loop);
+
+    // ── Word loop: store 8 bytes at a time ──
+    e.define_label(word_loop);
+    e.emit(Instruction::StoreIndU64 {
+        base: TEMP1,
+        src: SCRATCH1,
+        offset: 0,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP1,
+        src: TEMP1,
+        value: 8,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: SCRATCH2,
+        src: SCRATCH2,
+        value: -1,
+    });
+    e.emit_branch_ne_imm_to_label(SCRATCH2, 0, word_loop);
+
+    // ── Byte tail: TEMP_RESULT = len & 7 (remaining bytes) ──
+    e.define_label(byte_loop);
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH2,
+        value: 7,
+    });
+    e.emit(Instruction::And {
+        dst: TEMP_RESULT,
+        src1: TEMP_RESULT,
+        src2: SCRATCH2,
+    });
+    e.emit_branch_eq_imm_to_label(TEMP_RESULT, 0, end_label);
+
+    let byte_loop_body = e.alloc_label();
+    e.define_label(byte_loop_body);
     e.emit(Instruction::StoreIndU8 {
         base: TEMP1,
         src: TEMP2,
@@ -395,9 +469,9 @@ pub fn emit_pvm_memory_fill<'ctx>(
         src: TEMP_RESULT,
         value: -1,
     });
-    e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, loop_start);
+    e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, byte_loop_body);
 
-    e.define_label(loop_end);
+    e.define_label(end_label);
     Ok(())
 }
 
@@ -406,6 +480,9 @@ pub fn emit_pvm_memory_fill<'ctx>(
 /// When `dst > src`, a naive forward copy corrupts overlapping bytes before
 /// they are read. We detect this case and copy backward (from high to low
 /// addresses) so that source data is always read before being overwritten.
+///
+/// Uses word-sized (64-bit) loads/stores for the bulk of forward copies,
+/// with byte-by-byte handling for the tail and backward copies.
 pub fn emit_pvm_memory_copy<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -444,18 +521,68 @@ pub fn emit_pvm_memory_copy<'ctx>(
     e.emit_branch_eq_imm_to_label(TEMP_RESULT, 0, loop_end);
 
     // If src < dst (i.e. dst > src), use backward copy.
-    let fixup_idx = e.instructions.len();
-    e.fixups.push((fixup_idx, backward_label));
-    e.emit(Instruction::BranchLtU {
-        reg1: TEMP1, // dst
-        reg2: TEMP2, // src
-        offset: 0,
-    });
+    e.emit_branch_lt_u_to_label(TEMP1, TEMP2, backward_label);
 
     // ── Forward Copy (dst <= src or no overlap) ──
-    // while size > 0: dst++ = src++
-    e.define_label(forward_label);
+    // Word loop: copy 8 bytes at a time.
+    // SCRATCH2 = len >> 3 (number of full 8-byte words).
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH2,
+        value: 3,
+    });
+    e.emit(Instruction::ShloR64 {
+        dst: SCRATCH2,
+        src1: TEMP_RESULT,
+        src2: SCRATCH2,
+    });
 
+    let fwd_word_loop = e.alloc_label();
+    let fwd_byte_tail = e.alloc_label();
+
+    e.emit_branch_eq_imm_to_label(SCRATCH2, 0, fwd_byte_tail);
+    e.define_label(fwd_word_loop);
+
+    e.emit(Instruction::LoadIndU64 {
+        dst: SCRATCH1,
+        base: TEMP2,
+        offset: 0,
+    });
+    e.emit(Instruction::StoreIndU64 {
+        base: TEMP1,
+        src: SCRATCH1,
+        offset: 0,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP1,
+        src: TEMP1,
+        value: 8,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: TEMP2,
+        src: TEMP2,
+        value: 8,
+    });
+    e.emit(Instruction::AddImm64 {
+        dst: SCRATCH2,
+        src: SCRATCH2,
+        value: -1,
+    });
+    e.emit_branch_ne_imm_to_label(SCRATCH2, 0, fwd_word_loop);
+
+    // Byte tail: remaining = len & 7.
+    e.define_label(fwd_byte_tail);
+    e.emit(Instruction::LoadImm {
+        reg: SCRATCH2,
+        value: 7,
+    });
+    e.emit(Instruction::And {
+        dst: TEMP_RESULT,
+        src1: TEMP_RESULT,
+        src2: SCRATCH2,
+    });
+    e.emit_branch_eq_imm_to_label(TEMP_RESULT, 0, loop_end);
+
+    e.define_label(forward_label);
     e.emit(Instruction::LoadIndU8 {
         dst: SCRATCH1,
         base: TEMP2,
@@ -485,8 +612,9 @@ pub fn emit_pvm_memory_copy<'ctx>(
     e.emit_jump_to_label(loop_end);
 
     // ── Backward Copy (dst > src) ──
-    // src += len - 1; dst += len - 1;
-    // while size > 0: dst-- = src--
+    // Byte-by-byte backward copy for correctness with overlapping regions.
+    // (Word-sized backward copy is avoided because it increases code size
+    // significantly for large programs, and backward copies are rare in practice.)
     e.define_label(backward_label);
 
     // Decrement size once for the offset calculation (len - 1).
