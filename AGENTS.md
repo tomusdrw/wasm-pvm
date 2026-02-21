@@ -70,6 +70,10 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 
 This is not optional. Stale documentation causes repeated mistakes and wasted investigation time.
 
+### PR Description Policy
+
+**Every PR description MUST include benchmark results.** Run `./tests/utils/benchmark.sh --base main --current <branch>` and paste the comparison table into the PR body. This ensures reviewers can see the impact on JAM file size, gas usage, and execution time at a glance. PRs without benchmark results should not be merged.
+
 ---
 
 ## Structure
