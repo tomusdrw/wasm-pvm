@@ -778,7 +778,10 @@ impl Instruction {
             | Self::AddImm32 { src, .. }
             | Self::AddImm64 { src, .. }
             | Self::SetLtUImm { src, .. }
-            | Self::SetLtSImm { src, .. } => [Some(*src), None, None],
+            | Self::SetLtSImm { src, .. }
+            // CmovIzImm/CmovNzImm read from the cond register only (value is an immediate).
+            | Self::CmovIzImm { cond: src, .. }
+            | Self::CmovNzImm { cond: src, .. } => [Some(*src), None, None],
 
             Self::StoreIndU8 { base, src, .. }
             | Self::StoreIndU16 { base, src, .. }

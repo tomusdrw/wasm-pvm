@@ -461,10 +461,41 @@ pub fn eliminate_dead_code(
                 | Instruction::StoreIndU16 { .. }
                 | Instruction::StoreIndU32 { .. }
                 | Instruction::StoreIndU64 { .. }
-                | Instruction::Ecalli { .. }
                 | Instruction::Trap
                 | Instruction::Sbrk { .. } => {
-                    // Side effects, keep.
+                    // Side effects (memory writes / traps), keep.
+                }
+                // Memory loads can trap on out-of-bounds access: treat as side-effecting.
+                // The result register is still tracked for liveness so that any dead
+                // *definition* of that register earlier can be eliminated, but the load
+                // itself is never removed.
+                Instruction::LoadIndU8 { dst, .. }
+                | Instruction::LoadIndI8 { dst, .. }
+                | Instruction::LoadIndU16 { dst, .. }
+                | Instruction::LoadIndI16 { dst, .. }
+                | Instruction::LoadIndU32 { dst, .. }
+                | Instruction::LoadIndU64 { dst, .. } => {
+                    // Mark dst as no longer needed upstream (the load defines it here).
+                    needed_regs[*dst as usize] = false;
+                }
+                // Integer division/remainder can trap on divide-by-zero: treat as
+                // side-effecting (never remove), but still track the destination register.
+                Instruction::DivU32 { dst, .. }
+                | Instruction::DivS32 { dst, .. }
+                | Instruction::RemU32 { dst, .. }
+                | Instruction::RemS32 { dst, .. }
+                | Instruction::DivU64 { dst, .. }
+                | Instruction::DivS64 { dst, .. }
+                | Instruction::RemU64 { dst, .. }
+                | Instruction::RemS64 { dst, .. } => {
+                    // Mark dst as no longer needed upstream (the instruction defines it).
+                    needed_regs[*dst as usize] = false;
+                }
+                // Ecalli: the called host function may read any argument register.
+                // Reset liveness conservatively so that all register setup instructions
+                // feeding the Ecalli are preserved.
+                Instruction::Ecalli { .. } => {
+                    needed_regs = [true; 13];
                 }
                 _ => {
                     if let Some(dst) = instr.dest_reg() {
@@ -1053,6 +1084,163 @@ mod tests {
 
         assert_eq!(instrs.len(), 3);
         assert_eq!(fixups[0].0, 2); // remapped from 3 to 2
+    }
+
+    // ── Dead code elimination tests ──
+
+    #[test]
+    fn dce_removes_overwritten_definition() {
+        // LoadImm r2=1 is immediately overwritten by LoadImm r2=2 before any use.
+        // The first LoadImm is dead and should be removed.
+        let mut instrs = vec![
+            Instruction::LoadImm { reg: 2, value: 1 }, // dead: r2 redefined below
+            Instruction::LoadImm { reg: 2, value: 2 }, // r2 is used by Add64
+            Instruction::LoadImm { reg: 3, value: 3 },
+            Instruction::Add64 {
+                dst: 4,
+                src1: 2,
+                src2: 3,
+            },
+            Instruction::StoreIndU64 {
+                base: 1,
+                src: 4,
+                offset: 0,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_code(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        // The first LoadImm {reg:2, value:1} should be removed; the second kept.
+        let load_imm_r2_count = instrs
+            .iter()
+            .filter(|i| matches!(i, Instruction::LoadImm { reg: 2, .. }))
+            .count();
+        assert_eq!(
+            load_imm_r2_count, 1,
+            "Only one LoadImm r2 should remain (the first one, value=1, is dead)"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::LoadImm { reg: 2, value: 2 })),
+            "The used LoadImm r2=2 must survive"
+        );
+    }
+
+    #[test]
+    fn dce_keeps_load_ind_even_if_result_unused() {
+        // LoadIndU64 r4 from some address — even if r4 is never used, the load
+        // can trap (out-of-bounds), so it must be kept.
+        let mut instrs = vec![
+            Instruction::LoadImm { reg: 2, value: 0x1000 },
+            Instruction::LoadIndU64 {
+                dst: 4,
+                base: 2,
+                offset: 0,
+            },
+            Instruction::LoadImm { reg: 5, value: 99 },
+            Instruction::Fallthrough,
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_code(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::LoadIndU64 { dst: 4, .. })),
+            "LoadIndU64 must not be removed even if result is unused (can trap)"
+        );
+    }
+
+    #[test]
+    fn dce_keeps_div_even_if_result_unused() {
+        // DivU64 r4 = r2/r3 — even if r4 is never used, division by zero traps.
+        let mut instrs = vec![
+            Instruction::LoadImm { reg: 2, value: 10 },
+            Instruction::LoadImm { reg: 3, value: 0 },
+            Instruction::DivU64 {
+                dst: 4,
+                src1: 2,
+                src2: 3,
+            },
+            Instruction::LoadImm { reg: 5, value: 99 },
+            Instruction::Fallthrough,
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_code(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::DivU64 { dst: 4, .. })),
+            "DivU64 must not be removed even if result is unused (can trap on div-by-zero)"
+        );
+    }
+
+    #[test]
+    fn dce_keeps_ecalli_argument_setup() {
+        // Set up r2 for an ecalli call, then ecalli.
+        // r2 must not be removed because ecalli reads argument registers.
+        let mut instrs = vec![
+            Instruction::LoadImm { reg: 2, value: 42 },
+            Instruction::Ecalli { index: 1 },
+            Instruction::Fallthrough,
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        eliminate_dead_code(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::LoadImm { reg: 2, value: 42 })),
+            "LoadImm setting up r2 for ecalli must not be removed"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Ecalli { index: 1 })),
+            "Ecalli must be kept"
+        );
     }
 
     #[test]
