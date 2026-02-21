@@ -83,7 +83,7 @@ crates/
 │       │   └── mod.rs
 │       ├── llvm_backend/  # LLVM IR → PVM bytecode
 │       │   ├── mod.rs           # Public API + main lowering dispatch
-│       │   ├── emitter.rs       # PvmEmitter struct + value management + register cache (~450 lines)
+│       │   ├── emitter.rs       # EmitterConfig + PvmEmitter struct + value management + register cache (~470 lines)
 │       │   ├── alu.rs           # Arithmetic, logic, comparisons, conversions (~380 lines)
 │       │   ├── memory.rs        # Load/store, memory intrinsics, word-sized bulk ops (~890 lines)
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
@@ -118,7 +118,7 @@ crates/
    - Phase 2: `cgscc(inline)` (function inlining, optional)
    - Phase 3: `instcombine<max-iterations=2>`, `simplifycfg`, `gvn` (redundancy elimination), `simplifycfg`, `dce` (dead code removal)
 5. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
-   - `emitter.rs`: Core PvmEmitter with value slot management and **per-block register cache** (store-load forwarding)
+   - `emitter.rs`: `EmitterConfig` (immutable per-function config) + `PvmEmitter` (mutable codegen state) with value slot management and **per-block register cache** (store-load forwarding)
    - `alu.rs`: Arithmetic, logic, comparisons, conversions
    - `memory.rs`: Load/store, memory intrinsics, word-sized bulk memory ops (memory.copy/fill use 64-bit word loops with byte tails)
    - `control_flow.rs`: Branches, phi nodes, switch, return
@@ -175,7 +175,7 @@ crates/
 | Add PVM lowering (control flow) | `llvm_backend/control_flow.rs` | Branches, phi, switch, return |
 | Add PVM lowering (calls) | `llvm_backend/calls.rs` | Direct/indirect calls, import stubs |
 | Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` | PVM + LLVM intrinsic lowering |
-| Modify emitter core | `llvm_backend/emitter.rs` | PvmEmitter struct, value management |
+| Modify emitter core | `llvm_backend/emitter.rs` | EmitterConfig (per-function config) + PvmEmitter (mutable state) |
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
 | Modify peephole optimizer | `pvm/peephole.rs` | Add patterns, update fixup remapping |
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
@@ -209,9 +209,9 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `constant_propagation` | `--no-const-prop` | Skip redundant `LoadImm`/`LoadImm64` when register already holds the constant | `llvm_backend/emitter.rs:emit()` |
 | `inlining` | `--no-inline` | LLVM function inlining for small callees (CGSCC inline pass) | `llvm_frontend/function_builder.rs:run_optimization_passes()` |
 
-**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `PvmEmitter` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`). LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`.
+**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`) → `PvmEmitter.config`. LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`.
 
-**Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `PvmEmitter`, guard the optimization with the flag, add a `--no-*` CLI flag.
+**Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `EmitterConfig`, guard the optimization with `e.config.<flag>`, add a `--no-*` CLI flag.
 
 ---
 

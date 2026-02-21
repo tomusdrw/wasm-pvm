@@ -26,7 +26,9 @@ mod emitter;
 mod intrinsics;
 mod memory;
 
-pub use emitter::{LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup, LoweringContext};
+pub use emitter::{
+    EmitterConfig, LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup, LoweringContext,
+};
 
 use inkwell::values::{FunctionValue, InstructionOpcode};
 
@@ -49,14 +51,16 @@ pub fn lower_function(
     result_globals: Option<(u32, u32)>,
     entry_returns_ptr_len: bool,
 ) -> Result<LlvmFunctionTranslation> {
-    let mut emitter = PvmEmitter::new();
-    emitter.result_globals = result_globals;
-    emitter.entry_returns_ptr_len = entry_returns_ptr_len;
-    emitter.wasm_memory_base = ctx.wasm_memory_base;
-    emitter.register_cache_enabled = ctx.optimizations.register_cache;
-    emitter.icmp_fusion_enabled = ctx.optimizations.icmp_branch_fusion;
-    emitter.shrink_wrap_enabled = ctx.optimizations.shrink_wrap_callee_saves;
-    emitter.constant_propagation_enabled = ctx.optimizations.constant_propagation;
+    let config = EmitterConfig {
+        result_globals,
+        entry_returns_ptr_len,
+        wasm_memory_base: ctx.wasm_memory_base,
+        register_cache_enabled: ctx.optimizations.register_cache,
+        icmp_fusion_enabled: ctx.optimizations.icmp_branch_fusion,
+        shrink_wrap_enabled: ctx.optimizations.shrink_wrap_callee_saves,
+        constant_propagation_enabled: ctx.optimizations.constant_propagation,
+    };
+    let mut emitter = PvmEmitter::new(config);
 
     // Phase 1: Pre-scan — allocate labels for blocks and slots for all SSA values.
     pre_scan_function(&mut emitter, function, is_main);
@@ -185,7 +189,7 @@ fn emit_prologue<'ctx>(
                 e.emit(Instruction::AddImm64 {
                     dst: abi::ARGS_PTR_REG,
                     src: abi::ARGS_PTR_REG,
-                    value: -ctx.wasm_memory_base,
+                    value: -e.config.wasm_memory_base,
                 });
                 e.store_to_slot(slot, abi::ARGS_PTR_REG);
             } else if i == 1 {

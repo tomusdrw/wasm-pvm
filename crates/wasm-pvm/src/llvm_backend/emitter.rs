@@ -73,9 +73,41 @@ pub struct LlvmIndirectCallFixup {
     pub jump_ind_instr: usize,
 }
 
-/// PVM code emitter for a single function.
+/// Per-function configuration for the PVM emitter.
+///
+/// These fields are set once when lowering begins and are never mutated during codegen.
+/// Separating them from mutable state makes it clear what's fixed vs what changes.
 #[allow(clippy::struct_excessive_bools)]
+pub struct EmitterConfig {
+    /// For entry functions: (`result_ptr_global`, `result_len_global`) indices.
+    /// When set, the epilogue loads these globals into r7/r8 before exiting.
+    pub result_globals: Option<(u32, u32)>,
+
+    /// When true, the entry function's return value is a packed i64:
+    /// lower 32 bits = ptr (WASM address), upper 32 bits = len.
+    pub entry_returns_ptr_len: bool,
+
+    /// WASM memory base address (for converting WASM addresses to PVM addresses).
+    pub wasm_memory_base: i32,
+
+    /// Whether the register cache (store-load forwarding) is enabled.
+    pub register_cache_enabled: bool,
+
+    /// Whether constant propagation (redundant `LoadImm` elimination) is enabled.
+    pub constant_propagation_enabled: bool,
+
+    /// Whether ICmp+Branch fusion is enabled.
+    pub icmp_fusion_enabled: bool,
+
+    /// Whether callee-save shrink wrapping is enabled.
+    pub shrink_wrap_enabled: bool,
+}
+
+/// PVM code emitter for a single function.
 pub struct PvmEmitter<'ctx> {
+    /// Per-function configuration (immutable after construction).
+    pub(crate) config: EmitterConfig,
+
     pub(crate) instructions: Vec<Instruction>,
     pub(crate) labels: Vec<Option<usize>>,
     pub(crate) fixups: Vec<(usize, usize)>,
@@ -95,17 +127,6 @@ pub struct PvmEmitter<'ctx> {
     pub(crate) call_fixups: Vec<LlvmCallFixup>,
     pub(crate) indirect_call_fixups: Vec<LlvmIndirectCallFixup>,
 
-    /// For entry functions: (`result_ptr_global`, `result_len_global`) indices.
-    /// When set, the epilogue loads these globals into r7/r8 before exiting.
-    pub(crate) result_globals: Option<(u32, u32)>,
-
-    /// When true, the entry function's return value is a packed i64:
-    /// lower 32 bits = ptr (WASM address), upper 32 bits = len.
-    pub(crate) entry_returns_ptr_len: bool,
-
-    /// WASM memory base address (for converting WASM addresses to PVM addresses).
-    pub(crate) wasm_memory_base: i32,
-
     /// Current byte offset of the emitted code (for O(1) offset calculations).
     pub(crate) byte_offset: usize,
 
@@ -124,18 +145,10 @@ pub struct PvmEmitter<'ctx> {
     /// register already holds the same constant and skip the load if so.
     reg_to_const: [Option<u64>; 13],
 
-    /// Whether the register cache (store-load forwarding) is enabled.
-    pub(crate) register_cache_enabled: bool,
-
-    /// Whether constant propagation (redundant `LoadImm` elimination) is enabled.
-    pub(crate) constant_propagation_enabled: bool,
-    /// Whether ICmp+Branch fusion is enabled.
-    pub(crate) icmp_fusion_enabled: bool,
     /// Which callee-saved registers (r9-r12) are actually used by this function.
     /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
     pub(crate) used_callee_regs: [bool; 4],
-    /// Whether callee-save shrink wrapping is enabled.
-    pub(crate) shrink_wrap_enabled: bool,
+
     /// Frame offset for each callee-saved register (r9-r12), if saved.
     /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
     pub(crate) callee_save_offsets: [Option<i32>; 4],
@@ -166,8 +179,9 @@ pub fn val_key_instr(val: InstructionValue<'_>) -> ValKey {
 }
 
 impl<'ctx> PvmEmitter<'ctx> {
-    pub fn new() -> Self {
+    pub fn new(config: EmitterConfig) -> Self {
         Self {
+            config,
             instructions: Vec::new(),
             labels: Vec::new(),
             fixups: Vec::new(),
@@ -177,19 +191,12 @@ impl<'ctx> PvmEmitter<'ctx> {
             frame_size: 0,
             call_fixups: Vec::new(),
             indirect_call_fixups: Vec::new(),
-            result_globals: None,
-            entry_returns_ptr_len: false,
-            wasm_memory_base: 0,
             byte_offset: 0,
             slot_cache: HashMap::new(),
             reg_to_slot: [None; 13],
             reg_to_const: [None; 13],
             pending_fused_icmp: None,
-            register_cache_enabled: true,
-            constant_propagation_enabled: true,
-            icmp_fusion_enabled: true,
             used_callee_regs: [true; 4],
-            shrink_wrap_enabled: true,
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
         }
     }
@@ -218,7 +225,7 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     pub fn emit(&mut self, instr: Instruction) {
         // Constant propagation: skip LoadImm/LoadImm64 if register already holds the value.
-        if self.constant_propagation_enabled {
+        if self.config.constant_propagation_enabled {
             match &instr {
                 Instruction::LoadImm { reg, value } => {
                     // LoadImm sign-extends i32 → i64, so the 64-bit value is the sign extension.
@@ -241,7 +248,7 @@ impl<'ctx> PvmEmitter<'ctx> {
         }
 
         // Track constants after emit.
-        if self.constant_propagation_enabled {
+        if self.config.constant_propagation_enabled {
             match &instr {
                 Instruction::LoadImm { reg, value } => {
                     self.reg_to_const[*reg as usize] = Some(i64::from(*value) as u64);
@@ -436,7 +443,7 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     /// Record that `reg` now holds the value of `slot`.
     fn cache_slot(&mut self, slot: i32, reg: u8) {
-        if !self.register_cache_enabled {
+        if !self.config.register_cache_enabled {
             return;
         }
         // Remove any previous slot cached in this register.
@@ -603,7 +610,7 @@ pub fn pre_scan_function<'ctx>(
     is_main: bool,
 ) {
     // Determine which callee-saved registers are used (shrink wrapping).
-    if !is_main && emitter.shrink_wrap_enabled {
+    if !is_main && emitter.config.shrink_wrap_enabled {
         let num_params = function.count_params() as usize;
         let mut used = [false; 4];
 
