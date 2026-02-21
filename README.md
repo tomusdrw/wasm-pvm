@@ -1,7 +1,7 @@
 # WASM-PVM: WebAssembly to PolkaVM Recompiler
 
 > **WARNING: This project is largely vibe-coded.**
-> It was built iteratively with heavy AI assistance (Claude). While it has 370+ passing integration tests and
+> It was built iteratively with heavy AI assistance (Claude). While it has 400+ passing integration tests and
 > produces working PVM bytecode, the internals may contain unconventional patterns, over-engineering in some
 > places, and under-engineering in others. Use at your own risk. Contributions and proper engineering reviews
 > are very welcome!
@@ -26,7 +26,7 @@ WASM  ──►  LLVM IR  ──►  PVM bytecode  ──►  JAM program (.jam)
 ### Build
 
 ```bash
-git clone https://github.com/fluffylabs/wasm-pvm.git
+git clone https://github.com/tomusdrw/wasm-pvm.git
 cd wasm-pvm
 cargo build --release
 ```
@@ -153,6 +153,12 @@ wasm-pvm compile input.wasm -o output.jam \
 
 # Disable specific optimizations
 wasm-pvm compile input.wasm -o output.jam --no-inline --no-peephole
+
+# Disable all optimizations
+wasm-pvm compile input.wasm -o output.jam \
+  --no-llvm-passes --no-peephole --no-register-cache \
+  --no-icmp-fusion --no-shrink-wrap --no-dead-store-elim \
+  --no-const-prop --no-inline
 ```
 
 See the [Import Handling](#import-handling) section for details on resolving WASM imports.
@@ -168,7 +174,7 @@ crates/
       translate/         # Compilation orchestration & SPI assembly
       pvm/               # PVM instruction definitions & peephole optimizer
   wasm-pvm-cli/          # Command-line interface
-tests/                   # 370+ integration tests (TypeScript/Bun)
+tests/                   # 400+ integration tests (TypeScript/Bun)
   fixtures/
     wat/                 # WAT test programs
     assembly/            # AssemblyScript examples
@@ -196,7 +202,7 @@ cd tests && bun test layer1/
 The test suite is organized into layers:
 
 - **Layer 1**: Core/smoke tests (~50 tests) — fast, run during development
-- **Layer 2**: Feature tests (~100 tests)
+- **Layer 2**: Feature tests (~140 tests)
 - **Layer 3**: Regression/edge cases (~220 tests)
 - **Layer 4-5**: PVM-in-PVM tests — the PVM interpreter itself compiled to PVM, running the test suite inside PVM
 
