@@ -260,29 +260,28 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(30))]
 
-    /// i32.add of two params always produces an Add32 or AddImm32 opcode.
+    /// i32.add with various constant operands always produces an Add32 or AddImm32 opcode.
     #[test]
     fn add_produces_add_opcode(a in any::<i32>(), b in any::<i32>()) {
         let wat = format!(
             r#"(module
                 (memory 1)
-                (func (export "main") (param i32 i32 i32) (result i32)
+                (func (export "main") (param i32) (result i32)
                     local.get 0
-                    local.get 1
+                    i32.const {a}
                     i32.add
-                    local.get 2
+                    i32.const {b}
                     i32.add
                 )
             )"#
         );
-        let _ = (a, b); // Use the proptest values to ensure test runs multiple times
         let program = compile_wat(&wat).expect("compile");
         let instructions = extract_instructions(&program);
         prop_assert!(
             has_opcode(&instructions, Opcode::Add32)
                 || has_opcode(&instructions, Opcode::AddImm32)
                 || has_opcode(&instructions, Opcode::Add64),
-            "Expected Add opcode in compiled output"
+            "Expected Add opcode in compiled output for a={a}, b={b}"
         );
     }
 
