@@ -732,6 +732,116 @@ impl Instruction {
                 | Self::BranchGeS { .. }
         )
     }
+
+    /// Returns the source registers read by this instruction.
+    /// Used by dead code elimination to determine liveness.
+    /// Returns up to 3 registers (most instructions use 0-2, some 3).
+    #[must_use]
+    pub const fn src_regs(&self) -> [Option<u8>; 3] {
+        match self {
+            Self::Trap
+            | Self::Fallthrough
+            | Self::Jump { .. }
+            | Self::Ecalli { .. }
+            | Self::Unknown { .. } => [None, None, None],
+
+            Self::LoadImm { .. } | Self::LoadImm64 { .. } => [None, None, None],
+
+            Self::MoveReg { src, .. }
+            | Self::Sbrk { src, .. }
+            | Self::CountSetBits64 { src, .. }
+            | Self::CountSetBits32 { src, .. }
+            | Self::LeadingZeroBits64 { src, .. }
+            | Self::LeadingZeroBits32 { src, .. }
+            | Self::TrailingZeroBits64 { src, .. }
+            | Self::TrailingZeroBits32 { src, .. }
+            | Self::SignExtend8 { src, .. }
+            | Self::SignExtend16 { src, .. }
+            | Self::ZeroExtend16 { src, .. }
+            | Self::JumpInd { reg: src, .. }
+            | Self::LoadIndU8 { base: src, .. }
+            | Self::LoadIndI8 { base: src, .. }
+            | Self::LoadIndU16 { base: src, .. }
+            | Self::LoadIndI16 { base: src, .. }
+            | Self::LoadIndU32 { base: src, .. }
+            | Self::LoadIndU64 { base: src, .. }
+            | Self::BranchEqImm { reg: src, .. }
+            | Self::BranchNeImm { reg: src, .. }
+            | Self::BranchLtUImm { reg: src, .. }
+            | Self::BranchLeUImm { reg: src, .. }
+            | Self::BranchGeUImm { reg: src, .. }
+            | Self::BranchGtUImm { reg: src, .. }
+            | Self::BranchLtSImm { reg: src, .. }
+            | Self::BranchLeSImm { reg: src, .. }
+            | Self::BranchGeSImm { reg: src, .. }
+            | Self::BranchGtSImm { reg: src, .. }
+            | Self::AddImm32 { src, .. }
+            | Self::AddImm64 { src, .. }
+            | Self::SetLtUImm { src, .. }
+            | Self::SetLtSImm { src, .. } => [Some(*src), None, None],
+
+            Self::StoreIndU8 { base, src, .. }
+            | Self::StoreIndU16 { base, src, .. }
+            | Self::StoreIndU32 { base, src, .. }
+            | Self::StoreIndU64 { base, src, .. }
+            | Self::BranchEq {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchNe {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchLtU {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchLtS {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchGeU {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchGeS {
+                reg1: base,
+                reg2: src,
+                ..
+            } => [Some(*base), Some(*src), None],
+
+            Self::Add32 { src1, src2, .. }
+            | Self::Sub32 { src1, src2, .. }
+            | Self::Mul32 { src1, src2, .. }
+            | Self::DivU32 { src1, src2, .. }
+            | Self::DivS32 { src1, src2, .. }
+            | Self::RemU32 { src1, src2, .. }
+            | Self::RemS32 { src1, src2, .. }
+            | Self::Add64 { src1, src2, .. }
+            | Self::Sub64 { src1, src2, .. }
+            | Self::Mul64 { src1, src2, .. }
+            | Self::DivU64 { src1, src2, .. }
+            | Self::DivS64 { src1, src2, .. }
+            | Self::RemU64 { src1, src2, .. }
+            | Self::RemS64 { src1, src2, .. }
+            | Self::ShloL64 { src1, src2, .. }
+            | Self::ShloR64 { src1, src2, .. }
+            | Self::SharR64 { src1, src2, .. }
+            | Self::SetLtU { src1, src2, .. }
+            | Self::SetLtS { src1, src2, .. }
+            | Self::And { src1, src2, .. }
+            | Self::Xor { src1, src2, .. }
+            | Self::Or { src1, src2, .. }
+            | Self::ShloL32 { src1, src2, .. }
+            | Self::ShloR32 { src1, src2, .. }
+            | Self::SharR32 { src1, src2, .. } => [Some(*src1), Some(*src2), None],
+        }
+    }
 }
 
 fn encode_three_reg(opcode: Opcode, dst: u8, src1: u8, src2: u8) -> Vec<u8> {

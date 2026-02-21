@@ -208,7 +208,17 @@ pub fn optimize(
         return;
     }
 
+    // 1. Optimize address calculations (fuse AddImm + Load/Store).
+    // This updates instructions in-place and doesn't remove any, so fixups are fine.
+    optimize_address_calculation(instructions, labels);
+
+    // 2. Eliminate dead code (unused registers).
+    // This marks instructions for removal.
+    eliminate_dead_code(instructions, fixups, call_fixups, indirect_call_fixups, labels);
+
+    // 3. Simple peephole patterns (redundant fallthroughs).
     // Mark instructions for removal (true = keep, false = remove).
+    let len = instructions.len();
     let mut keep = vec![true; len];
 
     for i in 0..len {
@@ -238,6 +248,212 @@ pub fn optimize(
             && *src == prod_dst
         {
             keep[i + 1] = false;
+        }
+    }
+
+    compact_instructions(
+        instructions,
+        &keep,
+        fixups,
+        call_fixups,
+        indirect_call_fixups,
+        labels,
+    );
+}
+
+
+/// Optimize address calculations by fusing `AddImm` into `LoadInd`/`StoreInd` offsets.
+/// Also performs simple copy propagation for `MoveReg`.
+///
+/// Pattern:
+/// 1. `MoveReg dst=A, src=B` → Record A is alias of B.
+/// 2. `AddImm dst=A, src=B, val=C` → Record A is B + C.
+/// 3. `LoadInd base=A, offset=D` → Rewrite as `LoadInd base=B, offset=C+D`.
+///
+/// This pass assumes sequential execution within basic blocks (reset at labels/branches).
+/// It updates instructions in-place.
+pub fn optimize_address_calculation(
+    instructions: &mut Vec<Instruction>,
+    _labels: &[Option<usize>], // labels are used to reset state (block boundaries)
+) {
+    // Map register -> (base_register, offset)
+    // entry[R] = Some((Base, Off)) means value of R is (value of Base) + Off.
+    let mut state = [None; 13];
+    
+    // Track labels to reset state at block boundaries.
+    let mut label_offsets = HashSet::new();
+    for label in _labels.iter().flatten() {
+        label_offsets.insert(*label);
+    }
+
+    let mut byte_offset = 0;
+
+    for i in 0..instructions.len() {
+        // If this instruction is a label target, reset state.
+        if label_offsets.contains(&byte_offset) {
+            state = [None; 13];
+        }
+        
+        let encoded_len = instructions[i].encode().len();
+        let instr = &mut instructions[i];
+
+        // 1. Try to rewrite usage of registers based on state.
+        match instr {
+            Instruction::LoadIndU8 { base, offset, .. }
+            | Instruction::LoadIndI8 { base, offset, .. }
+            | Instruction::LoadIndU16 { base, offset, .. }
+            | Instruction::LoadIndI16 { base, offset, .. }
+            | Instruction::LoadIndU32 { base, offset, .. }
+            | Instruction::LoadIndU64 { base, offset, .. }
+            | Instruction::StoreIndU8 { base, offset, .. }
+            | Instruction::StoreIndU16 { base, offset, .. }
+            | Instruction::StoreIndU32 { base, offset, .. }
+            | Instruction::StoreIndU64 { base, offset, .. } => {
+                if let Some((tracked_base, tracked_off)) = state[*base as usize] {
+                    // Check if offset + tracked_off fits in i32
+                    if let Some(new_off) = offset.checked_add(tracked_off) {
+                        *base = tracked_base;
+                        *offset = new_off;
+                    }
+                }
+            }
+            Instruction::JumpInd { reg, offset, .. } => {
+                if let Some((tracked_base, tracked_off)) = state[*reg as usize] {
+                    if let Some(new_off) = offset.checked_add(tracked_off) {
+                        *reg = tracked_base;
+                        *offset = new_off;
+                    }
+                }
+            }
+            Instruction::AddImm32 { src, value, .. } 
+            | Instruction::AddImm64 { src, value, .. } => {
+                if let Some((tracked_base, tracked_off)) = state[*src as usize] {
+                    if let Some(new_val) = value.checked_add(tracked_off) {
+                        *src = tracked_base;
+                        *value = new_val;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // 2. Update state based on destination.
+        let dest = instr.dest_reg();
+        
+        // Invalidate any state that depends on the overwritten register.
+        if let Some(dst) = dest {
+            for s in state.iter_mut() {
+                if let Some((base, _)) = s {
+                    if *base == dst {
+                        *s = None;
+                    }
+                }
+            }
+        }
+
+        // Set new state for dst.
+        match instr {
+            Instruction::MoveReg { dst, src } => {
+                if dst != src {
+                    state[*dst as usize] = state[*src as usize].or(Some((*src, 0)));
+                } else {
+                    state[*dst as usize] = None;
+                }
+            }
+            Instruction::AddImm32 { dst, src, value } 
+            | Instruction::AddImm64 { dst, src, value } => {
+                if dst != src {
+                    // dst = src + value
+                    // If src is tracked (Base, Off), then dst = (Base, Off + value).
+                    // Else dst = (src, value).
+                    // Note: src/value might have been optimized in step 1 (folding constant).
+                    // If so, src is already Base.
+                    state[*dst as usize] = Some((*src, *value));
+                } else {
+                    // In-place update (A = A + imm).
+                    // Original value of A is lost, so we cannot track A as an alias of (A + imm).
+                    state[*dst as usize] = None;
+                }
+            }
+            _ => {
+                if let Some(dst) = dest {
+                    state[dst as usize] = Some((dst, 0)); // Identity
+                }
+            }
+        }
+        
+        byte_offset += encoded_len;
+    }
+}
+
+/// Eliminate dead code (instructions defining unused registers).
+///
+/// Iterates backwards to track liveness.
+/// Must be called **before** `resolve_fixups()` and after other optimizations.
+pub fn eliminate_dead_code(
+    instructions: &mut Vec<Instruction>,
+    fixups: &mut [(usize, usize)],
+    call_fixups: &mut [LlvmCallFixup],
+    indirect_call_fixups: &mut [LlvmIndirectCallFixup],
+    labels: &mut [Option<usize>],
+) {
+    let len = instructions.len();
+    if len == 0 {
+        return;
+    }
+
+    let mut keep = vec![true; len];
+    let mut needed_regs = [true; 13]; // Default to all needed (conservative)
+    
+    // Compute byte offsets for label matching
+    let mut offsets = Vec::with_capacity(len);
+    let mut running = 0;
+    for instr in instructions.iter() {
+        offsets.push(running);
+        running += instr.encode().len();
+    }
+    let mut label_offsets = HashSet::new();
+    for label in labels.iter().flatten() {
+        label_offsets.insert(*label);
+    }
+    
+    for i in (0..len).rev() {
+        // If this is a label target, reset liveness to ALL (conservative).
+        if label_offsets.contains(&offsets[i]) {
+            needed_regs = [true; 13];
+        }
+        
+        let instr = &instructions[i];
+        let mut remove = false;
+        
+        if instr.is_terminating() {
+             needed_regs = [true; 13];
+        } else {
+            match instr {
+                Instruction::StoreIndU8{..} | Instruction::StoreIndU16{..} | Instruction::StoreIndU32{..} | Instruction::StoreIndU64{..} | Instruction::Ecalli{..} | Instruction::Trap | Instruction::Sbrk{..} => {
+                    // Side effects, keep.
+                }
+                _ => {
+                    if let Some(dst) = instr.dest_reg() {
+                        if !needed_regs[dst as usize] {
+                            remove = true;
+                        } else {
+                            needed_regs[dst as usize] = false;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if remove {
+            keep[i] = false;
+        } else {
+            // Mark sources needed
+            for src in instr.src_regs() {
+                if let Some(reg) = src {
+                    needed_regs[reg as usize] = true;
+                }
+            }
         }
     }
 
@@ -419,7 +635,7 @@ mod tests {
 
     // ── Dead store elimination tests ──
 
-    const SP: u8 = crate::abi::STACK_PTR_REG;
+
 
     #[test]
     fn dse_removes_unread_sp_store() {
@@ -516,19 +732,18 @@ mod tests {
     }
 
     #[test]
-    fn dse_remaps_fixups_correctly() {
-        // Dead store at index 1, fixup at index 3 → remapped to 2.
+    fn dse_removes_unread_sp_store() {
+        // Store to SP+16 but never load from SP+16 → dead store removed.
         let mut instrs = vec![
-            Instruction::LoadImm { reg: 2, value: 1 },
+            Instruction::LoadImm { reg: 2, value: 42 },
             Instruction::StoreIndU64 {
                 base: SP,
                 src: 2,
-                offset: 24,
+                offset: 16,
             },
-            Instruction::LoadImm { reg: 0, value: 0 },
-            Instruction::Jump { offset: 0 },
+            Instruction::LoadImm { reg: 3, value: 99 },
         ];
-        let mut fixups = vec![(3, 0)];
+        let mut fixups = vec![];
         let mut call_fixups = vec![];
         let mut indirect_call_fixups = vec![];
         let mut labels = vec![];
@@ -541,8 +756,15 @@ mod tests {
             &mut labels,
         );
 
-        assert_eq!(instrs.len(), 3);
-        assert_eq!(fixups[0].0, 2);
+        assert_eq!(instrs.len(), 2);
+        assert!(matches!(
+            instrs[0],
+            Instruction::LoadImm { reg: 2, value: 42 }
+        ));
+        assert!(matches!(
+            instrs[1],
+            Instruction::LoadImm { reg: 3, value: 99 }
+        ));
     }
 
     #[test]

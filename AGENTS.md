@@ -246,9 +246,8 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 |---------|---------|
 | `0x10000` | Read-only data (dispatch table, passive segments) |
 | `0x30000` | Globals storage (each global = 4 bytes) |
-| `0x3FF00` | Parameter overflow area (5th+ args for call_indirect) |
-| `0x40000` | Spilled locals (512 bytes per function) |
-| `0x50000+` | WASM linear memory base (computed dynamically based on function count) |
+| `0x32000` | Parameter overflow area (5th+ args for call_indirect) |
+| `0x32100+` | WASM linear memory base (spilled locals area removed) |
 | `0xFEFE0000` | Stack segment end (stack grows downward) |
 | `0xFEFF0000` | Arguments (`args_ptr`) |
 | `0xFFFF0000` | EXIT address (HALT) |

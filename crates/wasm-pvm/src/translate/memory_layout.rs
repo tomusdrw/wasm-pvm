@@ -29,15 +29,17 @@ pub const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 /// Temporary area for passing overflow parameters (5th+ args) during `call_indirect`.
 /// The caller writes here, and the callee's prologue copies to its spilled local addresses.
 /// Supports up to 8 overflow parameters (64 bytes).
-pub const PARAM_OVERFLOW_BASE: i32 = 0x3FF00;
+/// Reduced from 0x3FF00 to save space (allows 8KB for globals).
+pub const PARAM_OVERFLOW_BASE: i32 = 0x32000;
 
 /// Base address for spilled locals in memory.
-/// Layout: 0x30000+ globals, 0x40000+ spilled locals.
+/// Layout: 0x30000+ globals, 0x32000 overflow, 0x32100+ spilled locals.
 /// User programs should use `heap.alloc()` (AS) or `memory.grow` (WASM) for dynamic allocation.
-pub const SPILLED_LOCALS_BASE: i32 = 0x40000;
+pub const SPILLED_LOCALS_BASE: i32 = 0x32100;
 
-/// Bytes allocated per function for spilled locals (64 locals * 8 bytes).
-pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
+/// Bytes allocated per function for spilled locals.
+/// Set to 0 as modern compiler spills to stack (r1-relative).
+pub const SPILLED_LOCALS_PER_FUNC: i32 = 0;
 
 /// Stack segment end address (where the stack pointer starts, grows downward).
 pub const STACK_SEGMENT_END: i32 = 0xFEFE_0000u32 as i32;
@@ -65,13 +67,10 @@ pub fn stack_limit(stack_size: u32) -> i32 {
 /// WASM memory address 0 maps to this PVM address.
 /// All `i32.load`/`i32.store` operations add this offset to the WASM address.
 #[must_use]
-pub fn compute_wasm_memory_base(num_local_funcs: usize) -> i32 {
-    let spilled_locals_end =
-        SPILLED_LOCALS_BASE + (num_local_funcs as i32) * SPILLED_LOCALS_PER_FUNC;
-    // Align up to 64KB boundary (0x10000) for clean page alignment
-    let aligned = (spilled_locals_end + 0xFFFF) & !0xFFFF;
-    // Minimum of 0x50000 to maintain backward compatibility for small modules
-    aligned.max(0x50000)
+pub fn compute_wasm_memory_base(_num_local_funcs: usize) -> i32 {
+    // No per-function allocation (spills are on stack).
+    // No 64KB alignment required for base address.
+    SPILLED_LOCALS_BASE
 }
 
 /// Offset within `GLOBAL_MEMORY_BASE` for the compiler-managed memory size global.

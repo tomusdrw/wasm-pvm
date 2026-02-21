@@ -152,6 +152,10 @@ pub struct PvmEmitter<'ctx> {
     /// Frame offset for each callee-saved register (r9-r12), if saved.
     /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
     pub(crate) callee_save_offsets: [Option<i32>; 4],
+
+    /// Whether the function contains any call instructions.
+    /// If false (leaf function), we can skip saving/restoring the return address register.
+    pub(crate) has_calls: bool,
 }
 
 /// Deferred `ICmp` info for branch fusion.
@@ -198,6 +202,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             pending_fused_icmp: None,
             used_callee_regs: [true; 4],
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
+            has_calls: true, // conservative default
         }
     }
 
@@ -630,6 +635,21 @@ pub fn pre_scan_function<'ctx>(
     function: FunctionValue<'ctx>,
     is_main: bool,
 ) {
+    // Detect calls to determine if this is a leaf function.
+    let mut has_calls = false;
+    for bb in function.get_basic_blocks() {
+        for instr in bb.get_instructions() {
+            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
+                has_calls = true;
+                break;
+            }
+        }
+        if has_calls {
+            break;
+        }
+    }
+    emitter.has_calls = has_calls;
+
     // Determine which callee-saved registers are used (shrink wrapping).
     if !is_main && emitter.config.shrink_wrap_enabled {
         let num_params = function.count_params() as usize;
@@ -645,22 +665,19 @@ pub fn pre_scan_function<'ctx>(
 
         // If the function contains any call instruction, all callee-saved regs are used
         // (because the callee may clobber them and expects us to preserve them).
-        if !used.iter().all(|&u| u) {
-            'outer: for bb in function.get_basic_blocks() {
-                for instr in bb.get_instructions() {
-                    if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
-                        used = [true; 4];
-                        break 'outer;
-                    }
-                }
-            }
+        if has_calls {
+            used = [true; 4];
+        } else {
+            // Check usage for non-call instructions if we assume registers might be used.
+            // But since we don't allocate r9-r12 as temps, they are only used for params.
+            // So `used` is already correct.
         }
 
         emitter.used_callee_regs = used;
 
         // Compute frame offsets for saved callee-saved registers.
-        // Layout: [ra at offset 0, then used callee-saved regs contiguously].
-        let mut offset = 8i32; // after ra
+        // Layout: [ra (optional), then used callee-saved regs contiguously].
+        let mut offset = if has_calls { 8i32 } else { 0i32 }; // Reserve space for ra only if needed
         let mut offsets = [None; 4];
         for i in 0..4 {
             if used[i] {
