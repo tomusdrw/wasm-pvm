@@ -3,6 +3,7 @@ import { describe, test, expect } from "bun:test";
 import { JAM_DIR } from "./paths";
 import { runJam } from "./run";
 import { runJamPvmInPvm } from "./pvm-in-pvm";
+import { runWasmForSuite } from "./wasm-runner";
 
 export interface TestSpec {
   args: string;
@@ -16,6 +17,8 @@ export interface SuiteSpec {
   tests: TestSpec[];
   /** Skip pvm-in-pvm variants (e.g. tests using unhandled ecalli host calls). */
   skipPvmInPvm?: boolean;
+  /** Skip differential testing (e.g. modules with PVM-specific imports). */
+  skipDifferential?: boolean;
   /** Custom timeout in ms for normal (non-pvm-in-pvm) tests. */
   timeout?: number;
 }
@@ -60,6 +63,60 @@ export function definePvmInPvmSuite(suite: SuiteSpec) {
         },
         PVM_IN_PVM_TEST_TIMEOUT,
       );
+    }
+  });
+}
+
+/**
+ * Create differential test variants for a suite.
+ *
+ * Runs each test case through both PVM (via runJam) and native WASM
+ * (via Bun's WebAssembly engine) and asserts the results match.
+ */
+export function defineDifferentialSuite(suite: SuiteSpec) {
+  if (suite.skipDifferential) return;
+
+  const jamFile = path.join(JAM_DIR, `${suite.name}.jam`);
+  describe(`differential: ${suite.name}`, () => {
+    for (const t of suite.tests) {
+      test(t.description, async () => {
+        // Skip tests with custom PC — PVM-specific entry points
+        // have no equivalent in native WASM execution.
+        if (t.pc !== undefined) {
+          console.log(
+            `[skip] ${suite.name}/${t.description}: custom PC`,
+          );
+          return;
+        }
+
+        const wasmResult = await runWasmForSuite(suite.name, t.args);
+        if (wasmResult === null) {
+          // Module has imports or WASM not found — skip
+          console.log(
+            `[skip] ${suite.name}/${t.description}: WASM unavailable`,
+          );
+          return;
+        }
+
+        // Run through PVM (t.pc is guaranteed undefined here after the guard above)
+        let pvmResult: number;
+        let pvmTrapped = false;
+        try {
+          pvmResult = runJam(jamFile, t.args);
+        } catch {
+          pvmTrapped = true;
+          pvmResult = -1;
+        }
+
+        if (wasmResult.trapped) {
+          // Both should trap
+          expect(pvmTrapped).toBe(true);
+        } else {
+          // Neither should trap, and values should match
+          expect(pvmTrapped).toBe(false);
+          expect(pvmResult!).toBe(wasmResult.value!);
+        }
+      });
     }
   });
 }

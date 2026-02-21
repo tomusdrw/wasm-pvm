@@ -10,10 +10,12 @@
     "test:layer2": "bun run build && bun test layer2/",
     "test:layer3": "bun run build && bun test layer3/",
     "test:layer4": "bun run build && bun test layer4/",
-    "test:layer5": "bun run build && bun test layer5/"
+    "test:layer5": "bun run build && bun test layer5/",
+    "test:differential": "bun run build && bun test differential/ --test-name-pattern differential"
   },
   "devDependencies": {
     "@types/bun": "^1.3.8",
-    "assemblyscript": "^0.27.32"
+    "assemblyscript": "^0.27.32",
+    "wabt": "^1.0.39"
   }
 }
