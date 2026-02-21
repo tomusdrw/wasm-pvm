@@ -21,8 +21,17 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Validate version input
+        run: |
+          VERSION='${{ inputs.version }}'
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
+            echo "Error: version '$VERSION' does not match semver pattern (e.g. 1.2.3 or 1.2.3-beta.1)"
+            exit 1
+          fi
+          echo "SAFE_VERSION=$VERSION" >> "$GITHUB_ENV"
+
       - name: Update workspace version in Cargo.toml
-        run: sed -i 's/^version = ".*"/version = "${{ inputs.version }}"/' Cargo.toml
+        run: sed -i "s/^version = \".*\"/version = \"$SAFE_VERSION\"/" Cargo.toml
 
       - name: Regenerate Cargo.lock
         run: cargo generate-lockfile
@@ -35,13 +44,13 @@ jobs:
       - name: Commit and tag
         run: |
           git add Cargo.toml Cargo.lock
-          git commit -m "Bump version to ${{ inputs.version }}"
-          git tag "v${{ inputs.version }}"
+          git commit -m "Bump version to $SAFE_VERSION"
+          git tag "v$SAFE_VERSION"
 
       - name: Push commit and tag
-        run: git push origin HEAD "v${{ inputs.version }}"
+        run: git push origin HEAD "v$SAFE_VERSION"
 
       - name: Create draft release
-        run: gh release create "v${{ inputs.version }}" --draft --generate-notes --title "v${{ inputs.version }}"
+        run: gh release create "v$SAFE_VERSION" --draft --generate-notes --title "v$SAFE_VERSION"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

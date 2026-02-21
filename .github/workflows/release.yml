@@ -10,7 +10,7 @@ env:
 jobs:
   publish:
     name: Publish crates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,10 +27,25 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Wait for crates.io index propagation
-        run: sleep 30
-
-      - name: Publish wasm-pvm-cli
-        run: cargo publish -p wasm-pvm-cli
+      - name: Publish wasm-pvm-cli (with retry for crates.io propagation)
+        run: |
+          max_attempts=5
+          attempt=0
+          delay=30
+          while [ $attempt -lt $max_attempts ]; do
+            attempt=$((attempt + 1))
+            echo "Attempt $attempt of $max_attempts..."
+            if cargo publish -p wasm-pvm-cli 2>&1; then
+              echo "Published successfully."
+              exit 0
+            fi
+            if [ $attempt -lt $max_attempts ]; then
+              echo "Retrying in ${delay}s..."
+              sleep $delay
+              delay=$((delay * 2))
+            fi
+          done
+          echo "All $max_attempts attempts failed."
+          exit 1
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
