@@ -8,7 +8,7 @@
 
 A Rust compiler that translates WebAssembly (WASM) bytecode into [PolkaVM](https://github.com/paritytech/polkavm) (PVM) bytecode for execution on the [JAM](https://graypaper.com/) (Join-Accumulate Machine) protocol. Write your JAM programs in [AssemblyScript](https://www.assemblyscript.org/) (TypeScript-like), hand-written WAT, or any language that compiles to WASM — and run them on PVM.
 
-```
+```text
 WASM  ──►  LLVM IR  ──►  PVM bytecode  ──►  JAM program (.jam)
       inkwell    mem2reg       Rust backend
 ```
@@ -145,7 +145,7 @@ See the [Import Handling](#import-handling) section for details on resolving WAS
 
 ## Project Structure
 
-```
+```text
 crates/
   wasm-pvm/              # Core compiler library
     src/
