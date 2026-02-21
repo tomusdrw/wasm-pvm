@@ -70,6 +70,10 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 
 This is not optional. Stale documentation causes repeated mistakes and wasted investigation time.
 
+### PR Description Policy
+
+**Every PR description MUST include benchmark results.** Run `./tests/utils/benchmark.sh --base main --current <branch>` and paste the comparison table into the PR body. The script produces both direct execution and PVM-in-PVM benchmark comparisons (JAM file size, gas usage, and execution time). PRs without benchmark results should not be merged.
+
 ---
 
 ## Structure
@@ -113,7 +117,10 @@ crates/
 1. **Adapter merge** (optional): `adapter_merge.rs` merges a WAT adapter module into the main WASM, replacing matching imports with adapter function bodies. Uses `wasm-encoder` to build merged binary.
 2. **WASM parsing**: `wasm_module.rs` parses all WASM sections into `WasmModule` struct
 3. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell
-4. **LLVM optimization passes**: `mem2reg` (SSA promotion), `instcombine` (strength reduction), `simplifycfg` (block merging), `gvn` (redundancy elimination), `dce` (dead code removal)
+4. **LLVM optimization passes** (three phases):
+   - Phase 1: `mem2reg` (SSA promotion), `instcombine`, `simplifycfg` (pre-inline cleanup)
+   - Phase 2: `cgscc(inline)` (function inlining, optional)
+   - Phase 3: `instcombine<max-iterations=2>`, `simplifycfg`, `gvn` (redundancy elimination), `simplifycfg`, `dce` (dead code removal)
 5. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
    - `emitter.rs`: `EmitterConfig` (immutable per-function config) + `PvmEmitter` (mutable codegen state) with value slot management and **per-block register cache** (store-load forwarding)
    - `alu.rs`: Arithmetic, logic, comparisons, conversions
@@ -207,8 +214,9 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `shrink_wrap_callee_saves` | `--no-shrink-wrap` | Only save/restore used callee-saved regs | `llvm_backend/emitter.rs:pre_scan_function()` |
 | `dead_store_elimination` | `--no-dead-store-elim` | Remove SP-relative stores never loaded from | `llvm_backend/mod.rs:lower_function()` → `peephole.rs` |
 | `constant_propagation` | `--no-const-prop` | Skip redundant `LoadImm`/`LoadImm64` when register already holds the constant | `llvm_backend/emitter.rs:emit()` |
+| `inlining` | `--no-inline` | LLVM function inlining for small callees (CGSCC inline pass) | `llvm_frontend/function_builder.rs:run_optimization_passes()` |
 
-**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`) → `PvmEmitter.config`. LLVM passes flag is passed directly to `translate_wasm_to_llvm()`.
+**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`) → `PvmEmitter.config`. LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`.
 
 **Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `EmitterConfig`, guard the optimization with `e.config.<flag>`, add a `--no-*` CLI flag.
 
