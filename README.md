@@ -1,7 +1,7 @@
 # WASM-PVM: WebAssembly to PolkaVM Recompiler
 
 > **WARNING: This project is largely vibe-coded.**
-> It was built iteratively with heavy AI assistance (Claude). While it has 400+ passing integration tests and
+> It was built iteratively with heavy AI assistance (Claude). While it has 412 passing integration tests and
 > produces working PVM bytecode, the internals may contain unconventional patterns, over-engineering in some
 > places, and under-engineering in others. Use at your own risk. Contributions and proper engineering reviews
 > are very welcome!
@@ -174,7 +174,7 @@ crates/
       translate/         # Compilation orchestration & SPI assembly
       pvm/               # PVM instruction definitions & peephole optimizer
   wasm-pvm-cli/          # Command-line interface
-tests/                   # 400+ integration tests (TypeScript/Bun)
+tests/                   # 412 integration tests (TypeScript/Bun)
   fixtures/
     wat/                 # WAT test programs
     assembly/            # AssemblyScript examples
