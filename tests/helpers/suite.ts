@@ -82,19 +82,27 @@ export function defineDifferentialSuite(suite: SuiteSpec) {
       test(t.description, async () => {
         // Skip tests with custom PC — PVM-specific entry points
         // have no equivalent in native WASM execution.
-        if (t.pc !== undefined) return;
-
-        const wasmResult = await runWasmForSuite(suite.name, t.args);
-        if (wasmResult === null) {
-          // Module has imports or WASM not found — skip silently
+        if (t.pc !== undefined) {
+          console.log(
+            `[skip] ${suite.name}/${t.description}: custom PC`,
+          );
           return;
         }
 
-        // Run through PVM
+        const wasmResult = await runWasmForSuite(suite.name, t.args);
+        if (wasmResult === null) {
+          // Module has imports or WASM not found — skip
+          console.log(
+            `[skip] ${suite.name}/${t.description}: WASM unavailable`,
+          );
+          return;
+        }
+
+        // Run through PVM (t.pc is guaranteed undefined here after the guard above)
         let pvmResult: number;
         let pvmTrapped = false;
         try {
-          pvmResult = runJam(jamFile, t.args, t.pc);
+          pvmResult = runJam(jamFile, t.args);
         } catch {
           pvmTrapped = true;
           pvmResult = -1;

@@ -59,7 +59,7 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
      - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): host-call-log (ecalli 100 unhandled), as-life (timeout), i64-ops (timeout)
    - **Differential**: PVM vs native WASM (~142 tests) - Verifies PVM output matches Bun's WebAssembly engine
      - Run with: `cd tests && bun run test:differential`
-     - Auto-skips modules with function imports (AS modules, host-call-log)
+     - Auto-skips modules with function imports (AssemblyScript (AS) modules, host-call-log)
      - Auto-skips tests with custom `pc` (PVM-specific entry points)
    - **CI runs**: Layer 1-3 first (integration job), then Layer 4-5 in separate PVM-in-PVM job (only if integration passes)
 
@@ -191,8 +191,9 @@ crates/
 | Verify JAM file | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
 | Add/modify optimization | `translate/mod.rs` (`OptimizationFlags`) | Add flag + thread through `LoweringContext` → `PvmEmitter` |
 | Toggle optimization in CLI | `wasm-pvm-cli/src/main.rs` | Add `--no-*` flag to `Compile` subcommand |
-| Fix differential testing | `tests/helpers/wasm-runner.ts` | Native WASM runner (WAT→WASM via wabt, Bun WebAssembly) |
-| Add differential suite | `tests/differential/differential.test.ts` | Import suites + call `defineDifferentialSuite()` |
+| Understand/modify native WASM runner | `tests/helpers/wasm-runner.ts` | Native WASM runner (WAT→WASM via wabt, Bun WebAssembly) |
+| Define differential test suite | `tests/helpers/suite.ts` | `defineDifferentialSuite()` + `skipDifferential` flag |
+| Add/aggregate differential tests | `tests/differential/differential.test.ts` | Import suites + call `defineDifferentialSuite()` |
 
 ---
 

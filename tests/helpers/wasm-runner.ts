@@ -31,10 +31,11 @@ async function watToWasm(watPath: string): Promise<Uint8Array> {
     !watSource.includes('(export "memory"') &&
     !watSource.includes("(export 'memory'")
   ) {
-    // Replace `(memory N)` with `(memory (export "memory") N)`
+    // Replace `(memory ...)` with `(memory (export "memory") ...)`.
+    // Handles: (memory N), (memory N M), (memory $name N), (memory $name N M)
     watSource = watSource.replace(
-      /\(memory\s+(\d+)\)/,
-      '(memory (export "memory") $1)',
+      /\(memory(\s+)(\$\w+\s+)?(\d+(?:\s+\d+)?)\)/,
+      '(memory$1$2(export "memory") $3)',
     );
   }
 
@@ -133,7 +134,10 @@ export async function runWasmNative(
     }
 
     const instance = new WebAssembly.Instance(module, importObject);
-    const mainFn = instance.exports.main as Function;
+    const mainFn = instance.exports.main as (
+      ptr: number,
+      len: number,
+    ) => number | number[];
     if (!mainFn) {
       return { value: null, trapped: true, error: "No 'main' export found" };
     }
@@ -175,15 +179,7 @@ export async function runWasmNative(
     return { value, trapped: false };
   } catch (err: any) {
     const msg = err?.message ?? String(err);
-    // WebAssembly traps manifest as RuntimeError
-    if (
-      err instanceof WebAssembly.RuntimeError ||
-      msg.includes("unreachable") ||
-      msg.includes("integer divide by zero") ||
-      msg.includes("integer overflow")
-    ) {
-      return { value: null, trapped: true, error: msg };
-    }
+    // All errors during WASM execution are treated as traps
     return { value: null, trapped: true, error: msg };
   }
 }
@@ -210,9 +206,16 @@ export async function runWasmForSuite(
 // ---------------------------------------------------------------------------
 
 function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) {
+    throw new Error(`Invalid hex string length: ${hex.length}`);
+  }
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+    const byte = parseInt(hex.substring(i, i + 2), 16);
+    if (Number.isNaN(byte)) {
+      throw new Error(`Invalid hex character at position ${i}`);
+    }
+    bytes[i / 2] = byte;
   }
   return bytes;
 }
