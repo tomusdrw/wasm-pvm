@@ -285,9 +285,9 @@ proptest! {
         );
     }
 
-    /// Division by param always produces a division opcode with trap guard.
+    /// Division by param always produces a division opcode with div-by-zero trap guard.
     #[test]
-    fn div_produces_div_opcode(_divisor in 1i32..=i32::MAX) {
+    fn div_produces_div_opcode_and_trap_guard(_divisor in any::<i32>()) {
         let wat = r#"(module
             (memory 1)
             (func (export "main") (param i32 i32) (result i32)
@@ -298,10 +298,37 @@ proptest! {
         )"#;
         let program = compile_wat(wat).expect("compile");
         let instructions = extract_instructions(&program);
-        // Division should produce a DivU32 instruction (and a trap guard for div-by-zero)
+        // Division should produce DivU32 with a trap guard for div-by-zero.
+        // The divisor is a runtime parameter, so the guard must always be present.
         prop_assert!(
             has_opcode(&instructions, Opcode::DivU32),
             "Expected DivU32 opcode"
+        );
+        prop_assert!(
+            has_opcode(&instructions, Opcode::Trap)
+                || has_opcode(&instructions, Opcode::BranchEqImm)
+                || has_opcode(&instructions, Opcode::BranchNeImm),
+            "Expected div-by-zero trap guard"
+        );
+    }
+
+    /// Division by constant zero compiles (LLVM may fold to trap).
+    #[test]
+    fn div_by_zero_const_compiles(_a in any::<i32>()) {
+        let wat = r#"(module
+            (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                i32.const 0
+                i32.div_u
+            )
+        )"#;
+        let program = compile_wat(wat).expect("compile");
+        let instructions = extract_instructions(&program);
+        // LLVM folds div-by-zero-const to a trap; the emitted code must contain a Trap
+        prop_assert!(
+            has_opcode(&instructions, Opcode::Trap),
+            "Division by constant 0 should produce a Trap"
         );
     }
 
