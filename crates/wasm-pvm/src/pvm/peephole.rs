@@ -214,7 +214,13 @@ pub fn optimize(
 
     // 2. Eliminate dead code (unused registers).
     // This marks instructions for removal.
-    eliminate_dead_code(instructions, fixups, call_fixups, indirect_call_fixups, labels);
+    eliminate_dead_code(
+        instructions,
+        fixups,
+        call_fixups,
+        indirect_call_fixups,
+        labels,
+    );
 
     // 3. Simple peephole patterns (redundant fallthroughs).
     // Mark instructions for removal (true = keep, false = remove).
@@ -261,7 +267,6 @@ pub fn optimize(
     );
 }
 
-
 /// Optimize address calculations by fusing `AddImm` into `LoadInd`/`StoreInd` offsets.
 /// Also performs simple copy propagation for `MoveReg`.
 ///
@@ -279,7 +284,7 @@ pub fn optimize_address_calculation(
     // Map register -> (base_register, offset)
     // entry[R] = Some((Base, Off)) means value of R is (value of Base) + Off.
     let mut state = [None; 13];
-    
+
     // Track labels to reset state at block boundaries.
     let mut label_offsets = HashSet::new();
     for label in _labels.iter().flatten() {
@@ -293,7 +298,7 @@ pub fn optimize_address_calculation(
         if label_offsets.contains(&byte_offset) {
             state = [None; 13];
         }
-        
+
         let encoded_len = instructions[i].encode().len();
         let instr = &mut instructions[i];
 
@@ -325,8 +330,7 @@ pub fn optimize_address_calculation(
                     }
                 }
             }
-            Instruction::AddImm32 { src, value, .. } 
-            | Instruction::AddImm64 { src, value, .. } => {
+            Instruction::AddImm32 { src, value, .. } | Instruction::AddImm64 { src, value, .. } => {
                 if let Some((tracked_base, tracked_off)) = state[*src as usize] {
                     if let Some(new_val) = value.checked_add(tracked_off) {
                         *src = tracked_base;
@@ -339,7 +343,7 @@ pub fn optimize_address_calculation(
 
         // 2. Update state based on destination.
         let dest = instr.dest_reg();
-        
+
         // Invalidate any state that depends on the overwritten register.
         if let Some(dst) = dest {
             for s in state.iter_mut() {
@@ -360,7 +364,7 @@ pub fn optimize_address_calculation(
                     state[*dst as usize] = None;
                 }
             }
-            Instruction::AddImm32 { dst, src, value } 
+            Instruction::AddImm32 { dst, src, value }
             | Instruction::AddImm64 { dst, src, value } => {
                 if dst != src {
                     // dst = src + value
@@ -381,7 +385,7 @@ pub fn optimize_address_calculation(
                 }
             }
         }
-        
+
         byte_offset += encoded_len;
     }
 }
@@ -404,7 +408,7 @@ pub fn eliminate_dead_code(
 
     let mut keep = vec![true; len];
     let mut needed_regs = [true; 13]; // Default to all needed (conservative)
-    
+
     // Compute byte offsets for label matching
     let mut offsets = Vec::with_capacity(len);
     let mut running = 0;
@@ -416,21 +420,27 @@ pub fn eliminate_dead_code(
     for label in labels.iter().flatten() {
         label_offsets.insert(*label);
     }
-    
+
     for i in (0..len).rev() {
         // If this is a label target, reset liveness to ALL (conservative).
         if label_offsets.contains(&offsets[i]) {
             needed_regs = [true; 13];
         }
-        
+
         let instr = &instructions[i];
         let mut remove = false;
-        
+
         if instr.is_terminating() {
-             needed_regs = [true; 13];
+            needed_regs = [true; 13];
         } else {
             match instr {
-                Instruction::StoreIndU8{..} | Instruction::StoreIndU16{..} | Instruction::StoreIndU32{..} | Instruction::StoreIndU64{..} | Instruction::Ecalli{..} | Instruction::Trap | Instruction::Sbrk{..} => {
+                Instruction::StoreIndU8 { .. }
+                | Instruction::StoreIndU16 { .. }
+                | Instruction::StoreIndU32 { .. }
+                | Instruction::StoreIndU64 { .. }
+                | Instruction::Ecalli { .. }
+                | Instruction::Trap
+                | Instruction::Sbrk { .. } => {
                     // Side effects, keep.
                 }
                 _ => {
@@ -444,7 +454,7 @@ pub fn eliminate_dead_code(
                 }
             }
         }
-        
+
         if remove {
             keep[i] = false;
         } else {
@@ -470,6 +480,8 @@ pub fn eliminate_dead_code(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SP: u8 = crate::abi::STACK_PTR_REG;
 
     #[test]
     fn collapse_consecutive_fallthroughs() {
@@ -635,8 +647,6 @@ mod tests {
 
     // ── Dead store elimination tests ──
 
-
-
     #[test]
     fn dse_removes_unread_sp_store() {
         // Store to SP+16 but never load from SP+16 → dead store removed.
@@ -729,42 +739,6 @@ mod tests {
         );
 
         assert_eq!(instrs.len(), 2);
-    }
-
-    #[test]
-    fn dse_removes_unread_sp_store() {
-        // Store to SP+16 but never load from SP+16 → dead store removed.
-        let mut instrs = vec![
-            Instruction::LoadImm { reg: 2, value: 42 },
-            Instruction::StoreIndU64 {
-                base: SP,
-                src: 2,
-                offset: 16,
-            },
-            Instruction::LoadImm { reg: 3, value: 99 },
-        ];
-        let mut fixups = vec![];
-        let mut call_fixups = vec![];
-        let mut indirect_call_fixups = vec![];
-        let mut labels = vec![];
-
-        eliminate_dead_stores(
-            &mut instrs,
-            &mut fixups,
-            &mut call_fixups,
-            &mut indirect_call_fixups,
-            &mut labels,
-        );
-
-        assert_eq!(instrs.len(), 2);
-        assert!(matches!(
-            instrs[0],
-            Instruction::LoadImm { reg: 2, value: 42 }
-        ));
-        assert!(matches!(
-            instrs[1],
-            Instruction::LoadImm { reg: 3, value: 99 }
-        ));
     }
 
     #[test]
