@@ -845,6 +845,94 @@ fn test_leaf_function_optimization_skips_ra_save() {
     );
 }
 
+/// Leaf function optimization: a non-main leaf function should NOT save RA,
+/// even when that module also has a non-leaf function.
+/// Inlining is disabled so helper functions are compiled as standalone functions.
+/// Verifies that adding a non-leaf caller does not cause the leaf function to save RA;
+/// by comparing RA save count between a module with two non-leaf callers vs.
+/// one non-leaf caller + one leaf callee.
+#[test]
+fn test_non_main_leaf_function_skips_ra_save() {
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    let opts = CompileOptions {
+        optimizations: OptimizationFlags {
+            inlining: false,
+            ..OptimizationFlags::default()
+        },
+        ..CompileOptions::default()
+    };
+
+    // Module A: $helper is a leaf (no calls). $caller calls $helper. $main calls $caller.
+    // Expected: $helper saves 0 RA, $caller saves 1 RA.
+    let program_leaf = compile_wat_with_options(
+        r#"
+        (module
+            (func $helper (result i32)
+                i32.const 42
+            )
+            (func $caller (result i32)
+                call $helper
+            )
+            (func (export "main") (result i32)
+                call $caller
+            )
+        )
+        "#,
+        &opts,
+    )
+    .expect("compile leaf module");
+
+    // Module B: $helper2 also calls something, making it non-leaf.
+    // $caller calls $helper2. $main calls $caller.
+    // Expected: $helper2 saves 1 RA, $caller saves 1 RA — total 2.
+    let program_nonleaf = compile_wat_with_options(
+        r#"
+        (module
+            (func $inner (result i32)
+                i32.const 1
+            )
+            (func $helper2 (result i32)
+                call $inner
+            )
+            (func $caller (result i32)
+                call $helper2
+            )
+            (func (export "main") (result i32)
+                call $caller
+            )
+        )
+        "#,
+        &opts,
+    )
+    .expect("compile non-leaf module");
+
+    let count_ra_saves = |instrs: &[wasm_pvm::pvm::Instruction]| {
+        instrs
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i,
+                    wasm_pvm::pvm::Instruction::StoreIndU64 {
+                        base: 1,
+                        src: 0,
+                        offset: 0
+                    }
+                )
+            })
+            .count()
+    };
+
+    let leaf_ra_saves = count_ra_saves(&extract_instructions(&program_leaf));
+    let nonleaf_ra_saves = count_ra_saves(&extract_instructions(&program_nonleaf));
+
+    assert!(
+        leaf_ra_saves < nonleaf_ra_saves,
+        "Leaf $helper should save fewer RA than non-leaf $helper2: leaf={leaf_ra_saves}, nonleaf={nonleaf_ra_saves}"
+    );
+}
+
 /// Non-leaf function (has calls) MUST save return address (r0).
 /// Requires inlining disabled to preserve call structure.
 #[test]

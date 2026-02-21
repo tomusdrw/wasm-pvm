@@ -279,27 +279,40 @@ pub fn optimize(
 /// It updates instructions in-place.
 pub fn optimize_address_calculation(
     instructions: &mut [Instruction],
-    labels: &[Option<usize>], // labels are used to reset state (block boundaries)
+    labels: &mut [Option<usize>],
 ) {
     // Map register -> (base_register, offset)
     // entry[R] = Some((Base, Off)) means value of R is (value of Base) + Off.
     let mut state = [None; 13];
 
-    // Track labels to reset state at block boundaries.
+    // Compute pre-pass byte offsets (one per instruction) and build a reverse map
+    // (byte_offset → instruction index). We need this to remap labels after the pass,
+    // because mutating offsets can change the encoded length of an instruction.
+    let mut old_byte_offsets: Vec<usize> = Vec::with_capacity(instructions.len());
+    let mut running = 0usize;
+    for instr in instructions.iter() {
+        old_byte_offsets.push(running);
+        running += instr.encode().len();
+    }
+    let mut old_offset_to_idx: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
+    for (idx, &off) in old_byte_offsets.iter().enumerate() {
+        old_offset_to_idx.entry(off).or_insert(idx);
+    }
+
+    // Track label offsets (pre-pass) to reset state at block boundaries.
     let mut label_offsets = HashSet::new();
     for label in labels.iter().flatten() {
         label_offsets.insert(*label);
     }
 
-    let mut byte_offset = 0;
+    for (i, instr) in instructions.iter_mut().enumerate() {
+        let byte_offset = old_byte_offsets[i];
 
-    for instr in instructions.iter_mut() {
         // If this instruction is a label target, reset state.
         if label_offsets.contains(&byte_offset) {
             state = [None; 13];
         }
-
-        let encoded_len = instr.encode().len();
 
         // 1. Try to rewrite usage of registers based on state.
         match instr {
@@ -382,8 +395,21 @@ pub fn optimize_address_calculation(
                 }
             }
         }
+    }
 
-        byte_offset += encoded_len;
+    // Recompute post-pass byte offsets (encoded lengths may have changed).
+    // Update labels: map old byte offset → instruction index → new byte offset.
+    let mut new_byte_offsets: Vec<usize> = Vec::with_capacity(instructions.len());
+    let mut post_running = 0usize;
+    for instr in instructions.iter() {
+        new_byte_offsets.push(post_running);
+        post_running += instr.encode().len();
+    }
+
+    for label in labels.iter_mut().flatten() {
+        if let Some(&idx) = old_offset_to_idx.get(label) {
+            *label = new_byte_offsets[idx];
+        }
     }
 }
 
