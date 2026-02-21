@@ -3,8 +3,8 @@
 //! Tests for WASM operators and PVM lowering paths that were previously
 //! only incidentally exercised through integration tests.
 
-use wasm_pvm::test_harness::*;
 use wasm_pvm::Opcode;
+use wasm_pvm::test_harness::*;
 
 // =============================================================================
 // Division & Remainder: Trap Conditions
@@ -1128,8 +1128,8 @@ fn test_local_tee() {
     let instructions = extract_instructions(&program);
 
     // Should produce Add instructions (the two adds in the source)
-    let add_count = count_opcode(&instructions, Opcode::Add32)
-        + count_opcode(&instructions, Opcode::AddImm32);
+    let add_count =
+        count_opcode(&instructions, Opcode::Add32) + count_opcode(&instructions, Opcode::AddImm32);
     assert!(
         add_count >= 2,
         "local.tee test should have at least 2 add operations, got {add_count}"
@@ -1421,10 +1421,7 @@ fn test_drop() {
     let instructions = extract_instructions(&program);
 
     // Should compile successfully
-    assert!(
-        !instructions.is_empty(),
-        "drop should produce instructions"
-    );
+    assert!(!instructions.is_empty(), "drop should produce instructions");
 }
 
 // =============================================================================
