@@ -1232,7 +1232,8 @@ fn test_import_nop_action() {
     let program = compile_wat_with_imports(wat, import_map).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Nop import should not generate a Trap
+    // Nop import should not prevent correct function compilation:
+    // the return value 42 must still be produced.
     let has_42 = instructions
         .iter()
         .any(|i| matches!(i, wasm_pvm::Instruction::LoadImm { value: 42, .. }));
@@ -1560,6 +1561,10 @@ fn test_i64_rem_s() {
     let instructions = extract_instructions(&program);
 
     assert!(has_opcode(&instructions, Opcode::RemS64));
+    assert!(
+        has_opcode(&instructions, Opcode::Trap),
+        "i64.rem_s should have a zero-check trap guard"
+    );
 }
 
 // =============================================================================
