@@ -288,12 +288,15 @@ pub fn optimize_address_calculation(
     // Compute pre-pass byte offsets (one per instruction) and build a reverse map
     // (byte_offset → instruction index). We need this to remap labels after the pass,
     // because mutating offsets can change the encoded length of an instruction.
-    let mut old_byte_offsets: Vec<usize> = Vec::with_capacity(instructions.len());
+    let mut old_byte_offsets: Vec<usize> = Vec::with_capacity(instructions.len() + 1);
     let mut running = 0usize;
     for instr in instructions.iter() {
         old_byte_offsets.push(running);
         running += instr.encode().len();
     }
+    // Include the end-of-stream offset so labels pointing past the last instruction
+    // (e.g., a label defined after the last emitted instruction) are also remapped.
+    old_byte_offsets.push(running);
     let mut old_offset_to_idx: std::collections::HashMap<usize, usize> =
         std::collections::HashMap::new();
     for (idx, &off) in old_byte_offsets.iter().enumerate() {
@@ -400,12 +403,13 @@ pub fn optimize_address_calculation(
 
     // Recompute post-pass byte offsets (encoded lengths may have changed).
     // Update labels: map old byte offset → instruction index → new byte offset.
-    let mut new_byte_offsets: Vec<usize> = Vec::with_capacity(instructions.len());
+    let mut new_byte_offsets: Vec<usize> = Vec::with_capacity(instructions.len() + 1);
     let mut post_running = 0usize;
     for instr in instructions.iter() {
         new_byte_offsets.push(post_running);
         post_running += instr.encode().len();
     }
+    new_byte_offsets.push(post_running); // end-of-stream offset
 
     for label in labels.iter_mut().flatten() {
         if let Some(&idx) = old_offset_to_idx.get(label) {

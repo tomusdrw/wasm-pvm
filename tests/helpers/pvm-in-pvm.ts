@@ -123,8 +123,15 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
 
   // Minimum: status(1) + exitCode(4) + gas(8) + pc(4) = 17 bytes
   if (resultBuffer.length < 17) {
+    // Include full outer interpreter output for debugging CI failures.
+    const gasMatch = stdout.match(/Gas remaining:\s*(\d+)/);
+    const pcMatch = stdout.match(/Program counter:\s*(\d+)/);
+    const regsMatch = stdout.match(/Registers:\s*\[([^\]]*)\]/);
     throw new Error(
-      `Result too short (${resultBuffer.length} bytes, need >= 17): 0x${resultHex}`,
+      `Result too short (${resultBuffer.length} bytes, need >= 17): 0x${resultHex}\n` +
+        `Outer status=${outerStatus}, gas=${gasMatch?.[1] ?? "?"}, pc=${pcMatch?.[1] ?? "?"}\n` +
+        `Registers: ${regsMatch?.[1] ?? "?"}\n` +
+        `Full output (first 1000 chars): ${stdout.substring(0, 1000)}`,
     );
   }
 
