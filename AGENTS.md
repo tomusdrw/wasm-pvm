@@ -157,7 +157,7 @@ crates/
 ### Project-Specific
 - No `lib/` folder in crates — flat src structure
 - Integration tests in TypeScript (`tests/`)
-- Rust unit tests in `crates/wasm-pvm/tests/`
+- Rust unit tests in `crates/wasm-pvm/tests/` (see below for test file descriptions)
 - Pre-push hook: `.githooks/pre-push` (install with `git config core.hooksPath .githooks`)
 
 ---
@@ -178,7 +178,10 @@ crates/
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
 | Fix compilation pipeline | `translate/mod.rs` | `compile()` |
 | Fix adapter merge | `translate/adapter_merge.rs` | WAT adapter → merged WASM binary |
-| Add test case | `tests/layer{1,2,3}/*.test.ts` | Each file calls `defineSuite()` with hex args, little-endian |
+| Add integration test | `tests/layer{1,2,3}/*.test.ts` | Each file calls `defineSuite()` with hex args, little-endian |
+| Add operator unit test | `crates/wasm-pvm/tests/operator_coverage.rs` | WASM operator → PVM opcode verification (72 tests) |
+| Add emitter unit test | `crates/wasm-pvm/tests/emitter_unit.rs` | Slot allocation, labels, fixups, frame layout (19 tests) |
+| Add stack spill test | `crates/wasm-pvm/tests/deep_stack_spill.rs` | Deep stack, spill across calls (8 tests) |
 | Add/modify import adapter | `tests/fixtures/imports/*.adapter.wat` | WAT adapter files for complex import resolution |
 | Add/modify import map | `tests/fixtures/imports/*.imports` | Text-based import maps (simple: trap, nop) |
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` |
