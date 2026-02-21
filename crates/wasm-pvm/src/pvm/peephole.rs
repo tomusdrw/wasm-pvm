@@ -1142,7 +1142,10 @@ mod tests {
         // LoadIndU64 r4 from some address — even if r4 is never used, the load
         // can trap (out-of-bounds), so it must be kept.
         let mut instrs = vec![
-            Instruction::LoadImm { reg: 2, value: 0x1000 },
+            Instruction::LoadImm {
+                reg: 2,
+                value: 0x1000,
+            },
             Instruction::LoadIndU64 {
                 dst: 4,
                 base: 2,
