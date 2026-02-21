@@ -85,7 +85,7 @@ crates/
 │       │   ├── mod.rs           # Public API + main lowering dispatch
 │       │   ├── emitter.rs       # PvmEmitter struct + value management + register cache (~450 lines)
 │       │   ├── alu.rs           # Arithmetic, logic, comparisons, conversions (~380 lines)
-│       │   ├── memory.rs        # Load/store, memory intrinsics (~340 lines)
+│       │   ├── memory.rs        # Load/store, memory intrinsics, word-sized bulk ops (~890 lines)
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
 │       │   ├── calls.rs         # Direct/indirect calls, import stubs (~190 lines)
 │       │   └── intrinsics.rs    # PVM + LLVM intrinsic lowering (~280 lines)
@@ -117,7 +117,7 @@ crates/
 5. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
    - `emitter.rs`: Core PvmEmitter with value slot management and **per-block register cache** (store-load forwarding)
    - `alu.rs`: Arithmetic, logic, comparisons, conversions
-   - `memory.rs`: Load/store and memory intrinsics
+   - `memory.rs`: Load/store, memory intrinsics, word-sized bulk memory ops (memory.copy/fill use 64-bit word loops with byte tails)
    - `control_flow.rs`: Branches, phi nodes, switch, return
    - `calls.rs`: Direct/indirect function calls
    - `intrinsics.rs`: PVM and LLVM intrinsic lowering
@@ -168,7 +168,7 @@ crates/
 |------|----------|-------|
 | Add WASM operator | `llvm_frontend/function_builder.rs` | Add to operator match |
 | Add PVM lowering (arithmetic) | `llvm_backend/alu.rs` | Binary ops, comparisons, conversions |
-| Add PVM lowering (memory) | `llvm_backend/memory.rs` | Load/store, memory.size, memory.grow, etc. |
+| Add PVM lowering (memory) | `llvm_backend/memory.rs` | Load/store, memory.size, memory.grow, bulk ops (word-sized) |
 | Add PVM lowering (control flow) | `llvm_backend/control_flow.rs` | Branches, phi, switch, return |
 | Add PVM lowering (calls) | `llvm_backend/calls.rs` | Direct/indirect calls, import stubs |
 | Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` | PVM + LLVM intrinsic lowering |

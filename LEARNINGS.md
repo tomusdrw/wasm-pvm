@@ -702,6 +702,26 @@ The fused path emits just: load two operands + `BranchLtU`/`BranchGeU`/`BranchEq
 
 ---
 
+## Word-Sized Memory Operations (Issue #35)
+
+**Date**: 2026-02-20
+
+**Problem**: `memory.copy` and `memory.fill` were lowered to byte-by-byte loops (`LoadIndU8`/`StoreIndU8`), which is inefficient for large operations.
+
+**Solution**: Use `LoadIndU64`/`StoreIndU64` for the bulk of the data, with byte-by-byte handling for the 0-7 byte tail.
+
+**Scope of optimization**:
+- **`memory.fill`**: Word-sized stores for the bulk. The fill byte is replicated across all 8 bytes of a u64 by masking to 0xFF and multiplying by `0x0101010101010101`. The byte tail uses original `StoreIndU8` (which naturally truncates).
+- **`memory.copy` (forward)**: Word-sized loads/stores for the bulk, byte-by-byte tail for remaining bytes.
+- **`memory.copy` (backward)**: Kept as byte-by-byte. Word-sized backward copy was implemented and tested correctly in isolation, but caused PVM-in-PVM test failures for the anan-as-compiler binary. The root cause remains undiagnosed (possibly related to code layout interactions in very large programs). Since backward copies are rare (only needed for overlapping `dst > src`), the byte-by-byte approach is acceptable.
+- **`memory.init`**: Not optimized (always forward, from read-only data, could be optimized in the future).
+
+**Key detail**: For `memory.fill`, the WASM spec requires `val & 0xFF` (fill with the low byte only). The `StoreIndU8` instruction handles this naturally for byte-by-byte fills, but for word-sized fills, an explicit `AND` with `0xFF` is needed before broadcasting with the multiply trick.
+
+**PVM allows unaligned access**, so no alignment handling is needed for the word-sized operations.
+
+---
+
 ## References
 
 - Original: LEARNINGS.md (technical details)
