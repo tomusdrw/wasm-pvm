@@ -19,7 +19,7 @@ proptest! {
 
     /// i32.add with random constant operands compiles without panicking.
     #[test]
-    fn compile_i32_add_const(a in any::<i32>(), b in any::<i32>()) {
+    fn wasm_compile_i32_add_const(a in any::<i32>(), b in any::<i32>()) {
         let wat = format!(
             r#"(module
                 (memory 1)
@@ -36,7 +36,7 @@ proptest! {
 
     /// i32.sub with random constant operands compiles without panicking.
     #[test]
-    fn compile_i32_sub_const(a in any::<i32>(), b in any::<i32>()) {
+    fn wasm_compile_i32_sub_const(a in any::<i32>(), b in any::<i32>()) {
         let wat = format!(
             r#"(module
                 (memory 1)
@@ -53,7 +53,7 @@ proptest! {
 
     /// i32.mul with random constant operands compiles without panicking.
     #[test]
-    fn compile_i32_mul_const(a in any::<i32>(), b in any::<i32>()) {
+    fn wasm_compile_i32_mul_const(a in any::<i32>(), b in any::<i32>()) {
         let wat = format!(
             r#"(module
                 (memory 1)
@@ -70,7 +70,7 @@ proptest! {
 
     /// i64 arithmetic with random constants compiles without panicking.
     #[test]
-    fn compile_i64_add_const(a in any::<i64>(), b in any::<i64>()) {
+    fn wasm_compile_i64_add_const(a in any::<i64>(), b in any::<i64>()) {
         let wat = format!(
             r#"(module
                 (memory 1)
@@ -87,7 +87,7 @@ proptest! {
 
     /// Shift amounts can be any value (WASM masks them to type width).
     #[test]
-    fn compile_i32_shl_any_amount(shift in any::<i32>()) {
+    fn wasm_compile_i32_shl_any_amount(shift in any::<i32>()) {
         let wat = format!(
             r#"(module
                 (memory 1)
@@ -104,7 +104,7 @@ proptest! {
 
     /// Memory load with random offset compiles (offset is compile-time constant).
     #[test]
-    fn compile_memory_load_offset(offset in 0u32..65536) {
+    fn wasm_compile_memory_load_offset(offset in 0u32..65536) {
         let wat = format!(
             r#"(module
                 (memory 1)
@@ -120,7 +120,7 @@ proptest! {
 
     /// Memory store with random offset compiles.
     #[test]
-    fn compile_memory_store_offset(offset in 0u32..65536) {
+    fn wasm_compile_memory_store_offset(offset in 0u32..65536) {
         let wat = format!(
             r#"(module
                 (memory 1)
@@ -138,7 +138,7 @@ proptest! {
 
     /// Branch table with random number of targets compiles.
     #[test]
-    fn compile_br_table(num_targets in 1usize..10) {
+    fn wasm_compile_br_table(num_targets in 1usize..10) {
         let targets: Vec<String> = (0..num_targets).map(|_| "0".to_string()).collect();
         let target_list = targets.join(" ");
         let wat = format!(
@@ -159,7 +159,7 @@ proptest! {
 
     /// Multiple locals of various counts compile correctly.
     #[test]
-    fn compile_many_locals(num_locals in 1usize..20) {
+    fn wasm_compile_many_locals(num_locals in 1usize..20) {
         let locals: String = (0..num_locals).map(|_| "(local i32)").collect::<Vec<_>>().join(" ");
         let wat = format!(
             r#"(module
@@ -356,7 +356,7 @@ proptest! {
 
     /// Nested loops with random depth compile correctly.
     #[test]
-    fn compile_nested_loops(depth in 1usize..5) {
+    fn wasm_compile_nested_loops(depth in 1usize..5) {
         // Each loop has no result type; only the outermost function returns i32.
         let mut body = String::new();
         for _ in 0..depth {
@@ -382,7 +382,7 @@ proptest! {
 
     /// Nested blocks with random depth compile correctly.
     #[test]
-    fn compile_nested_blocks(depth in 1usize..10) {
+    fn wasm_compile_nested_blocks(depth in 1usize..10) {
         let mut body = String::new();
         for _ in 0..depth {
             body.push_str("(block ");
@@ -407,7 +407,7 @@ proptest! {
 
     /// Chain of i32 operations with random length compiles correctly.
     #[test]
-    fn compile_operation_chain(chain_len in 1usize..15) {
+    fn wasm_compile_operation_chain(chain_len in 1usize..15) {
         let ops = ["i32.add", "i32.sub", "i32.mul", "i32.and", "i32.or", "i32.xor"];
         let mut body = String::from("local.get 0\n");
         for i in 0..chain_len {
@@ -430,7 +430,7 @@ proptest! {
 
     /// Global variables with any i32 initial value compile correctly.
     #[test]
-    fn compile_global_init(init_val in any::<i32>()) {
+    fn wasm_compile_global_init(init_val in any::<i32>()) {
         let wat = format!(
             r#"(module
                 (memory 1)
@@ -446,7 +446,7 @@ proptest! {
 
     /// Functions with varying param counts compile correctly.
     #[test]
-    fn compile_varying_params(num_params in 1usize..8) {
+    fn wasm_compile_varying_params(num_params in 1usize..8) {
         let params: String = (0..num_params).map(|_| "(param i32)").collect::<Vec<_>>().join(" ");
         let wat = format!(
             r#"(module
