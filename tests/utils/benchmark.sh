@@ -132,9 +132,9 @@ sys.stdout.buffer.write(struct.pack('<QIII',${INNER_GAS},0,${program_len},${inne
   # Append program bytes
   cat "$jam_file" >> "$out_file"
 
-  # Append inner args
+  # Append inner args (use %b to expand \xNN escapes without treating % as a format specifier)
   if [ -n "$inner_args_hex" ]; then
-    printf "$inner_args_bytes" >> "$out_file"
+    printf '%b' "$inner_args_bytes" >> "$out_file"
   fi
 }
 
