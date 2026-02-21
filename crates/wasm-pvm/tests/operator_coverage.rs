@@ -150,6 +150,10 @@ fn test_i32_rem_s_compiles() {
     let instructions = extract_instructions(&program);
 
     assert!(has_opcode(&instructions, Opcode::RemS32));
+    assert!(
+        has_opcode(&instructions, Opcode::Trap),
+        "Signed remainder should have a zero-check trap guard"
+    );
 }
 
 // =============================================================================
@@ -696,11 +700,12 @@ fn test_i32_eq() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // eq is typically lowered as XOR + SetLtUImm(1) or similar
-    // At minimum it should compile
+    // eq is lowered as XOR + SetLtUImm(1): xor the operands, then test < 1 (i.e. == 0)
     assert!(
-        !instructions.is_empty(),
-        "i32.eq should produce instructions"
+        has_opcode(&instructions, Opcode::Xor)
+            || has_opcode(&instructions, Opcode::SetLtUImm)
+            || has_opcode(&instructions, Opcode::SetLtU),
+        "i32.eq should produce comparison/xor instructions"
     );
 }
 
@@ -720,9 +725,12 @@ fn test_i32_ne() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
+    // ne is lowered as XOR + SetLtU(0, result): xor the operands, then test 0 < result (nonzero)
     assert!(
-        !instructions.is_empty(),
-        "i32.ne should produce instructions"
+        has_opcode(&instructions, Opcode::Xor)
+            || has_opcode(&instructions, Opcode::SetLtU)
+            || has_opcode(&instructions, Opcode::SetLtUImm),
+        "i32.ne should produce xor/comparison instructions"
     );
 }
 
@@ -1074,10 +1082,11 @@ fn test_memory_size() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // memory.size should produce some instructions (it reads from the sbrk area)
+    // memory.size reads the page count from the memory-size global slot (LoadIndU32)
     assert!(
-        !instructions.is_empty(),
-        "memory.size should produce instructions"
+        has_opcode(&instructions, Opcode::LoadIndU32)
+            || has_opcode(&instructions, Opcode::LoadIndU64),
+        "memory.size should read from the memory-size global (load instruction expected)"
     );
 }
 
@@ -1757,11 +1766,12 @@ fn test_i32_rotl() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Rotation uses LLVM fshl/fshr intrinsics, which lower to shift+or
-    // or the PVM might use dedicated instructions. At minimum it should compile.
+    // i32.rotl lowers via llvm.fshl intrinsic to: (a << amt) | (a >> (32 - amt))
     assert!(
-        !instructions.is_empty(),
-        "i32.rotl should produce instructions"
+        has_opcode(&instructions, Opcode::ShloL32)
+            || has_opcode(&instructions, Opcode::ShloR32)
+            || has_opcode(&instructions, Opcode::Or),
+        "i32.rotl should produce shift/or instructions"
     );
 }
 
@@ -1781,9 +1791,12 @@ fn test_i32_rotr() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
+    // i32.rotr lowers via llvm.fshr intrinsic to: (a >> amt) | (a << (32 - amt))
     assert!(
-        !instructions.is_empty(),
-        "i32.rotr should produce instructions"
+        has_opcode(&instructions, Opcode::ShloL32)
+            || has_opcode(&instructions, Opcode::ShloR32)
+            || has_opcode(&instructions, Opcode::Or),
+        "i32.rotr should produce shift/or instructions"
     );
 }
 
@@ -1803,9 +1816,12 @@ fn test_i64_rotl() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
+    // i64.rotl lowers via llvm.fshl intrinsic to: (a << amt) | (a >> (64 - amt))
     assert!(
-        !instructions.is_empty(),
-        "i64.rotl should produce instructions"
+        has_opcode(&instructions, Opcode::ShloL64)
+            || has_opcode(&instructions, Opcode::ShloR64)
+            || has_opcode(&instructions, Opcode::Or),
+        "i64.rotl should produce shift/or instructions"
     );
 }
 
@@ -1825,9 +1841,12 @@ fn test_i64_rotr() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
+    // i64.rotr lowers via llvm.fshr intrinsic to: (a >> amt) | (a << (64 - amt))
     assert!(
-        !instructions.is_empty(),
-        "i64.rotr should produce instructions"
+        has_opcode(&instructions, Opcode::ShloL64)
+            || has_opcode(&instructions, Opcode::ShloR64)
+            || has_opcode(&instructions, Opcode::Or),
+        "i64.rotr should produce shift/or instructions"
     );
 }
 
