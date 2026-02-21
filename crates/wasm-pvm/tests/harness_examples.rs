@@ -57,10 +57,15 @@ fn test_if_else_compilation() {
     let program = compile_wat(wat).expect("Failed to compile");
     let instructions = extract_instructions(&program);
 
-    // Should have branch instructions for the if/else
+    // Should have either branch instructions (if/else lowering) or comparison
+    // instructions (when LLVM optimizes `if x > 0 then 1 else 0` into a select/cmp).
     assert!(
         has_opcode(&instructions, Opcode::BranchEqImm)
             || has_opcode(&instructions, Opcode::BranchNeImm)
+            || has_opcode(&instructions, Opcode::SetLtS)
+            || has_opcode(&instructions, Opcode::SetLtU)
+            || has_opcode(&instructions, Opcode::BranchGeSImm)
+            || has_opcode(&instructions, Opcode::BranchLtSImm)
     );
 }
 

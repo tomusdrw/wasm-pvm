@@ -224,6 +224,57 @@ pub fn lower_llvm_intrinsic<'ctx>(
         return Ok(());
     }
 
+    // llvm.abs — absolute value intrinsic.
+    // Lowered as: if x < 0 then 0 - x else x.
+    if name.contains("abs") {
+        let val = get_operand(instr, 0)?;
+        e.load_operand(val, TEMP1)?;
+        let bits = operand_bit_width(instr);
+
+        // For i32, sign-extend to i64 for correct signed comparison.
+        if bits == 32 {
+            e.emit(Instruction::AddImm32 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 0,
+            });
+        }
+
+        // Branch if TEMP1 >= 0 (signed): skip negation.
+        let done_label = e.alloc_label();
+        let nonneg_label = e.alloc_label();
+        e.emit(Instruction::LoadImm {
+            reg: TEMP2,
+            value: 0,
+        });
+        // BranchGeS { reg1, reg2 } branches if reg2 >= reg1 (signed).
+        e.emit_branch_ge_s_to_label(TEMP2, TEMP1, nonneg_label);
+
+        // Negative path: result = 0 - x.
+        if bits == 32 {
+            e.emit(Instruction::Sub32 {
+                dst: TEMP_RESULT,
+                src1: TEMP2,
+                src2: TEMP1,
+            });
+        } else {
+            e.emit(Instruction::Sub64 {
+                dst: TEMP_RESULT,
+                src1: TEMP2,
+                src2: TEMP1,
+            });
+        }
+        e.store_to_slot(slot, TEMP_RESULT);
+        e.emit_jump_to_label(done_label);
+
+        // Non-negative path: result = x.
+        e.define_label(nonneg_label);
+        e.store_to_slot(slot, TEMP1);
+
+        e.define_label(done_label);
+        return Ok(());
+    }
+
     if name.contains("ctlz") {
         let val = get_operand(instr, 0)?;
         e.load_operand(val, TEMP1)?;
