@@ -62,6 +62,9 @@ enum Commands {
             help = "Disable constant propagation (redundant LoadImm elimination)"
         )]
         no_const_prop: bool,
+
+        #[arg(long, help = "Disable LLVM function inlining")]
+        no_inline: bool,
     },
 }
 
@@ -85,6 +88,7 @@ fn main() -> Result<()> {
             no_shrink_wrap,
             no_dead_store_elim,
             no_const_prop,
+            no_inline,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -120,6 +124,7 @@ fn main() -> Result<()> {
                     shrink_wrap_callee_saves: !no_shrink_wrap,
                     dead_store_elimination: !no_dead_store_elim,
                     constant_propagation: !no_const_prop,
+                    inlining: !no_inline,
                 },
             };
 

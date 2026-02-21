@@ -31,6 +31,7 @@ pub enum ImportAction {
 #[allow(clippy::struct_excessive_bools)]
 pub struct OptimizationFlags {
     /// Run LLVM optimization passes (mem2reg, instcombine, simplifycfg, gvn, dce).
+    /// When false, also disables inlining (all LLVM passes are skipped).
     pub llvm_passes: bool,
     /// Run peephole optimizer (fallthrough removal, dead code elimination).
     pub peephole: bool,
@@ -44,6 +45,8 @@ pub struct OptimizationFlags {
     pub dead_store_elimination: bool,
     /// Skip redundant `LoadImm`/`LoadImm64` when the register already holds the constant.
     pub constant_propagation: bool,
+    /// Inline small functions at the LLVM IR level to eliminate call overhead.
+    pub inlining: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -56,6 +59,7 @@ impl Default for OptimizationFlags {
             shrink_wrap_callee_saves: true,
             dead_store_elimination: true,
             constant_propagation: true,
+            inlining: true,
         }
     }
 }
@@ -148,8 +152,12 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
 
     // Phase 1: WASM → LLVM IR
     let context = Context::create();
-    let llvm_module =
-        llvm_frontend::translate_wasm_to_llvm(&context, module, options.optimizations.llvm_passes)?;
+    let llvm_module = llvm_frontend::translate_wasm_to_llvm(
+        &context,
+        module,
+        options.optimizations.llvm_passes,
+        options.optimizations.inlining,
+    )?;
 
     // Calculate RO_DATA offsets and lengths for passive data segments
     let mut data_segment_offsets = std::collections::HashMap::new();

@@ -18,7 +18,8 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot, try_get_constant,
+    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot, source_bit_width,
+    try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -516,7 +517,7 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
 pub fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
-    let from_bits = operand_bit_width(instr);
+    let from_bits = source_bit_width(instr);
 
     e.load_operand(src, TEMP1)?;
 
@@ -550,7 +551,7 @@ pub fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
 pub fn lower_sext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
-    let from_bits = operand_bit_width(instr);
+    let from_bits = source_bit_width(instr);
 
     e.load_operand(src, TEMP1)?;
 

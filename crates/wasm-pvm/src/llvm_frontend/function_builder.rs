@@ -243,6 +243,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         mut self,
         wasm_module: &WasmModule,
         run_llvm_passes: bool,
+        run_inlining: bool,
     ) -> Result<Module<'ctx>> {
         self.declare_functions(wasm_module);
         self.declare_globals(wasm_module);
@@ -272,7 +273,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         }
 
         if run_llvm_passes {
-            self.run_optimization_passes()?;
+            self.run_optimization_passes(run_inlining)?;
         }
 
         self.module
@@ -1630,7 +1631,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
     // ── Optimization passes ──
 
-    fn run_optimization_passes(&self) -> Result<()> {
+    fn run_optimization_passes(&self, run_inlining: bool) -> Result<()> {
         use inkwell::passes::PassBuilderOptions;
         use inkwell::targets::{InitializationConfig, Target, TargetMachine};
 
@@ -1650,10 +1651,31 @@ impl<'ctx> WasmToLlvm<'ctx> {
             )
             .ok_or_else(|| Error::Internal("failed to create target machine".into()))?;
 
+        // Phase 1: Promote allocas to SSA and simplify before inlining.
+        // Running instcombine+simplifycfg pre-inline reduces IR complexity so that
+        // post-inline instcombine converges reliably (avoids LLVM fixpoint errors).
+        let opts = PassBuilderOptions::create();
+        self.module
+            .run_passes("mem2reg,instcombine,simplifycfg", &machine, opts)
+            .map_err(|e| Error::Internal(format!("LLVM pre-inline passes failed: {e}")))?;
+
+        // Phase 2 (optional): Inline small functions at the CGSCC level.
+        // This must run as a separate pass invocation because `inline` is a CGSCC pass
+        // and cannot be mixed with function passes in the new pass manager pipeline.
+        // Uses LLVM's default inline threshold (225, same as -O2).
+        if run_inlining {
+            let opts = PassBuilderOptions::create();
+            self.module
+                .run_passes("cgscc(inline)", &machine, opts)
+                .map_err(|e| Error::Internal(format!("LLVM inlining pass failed: {e}")))?;
+        }
+
+        // Phase 3: Clean up the (potentially inlined) IR.
+        // Use instcombine<max-iterations=2> to handle complex patterns created by inlining.
         let opts = PassBuilderOptions::create();
         self.module
             .run_passes(
-                "mem2reg,instcombine,simplifycfg,gvn,simplifycfg,dce",
+                "instcombine<max-iterations=2>,simplifycfg,gvn,simplifycfg,dce",
                 &machine,
                 opts,
             )
