@@ -172,7 +172,7 @@ crates/
 | Add PVM lowering (control flow) | `llvm_backend/control_flow.rs` | Branches, phi, switch, return |
 | Add PVM lowering (calls) | `llvm_backend/calls.rs` | Direct/indirect calls, import stubs |
 | Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` | PVM + LLVM intrinsic lowering |
-| Modify emitter core | `llvm_backend/emitter.rs` | PvmEmitter struct, value management |
+| Modify emitter core | `llvm_backend/emitter.rs` | EmitterConfig (per-function config) + PvmEmitter (mutable state) |
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
 | Modify peephole optimizer | `pvm/peephole.rs` | Add patterns, update fixup remapping |
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
