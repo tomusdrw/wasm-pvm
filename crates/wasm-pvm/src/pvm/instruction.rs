@@ -75,6 +75,7 @@ pub enum Instruction {
     LoadIndI16 { dst: u8, base: u8, offset: i32 },
     StoreIndU16 { base: u8, src: u8, offset: i32 },
     Ecalli { index: u32 },
+    Unknown { opcode: u8, raw_bytes: Vec<u8> },
 }
 
 impl Instruction {
@@ -326,6 +327,7 @@ impl Instruction {
                 bytes.extend_from_slice(&encode_uimm(*index));
                 bytes
             }
+            Self::Unknown { raw_bytes, .. } => raw_bytes.clone(),
         }
     }
 
@@ -406,7 +408,8 @@ impl Instruction {
             | Self::StoreIndU16 { .. }
             | Self::StoreIndU32 { .. }
             | Self::StoreIndU64 { .. }
-            | Self::Ecalli { .. } => None,
+            | Self::Ecalli { .. }
+            | Self::Unknown { .. } => None,
         }
     }
 
