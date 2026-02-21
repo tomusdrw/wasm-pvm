@@ -1028,6 +1028,7 @@ impl InstructionExt for Instruction {
             Instruction::StoreIndU8 { .. } => Some(Opcode::StoreIndU8),
             Instruction::StoreIndU16 { .. } => Some(Opcode::StoreIndU16),
             Instruction::Ecalli { .. } => Some(Opcode::Ecalli),
+            Instruction::Unknown { .. } => None,
         }
     }
 }
