@@ -168,10 +168,10 @@ pub fn lower_return<'ctx>(
     is_main: bool,
 ) -> Result<()> {
     if is_main {
-        if let Some((ptr_global, len_global)) = e.result_globals {
+        if let Some((ptr_global, len_global)) = e.config.result_globals {
             // Globals convention: load result_ptr and result_len from WASM globals.
             // JAM SPI result convention: r7 = start address, r8 = end address.
-            let wasm_memory_base = e.wasm_memory_base;
+            let wasm_memory_base = e.config.wasm_memory_base;
             let ptr_addr = abi::global_addr(ptr_global);
             e.emit(Instruction::LoadImm {
                 reg: TEMP1,
@@ -204,12 +204,12 @@ pub fn lower_return<'ctx>(
                 src1: abi::ARGS_PTR_REG,
                 src2: TEMP2,
             });
-        } else if e.entry_returns_ptr_len && instr.get_num_operands() > 0 {
+        } else if e.config.entry_returns_ptr_len && instr.get_num_operands() > 0 {
             // Packed (ptr, len) convention: return value is packed i64.
             // Lower 32 bits = WASM ptr, upper 32 bits = len.
             // JAM SPI result convention: r7 = start address, r8 = end address.
             let ret_val = get_operand(instr, 0)?;
-            let wasm_memory_base = e.wasm_memory_base;
+            let wasm_memory_base = e.config.wasm_memory_base;
             e.load_operand(ret_val, TEMP1)?;
             // TEMP2 = packed >> 32 (length)
             e.emit(Instruction::LoadImm {

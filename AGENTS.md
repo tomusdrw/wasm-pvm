@@ -83,7 +83,7 @@ crates/
 │       │   └── mod.rs
 │       ├── llvm_backend/  # LLVM IR → PVM bytecode
 │       │   ├── mod.rs           # Public API + main lowering dispatch
-│       │   ├── emitter.rs       # PvmEmitter struct + value management + register cache (~450 lines)
+│       │   ├── emitter.rs       # EmitterConfig + PvmEmitter struct + value management + register cache (~470 lines)
 │       │   ├── alu.rs           # Arithmetic, logic, comparisons, conversions (~380 lines)
 │       │   ├── memory.rs        # Load/store, memory intrinsics, word-sized bulk ops (~890 lines)
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
@@ -115,7 +115,7 @@ crates/
 3. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell
 4. **LLVM optimization passes**: `mem2reg` (SSA promotion), `instcombine` (strength reduction), `simplifycfg` (block merging), `gvn` (redundancy elimination), `dce` (dead code removal)
 5. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
-   - `emitter.rs`: Core PvmEmitter with value slot management and **per-block register cache** (store-load forwarding)
+   - `emitter.rs`: `EmitterConfig` (immutable per-function config) + `PvmEmitter` (mutable codegen state) with value slot management and **per-block register cache** (store-load forwarding)
    - `alu.rs`: Arithmetic, logic, comparisons, conversions
    - `memory.rs`: Load/store, memory intrinsics, word-sized bulk memory ops (memory.copy/fill use 64-bit word loops with byte tails)
    - `control_flow.rs`: Branches, phi nodes, switch, return
@@ -205,9 +205,9 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `dead_store_elimination` | `--no-dead-store-elim` | Remove SP-relative stores never loaded from | `llvm_backend/mod.rs:lower_function()` → `peephole.rs` |
 | `constant_propagation` | `--no-const-prop` | Skip redundant `LoadImm`/`LoadImm64` when register already holds the constant | `llvm_backend/emitter.rs:emit()` |
 
-**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `PvmEmitter` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`). LLVM passes flag is passed directly to `translate_wasm_to_llvm()`.
+**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`) → `PvmEmitter.config`. LLVM passes flag is passed directly to `translate_wasm_to_llvm()`.
 
-**Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `PvmEmitter`, guard the optimization with the flag, add a `--no-*` CLI flag.
+**Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `EmitterConfig`, guard the optimization with `e.config.<flag>`, add a `--no-*` CLI flag.
 
 ---
 

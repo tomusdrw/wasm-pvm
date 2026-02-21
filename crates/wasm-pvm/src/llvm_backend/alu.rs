@@ -355,7 +355,7 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     // Optimization: if this ICmp is only used by a single branch instruction,
     // defer it for fusion — the branch will emit a single fused PVM branch
     // instead of computing a boolean and branching on it.
-    if e.icmp_fusion_enabled && is_single_use_by_branch(instr) {
+    if e.config.icmp_fusion_enabled && is_single_use_by_branch(instr) {
         e.pending_fused_icmp = Some(FusedIcmp {
             predicate: pred,
             lhs,
