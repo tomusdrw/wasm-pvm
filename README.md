@@ -111,6 +111,21 @@ The compiler pipeline:
 - **No floating point**: PVM lacks FP support; WASM floats are rejected at compile time
 - **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`
 
+### Benchmark: Optimizations Impact
+
+All optimizations enabled (default) vs all PVM-level optimizations disabled:
+
+| Benchmark | WASM size | JAM (opt) | JAM (no opt) | Size reduction | Gas (opt) | Gas (no opt) | Gas reduction |
+|-----------|----------|-----------|-------------|----------------|----------|-------------|---------------|
+| add(5,7) | 66 B | 208 B | 242 B | -14% | 39 | 48 | -19% |
+| fib(20) | 108 B | 277 B | 304 B | -9% | 612 | 716 | -15% |
+| factorial(10) | 100 B | 255 B | 279 B | -9% | 279 | 333 | -16% |
+| is_prime(25) | 160 B | 340 B | 424 B | -20% | 81 | 108 | -25% |
+| AS fib(10) | 266 B | 808 B | 986 B | -18% | 353 | 445 | -21% |
+| AS factorial(7) | 265 B | 800 B | 971 B | -18% | 306 | 372 | -18% |
+| AS gcd(2017,200) | 260 B | 792 B | 990 B | -20% | 217 | 285 | -24% |
+| anan-as compiler | 54 KB | 365 KB | 367 KB | -1% | 24,729 | 49,638 | -50% |
+
 ## Supported WASM Features
 
 | Category | Operations |
