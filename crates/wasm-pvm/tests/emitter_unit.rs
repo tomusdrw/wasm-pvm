@@ -2,7 +2,7 @@
 //! and constant emission — the core "stack machine" logic (issue #32).
 
 use wasm_pvm::test_harness::*;
-use wasm_pvm::{Instruction, Opcode};
+use wasm_pvm::{CompileOptions, Instruction, Opcode, OptimizationFlags};
 
 // ── Slot Allocation ──
 
@@ -684,9 +684,10 @@ fn test_shrink_wrap_leaf_0_params_no_saves() {
 }
 
 /// Shrink wrapping: function that calls another should save all callee-saved regs.
+/// Uses `--no-inline` to prevent LLVM from inlining the callee.
 #[test]
 fn test_shrink_wrap_calling_function_saves_all() {
-    let program = compile_wat(
+    let program = compile_wat_with_options(
         r#"
         (module
             (func $leaf (result i32)
@@ -700,6 +701,13 @@ fn test_shrink_wrap_calling_function_saves_all() {
             )
         )
         "#,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
     )
     .expect("compile");
     let instructions = extract_instructions(&program);

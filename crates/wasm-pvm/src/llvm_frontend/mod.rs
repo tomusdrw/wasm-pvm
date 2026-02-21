@@ -18,7 +18,8 @@ pub fn translate_wasm_to_llvm<'ctx>(
     context: &'ctx Context,
     wasm_module: &WasmModule,
     run_llvm_passes: bool,
+    run_inlining: bool,
 ) -> Result<Module<'ctx>> {
     let translator = WasmToLlvm::new(context, "wasm_module");
-    translator.translate_module(wasm_module, run_llvm_passes)
+    translator.translate_module(wasm_module, run_llvm_passes, run_inlining)
 }
