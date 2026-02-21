@@ -201,6 +201,7 @@ crates/
 | Verify JAM file | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
 | Add/modify optimization | `translate/mod.rs` (`OptimizationFlags`) | Add flag + thread through `LoweringContext` → `PvmEmitter` |
 | Toggle optimization in CLI | `wasm-pvm-cli/src/main.rs` | Add `--no-*` flag to `Compile` subcommand |
+| Add property test | `crates/wasm-pvm/tests/property_tests.rs` | Proptest: compilation safety, encoding roundtrips (28 tests) |
 | Understand/modify native WASM runner | `tests/helpers/wasm-runner.ts` | Native WASM runner (WAT→WASM via wabt, Bun WebAssembly) |
 | Define differential test suite | `tests/helpers/suite.ts` | `defineDifferentialSuite()` + `skipDifferential` flag |
 | Add/aggregate differential tests | `tests/differential/differential.test.ts` | Import suites + call `defineDifferentialSuite()` |
