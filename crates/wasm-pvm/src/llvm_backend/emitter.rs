@@ -587,7 +587,7 @@ pub fn operand_bit_width(instr: InstructionValue<'_>) -> u32 {
 
 /// Detect the bit width of an instruction's **source** (first operand) type.
 ///
-/// This is the correct function for conversion instructions (SExt, ZExt, Trunc)
+/// This is the correct function for conversion instructions (`SExt`, `ZExt`, `Trunc`)
 /// where you need to know what width the value is being converted *from*.
 pub fn source_bit_width(instr: InstructionValue<'_>) -> u32 {
     if let Some(op) = instr
