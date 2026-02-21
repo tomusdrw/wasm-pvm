@@ -390,8 +390,10 @@ pub fn optimize_address_calculation(
                 }
             }
             _ => {
+                // Other instructions overwrite the register with an unknown value.
+                // Clear tracking since there's nothing useful to fold.
                 if let Some(dst) = dest {
-                    state[dst as usize] = Some((dst, 0)); // Identity
+                    state[dst as usize] = None;
                 }
             }
         }
