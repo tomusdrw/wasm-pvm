@@ -728,3 +728,74 @@ fn test_shrink_wrap_calling_function_saves_all() {
         );
     }
 }
+
+/// Inlining: calling a small leaf function should produce different (inlined) code.
+#[test]
+fn test_inlining_changes_codegen() {
+    let wat = r#"
+        (module
+            (func $add_ten (param i32) (result i32)
+                local.get 0
+                i32.const 10
+                i32.add
+            )
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                call $add_ten
+            )
+        )
+    "#;
+
+    let with_inline = compile_wat_with_options(
+        wat,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: true,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile with inlining");
+
+    let without_inline = compile_wat_with_options(
+        wat,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile without inlining");
+
+    // Inlining should produce different encoded output (the call is eliminated
+    // from the entry function and replaced with the inlined body).
+    let inlined_bytes = with_inline.encode();
+    let noinline_bytes = without_inline.encode();
+    assert_ne!(
+        inlined_bytes, noinline_bytes,
+        "Inlining should change the generated code"
+    );
+
+    // Without inlining, we expect LoadImm64 for the return address (call overhead).
+    // With inlining, this overhead is eliminated.
+    let noinline_instrs = extract_instructions(&without_inline);
+    let noinline_load_imm64_count = noinline_instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::LoadImm64 { .. }))
+        .count();
+
+    let inlined_instrs = extract_instructions(&with_inline);
+    let inlined_load_imm64_count = inlined_instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::LoadImm64 { .. }))
+        .count();
+
+    // Without inlining needs LoadImm64 for return address; with inlining doesn't.
+    assert!(
+        inlined_load_imm64_count < noinline_load_imm64_count,
+        "Inlining should reduce LoadImm64 count (call overhead): inlined={inlined_load_imm64_count}, no-inline={noinline_load_imm64_count}"
+    );
+}

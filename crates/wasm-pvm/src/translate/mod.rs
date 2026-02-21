@@ -31,6 +31,7 @@ pub enum ImportAction {
 #[allow(clippy::struct_excessive_bools)]
 pub struct OptimizationFlags {
     /// Run LLVM optimization passes (mem2reg, instcombine, simplifycfg, gvn, dce).
+    /// When false, also disables inlining (all LLVM passes are skipped).
     pub llvm_passes: bool,
     /// Run peephole optimizer (fallthrough removal, dead code elimination).
     pub peephole: bool,
