@@ -743,9 +743,9 @@ impl Instruction {
             | Self::Fallthrough
             | Self::Jump { .. }
             | Self::Ecalli { .. }
-            | Self::Unknown { .. } => [None, None, None],
-
-            Self::LoadImm { .. } | Self::LoadImm64 { .. } => [None, None, None],
+            | Self::Unknown { .. }
+            | Self::LoadImm { .. }
+            | Self::LoadImm64 { .. } => [None, None, None],
 
             Self::MoveReg { src, .. }
             | Self::Sbrk { src, .. }

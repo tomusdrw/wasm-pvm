@@ -278,8 +278,8 @@ pub fn optimize(
 /// This pass assumes sequential execution within basic blocks (reset at labels/branches).
 /// It updates instructions in-place.
 pub fn optimize_address_calculation(
-    instructions: &mut Vec<Instruction>,
-    _labels: &[Option<usize>], // labels are used to reset state (block boundaries)
+    instructions: &mut [Instruction],
+    labels: &[Option<usize>], // labels are used to reset state (block boundaries)
 ) {
     // Map register -> (base_register, offset)
     // entry[R] = Some((Base, Off)) means value of R is (value of Base) + Off.
@@ -287,20 +287,19 @@ pub fn optimize_address_calculation(
 
     // Track labels to reset state at block boundaries.
     let mut label_offsets = HashSet::new();
-    for label in _labels.iter().flatten() {
+    for label in labels.iter().flatten() {
         label_offsets.insert(*label);
     }
 
     let mut byte_offset = 0;
 
-    for i in 0..instructions.len() {
+    for instr in instructions.iter_mut() {
         // If this instruction is a label target, reset state.
         if label_offsets.contains(&byte_offset) {
             state = [None; 13];
         }
 
-        let encoded_len = instructions[i].encode().len();
-        let instr = &mut instructions[i];
+        let encoded_len = instr.encode().len();
 
         // 1. Try to rewrite usage of registers based on state.
         match instr {
@@ -323,19 +322,19 @@ pub fn optimize_address_calculation(
                 }
             }
             Instruction::JumpInd { reg, offset, .. } => {
-                if let Some((tracked_base, tracked_off)) = state[*reg as usize] {
-                    if let Some(new_off) = offset.checked_add(tracked_off) {
-                        *reg = tracked_base;
-                        *offset = new_off;
-                    }
+                if let Some((tracked_base, tracked_off)) = state[*reg as usize]
+                    && let Some(new_off) = offset.checked_add(tracked_off)
+                {
+                    *reg = tracked_base;
+                    *offset = new_off;
                 }
             }
             Instruction::AddImm32 { src, value, .. } | Instruction::AddImm64 { src, value, .. } => {
-                if let Some((tracked_base, tracked_off)) = state[*src as usize] {
-                    if let Some(new_val) = value.checked_add(tracked_off) {
-                        *src = tracked_base;
-                        *value = new_val;
-                    }
+                if let Some((tracked_base, tracked_off)) = state[*src as usize]
+                    && let Some(new_val) = value.checked_add(tracked_off)
+                {
+                    *src = tracked_base;
+                    *value = new_val;
                 }
             }
             _ => {}
@@ -346,11 +345,9 @@ pub fn optimize_address_calculation(
 
         // Invalidate any state that depends on the overwritten register.
         if let Some(dst) = dest {
-            for s in state.iter_mut() {
-                if let Some((base, _)) = s {
-                    if *base == dst {
-                        *s = None;
-                    }
+            for s in &mut state {
+                if matches!(s, Some((base, _)) if *base == dst) {
+                    *s = None;
                 }
             }
         }
@@ -358,25 +355,25 @@ pub fn optimize_address_calculation(
         // Set new state for dst.
         match instr {
             Instruction::MoveReg { dst, src } => {
-                if dst != src {
-                    state[*dst as usize] = state[*src as usize].or(Some((*src, 0)));
-                } else {
+                if dst == src {
                     state[*dst as usize] = None;
+                } else {
+                    state[*dst as usize] = state[*src as usize].or(Some((*src, 0)));
                 }
             }
             Instruction::AddImm32 { dst, src, value }
             | Instruction::AddImm64 { dst, src, value } => {
-                if dst != src {
+                if dst == src {
+                    // In-place update (A = A + imm).
+                    // Original value of A is lost, so we cannot track A as an alias of (A + imm).
+                    state[*dst as usize] = None;
+                } else {
                     // dst = src + value
                     // If src is tracked (Base, Off), then dst = (Base, Off + value).
                     // Else dst = (src, value).
                     // Note: src/value might have been optimized in step 1 (folding constant).
                     // If so, src is already Base.
                     state[*dst as usize] = Some((*src, *value));
-                } else {
-                    // In-place update (A = A + imm).
-                    // Original value of A is lost, so we cannot track A as an alias of (A + imm).
-                    state[*dst as usize] = None;
                 }
             }
             _ => {
@@ -445,10 +442,10 @@ pub fn eliminate_dead_code(
                 }
                 _ => {
                     if let Some(dst) = instr.dest_reg() {
-                        if !needed_regs[dst as usize] {
-                            remove = true;
-                        } else {
+                        if needed_regs[dst as usize] {
                             needed_regs[dst as usize] = false;
+                        } else {
+                            remove = true;
                         }
                     }
                 }
@@ -459,10 +456,8 @@ pub fn eliminate_dead_code(
             keep[i] = false;
         } else {
             // Mark sources needed
-            for src in instr.src_regs() {
-                if let Some(reg) = src {
-                    needed_regs[reg as usize] = true;
-                }
+            for reg in instr.src_regs().into_iter().flatten() {
+                needed_regs[reg as usize] = true;
             }
         }
     }
