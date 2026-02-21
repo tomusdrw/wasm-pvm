@@ -187,6 +187,7 @@ crates/
 | Verify JAM file | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
 | Add/modify optimization | `translate/mod.rs` (`OptimizationFlags`) | Add flag + thread through `LoweringContext` → `PvmEmitter` |
 | Toggle optimization in CLI | `wasm-pvm-cli/src/main.rs` | Add `--no-*` flag to `Compile` subcommand |
+| Add property test | `crates/wasm-pvm/tests/property_tests.rs` | Proptest: compilation safety, encoding roundtrips (28 tests) |
 
 ---
 

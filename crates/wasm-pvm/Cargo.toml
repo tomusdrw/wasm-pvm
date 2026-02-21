@@ -20,6 +20,7 @@ wat = { workspace = true, optional = true }
 
 [dev-dependencies]
 wat.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true
