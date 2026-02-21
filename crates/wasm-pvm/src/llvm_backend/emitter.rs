@@ -560,15 +560,36 @@ pub fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i3
         .ok_or_else(|| Error::Internal(format!("no slot for {:?} result", instr.get_opcode())))
 }
 
-/// Detect the bit width of an instruction's result or first operand.
-/// Checks the result type first (important for ZExt/SExt/Trunc where result
-/// width differs from operand width), then falls back to operand inspection.
+/// Detect the bit width of an instruction's **result** type.
+///
+/// For most instructions (binary ops, comparisons), this is the correct width
+/// to use for choosing 32-bit vs 64-bit PVM instructions.
+///
+/// **Warning**: For conversion instructions (SExt, ZExt, Trunc), the result
+/// type differs from the source type. Use [`source_bit_width`] instead when
+/// you need the source operand's width (e.g., to determine which sign extension
+/// to emit).
 pub fn operand_bit_width(instr: InstructionValue<'_>) -> u32 {
-    // Prefer the instruction's result type (correct for conversion instructions).
+    // Prefer the instruction's result type.
     if let inkwell::types::AnyTypeEnum::IntType(ty) = instr.get_type() {
         return ty.get_bit_width();
     }
     // Fallback: check the first operand's type.
+    if let Some(op) = instr
+        .get_operand(0)
+        .and_then(inkwell::values::Operand::value)
+        && let BasicValueEnum::IntValue(iv) = op
+    {
+        return iv.get_type().get_bit_width();
+    }
+    64 // default
+}
+
+/// Detect the bit width of an instruction's **source** (first operand) type.
+///
+/// This is the correct function for conversion instructions (SExt, ZExt, Trunc)
+/// where you need to know what width the value is being converted *from*.
+pub fn source_bit_width(instr: InstructionValue<'_>) -> u32 {
     if let Some(op) = instr
         .get_operand(0)
         .and_then(inkwell::values::Operand::value)
