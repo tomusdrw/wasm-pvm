@@ -56,8 +56,7 @@ Compile it to a JAM blob and run it:
 cargo run -p wasm-pvm-cli -- compile add.wat -o add.jam
 
 # Run with two u32 arguments: 5 and 7 (little-endian hex)
-# Requires: cd vendor/anan-as && npm ci && npm run build  (first time only)
-cd tests && bun utils/run-jam.ts ../add.jam --args=0500000007000000
+npx @fluffylabs/anan-as run add.jam 0500000007000000
 # Output: 0c000000  (12 in little-endian)
 ```
 
