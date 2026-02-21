@@ -358,26 +358,39 @@ fn test_function_prologue_adjusts_sp() {
     );
 }
 
-/// Function call saves/restores return address to stack.
+/// Function call saves/restores return address to stack (for non-leaf non-main functions).
+/// Requires inlining disabled to preserve call structure.
 #[test]
 fn test_call_saves_return_address() {
-    let program = compile_wat(
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    let program = compile_wat_with_options(
         r#"
         (module
-            (func $helper (param i32) (result i32)
-                local.get 0
+            (func $leaf (result i32)
+                i32.const 42
             )
-            (func (export "main") (param i32) (result i32)
-                local.get 0
-                call $helper
+            (func $caller (result i32)
+                call $leaf
+            )
+            (func (export "main") (result i32)
+                call $caller
             )
         )
         "#,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
     )
     .expect("compile");
     let instructions = extract_instructions(&program);
 
-    // The caller should save the return address (r0) to the stack frame.
+    // The caller ($caller) calls $leaf, so it must save r0.
     assert_has_pattern(
         &instructions,
         &[InstructionPattern::StoreIndU64 {
@@ -797,5 +810,91 @@ fn test_inlining_changes_codegen() {
     assert!(
         inlined_load_imm64_count < noinline_load_imm64_count,
         "Inlining should reduce LoadImm64 count (call overhead): inlined={inlined_load_imm64_count}, no-inline={noinline_load_imm64_count}"
+    );
+}
+/// Leaf function optimization: leaf function (no calls) should NOT save return address (r0).
+#[test]
+fn test_leaf_function_optimization_skips_ra_save() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (result i32)
+                i32.const 42
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Should NOT save RA (r0) to stack (offset 0).
+    // StoreIndU64 { base: 1, src: 0, offset: 0 } should NOT exist.
+    let has_ra_save = instructions.iter().any(|i| {
+        matches!(
+            i,
+            Instruction::StoreIndU64 {
+                base: 1,
+                src: 0,
+                offset: 0
+            }
+        )
+    });
+    assert!(
+        !has_ra_save,
+        "Leaf function should NOT save return address (r0)"
+    );
+}
+
+/// Non-leaf function (has calls) MUST save return address (r0).
+/// Requires inlining disabled to preserve call structure.
+#[test]
+fn test_non_leaf_function_saves_ra() {
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    let program = compile_wat_with_options(
+        r#"
+        (module
+            (func $leaf (result i32)
+                i32.const 42
+            )
+            (func $caller (result i32)
+                call $leaf
+            )
+            (func (export "main") (result i32)
+                call $caller
+            )
+        )
+        "#,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // We expect at least one RA save (from $caller).
+    // StoreIndU64 { base: 1, src: 0, offset: 0 }
+    let ra_save_count = instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i,
+                Instruction::StoreIndU64 {
+                    base: 1,
+                    src: 0,
+                    offset: 0
+                }
+            )
+        })
+        .count();
+
+    assert!(
+        ra_save_count >= 1,
+        "Non-leaf function ($caller) MUST save return address (r0)"
     );
 }
