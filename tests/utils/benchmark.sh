@@ -16,6 +16,9 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ANAN_CLI="$PROJECT_ROOT/vendor/anan-as/dist/bin/index.js"
 JAM_DIR="$PROJECT_ROOT/tests/build/jam"
 GAS_BUDGET=100000000
+COMPILER_JAM="$JAM_DIR/anan-as-compiler.jam"
+OUTER_GAS=10000000000
+INNER_GAS=100000000
 
 # Representative benchmarks: (jam_basename, args, description)
 BENCHMARKS=(
@@ -29,6 +32,18 @@ BENCHMARKS=(
   "as-decoder-test|00000000|AS decoder"
   "as-array-test|00000000|AS array"
   "anan-as-compiler||AS compiler (size only)"
+)
+
+# PVM-in-PVM benchmarks: (jam_basename, args, description)
+# These run the JAM file inside the anan-as interpreter (pvm-in-pvm).
+PVM_IN_PVM_BENCHMARKS=(
+  "add|0500000007000000|PiP add(5,7)"
+  "fibonacci|14000000|PiP fib(20)"
+  "factorial|0a000000|PiP factorial(10)"
+  "is-prime|19000000|PiP is_prime(25)"
+  "as-fibonacci|0a000000|PiP AS fib(10)"
+  "as-factorial|07000000|PiP AS 7!"
+  "as-gcd|00e10700c8000000|PiP AS gcd(2017,200)"
 )
 
 benchmark_one() {
@@ -91,6 +106,106 @@ benchmark_one() {
   echo "OK|$desc|$size|$gas_used|${time_ms}ms"
 }
 
+# Build binary args file for pvm-in-pvm execution.
+# Format: gas(8LE) + pc(4LE) + program_len(4LE) + inner_args_len(4LE) + program + inner_args
+build_pvm_in_pvm_args() {
+  local jam_file="$1"
+  local inner_args_hex="$2"
+  local out_file="$3"
+
+  local program_len
+  program_len=$(wc -c < "$jam_file" | tr -d ' ')
+
+  local inner_args_bytes=""
+  local inner_args_len=0
+  if [ -n "$inner_args_hex" ]; then
+    inner_args_bytes=$(echo -n "$inner_args_hex" | sed 's/../\\x&/g')
+    inner_args_len=$(( ${#inner_args_hex} / 2 ))
+  fi
+
+  # Build header (20 bytes) using python3 for reliable LE encoding
+  python3 -c "
+import struct,sys
+sys.stdout.buffer.write(struct.pack('<QIII',${INNER_GAS},0,${program_len},${inner_args_len}))
+" > "$out_file"
+
+  # Append program bytes
+  cat "$jam_file" >> "$out_file"
+
+  # Append inner args
+  if [ -n "$inner_args_hex" ]; then
+    printf "$inner_args_bytes" >> "$out_file"
+  fi
+}
+
+# Benchmark a JAM file running through pvm-in-pvm.
+# Reports outer gas used (interpreter overhead + inner execution).
+benchmark_pvm_in_pvm() {
+  local jam_file="$1"
+  local args="$2"
+  local desc="$3"
+  local size gas_used time_ms
+
+  if [ ! -f "$jam_file" ]; then
+    echo "SKIP|$desc|missing"
+    return
+  fi
+
+  if [ ! -f "$COMPILER_JAM" ]; then
+    echo "SKIP|$desc|no compiler.jam"
+    return
+  fi
+
+  size=$(wc -c < "$jam_file" | tr -d ' ')
+
+  # Build args binary file
+  local tmp_args
+  tmp_args=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-args-XXXXXX.bin")
+  build_pvm_in_pvm_args "$jam_file" "$args" "$tmp_args"
+
+  # Run 3 times and take the median time
+  local times=()
+  local gas_remaining=""
+  for _i in 1 2 3; do
+    local start_ns end_ns elapsed_ms output exit_code
+    start_ns=$(python3 -c "import time; print(int(time.time_ns()))")
+    exit_code=0
+    output=$(node "$ANAN_CLI" run --spi --no-logs --gas=$OUTER_GAS "$COMPILER_JAM" "$tmp_args" 2>&1) || exit_code=$?
+    end_ns=$(python3 -c "import time; print(int(time.time_ns()))")
+    elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
+
+    if [ "$exit_code" -ne 0 ] && ! echo "$output" | grep -q 'Gas remaining:'; then
+      continue
+    fi
+
+    times+=("$elapsed_ms")
+
+    if [ -z "$gas_remaining" ]; then
+      gas_remaining=$(echo "$output" | grep -o 'Gas remaining: [0-9]*' | grep -o '[0-9]*' || echo "")
+    fi
+  done
+
+  rm -f "$tmp_args"
+
+  if [ "${#times[@]}" -eq 0 ]; then
+    echo "SKIP|$desc|$size (run failed)"
+    return
+  fi
+
+  # Sort and pick median (middle element)
+  IFS=$'\n' read -r -d '' -a sorted < <(printf '%s\n' "${times[@]}" | sort -n; printf '\0') || true
+  local mid=$(( ${#sorted[@]} / 2 ))
+  time_ms="${sorted[$mid]}"
+
+  if [ -n "$gas_remaining" ]; then
+    gas_used=$((OUTER_GAS - gas_remaining))
+  else
+    gas_used="error"
+  fi
+
+  echo "OK|$desc|$size|$gas_used|${time_ms}ms"
+}
+
 run_benchmarks() {
   local label="$1"
   echo "## $label"
@@ -112,6 +227,29 @@ run_benchmarks() {
     fi
   done
   echo ""
+
+  # PVM-in-PVM benchmarks
+  if [ -f "$COMPILER_JAM" ]; then
+    echo "### PVM-in-PVM"
+    echo ""
+    echo "| Benchmark | JAM Size | Outer Gas Used | Time (median of 3) |"
+    echo "|-----------|----------|----------------|-------------------|"
+
+    for entry in "${PVM_IN_PVM_BENCHMARKS[@]}"; do
+      IFS='|' read -r basename args desc <<< "$entry"
+      local jam_file="$JAM_DIR/$basename.jam"
+      local result
+      result=$(benchmark_pvm_in_pvm "$jam_file" "$args" "$desc")
+
+      IFS='|' read -r status rdesc size gas time <<< "$result"
+      if [ "$status" = "OK" ]; then
+        printf "| %-20s | %10s | %14s | %10s |\n" "$rdesc" "$size" "$gas" "$time"
+      else
+        printf "| %-20s | %10s | %14s | %10s |\n" "$rdesc" "SKIP" "-" "-"
+      fi
+    done
+    echo ""
+  fi
 }
 
 build_and_benchmark() {

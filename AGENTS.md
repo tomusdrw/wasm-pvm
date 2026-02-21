@@ -72,7 +72,7 @@ This is not optional. Stale documentation causes repeated mistakes and wasted in
 
 ### PR Description Policy
 
-**Every PR description MUST include benchmark results.** Run `./tests/utils/benchmark.sh --base main --current <branch>` and paste the comparison table into the PR body. This ensures reviewers can see the impact on JAM file size, gas usage, and execution time at a glance. PRs without benchmark results should not be merged.
+**Every PR description MUST include benchmark results.** Run `./tests/utils/benchmark.sh --base main --current <branch>` and paste the comparison table into the PR body. The script produces both direct execution and PVM-in-PVM benchmark comparisons (JAM file size, gas usage, and execution time). PRs without benchmark results should not be merged.
 
 ---
 
