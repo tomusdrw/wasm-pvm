@@ -773,9 +773,12 @@ fn test_i64_eqz() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
+    // eqz compares against 0, should produce SetLtUImm(1) or similar (same as i32.eqz)
     assert!(
-        !instructions.is_empty(),
-        "i64.eqz should produce instructions"
+        has_opcode(&instructions, Opcode::SetLtUImm)
+            || has_opcode(&instructions, Opcode::SetLtU)
+            || has_opcode(&instructions, Opcode::SetLtSImm),
+        "i64.eqz should produce a comparison"
     );
 }
 
