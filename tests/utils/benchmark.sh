@@ -119,6 +119,15 @@ build_pvm_in_pvm_args() {
   local inner_args_bytes=""
   local inner_args_len=0
   if [ -n "$inner_args_hex" ]; then
+    # Validate: must be even-length hex string
+    if ! [[ "$inner_args_hex" =~ ^[0-9a-fA-F]*$ ]]; then
+      echo "ERROR: inner_args_hex contains non-hex characters: $inner_args_hex" >&2
+      return 1
+    fi
+    if (( ${#inner_args_hex} % 2 != 0 )); then
+      echo "ERROR: inner_args_hex has odd length (${#inner_args_hex}): $inner_args_hex" >&2
+      return 1
+    fi
     inner_args_bytes=$(echo -n "$inner_args_hex" | sed 's/../\\x&/g')
     inner_args_len=$(( ${#inner_args_hex} / 2 ))
   fi
@@ -158,9 +167,11 @@ benchmark_pvm_in_pvm() {
 
   size=$(wc -c < "$jam_file" | tr -d ' ')
 
-  # Build args binary file
+  # Build args binary file (trap ensures cleanup even on early exit)
   local tmp_args
   tmp_args=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-args-XXXXXX.bin")
+  # shellcheck disable=SC2064  # tmp_args is intentionally expanded now, not at trap time
+  trap "rm -f '$tmp_args'" RETURN
   build_pvm_in_pvm_args "$jam_file" "$args" "$tmp_args"
 
   # Run 3 times and take the median time
