@@ -113,18 +113,22 @@ The compiler pipeline:
 
 ### Benchmark: Optimizations Impact
 
-All optimizations enabled (default) vs all PVM-level optimizations disabled:
+All PVM-level optimizations disabled vs enabled (default):
 
-| Benchmark | WASM size | JAM (opt) | JAM (no opt) | Size reduction | Gas (opt) | Gas (no opt) | Gas reduction |
-|-----------|----------|-----------|-------------|----------------|----------|-------------|---------------|
-| add(5,7) | 66 B | 208 B | 242 B | -14% | 39 | 48 | -19% |
-| fib(20) | 108 B | 277 B | 304 B | -9% | 612 | 716 | -15% |
-| factorial(10) | 100 B | 255 B | 279 B | -9% | 279 | 333 | -16% |
-| is_prime(25) | 160 B | 340 B | 424 B | -20% | 81 | 108 | -25% |
-| AS fib(10) | 266 B | 808 B | 986 B | -18% | 353 | 445 | -21% |
-| AS factorial(7) | 265 B | 800 B | 971 B | -18% | 306 | 372 | -18% |
-| AS gcd(2017,200) | 260 B | 792 B | 990 B | -20% | 217 | 285 | -24% |
-| anan-as compiler | 54 KB | 365 KB | 367 KB | -1% | 24,729 | 49,638 | -50% |
+| Benchmark | WASM size | JAM (no opt) | JAM (opt) | Gas (no opt) | Gas (opt) |
+|-----------|----------|-------------|-----------|-------------|-----------|
+| add(5,7) | 66 B | 242 B | 206 B (-15%) | 48 | 38 (-21%) |
+| fib(20) | 108 B | 304 B | 277 B (-9%) | 716 | 612 (-15%) |
+| factorial(10) | 100 B | 279 B | 255 B (-9%) | 333 | 279 (-16%) |
+| is_prime(25) | 160 B | 424 B | 338 B (-20%) | 108 | 80 (-26%) |
+| AS fib(10) | 266 B | 982 B | 791 B (-19%) | 443 | 347 (-22%) |
+| AS factorial(7) | 265 B | 967 B | 786 B (-19%) | 370 | 301 (-19%) |
+| AS gcd(2017,200) | 260 B | 986 B | 775 B (-21%) | 283 | 211 (-25%) |
+| AS decoder | 1.5 KB | 20.1 KB | 17.7 KB (-12%) | 979 | 721 (-26%) |
+| AS array | 1.4 KB | 18.8 KB | 16.7 KB (-11%) | 847 | 633 (-25%) |
+| anan-as PVM interpreter | 54 KB | 230 KB | 175 KB (-24%) | 31,007 | 22,457 (-28%) |
+
+Gas for the anan-as PVM interpreter is the cost of running a 1-byte TRAP program through PVM-in-PVM (interpreter overhead only).
 
 ## Supported WASM Features
 

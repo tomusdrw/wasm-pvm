@@ -326,12 +326,11 @@ pub fn optimize_address_calculation(
             | Instruction::StoreIndU16 { base, offset, .. }
             | Instruction::StoreIndU32 { base, offset, .. }
             | Instruction::StoreIndU64 { base, offset, .. } => {
-                if let Some((tracked_base, tracked_off)) = state[*base as usize] {
-                    // Check if offset + tracked_off fits in i32
-                    if let Some(new_off) = offset.checked_add(tracked_off) {
-                        *base = tracked_base;
-                        *offset = new_off;
-                    }
+                if let Some((tracked_base, tracked_off)) = state[*base as usize]
+                    && let Some(new_off) = offset.checked_add(tracked_off)
+                {
+                    *base = tracked_base;
+                    *offset = new_off;
                 }
             }
             Instruction::JumpInd { reg, offset, .. } => {
@@ -437,7 +436,7 @@ pub fn eliminate_dead_code(
     // Compute byte offsets for label matching
     let mut offsets = Vec::with_capacity(len);
     let mut running = 0;
-    for instr in instructions.iter() {
+    for instr in &*instructions {
         offsets.push(running);
         running += instr.encode().len();
     }

@@ -20,23 +20,26 @@ COMPILER_JAM="$JAM_DIR/anan-as-compiler.jam"
 OUTER_GAS=10000000000
 INNER_GAS=100000000
 
-# Representative benchmarks: (jam_basename, args, description)
+# Representative benchmarks: (jam_basename, args, description, wasm_source)
+# wasm_source: "wat:<path>" for WAT files (uses wat2wasm), "wasm:<path>" for WASM files, empty to skip
 BENCHMARKS=(
-  "add|0500000007000000|add(5,7)"
-  "fibonacci|14000000|fib(20)"
-  "factorial|0a000000|factorial(10)"
-  "is-prime|19000000|is_prime(25)"
-  "as-fibonacci|0a000000|AS fib(10)"
-  "as-factorial|07000000|AS 7!"
-  "as-gcd|00e10700c8000000|AS gcd(2017,200)"
-  "as-decoder-test|00000000|AS decoder"
-  "as-array-test|00000000|AS array"
-  "anan-as-compiler||AS compiler (size only)"
+  "add|0500000007000000|add(5,7)|wat:tests/fixtures/wat/add.jam.wat"
+  "fibonacci|14000000|fib(20)|wat:tests/fixtures/wat/fibonacci.jam.wat"
+  "factorial|0a000000|factorial(10)|wat:tests/fixtures/wat/factorial.jam.wat"
+  "is-prime|19000000|is_prime(25)|wat:tests/fixtures/wat/is-prime.jam.wat"
+  "as-fibonacci|0a000000|AS fib(10)|wasm:tests/build/wasm/fibonacci.wasm"
+  "as-factorial|07000000|AS 7!|wasm:tests/build/wasm/factorial.wasm"
+  "as-gcd|00e10700c8000000|AS gcd(2017,200)|wasm:tests/build/wasm/gcd.wasm"
+  "as-decoder-test|00000000|AS decoder|wasm:tests/build/wasm/decoder-test.wasm"
+  "as-array-test|00000000|AS array|wasm:tests/build/wasm/array-test.wasm"
+  "anan-as-compiler||anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
 )
 
 # PVM-in-PVM benchmarks: (jam_basename, args, description)
-# These run the JAM file inside the anan-as interpreter (pvm-in-pvm).
+# These run the JAM file inside the anan-as PVM interpreter (pvm-in-pvm).
+# Use "TRAP" as jam_basename for a synthetic 1-byte TRAP program.
 PVM_IN_PVM_BENCHMARKS=(
+  "TRAP||PiP TRAP"
   "add|0500000007000000|PiP add(5,7)"
   "fibonacci|14000000|PiP fib(20)"
   "factorial|0a000000|PiP factorial(10)"
@@ -45,6 +48,40 @@ PVM_IN_PVM_BENCHMARKS=(
   "as-factorial|07000000|PiP AS 7!"
   "as-gcd|00e10700c8000000|PiP AS gcd(2017,200)"
 )
+
+# Get WASM size from a source spec ("wat:<path>" or "wasm:<path>")
+wasm_size() {
+  local spec="$1"
+  if [ -z "$spec" ]; then
+    echo "-"
+    return
+  fi
+
+  local kind="${spec%%:*}"
+  local filepath="${spec#*:}"
+  filepath="$PROJECT_ROOT/$filepath"
+
+  if [ ! -f "$filepath" ]; then
+    echo "-"
+    return
+  fi
+
+  if [ "$kind" = "wat" ]; then
+    local tmp_wasm
+    tmp_wasm=$(mktemp "${TMPDIR:-/tmp}/wasm-size-XXXXXX")
+    if wat2wasm "$filepath" -o "$tmp_wasm" 2>/dev/null; then
+      wc -c < "$tmp_wasm" | tr -d ' '
+      rm -f "$tmp_wasm"
+    else
+      rm -f "$tmp_wasm"
+      echo "-"
+    fi
+  elif [ "$kind" = "wasm" ]; then
+    wc -c < "$filepath" | tr -d ' '
+  else
+    echo "-"
+  fi
+}
 
 benchmark_one() {
   local jam_file="$1"
@@ -169,7 +206,7 @@ benchmark_pvm_in_pvm() {
 
   # Build args binary file (trap ensures cleanup even on early exit)
   local tmp_args
-  tmp_args=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-args-XXXXXX.bin")
+  tmp_args=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-args-XXXXXX")
   # shellcheck disable=SC2064  # tmp_args is intentionally expanded now, not at trap time
   trap "rm -f '$tmp_args'" RETURN
   build_pvm_in_pvm_args "$jam_file" "$args" "$tmp_args"
@@ -185,14 +222,15 @@ benchmark_pvm_in_pvm() {
     end_ns=$(python3 -c "import time; print(int(time.time_ns()))")
     elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
 
-    if [ "$exit_code" -ne 0 ] && ! echo "$output" | grep -q 'Gas remaining:'; then
+    # Use grep -a to force text mode (output may contain binary from file path warnings)
+    if [ "$exit_code" -ne 0 ] && ! echo "$output" | grep -aq 'Gas remaining:'; then
       continue
     fi
 
     times+=("$elapsed_ms")
 
     if [ -z "$gas_remaining" ]; then
-      gas_remaining=$(echo "$output" | grep -o 'Gas remaining: [0-9]*' | grep -o '[0-9]*' || echo "")
+      gas_remaining=$(echo "$output" | grep -ao 'Gas remaining: [0-9]*' | grep -o '[0-9]*' || echo "")
     fi
   done
 
@@ -221,20 +259,22 @@ run_benchmarks() {
   local label="$1"
   echo "## $label"
   echo ""
-  echo "| Benchmark | JAM Size | Gas Used | Time (median of 3) |"
-  echo "|-----------|----------|----------|-------------------|"
+  echo "| Benchmark | WASM Size | JAM Size | Gas Used | Time (median of 3) |"
+  echo "|-----------|-----------|----------|----------|-------------------|"
 
   for entry in "${BENCHMARKS[@]}"; do
-    IFS='|' read -r basename args desc <<< "$entry"
+    IFS='|' read -r basename args desc wasm_src <<< "$entry"
     local jam_file="$JAM_DIR/$basename.jam"
+    local wsize
+    wsize=$(wasm_size "$wasm_src")
     local result
     result=$(benchmark_one "$jam_file" "$args" "$desc")
 
     IFS='|' read -r status rdesc size gas time <<< "$result"
     if [ "$status" = "OK" ]; then
-      printf "| %-20s | %10s | %10s | %10s |\n" "$rdesc" "$size" "$gas" "$time"
+      printf "| %-20s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "$size" "$gas" "$time"
     else
-      printf "| %-20s | %10s | %10s | %10s |\n" "$rdesc" "SKIP" "-" "-"
+      printf "| %-20s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "SKIP" "-" "-"
     fi
   done
   echo ""
@@ -248,9 +288,19 @@ run_benchmarks() {
 
     for entry in "${PVM_IN_PVM_BENCHMARKS[@]}"; do
       IFS='|' read -r basename args desc <<< "$entry"
-      local jam_file="$JAM_DIR/$basename.jam"
+      local jam_file
+      if [ "$basename" = "TRAP" ]; then
+        # Synthetic 1-byte TRAP program (opcode 0x00)
+        jam_file=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-trap-XXXXXX")
+        printf '\x00' > "$jam_file"
+      else
+        jam_file="$JAM_DIR/$basename.jam"
+      fi
       local result
       result=$(benchmark_pvm_in_pvm "$jam_file" "$args" "$desc")
+      if [ "$basename" = "TRAP" ]; then
+        rm -f "$jam_file"
+      fi
 
       IFS='|' read -r status rdesc size gas time <<< "$result"
       if [ "$status" = "OK" ]; then
