@@ -565,7 +565,7 @@ pub fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i3
 /// For most instructions (binary ops, comparisons), this is the correct width
 /// to use for choosing 32-bit vs 64-bit PVM instructions.
 ///
-/// **Warning**: For conversion instructions (SExt, ZExt, Trunc), the result
+/// **Warning**: For conversion instructions (`SExt`, `ZExt`, `Trunc`), the result
 /// type differs from the source type. Use [`source_bit_width`] instead when
 /// you need the source operand's width (e.g., to determine which sign extension
 /// to emit).
