@@ -70,7 +70,7 @@ pub fn lower_pvm_intrinsic<'ctx>(
     }
 }
 
-/// Lower an LLVM intrinsic call (ctlz, cttz, ctpop, fshl, fshr, assume).
+/// Lower an LLVM intrinsic call (smax, smin, umax, umin, bswap, abs, ctlz, cttz, ctpop, fshl, fshr, assume).
 pub fn lower_llvm_intrinsic<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,

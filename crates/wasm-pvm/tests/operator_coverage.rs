@@ -2256,26 +2256,10 @@ fn test_select_with_constant_emits_cmov_imm() {
     );
 }
 
-/// bswap (i32) should emit ReverseBytes instruction.
+/// smax: LLVM may or may not convert `select(gt_s, a, b)` to `llvm.smax`.
+/// When it does, we emit Max; otherwise CmovNz handles the select.
 #[test]
-fn test_bswap_i32_emits_reverse_bytes() {
-    // WASM doesn't have bswap directly, but we can trigger it indirectly.
-    // The LLVM frontend may produce bswap from specific shift/or patterns.
-    // Instead, we test via a WAT that loads and stores bytes in reverse order,
-    // which LLVM may optimize to bswap. If not, we test by checking the instruction
-    // set does include ReverseBytes when compiling byte-swap patterns.
-    //
-    // For now, verify compilation of i32.rotl/rotr since those use the same machinery.
-    // Direct bswap testing requires LLVM to emit llvm.bswap which is harder to trigger from WAT.
-}
-
-/// smax should emit Max instruction.
-#[test]
-fn test_smax_emits_max() {
-    // smax is lowered from LLVM's llvm.smax intrinsic.
-    // WASM doesn't have a direct max instruction, but LLVM instcombine can produce
-    // smax from patterns like: (a > b) ? a : b → llvm.smax(a, b)
-    // We verify this by compiling a select-based max pattern.
+fn test_smax_emits_max_or_cmov() {
     let wat = r#"
         (module
             (memory 1)
@@ -2293,11 +2277,123 @@ fn test_smax_emits_max() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // LLVM instcombine should recognize the select pattern as smax
+    // LLVM instcombine may or may not fold to smax depending on version/heuristics.
     assert!(
         has_opcode(&instructions, Opcode::Max)
             || has_opcode(&instructions, Opcode::CmovNz)
             || has_opcode(&instructions, Opcode::CmovNzImm),
         "select-based max pattern should emit Max or CmovNz.\nInstructions: {instructions:#?}"
+    );
+}
+
+/// smin: similar to smax, LLVM may or may not fold to smin.
+#[test]
+fn test_smin_emits_min_or_cmov() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                local.get 0
+                local.get 1
+                i32.lt_s
+                select
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::Min)
+            || has_opcode(&instructions, Opcode::CmovNz)
+            || has_opcode(&instructions, Opcode::CmovNzImm),
+        "select-based min pattern should emit Min or CmovNz.\nInstructions: {instructions:#?}"
+    );
+}
+
+/// umax: LLVM may or may not fold to umax.
+#[test]
+fn test_umax_emits_max_u_or_cmov() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                local.get 0
+                local.get 1
+                i32.gt_u
+                select
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::MaxU)
+            || has_opcode(&instructions, Opcode::CmovNz)
+            || has_opcode(&instructions, Opcode::CmovNzImm),
+        "select-based unsigned max pattern should emit MaxU or CmovNz.\nInstructions: {instructions:#?}"
+    );
+}
+
+/// umin: LLVM may or may not fold to umin.
+#[test]
+fn test_umin_emits_min_u_or_cmov() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                local.get 0
+                local.get 1
+                i32.lt_u
+                select
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::MinU)
+            || has_opcode(&instructions, Opcode::CmovNz)
+            || has_opcode(&instructions, Opcode::CmovNzImm),
+        "select-based unsigned min pattern should emit MinU or CmovNz.\nInstructions: {instructions:#?}"
+    );
+}
+
+/// select with both constants should use CmovNzImm/CmovIzImm (not register CmovNz).
+#[test]
+fn test_select_both_constants_emits_cmov_imm() {
+    let wat = r#"
+        (module
+            (func (export "main") (param i32) (result i32)
+                i32.const 100
+                i32.const 200
+                local.get 0
+                select
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::CmovNzImm)
+            || has_opcode(&instructions, Opcode::CmovIzImm),
+        "select with both constant operands should emit CmovNzImm or CmovIzImm.\nInstructions: {instructions:#?}"
+    );
+    assert!(
+        !has_opcode(&instructions, Opcode::CmovNz),
+        "select with constant operands should NOT use register-based CmovNz"
     );
 }
