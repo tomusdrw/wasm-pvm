@@ -108,11 +108,13 @@ Accumulated knowledge from development. Update after every task.
 ## Cross-Block Register Cache
 
 ### Approach
+
 - Pre-scan computes `block_single_pred` map by scanning terminator successors
 - For each block with exactly 1 predecessor and no phi nodes, restore the predecessor's cache snapshot instead of clearing
 - Snapshot is taken **before** the terminator instruction to avoid capturing path-specific phi copies
 
 ### Key Pitfall: Terminator Phi Copies
+
 - `lower_switch` emits phi copies for the default path inline (not in a trampoline)
 - These phi copies modify the register cache (storing values to phi slots)
 - If the exit cache includes these entries, they are WRONG for case targets (which don't take the default path)
