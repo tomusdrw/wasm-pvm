@@ -603,13 +603,13 @@ impl Instruction {
                 bytes.extend_from_slice(&encode_imm(*offset));
                 bytes
             }
-            Self::CmovIzImm { cond, dst, value } => {
-                let mut bytes = vec![Opcode::CmovIzImm as u8, (*cond & 0x0F) << 4 | (*dst & 0x0F)];
+            Self::CmovIzImm { dst, cond, value } => {
+                let mut bytes = encode_two_reg(Opcode::CmovIzImm, *dst, *cond);
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
             }
-            Self::CmovNzImm { cond, dst, value } => {
-                let mut bytes = vec![Opcode::CmovNzImm as u8, (*cond & 0x0F) << 4 | (*dst & 0x0F)];
+            Self::CmovNzImm { dst, cond, value } => {
+                let mut bytes = encode_two_reg(Opcode::CmovNzImm, *dst, *cond);
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
             }
@@ -867,6 +867,61 @@ mod tests {
         assert_eq!(encoded[0], Opcode::CmovIzImm as u8);
         assert_eq!(encoded[1], 0x07); // cond=0 in high nibble, dst=7 in low nibble
         assert_eq!(encoded.len(), 2); // value=0 → no immediate bytes
+    }
+
+    #[test]
+    fn test_cmov_imm_roundtrip() {
+        // Roundtrip: encode CmovIzImm/CmovNzImm then decode manually and verify field values.
+        for (dst, cond, value) in [(0u8, 5u8, 0i32), (7, 3, 42), (12, 1, -1), (2, 9, 8_388_607)] {
+            for (opcode_byte, is_iz) in [
+                (Opcode::CmovIzImm as u8, true),
+                (Opcode::CmovNzImm as u8, false),
+            ] {
+                let instr = if is_iz {
+                    Instruction::CmovIzImm { dst, cond, value }
+                } else {
+                    Instruction::CmovNzImm { dst, cond, value }
+                };
+                let encoded = instr.encode();
+
+                // Verify opcode byte
+                assert_eq!(
+                    encoded[0], opcode_byte,
+                    "opcode mismatch for dst={dst} cond={cond} value={value}"
+                );
+
+                // Decode the packed nibble byte: cond in high nibble, dst in low nibble
+                let nibble_byte = encoded[1];
+                let decoded_cond = (nibble_byte >> 4) & 0x0F;
+                let decoded_dst = nibble_byte & 0x0F;
+                assert_eq!(
+                    decoded_dst, dst,
+                    "dst mismatch for dst={dst} cond={cond} value={value}"
+                );
+                assert_eq!(
+                    decoded_cond, cond,
+                    "cond mismatch for dst={dst} cond={cond} value={value}"
+                );
+
+                // Decode the immediate (sign-extend from however many bytes were written)
+                let imm_bytes = &encoded[2..];
+                let mut buf = [0u8; 4];
+                buf[..imm_bytes.len()].copy_from_slice(imm_bytes);
+                // Sign-extend: if top bit of last written byte is set, fill with 0xFF
+                if let Some(&last) = imm_bytes.last() {
+                    if last & 0x80 != 0 {
+                        for b in buf.iter_mut().skip(imm_bytes.len()) {
+                            *b = 0xFF;
+                        }
+                    }
+                }
+                let decoded_value = i32::from_le_bytes(buf);
+                assert_eq!(
+                    decoded_value, value,
+                    "value mismatch for dst={dst} cond={cond} value={value}"
+                );
+            }
+        }
     }
 
     #[test]
