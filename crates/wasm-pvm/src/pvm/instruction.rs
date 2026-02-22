@@ -350,6 +350,26 @@ pub enum Instruction {
         cond: u8,
         value: i32,
     },
+    /// Store immediate to absolute address: mem[address] = value (u8)
+    StoreImmU8 {
+        address: i32,
+        value: i32,
+    },
+    /// Store immediate to absolute address: mem[address] = value (u16)
+    StoreImmU16 {
+        address: i32,
+        value: i32,
+    },
+    /// Store immediate to absolute address: mem[address] = value (u32)
+    StoreImmU32 {
+        address: i32,
+        value: i32,
+    },
+    /// Store immediate to absolute address: mem[address] = `sign_extend(value)` (u64)
+    StoreImmU64 {
+        address: i32,
+        value: i32,
+    },
     Ecalli {
         index: u32,
     },
@@ -613,6 +633,18 @@ impl Instruction {
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
             }
+            Self::StoreImmU8 { address, value } => {
+                encode_two_imm(Opcode::StoreImmU8, *address, *value)
+            }
+            Self::StoreImmU16 { address, value } => {
+                encode_two_imm(Opcode::StoreImmU16, *address, *value)
+            }
+            Self::StoreImmU32 { address, value } => {
+                encode_two_imm(Opcode::StoreImmU32, *address, *value)
+            }
+            Self::StoreImmU64 { address, value } => {
+                encode_two_imm(Opcode::StoreImmU64, *address, *value)
+            }
             Self::Ecalli { index } => {
                 let mut bytes = vec![Opcode::Ecalli as u8];
                 bytes.extend_from_slice(&encode_uimm(*index));
@@ -701,6 +733,10 @@ impl Instruction {
             | Self::StoreIndU16 { .. }
             | Self::StoreIndU32 { .. }
             | Self::StoreIndU64 { .. }
+            | Self::StoreImmU8 { .. }
+            | Self::StoreImmU16 { .. }
+            | Self::StoreImmU32 { .. }
+            | Self::StoreImmU64 { .. }
             | Self::Ecalli { .. }
             | Self::Unknown { .. } => None,
         }
@@ -757,6 +793,16 @@ fn encode_one_reg_one_imm_one_off(opcode: Opcode, reg: u8, imm: i32, offset: i32
 fn encode_two_reg_one_off(opcode: Opcode, reg1: u8, reg2: u8, offset: i32) -> Vec<u8> {
     let mut bytes = vec![opcode as u8, (reg1 & 0x0F) << 4 | (reg2 & 0x0F)];
     bytes.extend_from_slice(&offset.to_le_bytes());
+    bytes
+}
+
+fn encode_two_imm(opcode: Opcode, imm1: i32, imm2: i32) -> Vec<u8> {
+    let imm1_enc = encode_imm(imm1);
+    let imm1_len = imm1_enc.len() as u8;
+    let imm2_enc = encode_imm(imm2);
+    let mut bytes = vec![opcode as u8, imm1_len & 0x0F];
+    bytes.extend_from_slice(&imm1_enc);
+    bytes.extend_from_slice(&imm2_enc);
     bytes
 }
 
@@ -922,6 +968,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_two_imm_encoding() {
+        // StoreImmU32 with address=0x30000 and value=42
+        let instr = Instruction::StoreImmU32 {
+            address: 0x30000_i32,
+            value: 42,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::StoreImmU32 as u8);
+        // Low nibble of byte 1 = length of first immediate (address)
+        let addr_len = (encoded[1] & 0x0F) as usize;
+        assert_eq!(addr_len, 3); // 0x30000 fits in 3 bytes
+        // Decode address from bytes 2..2+addr_len
+        let mut addr_bytes = [0u8; 4];
+        addr_bytes[..addr_len].copy_from_slice(&encoded[2..2 + addr_len]);
+        let decoded_addr = i32::from_le_bytes(addr_bytes);
+        assert_eq!(decoded_addr, 0x30000);
+        // Decode value from remaining bytes
+        let val_start = 2 + addr_len;
+        let mut val_bytes = [0u8; 4];
+        let val_len = encoded.len() - val_start;
+        val_bytes[..val_len].copy_from_slice(&encoded[val_start..]);
+        let decoded_val = i32::from_le_bytes(val_bytes);
+        assert_eq!(decoded_val, 42);
+    }
+
+    #[test]
+    fn test_two_imm_encoding_zero_value() {
+        // StoreImmU32 with value=0: second immediate has 0 bytes
+        let instr = Instruction::StoreImmU32 {
+            address: 0x30000_i32,
+            value: 0,
+        };
+        let encoded = instr.encode();
+        let addr_len = (encoded[1] & 0x0F) as usize;
+        // Total length = 1(opcode) + 1(nibble byte) + addr_len + 0(value=0)
+        assert_eq!(encoded.len(), 2 + addr_len);
     }
 
     #[test]

@@ -35,6 +35,17 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## StoreImm (TwoImm Encoding)
+
+- Opcodes 30-33: StoreImmU8/U16/U32/U64
+- TwoImm encoding: `[opcode, addr_len & 0x0F, address_bytes..., value_bytes...]`
+- Both address and value are variable-length signed immediates (0-4 bytes each)
+- Semantics: `mem[address] = value` (no registers involved)
+- Used for: `data.drop` (store 0 to segment length addr), `global.set` with constants
+- Savings: 3 instructions (LoadImm + LoadImm + StoreInd) → 1 instruction
+
+---
+
 ## CmovIzImm / CmovNzImm (TwoRegOneImm Encoding)
 
 - Opcodes 147-148: Conditional move with immediate value
