@@ -244,6 +244,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         wasm_module: &WasmModule,
         run_llvm_passes: bool,
         run_inlining: bool,
+        reachable_locals: Option<&std::collections::HashSet<usize>>,
     ) -> Result<Module<'ctx>> {
         self.declare_functions(wasm_module);
         self.declare_globals(wasm_module);
@@ -251,6 +252,14 @@ impl<'ctx> WasmToLlvm<'ctx> {
             .clone_from(&wasm_module.type_signatures);
 
         for (local_idx, func_body) in wasm_module.functions.iter().enumerate() {
+            // Skip dead functions: still declared (for call references) but body is `unreachable`.
+            if reachable_locals.is_some_and(|r| !r.contains(&local_idx)) {
+                let global_idx = wasm_module.num_imported_funcs as usize + local_idx;
+                let func_value = self.functions[global_idx];
+                self.emit_dead_function_body(func_value);
+                continue;
+            }
+
             let global_idx = wasm_module.num_imported_funcs as usize + local_idx;
             let func_value = self.functions[global_idx];
             let (num_params, has_return) = wasm_module.function_signatures[global_idx];
@@ -309,6 +318,19 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 .add_global(self.i64_type, None, &format!("wasm_global_{idx}"));
             global.set_initializer(&self.i64_type.const_int(init_value as u64, true));
             self.globals.push(global);
+        }
+    }
+
+    /// Emit a minimal body for a dead (unreachable) function.
+    /// The function is declared but never called, so the body just traps.
+    fn emit_dead_function_body(&self, func_value: FunctionValue<'ctx>) {
+        let bb = self.context.append_basic_block(func_value, "dead");
+        self.builder.position_at_end(bb);
+        if func_value.get_type().get_return_type().is_some() {
+            let zero = self.i64_type.const_zero();
+            let _ = self.builder.build_return(Some(&zero));
+        } else {
+            let _ = self.builder.build_return(None);
         }
     }
 
