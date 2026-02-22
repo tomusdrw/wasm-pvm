@@ -54,11 +54,34 @@ pub fn lower_pvm_intrinsic<'ctx>(
         }
 
         // ── Memory management ──
+        // memory_size doesn't use SCRATCH1/SCRATCH2, no spill needed.
         "__pvm_memory_size" => emit_pvm_memory_size(e, instr, ctx),
-        "__pvm_memory_grow" => emit_pvm_memory_grow(e, instr, ctx),
-        "__pvm_memory_fill" => emit_pvm_memory_fill(e, instr, ctx),
-        "__pvm_memory_copy" => emit_pvm_memory_copy(e, instr, ctx),
-        "__pvm_memory_init" => emit_pvm_memory_init(e, instr, ctx),
+        // These intrinsics use abi::SCRATCH1/SCRATCH2 (r5/r6) internally.
+        // Spill/reload register-allocated values around them.
+        "__pvm_memory_grow" => {
+            e.spill_allocated_regs();
+            let result = emit_pvm_memory_grow(e, instr, ctx);
+            e.reload_allocated_regs();
+            result
+        }
+        "__pvm_memory_fill" => {
+            e.spill_allocated_regs();
+            let result = emit_pvm_memory_fill(e, instr, ctx);
+            e.reload_allocated_regs();
+            result
+        }
+        "__pvm_memory_copy" => {
+            e.spill_allocated_regs();
+            let result = emit_pvm_memory_copy(e, instr, ctx);
+            e.reload_allocated_regs();
+            result
+        }
+        "__pvm_memory_init" => {
+            e.spill_allocated_regs();
+            let result = emit_pvm_memory_init(e, instr, ctx);
+            e.reload_allocated_regs();
+            result
+        }
         "__pvm_data_drop" => emit_pvm_data_drop(e, instr, ctx),
 
         // ── Indirect calls ──
@@ -335,6 +358,10 @@ pub fn lower_llvm_intrinsic<'ctx>(
             return Ok(());
         }
 
+        // Non-rotation funnel shift uses abi::SCRATCH1/SCRATCH2 (r5/r6).
+        // Spill any register-allocated values in those registers.
+        e.spill_allocated_regs();
+
         e.load_operand(a, TEMP1)?;
         e.load_operand(b, TEMP2)?;
         e.load_operand(amt, SCRATCH1)?;
@@ -428,6 +455,10 @@ pub fn lower_llvm_intrinsic<'ctx>(
         });
 
         e.store_to_slot(slot, TEMP_RESULT);
+
+        // Reload register-allocated values after using SCRATCH1/SCRATCH2.
+        e.reload_allocated_regs();
+
         return Ok(());
     }
 

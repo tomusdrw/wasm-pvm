@@ -49,6 +49,8 @@ pub struct OptimizationFlags {
     pub inlining: bool,
     /// Propagate register cache across single-predecessor block boundaries.
     pub cross_block_cache: bool,
+    /// Allocate long-lived SSA values to physical registers (r5, r6) across block boundaries.
+    pub register_allocation: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -63,6 +65,7 @@ impl Default for OptimizationFlags {
             constant_propagation: true,
             inlining: true,
             cross_block_cache: true,
+            register_allocation: true,
         }
     }
 }

@@ -96,7 +96,8 @@ crates/
 │       │   ├── memory.rs        # Load/store, memory intrinsics, word-sized bulk ops (~920 lines)
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
 │       │   ├── calls.rs         # Direct/indirect calls, import stubs (~190 lines)
-│       │   └── intrinsics.rs    # PVM + LLVM intrinsic lowering (~440 lines)
+│       │   ├── intrinsics.rs    # PVM + LLVM intrinsic lowering (~440 lines)
+│       │   └── regalloc.rs      # Linear-scan register allocator (r5/r6) (~360 lines)
 │       ├── translate/     # Compilation orchestration
 │       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
 │       │   ├── adapter_merge.rs (WAT adapter merge into WASM before compilation)
@@ -142,7 +143,7 @@ crates/
 
 ### Key Design Decisions
 - **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
-- **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first, register allocator is future work)
+- **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first). A **linear-scan register allocator** (`regalloc.rs`) assigns long-lived values to r5/r6, eliminating redundant memory traffic across block boundaries and loops.
 - **Per-block register cache**: `PvmEmitter` tracks which stack slots are live in registers via `slot_cache`/`reg_to_slot`. Eliminates redundant `LoadIndU64` when a value is used shortly after being computed. Cache is cleared at block boundaries and after calls/ecalli. (~50% gas reduction, ~15-40% code size reduction)
 - **Cross-block register cache**: When a block has exactly one predecessor and no phi nodes, the predecessor's cache snapshot is propagated instead of clearing. The snapshot is taken before the terminator instruction with TEMP1/TEMP2 invalidated (since terminators load operands into those registers). Predecessor map is computed in `pre_scan_function` by scanning terminator successors.
 - **heap_pages uses initial_pages**: SPI `heap_pages` reflects WASM `initial_pages` (not `max_pages`). Additional memory is allocated on demand via `sbrk`/`memory.grow`. Programs declaring `(memory 0)` get a minimum of 16 WASM pages (1MB).
@@ -186,6 +187,7 @@ crates/
 | Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` | PVM + LLVM intrinsic lowering |
 | Modify emitter core | `llvm_backend/emitter.rs` | EmitterConfig (per-function config) + PvmEmitter (mutable state) |
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
+| Modify register allocator | `llvm_backend/regalloc.rs` | Live range computation, linear scan, allocatable regs |
 | Modify peephole optimizer | `pvm/peephole.rs` | Add patterns, update fixup remapping |
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
 | Fix compilation pipeline | `translate/mod.rs` | `compile()` |
@@ -225,8 +227,9 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `constant_propagation` | `--no-const-prop` | Skip redundant `LoadImm`/`LoadImm64` when register already holds the constant | `llvm_backend/emitter.rs:emit()` |
 | `inlining` | `--no-inline` | LLVM function inlining for small callees (CGSCC inline pass) | `llvm_frontend/function_builder.rs:run_optimization_passes()` |
 | `cross_block_cache` | `--no-cross-block-cache` | Propagate register cache across single-predecessor block boundaries | `llvm_backend/mod.rs:lower_function()` |
+| `register_allocation` | `--no-register-alloc` | Linear-scan register allocation (r5/r6 for long-lived values) | `llvm_backend/mod.rs:lower_function()` → `regalloc.rs` |
 
-**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`, `cross_block_cache_enabled`) → `PvmEmitter.config`. LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`.
+**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`, `cross_block_cache_enabled`, `register_allocation_enabled`) → `PvmEmitter.config`. LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`.
 
 **Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `EmitterConfig`, guard the optimization with `e.config.<flag>`, add a `--no-*` CLI flag.
 
@@ -264,7 +267,9 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 |----------|-------|
 | r0 | Return address (jump table index) |
 | r1 | Stack pointer |
-| r2-r6 | Scratch registers |
+| r2-r3 | Scratch temps (TEMP1/TEMP2 for loading spilled operands) |
+| r4 | Scratch temp (TEMP_RESULT for instruction results) |
+| r5-r6 | Allocatable registers (`abi::SCRATCH1`/`SCRATCH2`). Assigned by the linear-scan register allocator to long-lived SSA values. Spilled/reloaded around memory intrinsics and funnel shifts that clobber them. |
 | r7 | Return value from calls / SPI args pointer |
 | r8 | SPI args length |
 | r9-r12 | Local variables (first 4) / callee-saved |

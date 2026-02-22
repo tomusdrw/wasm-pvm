@@ -251,3 +251,14 @@ Accumulated knowledge from development. Update after every task.
 - Detected via `val_key_basic(a) == val_key_basic(b)` identity check
 - fshl with same operands → `RotL32`/`RotL64`, fshr → `RotR32`/`RotR64`
 - Falls back to existing shift+or sequence when operands differ
+
+### Linear-Scan Register Allocation
+
+- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to r5/r6
+- Operates on LLVM IR before PVM lowering; produces `ValKey` → physical register mapping
+- `load_operand` checks regalloc before slot lookup: uses `MoveReg` from allocated reg instead of `LoadIndU64` from stack
+- `store_to_slot` uses write-through: copies to allocated reg AND stores to stack; DSE removes the stack store if never loaded
+- Spill/reload around clobbering operations: memory intrinsics (`memory.fill/copy/grow/init`), funnel shifts, and all call types
+- r5 (`abi::SCRATCH1`) and r6 (`abi::SCRATCH2`) are NOT the same as `emitter.rs` re-exports of `SCRATCH1`/`SCRATCH2` (which are r8/r7)
+- Values with ≤1 use are skipped (not worth a register)
+- Loop extension: back-edges detected by successor having lower block index; live ranges extended to cover the back-edge source

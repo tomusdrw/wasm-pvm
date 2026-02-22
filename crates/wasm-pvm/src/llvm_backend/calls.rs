@@ -49,6 +49,9 @@ pub fn lower_wasm_call<'ctx>(
         .copied()
         .ok_or_else(|| Error::Internal(format!("unknown function index: {global_func_idx}")))?;
 
+    // Spill register-allocated values before the call (r5/r6 are caller-saved).
+    e.spill_allocated_regs();
+
     // Load arguments from LLVM call operands into r9-r12 (first 4) and
     // PARAM_OVERFLOW_BASE (5th+). The last operand is the function pointer.
     let num_args = (instr.get_num_operands() - 1) as usize;
@@ -84,6 +87,9 @@ pub fn lower_wasm_call<'ctx>(
     // Return point: callee clobbers all caller-saved registers.
     e.emit(Instruction::Fallthrough);
     e.clear_reg_cache();
+
+    // Reload register-allocated values after the call.
+    e.reload_allocated_regs();
 
     e.call_fixups.push(LlvmCallFixup {
         return_addr_instr: jump_instr, // same instruction for LoadImmJump
@@ -256,6 +262,9 @@ fn lower_host_call<'ctx>(
         ))
     })?;
 
+    // Spill register-allocated values before ecalli (r5/r6 are caller-saved).
+    e.spill_allocated_regs();
+
     // Load remaining arguments into r7-r11.
     for i in 1..num_args.min(6) {
         let arg = get_operand(instr, i as u32)?;
@@ -268,6 +277,9 @@ fn lower_host_call<'ctx>(
     });
     // Ecalli clobbers registers externally.
     e.clear_reg_cache();
+
+    // Reload register-allocated values after ecalli.
+    e.reload_allocated_regs();
 
     if has_return {
         let slot = result_slot(e, instr)?;
@@ -359,6 +371,9 @@ pub fn lower_pvm_call_indirect<'ctx>(
             ));
         }
     };
+
+    // Spill register-allocated values before indirect call (r5/r6 are caller-saved).
+    e.spill_allocated_regs();
 
     // Load table entry index into ARGS_LEN_REG and save it in the spill area.
     // Using OPERAND_SPILL_BASE ensures we have reserved space in the frame.
@@ -457,6 +472,9 @@ pub fn lower_pvm_call_indirect<'ctx>(
     // Callee clobbers all caller-saved registers.
     e.emit(Instruction::Fallthrough);
     e.clear_reg_cache();
+
+    // Reload register-allocated values after the indirect call.
+    e.reload_allocated_regs();
 
     e.indirect_call_fixups.push(LlvmIndirectCallFixup {
         return_addr_instr,

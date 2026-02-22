@@ -68,6 +68,9 @@ enum Commands {
 
         #[arg(long, help = "Disable cross-block register cache propagation")]
         no_cross_block_cache: bool,
+
+        #[arg(long, help = "Disable register allocation (r5/r6 for long-lived values)")]
+        no_register_alloc: bool,
     },
 }
 
@@ -93,6 +96,7 @@ fn main() -> Result<()> {
             no_const_prop,
             no_inline,
             no_cross_block_cache,
+            no_register_alloc,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -130,6 +134,7 @@ fn main() -> Result<()> {
                     constant_propagation: !no_const_prop,
                     inlining: !no_inline,
                     cross_block_cache: !no_cross_block_cache,
+                    register_allocation: !no_register_alloc,
                 },
             };
 

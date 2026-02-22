@@ -25,6 +25,7 @@ mod control_flow;
 mod emitter;
 mod intrinsics;
 mod memory;
+pub(crate) mod regalloc;
 
 pub use emitter::{
     EmitterConfig, LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup, LoweringContext,
@@ -64,12 +65,18 @@ pub fn lower_function(
         shrink_wrap_enabled: ctx.optimizations.shrink_wrap_callee_saves,
         constant_propagation_enabled: ctx.optimizations.constant_propagation,
         cross_block_cache_enabled: ctx.optimizations.cross_block_cache,
+        register_allocation_enabled: ctx.optimizations.register_allocation,
     };
     let mut emitter = PvmEmitter::new(config, call_return_base);
 
     // Phase 1: Pre-scan — allocate labels for blocks and slots for all SSA values.
     pre_scan_function(&mut emitter, function, is_main);
     emitter.frame_size = emitter.next_slot_offset;
+
+    // Phase 1b: Register allocation — assign long-lived values to r5/r6.
+    if emitter.config.register_allocation_enabled {
+        emitter.regalloc = regalloc::run(function, &emitter.value_slots);
+    }
 
     // Phase 2: Emit prologue.
     emit_prologue(&mut emitter, function, ctx, is_main)?;
