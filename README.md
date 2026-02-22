@@ -135,6 +135,7 @@ PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost
 | TRAP (interpreter overhead) | 29,255 | 23,520 (-20%) |
 | add(5,7) | 1,392,024 | 1,191,963 (-14%) |
 | AS fib(10) | 2,385,831 | 1,789,512 (-25%) |
+| JAM-SDK fib(10) | 8,837,888 | 6,815,363 (-23%) |
 
 ## Supported WASM Features
 

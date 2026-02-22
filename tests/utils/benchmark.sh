@@ -65,13 +65,16 @@ benchmark_imports_for() {
   esac
 }
 
-# PVM-in-PVM benchmarks: (jam_basename, args, description)
+# PVM-in-PVM benchmarks: (jam_basename, args, pc, description)
 # These run the JAM file inside the anan-as PVM interpreter (pvm-in-pvm).
 # Use "TRAP" as jam_basename for a synthetic 1-byte TRAP program.
+# Use "EXT:<path>" as jam_basename for an external JAM file (path relative to PROJECT_ROOT).
+# pc: initial program counter (default 0).
 PVM_IN_PVM_BENCHMARKS=(
-  "TRAP||PiP TRAP"
-  "add|0500000007000000|PiP add(5,7)"
-  "as-fibonacci|0a000000|PiP AS fib(10)"
+  "TRAP||0|PiP TRAP"
+  "add|0500000007000000|0|PiP add(5,7)"
+  "as-fibonacci|0a000000|0|PiP AS fib(10)"
+  "EXT:../jam-examples/fib-jamsdk/services/example/example.jam|0100000002000000030000000000000000000000|5|PiP JAM-SDK fib(10)"
 )
 
 # Get WASM size from a source spec ("wat:<path>" or "wasm:<path>")
@@ -227,6 +230,7 @@ build_pvm_in_pvm_args() {
   local jam_file="$1"
   local inner_args_hex="$2"
   local out_file="$3"
+  local pc="${4:-0}"
 
   local program_len
   program_len=$(wc -c < "$jam_file" | tr -d ' ')
@@ -250,7 +254,7 @@ build_pvm_in_pvm_args() {
   # Build header (20 bytes) using python3 for reliable LE encoding
   python3 -c "
 import struct,sys
-sys.stdout.buffer.write(struct.pack('<QIII',${INNER_GAS},0,${program_len},${inner_args_len}))
+sys.stdout.buffer.write(struct.pack('<QIII',${INNER_GAS},${pc},${program_len},${inner_args_len}))
 " > "$out_file"
 
   # Append program bytes
@@ -267,7 +271,8 @@ sys.stdout.buffer.write(struct.pack('<QIII',${INNER_GAS},0,${program_len},${inne
 benchmark_pvm_in_pvm() {
   local jam_file="$1"
   local args="$2"
-  local desc="$3"
+  local pc="$3"
+  local desc="$4"
   local size gas_used time_ms
 
   if [ ! -f "$jam_file" ]; then
@@ -287,7 +292,7 @@ benchmark_pvm_in_pvm() {
   tmp_args=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-args-XXXXXX")
   # shellcheck disable=SC2064  # tmp_args is intentionally expanded now, not at trap time
   trap "rm -f '$tmp_args'" RETURN
-  build_pvm_in_pvm_args "$jam_file" "$args" "$tmp_args"
+  build_pvm_in_pvm_args "$jam_file" "$args" "$tmp_args" "$pc"
 
   # Run 3 times and take the median time
   local times=()
@@ -365,18 +370,24 @@ run_benchmarks() {
     echo "|-----------|----------|----------------|-------------------|"
 
     for entry in "${PVM_IN_PVM_BENCHMARKS[@]}"; do
-      IFS='|' read -r basename args desc <<< "$entry"
-      local jam_file
+      IFS='|' read -r basename args pc desc <<< "$entry"
+      pc="${pc:-0}"
+      local jam_file cleanup_jam=false
       if [ "$basename" = "TRAP" ]; then
         # Synthetic 1-byte TRAP program (opcode 0x00)
         jam_file=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-trap-XXXXXX")
         printf '\x00' > "$jam_file"
+        cleanup_jam=true
+      elif [[ "$basename" == EXT:* ]]; then
+        # External JAM file (path relative to PROJECT_ROOT)
+        local ext_path="${basename#EXT:}"
+        jam_file="$PROJECT_ROOT/$ext_path"
       else
         jam_file="$JAM_DIR/$basename.jam"
       fi
       local result
-      result=$(benchmark_pvm_in_pvm "$jam_file" "$args" "$desc")
-      if [ "$basename" = "TRAP" ]; then
+      result=$(benchmark_pvm_in_pvm "$jam_file" "$args" "$pc" "$desc")
+      if [ "$cleanup_jam" = true ]; then
         rm -f "$jam_file"
       fi
 
