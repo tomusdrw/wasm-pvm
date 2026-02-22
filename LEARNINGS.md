@@ -38,6 +38,7 @@ Accumulated knowledge from development. Update after every task.
 ## StoreImmInd (Store Immediate Indirect)
 
 ### Encoding (OneRegTwoImm)
+
 - Format: `[opcode, (offset_len << 4) | (base & 0x0F), offset_bytes..., value_bytes...]`
 - Both offset and value use variable-length signed encoding (`encode_imm`)
 - Opcodes: StoreImmIndU8=70, StoreImmIndU16=71, StoreImmIndU32=72, StoreImmIndU64=73
@@ -45,6 +46,7 @@ Accumulated knowledge from development. Update after every task.
 - For U64: `value` is sign-extended from i32 to i64
 
 ### Optimization Triggers
+
 - `emit_pvm_store`: When WASM store value is a compile-time constant fitting i32
 - `lower_wasm_global_store`: When global set value is a compile-time constant fitting i32
 - `emit_pvm_data_drop`: Always stores 0 (was: LoadImm + StoreIndU32, now: StoreImmIndU32)
