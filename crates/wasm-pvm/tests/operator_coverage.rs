@@ -945,6 +945,58 @@ fn test_i64_store() {
     assert!(has_opcode(&instructions, Opcode::StoreIndU64));
 }
 
+/// Storing a constant value to memory should use StoreImmInd (no LoadImm for value).
+#[test]
+fn test_store_const_uses_store_imm_ind() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32) (result i32)
+                ;; store constant 42 at address from param
+                local.get 0
+                i32.const 42
+                i32.store
+                i32.const 0
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Should use StoreImmIndU32 instead of LoadImm + StoreIndU32
+    assert!(
+        has_opcode(&instructions, Opcode::StoreImmIndU32),
+        "Storing constant should use StoreImmIndU32.\nInstructions: {:?}",
+        instructions
+    );
+}
+
+/// Storing a constant i64 value should use StoreImmIndU64.
+#[test]
+fn test_i64_store_const_uses_store_imm_ind() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                i64.const 0
+                i64.store
+                i32.const 0
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::StoreImmIndU64),
+        "Storing constant i64 should use StoreImmIndU64.\nInstructions: {:?}",
+        instructions
+    );
+}
+
 // =============================================================================
 // Control Flow: br_table / switch
 // =============================================================================
@@ -978,15 +1030,17 @@ fn test_br_table() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // br_table should lower to some combination of branches and jumps
-    let branch_count = count_opcode(&instructions, Opcode::BranchEqImm)
+    // br_table should lower to some combination of branches, jumps, and conditional moves
+    let control_flow_count = count_opcode(&instructions, Opcode::BranchEqImm)
         + count_opcode(&instructions, Opcode::BranchNeImm)
         + count_opcode(&instructions, Opcode::BranchLtUImm)
         + count_opcode(&instructions, Opcode::BranchGeUImm)
-        + count_opcode(&instructions, Opcode::Jump);
+        + count_opcode(&instructions, Opcode::Jump)
+        + count_opcode(&instructions, Opcode::CmovIz)
+        + count_opcode(&instructions, Opcode::CmovNz);
     assert!(
-        branch_count >= 2,
-        "br_table should produce multiple branches, got {branch_count}"
+        control_flow_count >= 2,
+        "br_table should produce multiple branches/cmovs, got {control_flow_count}"
     );
 
     // All three return values should be present
@@ -1027,10 +1081,11 @@ fn test_global_load_store() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Globals should use StoreIndU32/LoadIndU32 at fixed addresses (0x30000+)
+    // Globals should use StoreIndU32/StoreImmIndU32 at fixed addresses (0x30000+)
     assert!(
         has_opcode(&instructions, Opcode::StoreIndU32)
-            || has_opcode(&instructions, Opcode::StoreIndU64),
+            || has_opcode(&instructions, Opcode::StoreIndU64)
+            || has_opcode(&instructions, Opcode::StoreImmIndU32),
         "global.set should emit a store"
     );
     assert!(
@@ -1934,5 +1989,215 @@ fn test_dse_multiple_stores_same_offset() {
     assert!(
         stores_with <= stores_without,
         "DSE should not increase store count: {stores_with} > {stores_without}"
+    );
+}
+
+// =============================================================================
+// StoreImm optimization: store constant to absolute address
+// =============================================================================
+
+/// global.set with a constant value should use StoreImmU32 (1 instruction)
+/// instead of LoadImm + LoadImm + StoreIndU32 (3 instructions).
+#[test]
+fn test_global_set_const_uses_store_imm() {
+    let wat = r#"
+        (module
+            (global $g (mut i32) (i32.const 0))
+            (func (export "main")
+                i32.const 42
+                global.set $g
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::StoreImmU32),
+        "global.set with constant value should use StoreImmU32.\nInstructions: {instructions:#?}"
+    );
+}
+
+/// global.set with a non-constant value should NOT use StoreImm.
+#[test]
+fn test_global_set_dynamic_uses_store_ind() {
+    let wat = r#"
+        (module
+            (global $g (mut i32) (i32.const 0))
+            (func (export "main") (param i32)
+                local.get 0
+                global.set $g
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Dynamic value should use register-based store
+    assert!(
+        has_opcode(&instructions, Opcode::StoreIndU32),
+        "global.set with dynamic value should use StoreIndU32.\nInstructions: {instructions:#?}"
+    );
+    assert!(
+        !has_opcode(&instructions, Opcode::StoreImmU32),
+        "global.set with dynamic value should NOT use StoreImmU32.\nInstructions: {instructions:#?}"
+    );
+}
+
+// =============================================================================
+// Conditional Move (CmovNz) for select
+// =============================================================================
+
+#[test]
+fn test_select_uses_cmov_nz() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32 i32) (result i32)
+                local.get 2
+                local.get 0
+                local.get 1
+                select
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // select should use CmovNz (branchless conditional move)
+    assert!(
+        has_opcode(&instructions, Opcode::CmovNz),
+        "select should produce CmovNz instruction.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {:?}", i))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    // Should NOT have BranchEqImm (the old branch-based select pattern)
+    assert!(
+        !has_opcode(&instructions, Opcode::BranchEqImm),
+        "select should NOT produce BranchEqImm (should be branchless)"
+    );
+}
+
+// =============================================================================
+// ALU Immediate Opcode Folding
+// =============================================================================
+
+/// Helper: compile a WAT with one operation against a constant and check for an expected immediate opcode.
+fn assert_imm_folding(wat: &str, expected_opcode: Opcode, description: &str) {
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+    assert!(
+        has_opcode(&instructions, expected_opcode),
+        "{description}: expected {expected_opcode:?} in output.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {:?}", i))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn i32_and_const_produces_and_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 0xFF i32.and))"#,
+        Opcode::AndImm,
+        "i32.and with constant",
+    );
+}
+
+#[test]
+fn i32_or_const_produces_or_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 0x0F i32.or))"#,
+        Opcode::OrImm,
+        "i32.or with constant",
+    );
+}
+
+#[test]
+fn i32_xor_const_produces_xor_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 0x55 i32.xor))"#,
+        Opcode::XorImm,
+        "i32.xor with constant",
+    );
+}
+
+#[test]
+fn i32_mul_const_produces_mul_imm32() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 7 i32.mul))"#,
+        Opcode::MulImm32,
+        "i32.mul with constant",
+    );
+}
+
+#[test]
+fn i32_shl_const_produces_shlo_l_imm32() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 3 i32.shl))"#,
+        Opcode::ShloLImm32,
+        "i32.shl with constant",
+    );
+}
+
+#[test]
+fn i32_shr_u_const_produces_shlo_r_imm32() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 4 i32.shr_u))"#,
+        Opcode::ShloRImm32,
+        "i32.shr_u with constant",
+    );
+}
+
+#[test]
+fn i32_shr_s_const_produces_shar_r_imm32() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 2 i32.shr_s))"#,
+        Opcode::SharRImm32,
+        "i32.shr_s with constant",
+    );
+}
+
+#[test]
+fn i32_gt_s_const_produces_set_gt_s_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 5 i32.gt_s))"#,
+        Opcode::SetGtSImm,
+        "i32.gt_s with constant",
+    );
+}
+
+#[test]
+fn i32_gt_u_const_produces_set_gt_u_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 10 i32.gt_u))"#,
+        Opcode::SetGtUImm,
+        "i32.gt_u with constant",
     );
 }

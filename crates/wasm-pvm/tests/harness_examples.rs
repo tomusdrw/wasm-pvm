@@ -66,6 +66,8 @@ fn test_if_else_compilation() {
             || has_opcode(&instructions, Opcode::SetLtU)
             || has_opcode(&instructions, Opcode::BranchGeSImm)
             || has_opcode(&instructions, Opcode::BranchLtSImm)
+            || has_opcode(&instructions, Opcode::SetGtSImm)
+            || has_opcode(&instructions, Opcode::SetGtUImm)
     );
 }
 
