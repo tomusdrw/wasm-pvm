@@ -1,7 +1,7 @@
 import { defineSuite } from "../helpers/suite";
 
 const tests = [
-  { args: "0500000007000000", expected: 4277919488, description: "AS: memory args test - args_ptr check" },
+  { args: "0500000007000000", expected: 4277862400, description: "AS: memory args test - args_ptr check" },
 ];
 
 defineSuite({

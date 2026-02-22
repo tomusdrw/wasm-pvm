@@ -419,14 +419,11 @@ fn calculate_heap_pages(
 
     // heap_pages uses initial_pages (not max) — only pre-allocate what the program
     // needs at startup. Additional memory is allocated on demand via sbrk/memory.grow.
-    // We use a minimum of MIN_INITIAL_WASM_PAGES (1MB) for programs that declare (memory 0)
-    // but access memory without calling memory.grow first (common in AssemblyScript
-    // programs compiled with --runtime stub).
-    let initial_pages = if memory_limits.initial_pages == 0 {
-        MIN_INITIAL_WASM_PAGES
-    } else {
-        memory_limits.initial_pages
-    };
+    // We enforce a minimum of MIN_INITIAL_WASM_PAGES (16 pages = 1MB) because many
+    // programs (especially AssemblyScript with --runtime stub) access memory without
+    // calling memory.grow first, and the lowered wasm_memory_base (0x32100) means
+    // small initial_pages values produce too few heap_pages for real workloads.
+    let initial_pages = memory_limits.initial_pages.max(MIN_INITIAL_WASM_PAGES);
     let wasm_memory_initial_end = wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
 
     let end = spilled_locals_end.max(wasm_memory_initial_end);

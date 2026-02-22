@@ -10,10 +10,10 @@
 //! PVM Address Space:
 //!   0x00000 - 0x0FFFF   Reserved (fault on access)
 //!   0x10000 - 0x1FFFF   Read-only data segment (RO_DATA_BASE)
-//!   0x30000 - 0x3FEFF   Globals + user heap (GLOBAL_MEMORY_BASE)
-//!   0x3FF00 - 0x3FFFF   Parameter overflow area (PARAM_OVERFLOW_BASE)
-//!   0x40000 - 0x4FFFF+  Spilled locals (SPILLED_LOCALS_BASE)
-//!   0x50000+            WASM linear memory (computed dynamically)
+//!   0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
+//!   0x32000 - 0x320FF   Parameter overflow area (PARAM_OVERFLOW_BASE)
+//!   0x32100+            Spilled locals base (SPILLED_LOCALS_BASE)
+//!   0x40000+            WASM linear memory (64KB-aligned, computed dynamically)
 //!   ...
 //!   0xFEFE0000          Stack segment end (stack grows downward)
 //!   0xFFFF0000          Exit address (EXIT_ADDRESS)
@@ -69,8 +69,10 @@ pub fn stack_limit(stack_size: u32) -> i32 {
 #[must_use]
 pub fn compute_wasm_memory_base(_num_local_funcs: usize) -> i32 {
     // No per-function allocation (spills are on stack).
-    // No 64KB alignment required for base address.
-    SPILLED_LOCALS_BASE
+    // Must be 64KB-aligned: the SPI format uses segment-aligned regions
+    // and the anan-as interpreter requires page-aligned WASM memory base
+    // for correct memory mapping in pvm-in-pvm execution.
+    (SPILLED_LOCALS_BASE + 0xFFFF) & !0xFFFF
 }
 
 /// Offset within `GLOBAL_MEMORY_BASE` for the compiler-managed memory size global.

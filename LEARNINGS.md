@@ -38,7 +38,8 @@ Accumulated knowledge from development. Update after every task.
 ### PVM Memory Layout Optimization
 
 - **Spilled Locals Region**: The original layout reserved a dedicated region (starting at 0x40000) for spilled locals, allocated per-function (512 bytes). This caused huge bloat (128KB gap filled with zeros) in the RW data section because modern compiler implementation spills locals to the PVM stack (r1-relative) instead.
-- **Fix**: Removed the pre-allocated spilled locals region. Moved `PARAM_OVERFLOW_BASE` to `0x32000` (allowing 8KB for globals) and `WASM_MEMORY_BASE` to `0x32100`. This reduced JAM file sizes for AssemblyScript programs by ~87% (e.g., 140KB → 18KB).
+- **Fix**: Removed the pre-allocated spilled locals region. Moved `PARAM_OVERFLOW_BASE` to `0x32000` (allowing 8KB for globals) and `SPILLED_LOCALS_BASE` to `0x32100`. This reduced JAM file sizes for AssemblyScript programs by ~87% (e.g., 140KB → 18KB).
+- **64KB alignment requirement**: `wasm_memory_base` MUST be 64KB-aligned (e.g., `0x40000`). The SPI format uses 64KB segment-aligned regions, and the anan-as interpreter requires page-aligned WASM memory base for correct memory mapping in PVM-in-PVM execution. Unaligned values (e.g., `0x32100`) cause silent memory mapping failures in the inner interpreter. The base is computed as `(SPILLED_LOCALS_BASE + 0xFFFF) & !0xFFFF`.
 
 ### Code Generation
 
