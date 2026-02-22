@@ -104,7 +104,7 @@ Accumulated knowledge from development. Update after every task.
 - TwoRegOneImm encoding: `[opcode, (cond << 4) | dst, imm_bytes...]`
 - CmovIzImm: `if reg[cond] == 0 then reg[dst] = sign_extend(imm)`
 - CmovNzImm: `if reg[cond] != 0 then reg[dst] = sign_extend(imm)`
-- Future use: optimize `select` when one operand is a compile-time constant (depends on CmovIz/CmovNz from PR #98 merging first)
+- Now used: optimize `select` when one operand is a compile-time constant that fits in i32
 
 ---
 
@@ -209,3 +209,45 @@ Accumulated knowledge from development. Update after every task.
 - If the exit cache includes these entries, they are WRONG for case targets (which don't take the default path)
 - Fix: snapshot before the terminator and invalidate TEMP1/TEMP2 (registers the terminator clobbers for operand loads)
 - Same issue can occur with conditional branches when one path has phis and the other doesn't (trampoline case)
+
+---
+
+## Specialized PVM Instructions for Common Patterns
+
+### Absolute Address Load/Store (LoadU32/StoreU32)
+
+- `LoadU32 { dst, address }` replaces `LoadImm { reg, value: addr } + LoadIndU32 { dst, base: reg, offset: 0 }` for known-address loads (globals)
+- `StoreU32 { src, address }` similarly replaces the store pattern
+- OneRegOneImm encoding: `[opcode, reg & 0x0F, encode_imm(address)...]`
+- **PVM-in-PVM layout sensitivity**: Replacing multi-instruction sequences with single instructions changes bytecode layout (code size, jump offsets). The anan-as PVM interpreter has a pre-existing bug triggered by specific bytecode layouts. This means some LoadU32/StoreU32 optimizations can cause PVM-in-PVM test failures even though direct execution is correct. Empirically: LoadU32 for global loads is safe; StoreU32 for global stores, LoadU32 for memory_size, and StoreU32 for memory_grow can trigger failures. Test each change with full PVM-in-PVM suite (273 tests).
+- Current status: Only `LoadU32` for `lower_wasm_global_load` is enabled. Other absolute address optimizations are deferred pending anan-as interpreter fix.
+
+### LoadIndI32 (Sign-Extending Indirect Load)
+
+- Replaces `LoadIndU32 { dst, base, offset } + AddImm32 { dst, src: dst, value: 0 }` for signed i32 loads
+- Single instruction: `LoadIndI32 { dst, base, offset }` (sign-extends result to 64 bits)
+- Safe for PVM-in-PVM (small layout change)
+
+### Min/Max/MinU/MaxU (Single-Instruction Min/Max)
+
+- Replaces `SetLt + branch + stores + jump` pattern (~5-8 instructions) with `Min`/`Max`/`MinU`/`MaxU` (1 instruction)
+- For i32 signed variants, must keep `AddImm32 { value: 0 }` sign-extension before the instruction (PVM compares full 64-bit values)
+
+### ReverseBytes (Byte Swap)
+
+- `llvm.bswap` intrinsic lowered as `ReverseBytes { dst, src }` instead of byte-by-byte extraction
+- For sub-64-bit types: add `ShloRImm64` to align bytes (48 for i16, 32 for i32)
+- Savings: i16: ~10→2 instructions, i32: ~20→2, i64: ~40→1
+
+### CmovIzImm/CmovNzImm (Conditional Move with Immediate)
+
+- For `select` with one constant operand: `CmovNzImm { dst, cond, value }` or `CmovIzImm { dst, cond, value }`
+- Load non-constant operand as default, then conditionally overwrite with immediate
+- Note: LLVM may invert conditions, so `select(cond, true_const, false_runtime)` may emit CmovIzImm instead of CmovNzImm
+
+### RotL/RotR (Rotate Instructions)
+
+- `llvm.fshl(a, b, amt)` / `llvm.fshr(a, b, amt)` when a == b (same SSA value) → rotation
+- Detected via `val_key_basic(a) == val_key_basic(b)` identity check
+- fshl with same operands → `RotL32`/`RotL64`, fshr → `RotR32`/`RotR64`
+- Falls back to existing shift+or sequence when operands differ

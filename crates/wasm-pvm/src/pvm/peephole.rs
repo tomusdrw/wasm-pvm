@@ -472,6 +472,18 @@ pub fn eliminate_dead_code(
                 | Instruction::StoreIndU16 { .. }
                 | Instruction::StoreIndU32 { .. }
                 | Instruction::StoreIndU64 { .. }
+                | Instruction::StoreImmIndU8 { .. }
+                | Instruction::StoreImmIndU16 { .. }
+                | Instruction::StoreImmIndU32 { .. }
+                | Instruction::StoreImmIndU64 { .. }
+                | Instruction::StoreImmU8 { .. }
+                | Instruction::StoreImmU16 { .. }
+                | Instruction::StoreImmU32 { .. }
+                | Instruction::StoreImmU64 { .. }
+                | Instruction::StoreU8 { .. }
+                | Instruction::StoreU16 { .. }
+                | Instruction::StoreU32 { .. }
+                | Instruction::StoreU64 { .. }
                 | Instruction::Trap
                 | Instruction::Sbrk { .. } => {
                     // Side effects (memory writes / traps), keep.
@@ -485,7 +497,15 @@ pub fn eliminate_dead_code(
                 | Instruction::LoadIndU16 { dst, .. }
                 | Instruction::LoadIndI16 { dst, .. }
                 | Instruction::LoadIndU32 { dst, .. }
-                | Instruction::LoadIndU64 { dst, .. } => {
+                | Instruction::LoadIndI32 { dst, .. }
+                | Instruction::LoadIndU64 { dst, .. }
+                | Instruction::LoadU8 { dst, .. }
+                | Instruction::LoadI8 { dst, .. }
+                | Instruction::LoadU16 { dst, .. }
+                | Instruction::LoadI16 { dst, .. }
+                | Instruction::LoadU32 { dst, .. }
+                | Instruction::LoadI32 { dst, .. }
+                | Instruction::LoadU64 { dst, .. } => {
                     // Mark dst as no longer needed upstream (the load defines it here).
                     needed_regs[*dst as usize] = false;
                 }

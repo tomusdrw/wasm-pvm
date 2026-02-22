@@ -714,19 +714,41 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
     let false_val = get_operand(instr, 2)?;
     let slot = result_slot(e, instr)?;
 
-    // Branchless select using CmovNz:
-    // 1. Load false_val as default result
-    // 2. Load true_val into a temp register
-    // 3. Load condition
-    // 4. CmovNz: if cond != 0, overwrite result with true_val
-    e.load_operand(false_val, TEMP_RESULT)?;
-    e.load_operand(true_val, TEMP2)?;
-    e.load_operand(cond, TEMP1)?;
-    e.emit(Instruction::CmovNz {
-        dst: TEMP_RESULT,
-        src: TEMP2,
-        cond: TEMP1,
-    });
+    // Try to use CmovNzImm/CmovIzImm when one operand is a constant that fits i32.
+    // CmovNzImm: if cond != 0, dst = imm (keeps dst otherwise)
+    // CmovIzImm: if cond == 0, dst = imm (keeps dst otherwise)
+    let true_const = try_get_constant(true_val).filter(|v| i32::try_from(*v).is_ok());
+    let false_const = try_get_constant(false_val).filter(|v| i32::try_from(*v).is_ok());
+
+    if let Some(tv) = true_const {
+        // true_val is constant: load false_val as default, CmovNzImm overwrites if cond != 0
+        e.load_operand(false_val, TEMP_RESULT)?;
+        e.load_operand(cond, TEMP1)?;
+        e.emit(Instruction::CmovNzImm {
+            dst: TEMP_RESULT,
+            cond: TEMP1,
+            value: tv as i32,
+        });
+    } else if let Some(fv) = false_const {
+        // false_val is constant: load true_val as default, CmovIzImm overwrites if cond == 0
+        e.load_operand(true_val, TEMP_RESULT)?;
+        e.load_operand(cond, TEMP1)?;
+        e.emit(Instruction::CmovIzImm {
+            dst: TEMP_RESULT,
+            cond: TEMP1,
+            value: fv as i32,
+        });
+    } else {
+        // Neither is a small constant: use register CmovNz
+        e.load_operand(false_val, TEMP_RESULT)?;
+        e.load_operand(true_val, TEMP2)?;
+        e.load_operand(cond, TEMP1)?;
+        e.emit(Instruction::CmovNz {
+            dst: TEMP_RESULT,
+            src: TEMP2,
+            cond: TEMP1,
+        });
+    }
 
     e.store_to_slot(slot, TEMP_RESULT);
     Ok(())
