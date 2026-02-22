@@ -79,17 +79,12 @@ pub fn lower_wasm_global_store<'ctx>(
         {
             let global_addr = abi::global_addr(idx);
 
-            // Try immediate store for constant values.
+            // If value is a compile-time constant that fits in i32, use StoreImm.
             if let Some(val_const) = try_get_constant(val)
                 && i32::try_from(val_const).is_ok()
             {
-                e.emit(Instruction::LoadImm {
-                    reg: TEMP1,
-                    value: global_addr,
-                });
-                e.emit(Instruction::StoreImmIndU32 {
-                    base: TEMP1,
-                    offset: 0,
+                e.emit(Instruction::StoreImmU32 {
+                    address: global_addr,
                     value: val_const as i32,
                 });
                 return Ok(());
@@ -749,15 +744,9 @@ pub fn emit_pvm_data_drop<'ctx>(
         .get(&seg_idx)
         .ok_or_else(|| Error::Internal(format!("unknown passive data segment index {seg_idx}")))?;
 
-    // Store 0 to the segment's effective length address using StoreImmInd
-    // (saves one LoadImm instruction vs LoadImm+StoreInd).
-    e.emit(Instruction::LoadImm {
-        reg: TEMP1,
-        value: length_addr,
-    });
-    e.emit(Instruction::StoreImmIndU32 {
-        base: TEMP1,
-        offset: 0,
+    // Store 0 to the segment's effective length address.
+    e.emit(Instruction::StoreImmU32 {
+        address: length_addr,
         value: 0,
     });
 

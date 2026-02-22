@@ -35,6 +35,15 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## StoreImm (TwoImm Encoding)
+
+- Opcodes 30-33: StoreImmU8/U16/U32/U64
+- TwoImm encoding: `[opcode, addr_len & 0x0F, address_bytes..., value_bytes...]`
+- Both address and value are variable-length signed immediates (0-4 bytes each)
+- Semantics: `mem[address] = value` (no registers involved)
+- Used for: `data.drop` (store 0 to segment length addr), `global.set` with constants
+- Savings: 3 instructions (LoadImm + LoadImm + StoreInd) → 1 instruction
+
 ## StoreImmInd (Store Immediate Indirect)
 
 ### Encoding (OneRegTwoImm)
@@ -48,9 +57,17 @@ Accumulated knowledge from development. Update after every task.
 ### Optimization Triggers
 
 - `emit_pvm_store`: When WASM store value is a compile-time constant fitting i32
-- `lower_wasm_global_store`: When global set value is a compile-time constant fitting i32
-- `emit_pvm_data_drop`: Always stores 0 (was: LoadImm + StoreIndU32, now: StoreImmIndU32)
-- Saves 1 instruction (LoadImm) per constant store
+- Saves 1 instruction (LoadImm) per constant store to WASM linear memory
+
+## ALU Immediate Opcode Folding
+
+### Immediate folding for binary operations
+- When one operand of a binary ALU op is a constant that fits in i32, use the *Imm variant (e.g., `And` + const → `AndImm`)
+- Saves 1 gas per folded instruction (no separate `LoadImm`/`LoadImm64` needed) + code size reduction
+- Available for: Add, Mul, And, Or, Xor, ShloL, ShloR, SharR (both 32-bit and 64-bit)
+- Sub with const RHS → `AddImm` with negated value; Sub with const LHS → `NegAddImm`
+- ICmp UGT/SGT with const RHS → `SetGtUImm`/`SetGtSImm` (avoids swap trick)
+- LLVM often constant-folds before reaching the PVM backend, so benefits are most visible in complex programs
 
 ---
 
@@ -107,6 +124,25 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## Call Return Address Encoding
+
+### LoadImm vs LoadImm64 for Call Return Addresses
+
+- Call return addresses are jump table addresses: `(jump_table_index + 1) * 2`
+- These are always small positive integers (2, 4, 6, ...) that fit in `LoadImm` (3-6 bytes)
+- Previously used `LoadImm64` (10 bytes) with placeholder value 0, patched during fixup resolution
+- **Problem with late patching**: `LoadImm` has variable encoding size (2 bytes for value 0, 3 bytes for value 2), so changing the value after branch fixups are resolved corrupts relative offsets
+- **Solution**: Pre-assign jump table indices at emission time by threading a `next_call_return_idx` counter through the compilation pipeline. This way `LoadImm` values are known during emission, ensuring correct `byte_offset` tracking for branch fixup resolution
+- **Impact**: For direct calls, `LoadImmJump` already embeds the return address compactly. For indirect calls (`call_indirect`), `LoadImm` saves 7 bytes per call site vs `LoadImm64`.
+
+### Why LoadImm64 was originally needed
+
+- `LoadImm64` has fixed 10-byte encoding regardless of value, so placeholder patching was safe
+- `LoadImm` with value 0 encodes to 2 bytes, but after patching to value 2 becomes 3 bytes
+- This size change would break branch fixups already resolved with the old instruction sizes
+
+---
+
 ## PVM 32-bit Instruction Semantics
 
 ### Sign Extension
@@ -121,3 +157,21 @@ Accumulated knowledge from development. Update after every task.
 - In practice with LLVM passes enabled, `instcombine` already eliminates `trunc(32-bit-op)` at the LLVM IR level, so this peephole pattern fires rarely
 - The peephole is still valuable for `--no-llvm-passes` mode and as defense-in-depth
 - **Known limitation**: the pattern only matches directly adjacent instructions; a `StoreIndU64` between producer and truncation breaks the match
+
+---
+
+## Cross-Block Register Cache
+
+### Approach
+
+- Pre-scan computes `block_single_pred` map by scanning terminator successors
+- For each block with exactly 1 predecessor and no phi nodes, restore the predecessor's cache snapshot instead of clearing
+- Snapshot is taken **before** the terminator instruction to avoid capturing path-specific phi copies
+
+### Key Pitfall: Terminator Phi Copies
+
+- `lower_switch` emits phi copies for the default path inline (not in a trampoline)
+- These phi copies modify the register cache (storing values to phi slots)
+- If the exit cache includes these entries, they are WRONG for case targets (which don't take the default path)
+- Fix: snapshot before the terminator and invalidate TEMP1/TEMP2 (registers the terminator clobbers for operand loads)
+- Same issue can occur with conditional branches when one path has phis and the other doesn't (trampoline case)

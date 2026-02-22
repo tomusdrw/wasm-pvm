@@ -22,7 +22,12 @@ pub enum Instruction {
     BranchLtUImm { reg: u8, value: i32, offset: i32 },
     BranchEq { reg1: u8, reg2: u8, offset: i32 },
     CmovIzImm { dst: u8, cond: u8, value: i32 },  // TwoRegOneImm encoding
-    StoreImmIndU32 { base: u8, offset: i32, value: i32 },
+    StoreImmU32 { address: i32, value: i32 },  // TwoImm encoding
+    StoreImmIndU32 { base: u8, offset: i32, value: i32 },  // OneRegTwoImm encoding
+    AndImm { dst: u8, src: u8, value: i32 },
+    ShloLImm32 { dst: u8, src: u8, value: i32 },
+    NegAddImm32 { dst: u8, src: u8, value: i32 },
+    SetGtUImm { dst: u8, src: u8, value: i32 },
     // ... ~100 variants total
 }
 ```
@@ -32,6 +37,7 @@ pub enum Instruction {
 - `encode_three_reg(opcode, dst, src1, src2)` - ALU ops (3 regs)
 - `encode_two_reg(opcode, dst, src)` - Moves/conversions (2 regs)
 - `encode_two_reg_one_imm(opcode, dst, src, value)` - ALU immediate ops (2 regs + imm)
+- `encode_two_imm(opcode, imm1, imm2)` - TwoImm format (StoreImm*)
 - `encode_one_reg_one_imm_one_off(opcode, reg, imm, offset)` - Branch-immediate ops
 - `encode_one_reg_two_imm(opcode, base, offset, value)` - Store immediate indirect
 - `encode_two_reg_one_off(opcode, reg1, reg2, offset)` - Branch-register ops

@@ -5,6 +5,11 @@ pub enum Opcode {
     Fallthrough = 1,
     Ecalli = 10,
     LoadImm64 = 20,
+    // Store immediate to absolute address (TwoImm)
+    StoreImmU8 = 30,
+    StoreImmU16 = 31,
+    StoreImmU32 = 32,
+    StoreImmU64 = 33,
     Jump = 40,
     LoadImmJump = 80,
     JumpInd = 50,
@@ -42,13 +47,29 @@ pub enum Opcode {
     LoadIndU32 = 128,
     LoadIndU64 = 130,
     AddImm32 = 131,
-    // Set if less than immediate (TwoRegOneImm)
+    AndImm = 132,
+    XorImm = 133,
+    OrImm = 134,
+    MulImm32 = 135,
+    // Set if less/greater than immediate (TwoRegOneImm)
     SetLtUImm = 136,
     SetLtSImm = 137,
+    // Shift by immediate (TwoRegOneImm)
+    ShloLImm32 = 138,
+    ShloRImm32 = 139,
+    SharRImm32 = 140,
+    NegAddImm32 = 141,
+    SetGtUImm = 142,
+    SetGtSImm = 143,
     // Conditional move with immediate (TwoRegOneImm)
     CmovIzImm = 147,
     CmovNzImm = 148,
     AddImm64 = 149,
+    MulImm64 = 150,
+    ShloLImm64 = 151,
+    ShloRImm64 = 152,
+    SharRImm64 = 153,
+    NegAddImm64 = 154,
     // Branch with two registers (TwoRegOneOff)
     BranchEq = 170,
     BranchNe = 171,

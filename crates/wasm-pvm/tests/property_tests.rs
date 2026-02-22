@@ -307,6 +307,51 @@ proptest! {
                 "StoreImmInd should be 2-10 bytes, got {}", encoded.len());
         }
     }
+
+    /// TwoRegOneImm instructions (ALU immediate) encode registers and imm correctly.
+    #[test]
+    fn two_reg_one_imm_encoding(dst in 0u8..13, src in 0u8..13, value in any::<i32>()) {
+        // Test all TwoRegOneImm opcodes use the same encoding format
+        let instrs = vec![
+            wasm_pvm::Instruction::AndImm { dst, src, value },
+            wasm_pvm::Instruction::XorImm { dst, src, value },
+            wasm_pvm::Instruction::OrImm { dst, src, value },
+            wasm_pvm::Instruction::MulImm32 { dst, src, value },
+            wasm_pvm::Instruction::MulImm64 { dst, src, value },
+            wasm_pvm::Instruction::ShloLImm32 { dst, src, value },
+            wasm_pvm::Instruction::ShloRImm32 { dst, src, value },
+            wasm_pvm::Instruction::SharRImm32 { dst, src, value },
+            wasm_pvm::Instruction::ShloLImm64 { dst, src, value },
+            wasm_pvm::Instruction::ShloRImm64 { dst, src, value },
+            wasm_pvm::Instruction::SharRImm64 { dst, src, value },
+            wasm_pvm::Instruction::NegAddImm32 { dst, src, value },
+            wasm_pvm::Instruction::NegAddImm64 { dst, src, value },
+            wasm_pvm::Instruction::SetGtUImm { dst, src, value },
+            wasm_pvm::Instruction::SetGtSImm { dst, src, value },
+        ];
+        for instr in &instrs {
+            let encoded = instr.encode();
+            // byte[1] = (src & 0x0F) << 4 | (dst & 0x0F)
+            prop_assert_eq!(encoded[1] & 0x0F, dst & 0x0F, "dst nibble for {:?}", instr);
+            prop_assert_eq!(encoded[1] >> 4, src & 0x0F, "src nibble for {:?}", instr);
+            // Decode immediate from remaining bytes
+            let imm_bytes = &encoded[2..];
+            let mut raw = [0u8; 4];
+            raw[..imm_bytes.len()].copy_from_slice(imm_bytes);
+            let decoded = i32::from_le_bytes(raw);
+            // For sign-extension to work, we need to handle sign bit
+            if imm_bytes.len() < 4 && value < 0 {
+                // Variable-length encoding truncates; verify the sign-extended value
+                // is correct by checking the encoded bytes match the low bytes of value
+                let value_bytes = value.to_le_bytes();
+                for (i, b) in imm_bytes.iter().enumerate() {
+                    prop_assert_eq!(*b, value_bytes[i], "imm byte {} mismatch for {:?}", i, instr);
+                }
+            } else {
+                prop_assert_eq!(decoded, value, "imm roundtrip for {:?}", instr);
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -628,6 +673,41 @@ proptest! {
             let mut padded = if value < 0 { [0xFFu8; 4] } else { [0u8; 4] };
             padded[..imm_bytes.len()].copy_from_slice(imm_bytes);
             let decoded_val = i32::from_le_bytes(padded);
+            prop_assert_eq!(decoded_val, value, "value mismatch for {:?}", opcode);
+        }
+    }
+
+    /// StoreImm TwoImm encoding roundtrip: both immediates are recoverable.
+    #[test]
+    fn store_imm_encoding(address in any::<i32>(), value in any::<i32>()) {
+        let variants: Vec<(Opcode, wasm_pvm::Instruction)> = vec![
+            (Opcode::StoreImmU8, wasm_pvm::Instruction::StoreImmU8 { address, value }),
+            (Opcode::StoreImmU16, wasm_pvm::Instruction::StoreImmU16 { address, value }),
+            (Opcode::StoreImmU32, wasm_pvm::Instruction::StoreImmU32 { address, value }),
+            (Opcode::StoreImmU64, wasm_pvm::Instruction::StoreImmU64 { address, value }),
+        ];
+
+        for (opcode, instr) in &variants {
+            let encoded = instr.encode();
+            prop_assert_eq!(encoded[0], *opcode as u8, "wrong opcode for {:?}", opcode);
+            prop_assert!(encoded.len() >= 2, "too short for {:?}", opcode);
+
+            // Decode: low nibble of byte 1 = address immediate length
+            let addr_len = (encoded[1] & 0x0F) as usize;
+            prop_assert!(addr_len <= 4, "addr_len out of range for {:?}", opcode);
+
+            // Decode first immediate (address)
+            let mut addr_bytes = if address < 0 { [0xFFu8; 4] } else { [0u8; 4] };
+            addr_bytes[..addr_len].copy_from_slice(&encoded[2..2 + addr_len]);
+            let decoded_addr = i32::from_le_bytes(addr_bytes);
+            prop_assert_eq!(decoded_addr, address, "address mismatch for {:?}", opcode);
+
+            // Decode second immediate (value)
+            let val_start = 2 + addr_len;
+            let val_len = encoded.len() - val_start;
+            let mut val_bytes = if value < 0 { [0xFFu8; 4] } else { [0u8; 4] };
+            val_bytes[..val_len].copy_from_slice(&encoded[val_start..]);
+            let decoded_val = i32::from_le_bytes(val_bytes);
             prop_assert_eq!(decoded_val, value, "value mismatch for {:?}", opcode);
         }
     }

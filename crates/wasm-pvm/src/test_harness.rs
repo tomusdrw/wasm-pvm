@@ -398,6 +398,22 @@ pub enum InstructionPattern {
         dst: Pat<u8>,
         value: Pat<i32>,
     },
+    StoreImmU8 {
+        address: Pat<i32>,
+        value: Pat<i32>,
+    },
+    StoreImmU16 {
+        address: Pat<i32>,
+        value: Pat<i32>,
+    },
+    StoreImmU32 {
+        address: Pat<i32>,
+        value: Pat<i32>,
+    },
+    StoreImmU64 {
+        address: Pat<i32>,
+        value: Pat<i32>,
+    },
     Trap,
     Fallthrough,
     Ecalli {
@@ -867,6 +883,34 @@ impl InstructionPattern {
                 },
                 Instruction::CmovNzImm { cond, dst, value },
             ) => c_pat.matches(cond) && d_pat.matches(dst) && v_pat.matches(value),
+            (
+                P::StoreImmU8 {
+                    address: a_pat,
+                    value: v_pat,
+                },
+                Instruction::StoreImmU8 { address, value },
+            ) => a_pat.matches(address) && v_pat.matches(value),
+            (
+                P::StoreImmU16 {
+                    address: a_pat,
+                    value: v_pat,
+                },
+                Instruction::StoreImmU16 { address, value },
+            ) => a_pat.matches(address) && v_pat.matches(value),
+            (
+                P::StoreImmU32 {
+                    address: a_pat,
+                    value: v_pat,
+                },
+                Instruction::StoreImmU32 { address, value },
+            ) => a_pat.matches(address) && v_pat.matches(value),
+            (
+                P::StoreImmU64 {
+                    address: a_pat,
+                    value: v_pat,
+                },
+                Instruction::StoreImmU64 { address, value },
+            ) => a_pat.matches(address) && v_pat.matches(value),
             (P::Ecalli { index: i_pat }, Instruction::Ecalli { index }) => i_pat.matches(index),
             _ => false,
         }
@@ -1004,6 +1048,21 @@ impl InstructionExt for Instruction {
             Instruction::SharR64 { .. } => Some(Opcode::SharR64),
             Instruction::AddImm32 { .. } => Some(Opcode::AddImm32),
             Instruction::AddImm64 { .. } => Some(Opcode::AddImm64),
+            Instruction::AndImm { .. } => Some(Opcode::AndImm),
+            Instruction::XorImm { .. } => Some(Opcode::XorImm),
+            Instruction::OrImm { .. } => Some(Opcode::OrImm),
+            Instruction::MulImm32 { .. } => Some(Opcode::MulImm32),
+            Instruction::MulImm64 { .. } => Some(Opcode::MulImm64),
+            Instruction::ShloLImm32 { .. } => Some(Opcode::ShloLImm32),
+            Instruction::ShloRImm32 { .. } => Some(Opcode::ShloRImm32),
+            Instruction::SharRImm32 { .. } => Some(Opcode::SharRImm32),
+            Instruction::ShloLImm64 { .. } => Some(Opcode::ShloLImm64),
+            Instruction::ShloRImm64 { .. } => Some(Opcode::ShloRImm64),
+            Instruction::SharRImm64 { .. } => Some(Opcode::SharRImm64),
+            Instruction::NegAddImm32 { .. } => Some(Opcode::NegAddImm32),
+            Instruction::NegAddImm64 { .. } => Some(Opcode::NegAddImm64),
+            Instruction::SetGtUImm { .. } => Some(Opcode::SetGtUImm),
+            Instruction::SetGtSImm { .. } => Some(Opcode::SetGtSImm),
             Instruction::Jump { .. } => Some(Opcode::Jump),
             Instruction::LoadImmJump { .. } => Some(Opcode::LoadImmJump),
             Instruction::JumpInd { .. } => Some(Opcode::JumpInd),
@@ -1061,6 +1120,10 @@ impl InstructionExt for Instruction {
             Instruction::StoreImmIndU32 { .. } => Some(Opcode::StoreImmIndU32),
             Instruction::StoreImmIndU64 { .. } => Some(Opcode::StoreImmIndU64),
             Instruction::Ecalli { .. } => Some(Opcode::Ecalli),
+            Instruction::StoreImmU8 { .. } => Some(Opcode::StoreImmU8),
+            Instruction::StoreImmU16 { .. } => Some(Opcode::StoreImmU16),
+            Instruction::StoreImmU32 { .. } => Some(Opcode::StoreImmU32),
+            Instruction::StoreImmU64 { .. } => Some(Opcode::StoreImmU64),
             Instruction::Unknown { .. } => None,
         }
     }
