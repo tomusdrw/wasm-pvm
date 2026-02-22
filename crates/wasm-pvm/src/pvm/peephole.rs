@@ -405,7 +405,6 @@ pub fn optimize_address_calculation(
                 }
             }
         }
-
     }
 
     // Recompute post-pass byte offsets (encoded lengths may have changed).
