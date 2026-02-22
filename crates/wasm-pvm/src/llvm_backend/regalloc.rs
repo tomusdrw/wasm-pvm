@@ -53,10 +53,7 @@ pub struct RegAllocResult {
 /// Run register allocation for a function.
 ///
 /// `value_slots` maps `ValKey` → stack slot offset (from the pre-scan bump allocator).
-pub fn run(
-    function: FunctionValue<'_>,
-    value_slots: &HashMap<ValKey, i32>,
-) -> RegAllocResult {
+pub fn run(function: FunctionValue<'_>, value_slots: &HashMap<ValKey, i32>) -> RegAllocResult {
     let blocks = function.get_basic_blocks();
     if blocks.is_empty() {
         return RegAllocResult::default();
@@ -66,12 +63,7 @@ pub fn run(
     let (instr_index, block_ranges) = linearize(&blocks);
 
     // Phase 2: Compute live intervals.
-    let intervals = compute_live_intervals(
-        &blocks,
-        &instr_index,
-        &block_ranges,
-        value_slots,
-    );
+    let intervals = compute_live_intervals(&blocks, &instr_index, &block_ranges, value_slots);
 
     if intervals.is_empty() {
         return RegAllocResult::default();

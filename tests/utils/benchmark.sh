@@ -2,9 +2,12 @@
 # Benchmark script: measures JAM file size, gas usage, and execution time.
 #
 # Usage:
-#   ./tests/utils/benchmark.sh [--base <branch>] [--current <branch>]
+#   ./tests/utils/benchmark.sh [--no-opt] [--base <branch>] [--current <branch>]
 #
-# Without arguments, builds and benchmarks the current code.
+# --no-opt: Compile JAM files with all PVM-level optimizations disabled.
+#           Without this flag (default), uses the standard optimized build.
+#
+# Without --base/--current, builds and benchmarks the current code.
 # With --base/--current, compares two branches side by side.
 #
 # Prerequisites: cargo, bun, node, python3 must be in PATH.
@@ -14,39 +17,70 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ANAN_CLI="$PROJECT_ROOT/vendor/anan-as/dist/bin/index.js"
-JAM_DIR="$PROJECT_ROOT/tests/build/jam"
+DEFAULT_JAM_DIR="$PROJECT_ROOT/tests/build/jam"
 GAS_BUDGET=100000000
-COMPILER_JAM="$JAM_DIR/anan-as-compiler.jam"
 OUTER_GAS=10000000000
 INNER_GAS=100000000
 
-# Representative benchmarks: (jam_basename, args, description, wasm_source)
-# wasm_source: "wat:<path>" for WAT files (uses wat2wasm), "wasm:<path>" for WASM files, empty to skip
-BENCHMARKS=(
-  "add|0500000007000000|add(5,7)|wat:tests/fixtures/wat/add.jam.wat"
-  "fibonacci|14000000|fib(20)|wat:tests/fixtures/wat/fibonacci.jam.wat"
-  "factorial|0a000000|factorial(10)|wat:tests/fixtures/wat/factorial.jam.wat"
-  "is-prime|19000000|is_prime(25)|wat:tests/fixtures/wat/is-prime.jam.wat"
-  "as-fibonacci|0a000000|AS fib(10)|wasm:tests/build/wasm/fibonacci.wasm"
-  "as-factorial|07000000|AS 7!|wasm:tests/build/wasm/factorial.wasm"
-  "as-gcd|00e10700c8000000|AS gcd(2017,200)|wasm:tests/build/wasm/gcd.wasm"
-  "as-decoder-test|00000000|AS decoder|wasm:tests/build/wasm/decoder-test.wasm"
-  "as-array-test|00000000|AS array|wasm:tests/build/wasm/array-test.wasm"
-  "anan-as-compiler||anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
+# Will be set based on --no-opt flag
+JAM_DIR=""
+COMPILER_JAM=""
+NO_OPT=false
+
+NO_OPT_FLAGS=(
+  --no-llvm-passes
+  --no-peephole
+  --no-register-cache
+  --no-icmp-fusion
+  --no-shrink-wrap
+  --no-dead-store-elim
+  --no-const-prop
+  --no-inline
+  --no-cross-block-cache
 )
 
-# PVM-in-PVM benchmarks: (jam_basename, args, description)
+# Representative benchmarks: (jam_basename, args, pc, description, wasm_source)
+# jam_basename: name of the JAM file in JAM_DIR, or "EXT:<path>" for external JAM files.
+# wasm_source: "wat:<path>" for WAT files, "wasm:<path>" for WASM files, empty to skip.
+# pc: initial program counter (default 0).
+BENCHMARKS=(
+  "add|0500000007000000|0|add(5,7)|wat:tests/fixtures/wat/add.jam.wat"
+  "fibonacci|14000000|0|fib(20)|wat:tests/fixtures/wat/fibonacci.jam.wat"
+  "factorial|0a000000|0|factorial(10)|wat:tests/fixtures/wat/factorial.jam.wat"
+  "is-prime|19000000|0|is_prime(25)|wat:tests/fixtures/wat/is-prime.jam.wat"
+  "as-fibonacci|0a000000|0|AS fib(10)|wasm:tests/build/wasm/fibonacci.wasm"
+  "as-factorial|07000000|0|AS factorial(7)|wasm:tests/build/wasm/factorial.wasm"
+  "as-gcd|00e10700c8000000|0|AS gcd(2017,200)|wasm:tests/build/wasm/gcd.wasm"
+  "as-decoder-test|00000000|0|AS decoder|wasm:tests/build/wasm/decoder-test.wasm"
+  "as-array-test|00000000|0|AS array|wasm:tests/build/wasm/array-test.wasm"
+  "anan-as-compiler||0|anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
+)
+
+# Return "imports_path|adapter_path" for benchmarks that need them, or empty.
+benchmark_imports_for() {
+  local basename="$1"
+  case "$basename" in
+    anan-as-compiler)
+      echo "tests/fixtures/imports/anan-as-compiler.imports|tests/fixtures/imports/anan-as-compiler.adapter.wat"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+# PVM-in-PVM benchmarks: (jam_basename, args, pc, description)
 # These run the JAM file inside the anan-as PVM interpreter (pvm-in-pvm).
 # Use "TRAP" as jam_basename for a synthetic 1-byte TRAP program.
+# Use "EXT:<path>" as jam_basename for an external JAM file (path relative to PROJECT_ROOT).
+# pc: initial program counter (default 0).
 PVM_IN_PVM_BENCHMARKS=(
-  "TRAP||PiP TRAP"
-  "add|0500000007000000|PiP add(5,7)"
-  "fibonacci|14000000|PiP fib(20)"
-  "factorial|0a000000|PiP factorial(10)"
-  "is-prime|19000000|PiP is_prime(25)"
-  "as-fibonacci|0a000000|PiP AS fib(10)"
-  "as-factorial|07000000|PiP AS 7!"
-  "as-gcd|00e10700c8000000|PiP AS gcd(2017,200)"
+  "TRAP||0|PiP TRAP"
+  "add|0500000007000000|0|PiP add(5,7)"
+  "as-fibonacci|0a000000|0|PiP AS fib(10)"
+  "EXT:tests/fixtures/external/jam-sdk-fib.jam|0100000002000000030000000000000000000000|5|PiP JAM-SDK fib(10)"
+  "EXT:tests/fixtures/external/jambrains-fib.jam|0100000002000000030000000000000000000000|5|PiP Jambrains fib(10)"
+  "EXT:tests/fixtures/external/jade-fib.jam|0100000002000000030000000000000000000000|5|PiP JADE fib(10)"
 )
 
 # Get WASM size from a source spec ("wat:<path>" or "wasm:<path>")
@@ -83,10 +117,66 @@ wasm_size() {
   fi
 }
 
+# Compile a single benchmark source to JAM with the given extra flags.
+# Args: wasm_source_spec, output_jam_path, extra_flags...
+compile_benchmark() {
+  local spec="$1"
+  local output="$2"
+  local basename="$3"
+  shift 3
+  local extra_flags=("$@")
+
+  local kind="${spec%%:*}"
+  local filepath="${spec#*:}"
+  filepath="$PROJECT_ROOT/$filepath"
+
+  if [ ! -f "$filepath" ]; then
+    echo "SKIP: source not found: $filepath" >&2
+    return 1
+  fi
+
+  local cmd=("$PROJECT_ROOT/target/release/wasm-pvm" compile "$filepath" -o "$output")
+
+  # Add imports/adapter if configured for this benchmark
+  local imp_spec
+  imp_spec=$(benchmark_imports_for "$basename")
+  if [ -n "$imp_spec" ]; then
+    IFS='|' read -r imports_path adapter_path <<< "$imp_spec"
+    if [ -n "$imports_path" ] && [ -f "$PROJECT_ROOT/$imports_path" ]; then
+      cmd+=(--imports "$PROJECT_ROOT/$imports_path")
+    fi
+    if [ -n "$adapter_path" ] && [ -f "$PROJECT_ROOT/$adapter_path" ]; then
+      cmd+=(--adapter "$PROJECT_ROOT/$adapter_path")
+    fi
+  fi
+
+  cmd+=("${extra_flags[@]}")
+  "${cmd[@]}" 2>&1
+}
+
+# Recompile all benchmark sources into a separate directory with no-opt flags.
+compile_noopt_jams() {
+  local noopt_dir="$1"
+  rm -rf "$noopt_dir"
+  mkdir -p "$noopt_dir"
+
+  echo "Recompiling benchmarks without PVM optimizations..." >&2
+  for entry in "${BENCHMARKS[@]}"; do
+    IFS='|' read -r basename _args _pc _desc wasm_src <<< "$entry"
+    # Skip external JAM files (can't recompile) and entries without sources
+    if [ -z "$wasm_src" ] || [[ "$basename" == EXT:* ]]; then
+      continue
+    fi
+    local output="$noopt_dir/$basename.jam"
+    compile_benchmark "$wasm_src" "$output" "$basename" "${NO_OPT_FLAGS[@]}" >&2
+  done
+}
+
 benchmark_one() {
   local jam_file="$1"
   local args="$2"
-  local desc="$3"
+  local pc="$3"
+  local desc="$4"
   local size gas_used time_ms
 
   if [ ! -f "$jam_file" ]; then
@@ -109,7 +199,7 @@ benchmark_one() {
     local start_ns end_ns elapsed_ms output exit_code
     start_ns=$(python3 -c "import time; print(int(time.time_ns()))")
     exit_code=0
-    output=$(node "$ANAN_CLI" run --spi --no-logs --gas=$GAS_BUDGET "$jam_file" "0x$args" 2>&1) || exit_code=$?
+    output=$(node "$ANAN_CLI" run --spi --no-logs --gas=$GAS_BUDGET --pc="$pc" "$jam_file" "0x$args" 2>&1) || exit_code=$?
     end_ns=$(python3 -c "import time; print(int(time.time_ns()))")
     elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
 
@@ -149,6 +239,7 @@ build_pvm_in_pvm_args() {
   local jam_file="$1"
   local inner_args_hex="$2"
   local out_file="$3"
+  local pc="${4:-0}"
 
   local program_len
   program_len=$(wc -c < "$jam_file" | tr -d ' ')
@@ -172,7 +263,7 @@ build_pvm_in_pvm_args() {
   # Build header (20 bytes) using python3 for reliable LE encoding
   python3 -c "
 import struct,sys
-sys.stdout.buffer.write(struct.pack('<QIII',${INNER_GAS},0,${program_len},${inner_args_len}))
+sys.stdout.buffer.write(struct.pack('<QIII',${INNER_GAS},${pc},${program_len},${inner_args_len}))
 " > "$out_file"
 
   # Append program bytes
@@ -189,7 +280,8 @@ sys.stdout.buffer.write(struct.pack('<QIII',${INNER_GAS},0,${program_len},${inne
 benchmark_pvm_in_pvm() {
   local jam_file="$1"
   local args="$2"
-  local desc="$3"
+  local pc="$3"
+  local desc="$4"
   local size gas_used time_ms
 
   if [ ! -f "$jam_file" ]; then
@@ -209,7 +301,7 @@ benchmark_pvm_in_pvm() {
   tmp_args=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-args-XXXXXX")
   # shellcheck disable=SC2064  # tmp_args is intentionally expanded now, not at trap time
   trap "rm -f '$tmp_args'" RETURN
-  build_pvm_in_pvm_args "$jam_file" "$args" "$tmp_args"
+  build_pvm_in_pvm_args "$jam_file" "$args" "$tmp_args" "$pc"
 
   # Run 3 times and take the median time
   local times=()
@@ -263,12 +355,19 @@ run_benchmarks() {
   echo "|-----------|-----------|----------|----------|-------------------|"
 
   for entry in "${BENCHMARKS[@]}"; do
-    IFS='|' read -r basename args desc wasm_src <<< "$entry"
-    local jam_file="$JAM_DIR/$basename.jam"
+    IFS='|' read -r basename args pc desc wasm_src <<< "$entry"
+    pc="${pc:-0}"
+    local jam_file
+    if [[ "$basename" == EXT:* ]]; then
+      local ext_path="${basename#EXT:}"
+      jam_file="$PROJECT_ROOT/$ext_path"
+    else
+      jam_file="$JAM_DIR/$basename.jam"
+    fi
     local wsize
     wsize=$(wasm_size "$wasm_src")
     local result
-    result=$(benchmark_one "$jam_file" "$args" "$desc")
+    result=$(benchmark_one "$jam_file" "$args" "$pc" "$desc")
 
     IFS='|' read -r status rdesc size gas time <<< "$result"
     if [ "$status" = "OK" ]; then
@@ -287,18 +386,24 @@ run_benchmarks() {
     echo "|-----------|----------|----------------|-------------------|"
 
     for entry in "${PVM_IN_PVM_BENCHMARKS[@]}"; do
-      IFS='|' read -r basename args desc <<< "$entry"
-      local jam_file
+      IFS='|' read -r basename args pc desc <<< "$entry"
+      pc="${pc:-0}"
+      local jam_file cleanup_jam=false
       if [ "$basename" = "TRAP" ]; then
         # Synthetic 1-byte TRAP program (opcode 0x00)
         jam_file=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-trap-XXXXXX")
         printf '\x00' > "$jam_file"
+        cleanup_jam=true
+      elif [[ "$basename" == EXT:* ]]; then
+        # External JAM file (path relative to PROJECT_ROOT)
+        local ext_path="${basename#EXT:}"
+        jam_file="$PROJECT_ROOT/$ext_path"
       else
         jam_file="$JAM_DIR/$basename.jam"
       fi
       local result
-      result=$(benchmark_pvm_in_pvm "$jam_file" "$args" "$desc")
-      if [ "$basename" = "TRAP" ]; then
+      result=$(benchmark_pvm_in_pvm "$jam_file" "$args" "$pc" "$desc")
+      if [ "$cleanup_jam" = true ]; then
         rm -f "$jam_file"
       fi
 
@@ -319,6 +424,17 @@ build_and_benchmark() {
   cargo build --release --quiet >&2
   rm -rf "$PROJECT_ROOT/tests/build/wasm"
   (cd "$PROJECT_ROOT/tests" && bun build.ts >&2)
+
+  if [ "$NO_OPT" = true ]; then
+    local noopt_dir="$PROJECT_ROOT/tests/build/jam-noopt"
+    compile_noopt_jams "$noopt_dir"
+    JAM_DIR="$noopt_dir"
+    COMPILER_JAM="$noopt_dir/anan-as-compiler.jam"
+  else
+    JAM_DIR="$DEFAULT_JAM_DIR"
+    COMPILER_JAM="$DEFAULT_JAM_DIR/anan-as-compiler.jam"
+  fi
+
   run_benchmarks "$label"
 }
 
@@ -408,12 +524,19 @@ BASE_BRANCH=""
 CURRENT_BRANCH=""
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --no-opt) NO_OPT=true; shift ;;
     --base) BASE_BRANCH="$2"; shift 2 ;;
     --current) CURRENT_BRANCH="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: $0 [--base <branch>] [--current <branch>]"
+      echo "Usage: $0 [--no-opt] [--base <branch>] [--current <branch>]"
       echo ""
-      echo "Without arguments: build and benchmark current code"
+      echo "Options:"
+      echo "  --no-opt              Compile JAMs with all PVM-level optimizations disabled"
+      echo "  --base <branch>       Base branch for comparison"
+      echo "  --current <branch>    Current branch for comparison"
+      echo ""
+      echo "Without arguments: build and benchmark current code (optimized)"
+      echo "With --no-opt: build and benchmark with PVM optimizations disabled"
       echo "With --base/--current: compare two branches"
       exit 0
       ;;
@@ -427,5 +550,9 @@ elif [ -n "$BASE_BRANCH" ] || [ -n "$CURRENT_BRANCH" ]; then
   echo "Error: must specify both --base and --current, or neither"
   exit 1
 else
-  build_and_benchmark "Current Build"
+  if [ "$NO_OPT" = true ]; then
+    build_and_benchmark "Current Build (no PVM optimizations)"
+  else
+    build_and_benchmark "Current Build"
+  fi
 fi

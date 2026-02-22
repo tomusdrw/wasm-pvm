@@ -531,7 +531,12 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Spill all register-allocated values to their stack slots.
     /// Called before instructions that clobber r5/r6 (calls, memory intrinsics).
     pub fn spill_allocated_regs(&mut self) {
-        let entries: Vec<_> = self.regalloc.reg_to_slot.iter().map(|(&r, &s)| (r, s)).collect();
+        let entries: Vec<_> = self
+            .regalloc
+            .reg_to_slot
+            .iter()
+            .map(|(&r, &s)| (r, s))
+            .collect();
         for (reg, slot) in entries {
             self.emit(Instruction::StoreIndU64 {
                 base: STACK_PTR_REG,
@@ -544,7 +549,12 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Reload all register-allocated values from their stack slots.
     /// Called after instructions that clobber r5/r6 (calls, memory intrinsics).
     pub fn reload_allocated_regs(&mut self) {
-        let entries: Vec<_> = self.regalloc.reg_to_slot.iter().map(|(&r, &s)| (r, s)).collect();
+        let entries: Vec<_> = self
+            .regalloc
+            .reg_to_slot
+            .iter()
+            .map(|(&r, &s)| (r, s))
+            .collect();
         for (reg, slot) in entries {
             self.emit(Instruction::LoadIndU64 {
                 dst: reg,
