@@ -760,7 +760,8 @@ impl Instruction {
             | Self::Ecalli { .. }
             | Self::Unknown { .. }
             | Self::LoadImm { .. }
-            | Self::LoadImm64 { .. } => [None, None, None],
+            | Self::LoadImm64 { .. }
+            | Self::LoadImmJump { .. } => [None, None, None],
 
             Self::MoveReg { src, .. }
             | Self::Sbrk { src, .. }
