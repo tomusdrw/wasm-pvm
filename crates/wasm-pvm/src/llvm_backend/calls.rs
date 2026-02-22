@@ -440,6 +440,8 @@ pub fn lower_pvm_call_indirect<'ctx>(
     });
 
     // Emit indirect call: LoadImm for return address + JumpInd.
+    // The return address is a jump table address ((index+1)*2), pre-computed
+    // so the encoding size is known at emission time (avoids fixup size instability).
     let return_addr_instr = e.instructions.len();
     let call_return_addr = e.alloc_call_return_addr();
     e.emit(Instruction::LoadImm {

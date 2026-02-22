@@ -1089,6 +1089,8 @@ impl InstructionExt for Instruction {
             Instruction::BranchGeS { .. } => Some(Opcode::BranchGeS),
             Instruction::SetLtU { .. } => Some(Opcode::SetLtU),
             Instruction::SetLtS { .. } => Some(Opcode::SetLtS),
+            Instruction::CmovIz { .. } => Some(Opcode::CmovIz),
+            Instruction::CmovNz { .. } => Some(Opcode::CmovNz),
             Instruction::And { .. } => Some(Opcode::And),
             Instruction::Xor { .. } => Some(Opcode::Xor),
             Instruction::Or { .. } => Some(Opcode::Or),

@@ -506,18 +506,21 @@ pub(crate) fn build_rw_data(
     rw_data
 }
 
-/// Extract the pre-assigned jump-table index from a `LoadImm` instruction.
+/// Extract the pre-assigned jump-table index from a `LoadImmJump` or `LoadImm` instruction.
 ///
 /// Call return addresses are pre-assigned as `(idx + 1) * 2` at emission time.
 /// This helper recovers `idx` so that `resolve_call_fixups` can write the byte
 /// offset into the correct jump-table slot instead of appending in list order
 /// (which would desync when a function mixes direct and indirect calls).
+///
+/// Direct calls use `LoadImmJump` (combined return addr + jump), while
+/// indirect calls use `LoadImm` (separate return addr load + `JumpInd`).
 fn return_addr_jump_table_idx(
     instructions: &[Instruction],
     return_addr_instr: usize,
 ) -> Result<usize> {
     let value = match instructions.get(return_addr_instr) {
-        Some(Instruction::LoadImm { value, .. } | Instruction::LoadImmJump { value, .. }) => {
+        Some(Instruction::LoadImmJump { value, .. } | Instruction::LoadImm { value, .. }) => {
             Some(*value)
         }
         _ => None,
@@ -525,7 +528,7 @@ fn return_addr_jump_table_idx(
     match value {
         Some(v) if v > 0 && v % 2 == 0 => Ok((v as usize / 2) - 1),
         _ => Err(Error::Internal(format!(
-            "expected LoadImm/LoadImmJump((idx+1)*2) at return_addr_instr {return_addr_instr}, got {:?}",
+            "expected LoadImmJump/LoadImm((idx+1)*2) at return_addr_instr {return_addr_instr}, got {:?}",
             instructions.get(return_addr_instr)
         ))),
     }
@@ -553,9 +556,9 @@ fn resolve_call_fixups(
 
     let mut jump_table: Vec<u32> = vec![0u32; num_call_returns];
 
-    // Call return addresses (LoadImm values) are pre-assigned at emission time,
-    // so we only need to compute byte offsets for the jump table and Jump targets.
-    // Write each entry at its pre-assigned index to keep LoadImm values in sync.
+    // Call return addresses (LoadImmJump/LoadImm values) are pre-assigned at emission time,
+    // so we only need to compute byte offsets for the jump table and patch Jump targets.
+    // Write each entry at its pre-assigned index to keep values in sync.
     for (instr_base, fixup) in call_fixups {
         let target_offset = function_offsets
             .get(fixup.target_func as usize)
@@ -573,6 +576,14 @@ fn resolve_call_fixups(
 
         let slot = return_addr_jump_table_idx(instructions, instr_base + fixup.return_addr_instr)?;
         jump_table[slot] = return_addr_offset as u32;
+
+        // Verify pre-assigned jump table address matches actual index.
+        let expected_addr = ((slot + 1) * 2) as i32;
+        debug_assert!(
+            matches!(&instructions[jump_idx], Instruction::LoadImmJump { value, .. } if *value == expected_addr),
+            "pre-assigned jump table address mismatch: expected {expected_addr}, got {:?}",
+            &instructions[jump_idx]
+        );
 
         // Patch the offset field of LoadImmJump.
         let jump_start_offset: usize = instructions[..jump_idx]

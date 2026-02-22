@@ -1030,15 +1030,17 @@ fn test_br_table() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // br_table should lower to some combination of branches and jumps
-    let branch_count = count_opcode(&instructions, Opcode::BranchEqImm)
+    // br_table should lower to some combination of branches, jumps, and conditional moves
+    let control_flow_count = count_opcode(&instructions, Opcode::BranchEqImm)
         + count_opcode(&instructions, Opcode::BranchNeImm)
         + count_opcode(&instructions, Opcode::BranchLtUImm)
         + count_opcode(&instructions, Opcode::BranchGeUImm)
-        + count_opcode(&instructions, Opcode::Jump);
+        + count_opcode(&instructions, Opcode::Jump)
+        + count_opcode(&instructions, Opcode::CmovIz)
+        + count_opcode(&instructions, Opcode::CmovNz);
     assert!(
-        branch_count >= 2,
-        "br_table should produce multiple branches, got {branch_count}"
+        control_flow_count >= 2,
+        "br_table should produce multiple branches/cmovs, got {control_flow_count}"
     );
 
     // All three return values should be present
@@ -2041,6 +2043,44 @@ fn test_global_set_dynamic_uses_store_ind() {
     assert!(
         !has_opcode(&instructions, Opcode::StoreImmU32),
         "global.set with dynamic value should NOT use StoreImmU32.\nInstructions: {instructions:#?}"
+    );
+}
+
+// =============================================================================
+// Conditional Move (CmovNz) for select
+// =============================================================================
+
+#[test]
+fn test_select_uses_cmov_nz() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32 i32) (result i32)
+                local.get 2
+                local.get 0
+                local.get 1
+                select
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // select should use CmovNz (branchless conditional move)
+    assert!(
+        has_opcode(&instructions, Opcode::CmovNz),
+        "select should produce CmovNz instruction.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {:?}", i))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    // Should NOT have BranchEqImm (the old branch-based select pattern)
+    assert!(
+        !has_opcode(&instructions, Opcode::BranchEqImm),
+        "select should NOT produce BranchEqImm (should be branchless)"
     );
 }
 

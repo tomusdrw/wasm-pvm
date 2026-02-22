@@ -309,6 +309,18 @@ pub enum Instruction {
         src1: u8,
         src2: u8,
     },
+    /// Conditional move if zero: `if reg[cond] == 0 then reg[dst] = reg[src]`
+    CmovIz {
+        dst: u8,
+        src: u8,
+        cond: u8,
+    },
+    /// Conditional move if non-zero: `if reg[cond] != 0 then reg[dst] = reg[src]`
+    CmovNz {
+        dst: u8,
+        src: u8,
+        cond: u8,
+    },
     And {
         dst: u8,
         src1: u8,
@@ -545,6 +557,8 @@ impl Instruction {
             Self::SetLtS { dst, src1, src2 } => {
                 encode_three_reg(Opcode::SetLtS, *dst, *src1, *src2)
             }
+            Self::CmovIz { dst, src, cond } => encode_three_reg(Opcode::CmovIz, *dst, *src, *cond),
+            Self::CmovNz { dst, src, cond } => encode_three_reg(Opcode::CmovNz, *dst, *src, *cond),
             Self::And { dst, src1, src2 } => encode_three_reg(Opcode::And, *dst, *src1, *src2),
             Self::Xor { dst, src1, src2 } => encode_three_reg(Opcode::Xor, *dst, *src1, *src2),
             Self::Or { dst, src1, src2 } => encode_three_reg(Opcode::Or, *dst, *src1, *src2),
@@ -849,6 +863,8 @@ impl Instruction {
             | Self::Xor { dst, .. }
             | Self::SetLtU { dst, .. }
             | Self::SetLtS { dst, .. }
+            | Self::CmovIz { dst, .. }
+            | Self::CmovNz { dst, .. }
             | Self::SetLtUImm { dst, .. }
             | Self::SetLtSImm { dst, .. }
             | Self::CountSetBits32 { dst, .. }
@@ -1318,6 +1334,53 @@ mod tests {
             offset: 0,
         };
         assert_eq!(instr.dest_reg(), Some(5));
+    }
+
+    #[test]
+    fn test_cmov_encoding() {
+        // CmovIz: [opcode, (cond << 4) | src, dst]
+        let instr = Instruction::CmovIz {
+            dst: 3,
+            src: 1,
+            cond: 2,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::CmovIz as u8);
+        assert_eq!(encoded[1], 0x21); // cond=2 high nibble, src=1 low nibble
+        assert_eq!(encoded[2], 0x03); // dst
+
+        // CmovNz
+        let instr = Instruction::CmovNz {
+            dst: 5,
+            src: 4,
+            cond: 7,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::CmovNz as u8);
+        assert_eq!(encoded[1], 0x74); // cond=7 high nibble, src=4 low nibble
+        assert_eq!(encoded[2], 0x05); // dst
+    }
+
+    #[test]
+    fn test_cmov_dest_reg() {
+        assert_eq!(
+            Instruction::CmovIz {
+                dst: 5,
+                src: 1,
+                cond: 2
+            }
+            .dest_reg(),
+            Some(5)
+        );
+        assert_eq!(
+            Instruction::CmovNz {
+                dst: 8,
+                src: 3,
+                cond: 4
+            }
+            .dest_reg(),
+            Some(8)
+        );
     }
 
     #[test]
