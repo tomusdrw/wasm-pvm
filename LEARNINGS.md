@@ -35,6 +35,25 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## CmovIzImm / CmovNzImm (TwoRegOneImm Encoding)
+
+- Opcodes 147-148: Conditional move with immediate value
+- TwoRegOneImm encoding: `[opcode, (cond << 4) | dst, imm_bytes...]`
+- CmovIzImm: `if reg[cond] == 0 then reg[dst] = sign_extend(imm)`
+- CmovNzImm: `if reg[cond] != 0 then reg[dst] = sign_extend(imm)`
+- Future use: optimize `select` when one operand is a compile-time constant (depends on CmovIz/CmovNz from PR #98 merging first)
+
+---
+
+## LoadImmJumpInd (Opcode 180) — Not Yet Implemented
+
+- TwoRegTwoImm encoding: fuses `LoadImm + JumpInd` into one instruction
+- Semantics: `reg[dst] = sign_extend(value); jump to reg[base] + sign_extend(offset)`
+- **Blocker**: The fixup system computes byte offsets from instruction encodings, then patches values which changes variable-length encoding sizes. LoadImm64 has fixed 10-byte encoding, so patching its value doesn't change byte offsets. LoadImmJumpInd uses variable-length TwoImm encoding, creating a chicken-and-egg problem: the return address offset depends on the encoding size, which depends on the patched value.
+- **To implement**: Either (a) use a fixed-size encoding variant for fixup placeholders, or (b) rework fixup resolution to iterate to a fixed point after patching, or (c) pre-reserve maximum encoding size and pad with Fallthroughs.
+
+---
+
 ## PVM Intrinsic Lowering
 
 ### llvm.abs (absolute value)

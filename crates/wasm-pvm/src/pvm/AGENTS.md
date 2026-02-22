@@ -6,8 +6,8 @@
 
 | File | Lines | Role |
 |------|-------|------|
-| `instruction.rs` | ~530 | Instruction enum, encoding logic |
-| `opcode.rs` | 114 | Opcode constants (84 opcodes) |
+| `instruction.rs` | ~570 | Instruction enum, encoding logic |
+| `opcode.rs` | 118 | Opcode constants (86 opcodes) |
 | `blob.rs` | 143 | Program blob format with jump table |
 | `peephole.rs` | ~290 | Post-codegen peephole optimizer (Fallthroughs, truncation NOPs, dead stores) |
 
@@ -21,11 +21,13 @@ pub enum Instruction {
     MoveReg { dst: u8, src: u8 },
     BranchLtUImm { reg: u8, value: i32, offset: i32 },
     BranchEq { reg1: u8, reg2: u8, offset: i32 },
-    // ... 76 variants total
+    CmovIzImm { dst: u8, cond: u8, value: i32 },  // TwoRegOneImm encoding
+    // ... 78 variants total
 }
 ```
 
 ### Encoding Helpers
+
 - `encode_three_reg(opcode, dst, src1, src2)` - ALU ops
 - `encode_two_reg(opcode, dst, src)` - Moves/conversions
 - `encode_imm(value)` - Variable-length immediate (0-4 bytes)
@@ -56,7 +58,7 @@ pub fn dest_reg(&self) -> Option<u8> {
 |------|----------|
 | Add new PVM instruction | `opcode.rs` (add enum variant) + `instruction.rs` (encoding) |
 | Change instruction encoding | `instruction.rs:impl Instruction` |
-| Check opcode exists | `opcode.rs` (84 opcodes defined) |
+| Check opcode exists | `opcode.rs` (86 opcodes defined) |
 | Build program blob | `blob.rs:ProgramBlob::with_jump_table()` |
 | Variable int encoding | `blob.rs:encode_var_u32()` |
 
