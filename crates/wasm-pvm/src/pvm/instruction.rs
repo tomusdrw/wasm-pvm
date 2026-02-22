@@ -356,6 +356,30 @@ pub enum Instruction {
         cond: u8,
         value: i32,
     },
+    /// Store immediate to [base + offset]: mem[reg[base] + offset] = value (u8)
+    StoreImmIndU8 {
+        base: u8,
+        offset: i32,
+        value: i32,
+    },
+    /// Store immediate to [base + offset]: mem[reg[base] + offset] = value (u16)
+    StoreImmIndU16 {
+        base: u8,
+        offset: i32,
+        value: i32,
+    },
+    /// Store immediate to [base + offset]: mem[reg[base] + offset] = value (u32)
+    StoreImmIndU32 {
+        base: u8,
+        offset: i32,
+        value: i32,
+    },
+    /// Store immediate to [base + offset]: mem[reg[base] + offset] = `sign_extend(value)` (u64)
+    StoreImmIndU64 {
+        base: u8,
+        offset: i32,
+        value: i32,
+    },
     Ecalli {
         index: u32,
     },
@@ -622,6 +646,26 @@ impl Instruction {
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
             }
+            Self::StoreImmIndU8 {
+                base,
+                offset,
+                value,
+            } => encode_one_reg_two_imm(Opcode::StoreImmIndU8, *base, *offset, *value),
+            Self::StoreImmIndU16 {
+                base,
+                offset,
+                value,
+            } => encode_one_reg_two_imm(Opcode::StoreImmIndU16, *base, *offset, *value),
+            Self::StoreImmIndU32 {
+                base,
+                offset,
+                value,
+            } => encode_one_reg_two_imm(Opcode::StoreImmIndU32, *base, *offset, *value),
+            Self::StoreImmIndU64 {
+                base,
+                offset,
+                value,
+            } => encode_one_reg_two_imm(Opcode::StoreImmIndU64, *base, *offset, *value),
             Self::Ecalli { index } => {
                 let mut bytes = vec![Opcode::Ecalli as u8];
                 bytes.extend_from_slice(&encode_uimm(*index));
@@ -715,6 +759,10 @@ impl Instruction {
             | Self::StoreIndU16 { .. }
             | Self::StoreIndU32 { .. }
             | Self::StoreIndU64 { .. }
+            | Self::StoreImmIndU8 { .. }
+            | Self::StoreImmIndU16 { .. }
+            | Self::StoreImmIndU32 { .. }
+            | Self::StoreImmIndU64 { .. }
             | Self::Ecalli { .. }
             | Self::Unknown { .. } => None,
         }
@@ -766,6 +814,16 @@ fn encode_one_reg_one_imm_one_off(opcode: Opcode, reg: u8, imm: i32, offset: i32
     let mut bytes = vec![opcode as u8, (imm_len << 4) | (reg & 0x0F)];
     bytes.extend_from_slice(&imm_enc);
     bytes.extend_from_slice(&offset.to_le_bytes());
+    bytes
+}
+
+fn encode_one_reg_two_imm(opcode: Opcode, reg: u8, imm1: i32, imm2: i32) -> Vec<u8> {
+    let imm1_enc = encode_imm(imm1);
+    let imm1_len = imm1_enc.len() as u8;
+    let imm2_enc = encode_imm(imm2);
+    let mut bytes = vec![opcode as u8, (imm1_len << 4) | (reg & 0x0F)];
+    bytes.extend_from_slice(&imm1_enc);
+    bytes.extend_from_slice(&imm2_enc);
     bytes
 }
 
@@ -937,6 +995,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_one_reg_two_imm_encoding() {
+        // StoreImmIndU32 with base=3, offset=0, value=42
+        let instr = Instruction::StoreImmIndU32 {
+            base: 3,
+            offset: 0,
+            value: 42,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::StoreImmIndU32 as u8);
+        // offset=0 → 0 bytes → offset_len=0 → high nibble=0, reg=3 → byte = 0x03
+        assert_eq!(encoded[1], 0x03);
+        // value=42 → 1 byte → 0x2A
+        assert_eq!(encoded[2], 0x2A);
+    }
+
+    #[test]
+    fn test_store_imm_ind_with_offset() {
+        // StoreImmIndU64 with base=1, offset=100, value=-1
+        let instr = Instruction::StoreImmIndU64 {
+            base: 1,
+            offset: 100,
+            value: -1,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::StoreImmIndU64 as u8);
+        // offset=100 → 1 byte → offset_len=1 → high nibble=1, reg=1 → byte = 0x11
+        assert_eq!(encoded[1], 0x11);
+        // offset byte: 100
+        assert_eq!(encoded[2], 100);
+        // value=-1 → 1 byte → 0xFF
+        assert_eq!(encoded[3], 0xFF);
     }
 
     #[test]

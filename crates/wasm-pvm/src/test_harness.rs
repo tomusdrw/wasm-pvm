@@ -1056,6 +1056,10 @@ impl InstructionExt for Instruction {
             Instruction::StoreIndU16 { .. } => Some(Opcode::StoreIndU16),
             Instruction::CmovIzImm { .. } => Some(Opcode::CmovIzImm),
             Instruction::CmovNzImm { .. } => Some(Opcode::CmovNzImm),
+            Instruction::StoreImmIndU8 { .. } => Some(Opcode::StoreImmIndU8),
+            Instruction::StoreImmIndU16 { .. } => Some(Opcode::StoreImmIndU16),
+            Instruction::StoreImmIndU32 { .. } => Some(Opcode::StoreImmIndU32),
+            Instruction::StoreImmIndU64 { .. } => Some(Opcode::StoreImmIndU64),
             Instruction::Ecalli { .. } => Some(Opcode::Ecalli),
             Instruction::Unknown { .. } => None,
         }

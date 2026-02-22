@@ -283,6 +283,30 @@ proptest! {
         );
         prop_assert_eq!(decoded_offset, offset, "offset mismatch");
     }
+
+    /// StoreImmInd encoding: opcode, register in low nibble, offset_len in high nibble,
+    /// then offset bytes, then value bytes.
+    #[test]
+    fn store_imm_ind_encoding(
+        base in 0u8..13,
+        offset in any::<i32>(),
+        value in any::<i32>(),
+    ) {
+        let variants: Vec<(Opcode, wasm_pvm::Instruction)> = vec![
+            (Opcode::StoreImmIndU8, wasm_pvm::Instruction::StoreImmIndU8 { base, offset, value }),
+            (Opcode::StoreImmIndU16, wasm_pvm::Instruction::StoreImmIndU16 { base, offset, value }),
+            (Opcode::StoreImmIndU32, wasm_pvm::Instruction::StoreImmIndU32 { base, offset, value }),
+            (Opcode::StoreImmIndU64, wasm_pvm::Instruction::StoreImmIndU64 { base, offset, value }),
+        ];
+        for (expected_opcode, instr) in &variants {
+            let encoded = instr.encode();
+            prop_assert_eq!(encoded[0], *expected_opcode as u8, "opcode mismatch for {:?}", expected_opcode);
+            prop_assert_eq!(encoded[1] & 0x0F, base & 0x0F, "register mismatch for {:?}", expected_opcode);
+            // Minimum: 2 bytes (opcode + reg byte). Max: 2 + 4 (offset) + 4 (value) = 10.
+            prop_assert!(encoded.len() >= 2 && encoded.len() <= 10,
+                "StoreImmInd should be 2-10 bytes, got {}", encoded.len());
+        }
+    }
 }
 
 // =============================================================================

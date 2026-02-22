@@ -16,7 +16,7 @@ use inkwell::values::{BasicValueEnum, InstructionValue};
 use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
-use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_slot};
+use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_slot, try_get_constant};
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 /// Lower a load from a WASM global variable.
@@ -59,6 +59,9 @@ pub fn lower_wasm_global_load<'ctx>(
 }
 
 /// Lower a store to a WASM global variable.
+///
+/// When the value is a compile-time constant that fits in i32, uses `StoreImmIndU32`
+/// to avoid loading the value into a register.
 pub fn lower_wasm_global_store<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -75,6 +78,23 @@ pub fn lower_wasm_global_store<'ctx>(
             .and_then(|s| s.parse::<u32>().ok())
         {
             let global_addr = abi::global_addr(idx);
+
+            // Try immediate store for constant values.
+            if let Some(val_const) = try_get_constant(val)
+                && i32::try_from(val_const).is_ok()
+            {
+                e.emit(Instruction::LoadImm {
+                    reg: TEMP1,
+                    value: global_addr,
+                });
+                e.emit(Instruction::StoreImmIndU32 {
+                    base: TEMP1,
+                    offset: 0,
+                    value: val_const as i32,
+                });
+                return Ok(());
+            }
+
             e.load_operand(val, TEMP1)?;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
@@ -180,6 +200,9 @@ pub fn emit_pvm_load<'ctx>(
 }
 
 /// Emit a PVM store intrinsic.
+///
+/// When the value being stored is a compile-time constant that fits in i32,
+/// uses `StoreImmInd*` to avoid an extra `LoadImm` instruction.
 pub fn emit_pvm_store<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -190,10 +213,42 @@ pub fn emit_pvm_store<'ctx>(
     let addr = get_operand(instr, 0)?;
     let val = get_operand(instr, 1)?;
 
+    let offset = ctx.wasm_memory_base;
+
+    // Try immediate store: if value is a constant that fits in i32, use StoreImmInd*.
+    if let Some(val_const) = try_get_constant(val)
+        && i32::try_from(val_const).is_ok()
+    {
+        let imm = val_const as i32;
+        e.load_operand(addr, TEMP1)?;
+        match kind {
+            PvmStoreKind::U8 => e.emit(Instruction::StoreImmIndU8 {
+                base: TEMP1,
+                offset,
+                value: imm,
+            }),
+            PvmStoreKind::U16 => e.emit(Instruction::StoreImmIndU16 {
+                base: TEMP1,
+                offset,
+                value: imm,
+            }),
+            PvmStoreKind::U32 => e.emit(Instruction::StoreImmIndU32 {
+                base: TEMP1,
+                offset,
+                value: imm,
+            }),
+            PvmStoreKind::U64 => e.emit(Instruction::StoreImmIndU64 {
+                base: TEMP1,
+                offset,
+                value: imm,
+            }),
+        }
+        return Ok(());
+    }
+
     e.load_operand(addr, TEMP1)?;
     e.load_operand(val, TEMP2)?;
 
-    let offset = ctx.wasm_memory_base;
     match kind {
         PvmStoreKind::U8 => e.emit(Instruction::StoreIndU8 {
             base: TEMP1,
@@ -694,19 +749,16 @@ pub fn emit_pvm_data_drop<'ctx>(
         .get(&seg_idx)
         .ok_or_else(|| Error::Internal(format!("unknown passive data segment index {seg_idx}")))?;
 
-    // Store 0 to the segment's effective length address.
+    // Store 0 to the segment's effective length address using StoreImmInd
+    // (saves one LoadImm instruction vs LoadImm+StoreInd).
     e.emit(Instruction::LoadImm {
         reg: TEMP1,
         value: length_addr,
     });
-    e.emit(Instruction::LoadImm {
-        reg: TEMP2,
-        value: 0,
-    });
-    e.emit(Instruction::StoreIndU32 {
+    e.emit(Instruction::StoreImmIndU32 {
         base: TEMP1,
-        src: TEMP2,
         offset: 0,
+        value: 0,
     });
 
     Ok(())
