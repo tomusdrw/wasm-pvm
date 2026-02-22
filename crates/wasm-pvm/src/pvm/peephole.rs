@@ -229,18 +229,16 @@ pub fn optimize(
 
         // Pattern 3: Redundant truncation — remove AddImm32(x, x, 0) after a 32-bit producer.
         // PVM 32-bit operations already sign-extend their results, so truncation is a NOP.
+        // The truncation target must match the producer's destination register.
         if i + 1 < len
             && is_32bit_sign_extending_producer(&instructions[i])
             && keep[i]
+            && let Instruction::AddImm32 { dst, src, value: 0 } = &instructions[i + 1]
+            && let Some(prod_dst) = instructions[i].dest_reg()
+            && *dst == prod_dst
+            && *src == prod_dst
         {
-            if let Instruction::AddImm32 { dst, src, value: 0 } = &instructions[i + 1] {
-                // The truncation target must match the producer's destination register.
-                if let Some(prod_dst) = instructions[i].dest_reg() {
-                    if *dst == prod_dst && *src == prod_dst {
-                        keep[i + 1] = false;
-                    }
-                }
-            }
+            keep[i + 1] = false;
         }
     }
 
