@@ -8,6 +8,8 @@
 |------|-------|------|
 | `instruction.rs` | ~640 | Instruction enum, encoding logic |
 | `opcode.rs` | 122 | Opcode constants (~92 opcodes) |
+| `instruction.rs` | ~700 | Instruction enum, encoding logic |
+| `opcode.rs` | ~130 | Opcode constants (~100 opcodes) |
 | `blob.rs` | 143 | Program blob format with jump table |
 | `peephole.rs` | ~290 | Post-codegen peephole optimizer (Fallthroughs, truncation NOPs, dead stores) |
 
@@ -24,6 +26,11 @@ pub enum Instruction {
     CmovIzImm { dst: u8, cond: u8, value: i32 },  // TwoRegOneImm encoding
     StoreImmU32 { address: i32, value: i32 },  // TwoImm encoding
     // ... ~92 variants total
+    AndImm { dst: u8, src: u8, value: i32 },
+    ShloLImm32 { dst: u8, src: u8, value: i32 },
+    NegAddImm32 { dst: u8, src: u8, value: i32 },
+    SetGtUImm { dst: u8, src: u8, value: i32 },
+    // ... ~100 variants total
 }
 ```
 
@@ -33,6 +40,13 @@ pub enum Instruction {
 - `encode_two_reg(opcode, dst, src)` - Moves/conversions
 - `encode_two_imm(opcode, imm1, imm2)` - TwoImm format (StoreImm*)
 - `encode_imm(value)` - Variable-length immediate (0-4 bytes)
+- `encode_three_reg(opcode, dst, src1, src2)` - ALU ops (3 regs)
+- `encode_two_reg(opcode, dst, src)` - Moves/conversions (2 regs)
+- `encode_two_reg_one_imm(opcode, dst, src, value)` - ALU immediate ops (2 regs + imm)
+- `encode_one_reg_one_imm_one_off(opcode, reg, imm, offset)` - Branch-immediate ops
+- `encode_two_reg_one_off(opcode, reg1, reg2, offset)` - Branch-register ops
+- `encode_imm(value)` - Variable-length signed immediate (0-4 bytes)
+- `encode_uimm(value)` - Variable-length unsigned immediate (0-4 bytes)
 - `encode_var_u32(value)` - LEB128-style variable int
 
 ### Terminating Instructions
@@ -61,6 +75,7 @@ pub fn dest_reg(&self) -> Option<u8> {
 | Add new PVM instruction | `opcode.rs` (add enum variant) + `instruction.rs` (encoding) |
 | Change instruction encoding | `instruction.rs:impl Instruction` |
 | Check opcode exists | `opcode.rs` (~92 opcodes defined) |
+| Check opcode exists | `opcode.rs` (~100 opcodes defined) |
 | Build program blob | `blob.rs:ProgramBlob::with_jump_table()` |
 | Variable int encoding | `blob.rs:encode_var_u32()` |
 

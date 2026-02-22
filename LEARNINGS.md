@@ -44,6 +44,16 @@ Accumulated knowledge from development. Update after every task.
 - Used for: `data.drop` (store 0 to segment length addr), `global.set` with constants
 - Savings: 3 instructions (LoadImm + LoadImm + StoreInd) → 1 instruction
 
+## ALU Immediate Opcode Folding
+
+### Immediate folding for binary operations
+- When one operand of a binary ALU op is a constant that fits in i32, use the *Imm variant (e.g., `And` + const → `AndImm`)
+- Saves 1 gas per folded instruction (no separate `LoadImm`/`LoadImm64` needed) + code size reduction
+- Available for: Add, Mul, And, Or, Xor, ShloL, ShloR, SharR (both 32-bit and 64-bit)
+- Sub with const RHS → `AddImm` with negated value; Sub with const LHS → `NegAddImm`
+- ICmp UGT/SGT with const RHS → `SetGtUImm`/`SetGtSImm` (avoids swap trick)
+- LLVM often constant-folds before reaching the PVM backend, so benefits are most visible in complex programs
+
 ---
 
 ## CmovIzImm / CmovNzImm (TwoRegOneImm Encoding)
@@ -96,6 +106,25 @@ Accumulated knowledge from development. Update after every task.
 - Since `LoadImmJump` is a terminating instruction, the peephole optimizer can remove a preceding `Fallthrough`
 - This saves an additional 1 byte per call site where a basic block boundary precedes the call
 - Total savings per call: -8 bytes (instruction) + -1 byte (Fallthrough removal) + -1 gas
+
+---
+
+## Call Return Address Encoding
+
+### LoadImm vs LoadImm64 for Call Return Addresses
+
+- Call return addresses are jump table addresses: `(jump_table_index + 1) * 2`
+- These are always small positive integers (2, 4, 6, ...) that fit in `LoadImm` (3-6 bytes)
+- Previously used `LoadImm64` (10 bytes) with placeholder value 0, patched during fixup resolution
+- **Problem with late patching**: `LoadImm` has variable encoding size (2 bytes for value 0, 3 bytes for value 2), so changing the value after branch fixups are resolved corrupts relative offsets
+- **Solution**: Pre-assign jump table indices at emission time by threading a `next_call_return_idx` counter through the compilation pipeline. This way `LoadImm` values are known during emission, ensuring correct `byte_offset` tracking for branch fixup resolution
+- **Impact**: For direct calls, `LoadImmJump` already embeds the return address compactly. For indirect calls (`call_indirect`), `LoadImm` saves 7 bytes per call site vs `LoadImm64`.
+
+### Why LoadImm64 was originally needed
+
+- `LoadImm64` has fixed 10-byte encoding regardless of value, so placeholder patching was safe
+- `LoadImm` with value 0 encodes to 2 bytes, but after patching to value 2 becomes 3 bytes
+- This size change would break branch fixups already resolved with the old instruction sizes
 
 ---
 
