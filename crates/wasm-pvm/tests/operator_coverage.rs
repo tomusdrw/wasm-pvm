@@ -1637,7 +1637,7 @@ fn test_nested_if_else() {
     "#;
 
     let program = compile_wat(wat).expect("compile");
-    let instructions = extract_instructions(&program);
+    let _instructions = extract_instructions(&program);
 
     // We only assert control-flow structure here; constant materialization may be
     // optimized via immediates or data loads.

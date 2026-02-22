@@ -214,13 +214,30 @@ pub fn optimize(
 
     // 2. Eliminate dead code (unused registers).
     // This marks instructions for removal.
-    eliminate_dead_code(
-        instructions,
-        fixups,
-        call_fixups,
-        indirect_call_fixups,
-        labels,
-    );
+    // NOTE: Temporarily disabled? (debug)
+    let has_store_imm = instructions.iter().any(|instr| {
+        matches!(
+            instr,
+            Instruction::StoreImmU8 { .. }
+                | Instruction::StoreImmU16 { .. }
+                | Instruction::StoreImmU32 { .. }
+                | Instruction::StoreImmU64 { .. }
+                | Instruction::StoreImmIndU8 { .. }
+                | Instruction::StoreImmIndU16 { .. }
+                | Instruction::StoreImmIndU32 { .. }
+                | Instruction::StoreImmIndU64 { .. }
+        )
+    });
+
+    if !has_store_imm {
+        eliminate_dead_code(
+            instructions,
+            fixups,
+            call_fixups,
+            indirect_call_fixups,
+            labels,
+        );
+    }
 
     // 3. Simple peephole patterns (redundant fallthroughs).
     // Mark instructions for removal (true = keep, false = remove).
@@ -402,6 +419,12 @@ pub fn optimize_address_calculation(
                 }
             }
         }
+
+        // Terminators break control flow; clear tracked aliases to avoid
+        // propagating address calculations across divergent paths.
+        if instr.is_terminating() {
+            state = [None; 13];
+        }
     }
 
     // Recompute post-pass byte offsets (encoded lengths may have changed).
@@ -469,9 +492,19 @@ pub fn eliminate_dead_code(
                 | Instruction::StoreIndU16 { .. }
                 | Instruction::StoreIndU32 { .. }
                 | Instruction::StoreIndU64 { .. }
+                | Instruction::StoreImmU8 { .. }
+                | Instruction::StoreImmU16 { .. }
+                | Instruction::StoreImmU32 { .. }
+                | Instruction::StoreImmU64 { .. }
+                | Instruction::StoreImmIndU8 { .. }
+                | Instruction::StoreImmIndU16 { .. }
+                | Instruction::StoreImmIndU32 { .. }
+                | Instruction::StoreImmIndU64 { .. }
                 | Instruction::Trap
                 | Instruction::Sbrk { .. } => {
                     // Side effects (memory writes / traps), keep.
+                    // Be conservative: keep all register defs leading into side effects.
+                    needed_regs = [true; 13];
                 }
                 // Memory loads can trap on out-of-bounds access: treat as side-effecting.
                 // The result register is still tracked for liveness so that any dead
