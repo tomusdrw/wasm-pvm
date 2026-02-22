@@ -107,7 +107,88 @@ pub enum Instruction {
         src: u8,
         value: i32,
     },
+    AndImm {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    XorImm {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    OrImm {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    MulImm32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    MulImm64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    ShloLImm32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    ShloRImm32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    SharRImm32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    ShloLImm64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    ShloRImm64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    SharRImm64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    NegAddImm32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    NegAddImm64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    SetGtUImm {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    SetGtSImm {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
     Jump {
+        offset: i32,
+    },
+    /// Combined load-immediate + jump: `reg = sign_extend(value); goto(PC + offset)`
+    LoadImmJump {
+        reg: u8,
+        value: i32,
         offset: i32,
     },
     JumpInd {
@@ -350,6 +431,26 @@ pub enum Instruction {
         cond: u8,
         value: i32,
     },
+    /// Store immediate to absolute address: mem[address] = value (u8)
+    StoreImmU8 {
+        address: i32,
+        value: i32,
+    },
+    /// Store immediate to absolute address: mem[address] = value (u16)
+    StoreImmU16 {
+        address: i32,
+        value: i32,
+    },
+    /// Store immediate to absolute address: mem[address] = value (u32)
+    StoreImmU32 {
+        address: i32,
+        value: i32,
+    },
+    /// Store immediate to absolute address: mem[address] = `sign_extend(value)` (u64)
+    StoreImmU64 {
+        address: i32,
+        value: i32,
+    },
     Ecalli {
         index: u32,
     },
@@ -428,20 +529,64 @@ impl Instruction {
                 bytes.extend_from_slice(&offset.to_le_bytes());
                 bytes
             }
+            Self::LoadImmJump { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::LoadImmJump, *reg, *value, *offset)
+            }
             Self::JumpInd { reg, offset } => {
                 let mut bytes = vec![Opcode::JumpInd as u8, *reg & 0x0F];
                 bytes.extend_from_slice(&encode_imm(*offset));
                 bytes
             }
             Self::AddImm32 { dst, src, value } => {
-                let mut bytes = vec![Opcode::AddImm32 as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
-                bytes.extend_from_slice(&encode_imm(*value));
-                bytes
+                encode_two_reg_one_imm(Opcode::AddImm32, *dst, *src, *value)
             }
             Self::AddImm64 { dst, src, value } => {
-                let mut bytes = vec![Opcode::AddImm64 as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
-                bytes.extend_from_slice(&encode_imm(*value));
-                bytes
+                encode_two_reg_one_imm(Opcode::AddImm64, *dst, *src, *value)
+            }
+            Self::AndImm { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::AndImm, *dst, *src, *value)
+            }
+            Self::XorImm { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::XorImm, *dst, *src, *value)
+            }
+            Self::OrImm { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::OrImm, *dst, *src, *value)
+            }
+            Self::MulImm32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::MulImm32, *dst, *src, *value)
+            }
+            Self::MulImm64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::MulImm64, *dst, *src, *value)
+            }
+            Self::ShloLImm32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::ShloLImm32, *dst, *src, *value)
+            }
+            Self::ShloRImm32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::ShloRImm32, *dst, *src, *value)
+            }
+            Self::SharRImm32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::SharRImm32, *dst, *src, *value)
+            }
+            Self::ShloLImm64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::ShloLImm64, *dst, *src, *value)
+            }
+            Self::ShloRImm64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::ShloRImm64, *dst, *src, *value)
+            }
+            Self::SharRImm64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::SharRImm64, *dst, *src, *value)
+            }
+            Self::NegAddImm32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::NegAddImm32, *dst, *src, *value)
+            }
+            Self::NegAddImm64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::NegAddImm64, *dst, *src, *value)
+            }
+            Self::SetGtUImm { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::SetGtUImm, *dst, *src, *value)
+            }
+            Self::SetGtSImm { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::SetGtSImm, *dst, *src, *value)
             }
             Self::LoadIndU32 { dst, base, offset } => {
                 let mut bytes = vec![
@@ -525,14 +670,10 @@ impl Instruction {
                 encode_two_reg_one_off(Opcode::BranchGeS, *reg1, *reg2, *offset)
             }
             Self::SetLtUImm { dst, src, value } => {
-                let mut bytes = vec![Opcode::SetLtUImm as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
-                bytes.extend_from_slice(&encode_imm(*value));
-                bytes
+                encode_two_reg_one_imm(Opcode::SetLtUImm, *dst, *src, *value)
             }
             Self::SetLtSImm { dst, src, value } => {
-                let mut bytes = vec![Opcode::SetLtSImm as u8, (*src & 0x0F) << 4 | (*dst & 0x0F)];
-                bytes.extend_from_slice(&encode_imm(*value));
-                bytes
+                encode_two_reg_one_imm(Opcode::SetLtSImm, *dst, *src, *value)
             }
             Self::ShloL32 { dst, src1, src2 } => {
                 encode_three_reg(Opcode::ShloL32, *dst, *src1, *src2)
@@ -613,6 +754,18 @@ impl Instruction {
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
             }
+            Self::StoreImmU8 { address, value } => {
+                encode_two_imm(Opcode::StoreImmU8, *address, *value)
+            }
+            Self::StoreImmU16 { address, value } => {
+                encode_two_imm(Opcode::StoreImmU16, *address, *value)
+            }
+            Self::StoreImmU32 { address, value } => {
+                encode_two_imm(Opcode::StoreImmU32, *address, *value)
+            }
+            Self::StoreImmU64 { address, value } => {
+                encode_two_imm(Opcode::StoreImmU64, *address, *value)
+            }
             Self::Ecalli { index } => {
                 let mut bytes = vec![Opcode::Ecalli as u8];
                 bytes.extend_from_slice(&encode_uimm(*index));
@@ -674,8 +827,28 @@ impl Instruction {
             | Self::AddImm64 { dst, .. }
             | Self::CmovIzImm { dst, .. }
             | Self::CmovNzImm { dst, .. }
+            | Self::AndImm { dst, .. }
+            | Self::XorImm { dst, .. }
+            | Self::OrImm { dst, .. }
+            | Self::MulImm32 { dst, .. }
+            | Self::MulImm64 { dst, .. }
+            | Self::ShloLImm32 { dst, .. }
+            | Self::ShloRImm32 { dst, .. }
+            | Self::SharRImm32 { dst, .. }
+            | Self::ShloLImm64 { dst, .. }
+            | Self::ShloRImm64 { dst, .. }
+            | Self::SharRImm64 { dst, .. }
+            | Self::NegAddImm32 { dst, .. }
+            | Self::NegAddImm64 { dst, .. }
+            | Self::SetGtUImm { dst, .. }
+            | Self::SetGtSImm { dst, .. }
             | Self::MoveReg { dst, .. } => Some(*dst),
-            Self::LoadImm { reg, .. } | Self::LoadImm64 { reg, .. } => Some(*reg),
+            // LoadImmJump writes to a register AND jumps, but since it's
+            // terminating, the dest_reg is used only by peephole for cache
+            // invalidation. We report the register it writes to.
+            Self::LoadImm { reg, .. }
+            | Self::LoadImm64 { reg, .. }
+            | Self::LoadImmJump { reg, .. } => Some(*reg),
             // No destination register:
             Self::Trap
             | Self::Fallthrough
@@ -701,6 +874,10 @@ impl Instruction {
             | Self::StoreIndU16 { .. }
             | Self::StoreIndU32 { .. }
             | Self::StoreIndU64 { .. }
+            | Self::StoreImmU8 { .. }
+            | Self::StoreImmU16 { .. }
+            | Self::StoreImmU32 { .. }
+            | Self::StoreImmU64 { .. }
             | Self::Ecalli { .. }
             | Self::Unknown { .. } => None,
         }
@@ -713,6 +890,7 @@ impl Instruction {
             Self::Trap
                 | Self::Fallthrough
                 | Self::Jump { .. }
+                | Self::LoadImmJump { .. }
                 | Self::JumpInd { .. }
                 | Self::BranchNeImm { .. }
                 | Self::BranchEqImm { .. }
@@ -741,6 +919,12 @@ fn encode_three_reg(opcode: Opcode, dst: u8, src1: u8, src2: u8) -> Vec<u8> {
     vec![opcode as u8, (src2 & 0x0F) << 4 | (src1 & 0x0F), dst & 0x0F]
 }
 
+fn encode_two_reg_one_imm(opcode: Opcode, dst: u8, src: u8, value: i32) -> Vec<u8> {
+    let mut bytes = vec![opcode as u8, (src & 0x0F) << 4 | (dst & 0x0F)];
+    bytes.extend_from_slice(&encode_imm(value));
+    bytes
+}
+
 fn encode_two_reg(opcode: Opcode, dst: u8, src: u8) -> Vec<u8> {
     vec![opcode as u8, (src & 0x0F) << 4 | (dst & 0x0F)]
 }
@@ -757,6 +941,16 @@ fn encode_one_reg_one_imm_one_off(opcode: Opcode, reg: u8, imm: i32, offset: i32
 fn encode_two_reg_one_off(opcode: Opcode, reg1: u8, reg2: u8, offset: i32) -> Vec<u8> {
     let mut bytes = vec![opcode as u8, (reg1 & 0x0F) << 4 | (reg2 & 0x0F)];
     bytes.extend_from_slice(&offset.to_le_bytes());
+    bytes
+}
+
+fn encode_two_imm(opcode: Opcode, imm1: i32, imm2: i32) -> Vec<u8> {
+    let imm1_enc = encode_imm(imm1);
+    let imm1_len = imm1_enc.len() as u8;
+    let imm2_enc = encode_imm(imm2);
+    let mut bytes = vec![opcode as u8, imm1_len & 0x0F];
+    bytes.extend_from_slice(&imm1_enc);
+    bytes.extend_from_slice(&imm2_enc);
     bytes
 }
 
@@ -925,6 +1119,45 @@ mod tests {
     }
 
     #[test]
+    fn test_two_imm_encoding() {
+        // StoreImmU32 with address=0x30000 and value=42
+        let instr = Instruction::StoreImmU32 {
+            address: 0x30000_i32,
+            value: 42,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::StoreImmU32 as u8);
+        // Low nibble of byte 1 = length of first immediate (address)
+        let addr_len = (encoded[1] & 0x0F) as usize;
+        assert_eq!(addr_len, 3); // 0x30000 fits in 3 bytes
+        // Decode address from bytes 2..2+addr_len
+        let mut addr_bytes = [0u8; 4];
+        addr_bytes[..addr_len].copy_from_slice(&encoded[2..2 + addr_len]);
+        let decoded_addr = i32::from_le_bytes(addr_bytes);
+        assert_eq!(decoded_addr, 0x30000);
+        // Decode value from remaining bytes
+        let val_start = 2 + addr_len;
+        let mut val_bytes = [0u8; 4];
+        let val_len = encoded.len() - val_start;
+        val_bytes[..val_len].copy_from_slice(&encoded[val_start..]);
+        let decoded_val = i32::from_le_bytes(val_bytes);
+        assert_eq!(decoded_val, 42);
+    }
+
+    #[test]
+    fn test_two_imm_encoding_zero_value() {
+        // StoreImmU32 with value=0: second immediate has 0 bytes
+        let instr = Instruction::StoreImmU32 {
+            address: 0x30000_i32,
+            value: 0,
+        };
+        let encoded = instr.encode();
+        let addr_len = (encoded[1] & 0x0F) as usize;
+        // Total length = 1(opcode) + 1(nibble byte) + addr_len + 0(value=0)
+        assert_eq!(encoded.len(), 2 + addr_len);
+    }
+
+    #[test]
     fn test_ecalli_encoding_roundtrip() {
         for index in [0u32, 100, 0x1234, 0xFFFF_FFFE] {
             let instr = Instruction::Ecalli { index };
@@ -935,6 +1168,291 @@ mod tests {
             bytes[..imm.len()].copy_from_slice(imm);
             let decoded = u32::from_le_bytes(bytes);
             assert_eq!(decoded, index, "roundtrip failed for index {index}");
+        }
+    }
+
+    #[test]
+    fn test_load_imm_jump_encoding() {
+        // Typical call return address: value=2 (small), offset patched later
+        let instr = Instruction::LoadImmJump {
+            reg: 0,
+            value: 2,
+            offset: 100,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::LoadImmJump as u8);
+        // Second byte: (imm_len << 4) | reg. value=2 fits in 1 byte, so imm_len=1.
+        assert_eq!(encoded[1], 0x10); // (1 << 4) | 0
+        assert_eq!(encoded[2], 2); // imm = 2
+        // Offset is last 4 bytes
+        let offset_bytes = &encoded[3..7];
+        assert_eq!(i32::from_le_bytes(offset_bytes.try_into().unwrap()), 100);
+        // Total: 7 bytes (opcode + reg/len + imm + offset)
+        assert_eq!(encoded.len(), 7);
+    }
+
+    #[test]
+    fn test_load_imm_jump_encoding_zero_value() {
+        // value=0 → 0 imm bytes
+        let instr = Instruction::LoadImmJump {
+            reg: 0,
+            value: 0,
+            offset: -50,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::LoadImmJump as u8);
+        assert_eq!(encoded[1], 0x00); // (0 << 4) | 0
+        // No imm bytes, offset starts at byte 2
+        assert_eq!(encoded.len(), 6); // opcode + reg/len + offset(4)
+        let offset_bytes = &encoded[2..6];
+        assert_eq!(i32::from_le_bytes(offset_bytes.try_into().unwrap()), -50);
+    }
+
+    #[test]
+    fn test_load_imm_jump_is_terminating() {
+        let instr = Instruction::LoadImmJump {
+            reg: 0,
+            value: 2,
+            offset: 0,
+        };
+        assert!(instr.is_terminating());
+    }
+
+    #[test]
+    fn test_load_imm_jump_dest_reg() {
+        let instr = Instruction::LoadImmJump {
+            reg: 5,
+            value: 10,
+            offset: 0,
+        };
+        assert_eq!(instr.dest_reg(), Some(5));
+    }
+
+    #[test]
+    fn test_two_reg_one_imm_encoding_all_opcodes() {
+        // All TwoRegOneImm instructions use the same encoding: [opcode, (src<<4)|dst, imm...]
+        let test_cases: Vec<(Instruction, Opcode)> = vec![
+            (
+                Instruction::AndImm {
+                    dst: 2,
+                    src: 3,
+                    value: 0xFF,
+                },
+                Opcode::AndImm,
+            ),
+            (
+                Instruction::XorImm {
+                    dst: 4,
+                    src: 5,
+                    value: -1,
+                },
+                Opcode::XorImm,
+            ),
+            (
+                Instruction::OrImm {
+                    dst: 6,
+                    src: 7,
+                    value: 42,
+                },
+                Opcode::OrImm,
+            ),
+            (
+                Instruction::MulImm32 {
+                    dst: 0,
+                    src: 1,
+                    value: 10,
+                },
+                Opcode::MulImm32,
+            ),
+            (
+                Instruction::MulImm64 {
+                    dst: 2,
+                    src: 3,
+                    value: 100,
+                },
+                Opcode::MulImm64,
+            ),
+            (
+                Instruction::ShloLImm32 {
+                    dst: 4,
+                    src: 5,
+                    value: 3,
+                },
+                Opcode::ShloLImm32,
+            ),
+            (
+                Instruction::ShloRImm32 {
+                    dst: 6,
+                    src: 7,
+                    value: 1,
+                },
+                Opcode::ShloRImm32,
+            ),
+            (
+                Instruction::SharRImm32 {
+                    dst: 0,
+                    src: 1,
+                    value: 2,
+                },
+                Opcode::SharRImm32,
+            ),
+            (
+                Instruction::ShloLImm64 {
+                    dst: 2,
+                    src: 3,
+                    value: 32,
+                },
+                Opcode::ShloLImm64,
+            ),
+            (
+                Instruction::ShloRImm64 {
+                    dst: 4,
+                    src: 5,
+                    value: 16,
+                },
+                Opcode::ShloRImm64,
+            ),
+            (
+                Instruction::SharRImm64 {
+                    dst: 6,
+                    src: 7,
+                    value: 8,
+                },
+                Opcode::SharRImm64,
+            ),
+            (
+                Instruction::NegAddImm32 {
+                    dst: 0,
+                    src: 1,
+                    value: 0,
+                },
+                Opcode::NegAddImm32,
+            ),
+            (
+                Instruction::NegAddImm64 {
+                    dst: 2,
+                    src: 3,
+                    value: -5,
+                },
+                Opcode::NegAddImm64,
+            ),
+            (
+                Instruction::SetGtUImm {
+                    dst: 4,
+                    src: 5,
+                    value: 10,
+                },
+                Opcode::SetGtUImm,
+            ),
+            (
+                Instruction::SetGtSImm {
+                    dst: 6,
+                    src: 7,
+                    value: -10,
+                },
+                Opcode::SetGtSImm,
+            ),
+        ];
+
+        for (instr, expected_opcode) in &test_cases {
+            let encoded = instr.encode();
+            assert_eq!(
+                encoded[0], *expected_opcode as u8,
+                "Wrong opcode for {:?}",
+                instr
+            );
+            // Verify encoding is at least 2 bytes (opcode + reg byte)
+            assert!(encoded.len() >= 2, "Encoding too short for {:?}", instr);
+        }
+    }
+
+    #[test]
+    fn test_two_reg_one_imm_register_encoding() {
+        // Verify dst goes in low nibble, src in high nibble
+        let instr = Instruction::AndImm {
+            dst: 3,
+            src: 9,
+            value: 0,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[1], 0x93); // src=9 in high nibble, dst=3 in low nibble
+    }
+
+    #[test]
+    fn test_two_reg_one_imm_zero_imm() {
+        // Zero immediate should produce minimal encoding (just opcode + reg byte)
+        let instr = Instruction::NegAddImm32 {
+            dst: 0,
+            src: 1,
+            value: 0,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded.len(), 2); // opcode + regs, no imm bytes
+    }
+
+    #[test]
+    fn test_alu_imm_dest_reg() {
+        // All ALU immediate instructions should report their dest_reg
+        let instructions: Vec<Instruction> = vec![
+            Instruction::AndImm {
+                dst: 5,
+                src: 1,
+                value: 0,
+            },
+            Instruction::XorImm {
+                dst: 6,
+                src: 2,
+                value: 0,
+            },
+            Instruction::OrImm {
+                dst: 7,
+                src: 3,
+                value: 0,
+            },
+            Instruction::MulImm32 {
+                dst: 8,
+                src: 4,
+                value: 0,
+            },
+            Instruction::MulImm64 {
+                dst: 9,
+                src: 5,
+                value: 0,
+            },
+            Instruction::ShloLImm32 {
+                dst: 10,
+                src: 6,
+                value: 0,
+            },
+            Instruction::ShloRImm64 {
+                dst: 11,
+                src: 7,
+                value: 0,
+            },
+            Instruction::NegAddImm32 {
+                dst: 12,
+                src: 8,
+                value: 0,
+            },
+            Instruction::SetGtUImm {
+                dst: 0,
+                src: 9,
+                value: 0,
+            },
+            Instruction::SetGtSImm {
+                dst: 1,
+                src: 10,
+                value: 0,
+            },
+        ];
+        let expected_dsts: Vec<u8> = vec![5, 6, 7, 8, 9, 10, 11, 12, 0, 1];
+        for (instr, expected) in instructions.iter().zip(expected_dsts.iter()) {
+            assert_eq!(
+                instr.dest_reg(),
+                Some(*expected),
+                "Wrong dest_reg for {:?}",
+                instr
+            );
         }
     }
 }

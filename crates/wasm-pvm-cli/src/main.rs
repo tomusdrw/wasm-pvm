@@ -65,6 +65,9 @@ enum Commands {
 
         #[arg(long, help = "Disable LLVM function inlining")]
         no_inline: bool,
+
+        #[arg(long, help = "Disable cross-block register cache propagation")]
+        no_cross_block_cache: bool,
     },
 }
 
@@ -89,6 +92,7 @@ fn main() -> Result<()> {
             no_dead_store_elim,
             no_const_prop,
             no_inline,
+            no_cross_block_cache,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -125,6 +129,7 @@ fn main() -> Result<()> {
                     dead_store_elimination: !no_dead_store_elim,
                     constant_propagation: !no_const_prop,
                     inlining: !no_inline,
+                    cross_block_cache: !no_cross_block_cache,
                 },
             };
 

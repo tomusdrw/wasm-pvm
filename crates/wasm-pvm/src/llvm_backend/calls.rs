@@ -72,17 +72,12 @@ pub fn lower_wasm_call<'ctx>(
         }
     }
 
-    // Emit call fixup: LoadImm for return address + Jump to callee.
-    // The return address is a jump table address ((index+1)*2), pre-computed
-    // so the encoding size is known at emission time (avoids fixup size instability).
-    let return_addr_instr = e.instructions.len();
+    // Emit call fixup: LoadImmJump combines return address load + jump to callee.
     let call_return_addr = e.alloc_call_return_addr();
-    e.emit(Instruction::LoadImm {
+    let jump_instr = e.instructions.len();
+    e.emit(Instruction::LoadImmJump {
         reg: abi::RETURN_ADDR_REG,
         value: call_return_addr,
-    });
-    let jump_instr = e.instructions.len();
-    e.emit(Instruction::Jump {
         offset: 0, // patched during fixup resolution
     });
 
@@ -91,7 +86,7 @@ pub fn lower_wasm_call<'ctx>(
     e.clear_reg_cache();
 
     e.call_fixups.push(LlvmCallFixup {
-        return_addr_instr,
+        return_addr_instr: jump_instr, // same instruction for LoadImmJump
         jump_instr,
         target_func: local_func_idx,
     });

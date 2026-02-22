@@ -47,6 +47,8 @@ pub struct OptimizationFlags {
     pub constant_propagation: bool,
     /// Inline small functions at the LLVM IR level to eliminate call overhead.
     pub inlining: bool,
+    /// Propagate register cache across single-predecessor block boundaries.
+    pub cross_block_cache: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -60,6 +62,7 @@ impl Default for OptimizationFlags {
             dead_store_elimination: true,
             constant_propagation: true,
             inlining: true,
+            cross_block_cache: true,
         }
     }
 }
@@ -289,24 +292,22 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
                 offset: 8,
             });
 
-            // Call start function.
-            // Pre-assign jump table index so LoadImm has the correct value
-            // at emission time (avoids fixup size instability).
+            // Call start function using LoadImmJump (combined load + jump).
             let call_return_addr = ((next_call_return_idx + 1) * 2) as i32;
             next_call_return_idx += 1;
             let current_instr_idx = all_instructions.len();
-            all_instructions.push(Instruction::LoadImm {
+            all_instructions.push(Instruction::LoadImmJump {
                 reg: RETURN_ADDR_REG,
                 value: call_return_addr,
+                offset: 0, // patched during fixup resolution
             });
-            all_instructions.push(Instruction::Jump { offset: 0 });
 
             all_call_fixups.push((
                 current_instr_idx,
                 CallFixup {
                     target_func: start_local_idx as u32,
                     return_addr_instr: 0,
-                    jump_instr: 1,
+                    jump_instr: 0, // same instruction for LoadImmJump
                 },
             ));
 
@@ -515,12 +516,16 @@ fn return_addr_jump_table_idx(
     instructions: &[Instruction],
     return_addr_instr: usize,
 ) -> Result<usize> {
-    match instructions.get(return_addr_instr) {
-        Some(Instruction::LoadImm { value, .. }) if *value > 0 && *value % 2 == 0 => {
-            Ok((*value as usize / 2) - 1)
-        }
-        other => Err(Error::Internal(format!(
-            "expected LoadImm((idx+1)*2) at return_addr_instr {return_addr_instr}, got {other:?}"
+    let value = match instructions.get(return_addr_instr) {
+        Some(Instruction::LoadImm { value, .. }) => Some(*value),
+        Some(Instruction::LoadImmJump { value, .. }) => Some(*value),
+        _ => None,
+    };
+    match value {
+        Some(v) if v > 0 && v % 2 == 0 => Ok((v as usize / 2) - 1),
+        _ => Err(Error::Internal(format!(
+            "expected LoadImm/LoadImmJump((idx+1)*2) at return_addr_instr {return_addr_instr}, got {:?}",
+            instructions.get(return_addr_instr)
         ))),
     }
 }
@@ -559,6 +564,7 @@ fn resolve_call_fixups(
 
         let jump_idx = instr_base + fixup.jump_instr;
 
+        // Return address = byte offset after the LoadImmJump instruction.
         let return_addr_offset: usize = instructions[..=jump_idx]
             .iter()
             .map(|i| i.encode().len())
@@ -567,13 +573,14 @@ fn resolve_call_fixups(
         let slot = return_addr_jump_table_idx(instructions, instr_base + fixup.return_addr_instr)?;
         jump_table[slot] = return_addr_offset as u32;
 
+        // Patch the offset field of LoadImmJump.
         let jump_start_offset: usize = instructions[..jump_idx]
             .iter()
             .map(|i| i.encode().len())
             .sum();
         let relative_offset = (*target_offset as i32) - (jump_start_offset as i32);
 
-        if let Instruction::Jump { offset } = &mut instructions[jump_idx] {
+        if let Instruction::LoadImmJump { offset, .. } = &mut instructions[jump_idx] {
             *offset = relative_offset;
         }
     }

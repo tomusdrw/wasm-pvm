@@ -167,6 +167,31 @@ pub fn eliminate_dead_stores(
     );
 }
 
+/// Returns true if the instruction is a 32-bit producer that sign-extends its result.
+/// PVM 32-bit operations write `u32SignExtend(result)` to the destination register,
+/// so a subsequent `AddImm32(x, x, 0)` truncation is redundant.
+fn is_32bit_sign_extending_producer(instr: &Instruction) -> bool {
+    matches!(
+        instr,
+        Instruction::Add32 { .. }
+            | Instruction::Sub32 { .. }
+            | Instruction::Mul32 { .. }
+            | Instruction::DivU32 { .. }
+            | Instruction::DivS32 { .. }
+            | Instruction::RemU32 { .. }
+            | Instruction::RemS32 { .. }
+            | Instruction::ShloL32 { .. }
+            | Instruction::ShloR32 { .. }
+            | Instruction::SharR32 { .. }
+            | Instruction::AddImm32 { .. }
+            | Instruction::CountSetBits32 { .. }
+            | Instruction::LeadingZeroBits32 { .. }
+            | Instruction::TrailingZeroBits32 { .. }
+            | Instruction::SignExtend8 { .. }
+            | Instruction::SignExtend16 { .. }
+    )
+}
+
 /// Run peephole optimizations on a function's instruction stream.
 ///
 /// Must be called **before** `resolve_fixups()` since it removes instructions
@@ -190,19 +215,32 @@ pub fn optimize(
         if !keep[i] {
             continue;
         }
-        if !matches!(instructions[i], Instruction::Fallthrough) {
-            continue;
-        }
 
         // Pattern 1: Consecutive Fallthroughs — remove all but the last.
-        // Pattern 2: Fallthrough followed by Jump or Trap — remove the Fallthrough.
-        if i + 1 < len {
+        // Pattern 2: Fallthrough followed by a terminating jump or Trap — remove the Fallthrough.
+        if matches!(instructions[i], Instruction::Fallthrough) && i + 1 < len {
             match &instructions[i + 1] {
-                Instruction::Fallthrough | Instruction::Jump { .. } | Instruction::Trap => {
+                Instruction::Fallthrough
+                | Instruction::Jump { .. }
+                | Instruction::LoadImmJump { .. }
+                | Instruction::Trap => {
                     keep[i] = false;
                 }
                 _ => {}
             }
+        }
+
+        // Pattern 3: Redundant truncation — remove AddImm32(x, x, 0) after a 32-bit producer.
+        // PVM 32-bit operations already sign-extend their results, so truncation is a NOP.
+        // The truncation target must match the producer's destination register.
+        if i + 1 < len
+            && is_32bit_sign_extending_producer(&instructions[i])
+            && let Instruction::AddImm32 { dst, src, value: 0 } = &instructions[i + 1]
+            && let Some(prod_dst) = instructions[i].dest_reg()
+            && *dst == prod_dst
+            && *src == prod_dst
+        {
+            keep[i + 1] = false;
         }
     }
 
@@ -273,6 +311,43 @@ mod tests {
         assert!(matches!(instrs[0], Instruction::LoadImm { .. }));
         assert!(matches!(instrs[1], Instruction::Jump { .. }));
         assert_eq!(fixups[0].0, 1); // remapped from 2 to 1
+    }
+
+    #[test]
+    fn remove_fallthrough_before_load_imm_jump() {
+        let mut instrs = vec![
+            Instruction::Fallthrough,
+            Instruction::LoadImmJump {
+                reg: 0,
+                value: 2,
+                offset: 0,
+            },
+            Instruction::Fallthrough,
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![LlvmCallFixup {
+            return_addr_instr: 1,
+            jump_instr: 1,
+            target_func: 0,
+        }];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        // First Fallthrough removed (before LoadImmJump), second kept
+        assert_eq!(instrs.len(), 2);
+        assert!(matches!(instrs[0], Instruction::LoadImmJump { .. }));
+        assert!(matches!(instrs[1], Instruction::Fallthrough));
+        // Call fixup remapped from index 1 to 0
+        assert_eq!(call_fixups[0].return_addr_instr, 0);
+        assert_eq!(call_fixups[0].jump_instr, 0);
     }
 
     #[test]
@@ -540,6 +615,267 @@ mod tests {
         );
 
         assert_eq!(instrs.len(), original_len);
+    }
+
+    // ── Truncation NOP removal tests ──
+
+    #[test]
+    fn removes_redundant_trunc_after_add32() {
+        let mut instrs = vec![
+            Instruction::Add32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::AddImm32 {
+                dst: 5,
+                src: 5,
+                value: 0,
+            },
+            Instruction::LoadImm { reg: 0, value: 99 },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 2);
+        assert!(matches!(instrs[0], Instruction::Add32 { dst: 5, .. }));
+        assert!(matches!(instrs[1], Instruction::LoadImm { reg: 0, .. }));
+    }
+
+    #[test]
+    fn removes_redundant_trunc_after_mul32() {
+        let mut instrs = vec![
+            Instruction::Mul32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::AddImm32 {
+                dst: 5,
+                src: 5,
+                value: 0,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 1);
+        assert!(matches!(instrs[0], Instruction::Mul32 { dst: 5, .. }));
+    }
+
+    #[test]
+    fn keeps_trunc_when_registers_differ() {
+        // AddImm32 dst != producer dst → not redundant.
+        let mut instrs = vec![
+            Instruction::Add32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::AddImm32 {
+                dst: 6,
+                src: 6,
+                value: 0,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 2);
+    }
+
+    #[test]
+    fn keeps_trunc_with_nonzero_value() {
+        // AddImm32(x, x, 1) is NOT a truncation NOP.
+        let mut instrs = vec![
+            Instruction::Add32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::AddImm32 {
+                dst: 5,
+                src: 5,
+                value: 1,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 2);
+    }
+
+    #[test]
+    fn keeps_trunc_after_64bit_producer() {
+        // Add64 is NOT a 32-bit producer → AddImm32 truncation is meaningful.
+        let mut instrs = vec![
+            Instruction::Add64 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::AddImm32 {
+                dst: 5,
+                src: 5,
+                value: 0,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 2);
+    }
+
+    #[test]
+    fn removes_trunc_after_shlol32() {
+        let mut instrs = vec![
+            Instruction::ShloL32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::AddImm32 {
+                dst: 5,
+                src: 5,
+                value: 0,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 1);
+    }
+
+    #[test]
+    fn keeps_trunc_across_intervening_store() {
+        // StoreIndU64 between producer and truncation → pattern does NOT match.
+        // This is a known limitation: we only match directly adjacent pairs.
+        let mut instrs = vec![
+            Instruction::Add32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::StoreIndU64 {
+                base: 1,
+                src: 5,
+                offset: 8,
+            },
+            Instruction::AddImm32 {
+                dst: 5,
+                src: 5,
+                value: 0,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        // All 3 instructions kept — the pattern requires direct adjacency.
+        assert_eq!(instrs.len(), 3);
+    }
+
+    #[test]
+    fn trunc_removal_remaps_fixups() {
+        // Fixup at index 3 should be remapped to 2 after truncation NOP at index 1 is removed.
+        let mut instrs = vec![
+            Instruction::Add32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::AddImm32 {
+                dst: 5,
+                src: 5,
+                value: 0,
+            },
+            Instruction::LoadImm { reg: 0, value: 0 },
+            Instruction::Jump { offset: 0 },
+        ];
+        let mut fixups = vec![(3, 0)];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 3);
+        assert_eq!(fixups[0].0, 2); // remapped from 3 to 2
     }
 
     #[test]

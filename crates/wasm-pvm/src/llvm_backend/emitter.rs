@@ -14,7 +14,7 @@
     clippy::cast_sign_loss
 )]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
@@ -58,7 +58,7 @@ pub struct LlvmFunctionTranslation {
     pub instructions: Vec<Instruction>,
     pub call_fixups: Vec<LlvmCallFixup>,
     pub indirect_call_fixups: Vec<LlvmIndirectCallFixup>,
-    /// Number of call return entries allocated by this function (for jump table indexing).
+    /// Number of call return addresses allocated by this function (for jump table indexing).
     pub num_call_returns: usize,
 }
 
@@ -103,6 +103,9 @@ pub struct EmitterConfig {
 
     /// Whether callee-save shrink wrapping is enabled.
     pub shrink_wrap_enabled: bool,
+
+    /// Whether cross-block register cache propagation is enabled.
+    pub cross_block_cache_enabled: bool,
 }
 
 /// PVM code emitter for a single function.
@@ -154,6 +157,10 @@ pub struct PvmEmitter<'ctx> {
     /// Base index for call return addresses (set from the global counter).
     call_return_base_idx: usize,
 
+    /// For each block with exactly one predecessor, maps block → its single predecessor.
+    /// Used for cross-block register cache propagation.
+    pub(crate) block_single_pred: HashMap<BasicBlock<'ctx>, BasicBlock<'ctx>>,
+
     /// Which callee-saved registers (r9-r12) are actually used by this function.
     /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
     pub(crate) used_callee_regs: [bool; 4],
@@ -161,6 +168,25 @@ pub struct PvmEmitter<'ctx> {
     /// Frame offset for each callee-saved register (r9-r12), if saved.
     /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
     pub(crate) callee_save_offsets: [Option<i32>; 4],
+}
+
+/// Snapshot of the register cache state for cross-block propagation.
+#[derive(Clone)]
+pub struct CacheSnapshot {
+    pub slot_cache: HashMap<i32, u8>,
+    pub reg_to_slot: [Option<i32>; 13],
+    pub reg_to_const: [Option<u64>; 13],
+}
+
+impl CacheSnapshot {
+    /// Invalidate a register's cache entries in this snapshot.
+    /// Used to remove entries for registers that a terminator may clobber.
+    pub fn invalidate_reg(&mut self, reg: u8) {
+        if let Some(slot) = self.reg_to_slot[reg as usize].take() {
+            self.slot_cache.remove(&slot);
+        }
+        self.reg_to_const[reg as usize] = None;
+    }
 }
 
 /// Deferred `ICmp` info for branch fusion.
@@ -205,11 +231,28 @@ impl<'ctx> PvmEmitter<'ctx> {
             reg_to_slot: [None; 13],
             reg_to_const: [None; 13],
             pending_fused_icmp: None,
+            block_single_pred: HashMap::new(),
             next_call_return_idx: call_return_base,
             call_return_base_idx: call_return_base,
             used_callee_regs: [true; 4],
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
         }
+    }
+
+    /// Allocate a call return address (jump table address) for a direct call site.
+    /// Returns the pre-computed jump table address `(index + 1) * 2`.
+    pub fn alloc_call_return_addr(&mut self) -> i32 {
+        let idx = self.next_call_return_idx;
+        self.next_call_return_idx += 1;
+        (idx + 1)
+            .checked_mul(2)
+            .and_then(|v| i32::try_from(v).ok())
+            .expect("alloc_call_return_addr: jump table index overflow (exceeds i32 range)")
+    }
+
+    /// Returns how many call return addresses this function allocated.
+    pub fn num_call_returns(&self) -> usize {
+        self.next_call_return_idx - self.call_return_base_idx
     }
 
     pub fn alloc_label(&mut self) -> usize {
@@ -361,27 +404,6 @@ impl<'ctx> PvmEmitter<'ctx> {
         });
     }
 
-    // ── Call return address allocation ──
-
-    /// Allocate a jump table index for a call return address and return the
-    /// corresponding jump table address as an i32 suitable for `LoadImm`.
-    ///
-    /// Jump table addresses are `(index + 1) * 2`, which is always a small
-    /// positive value that fits in `LoadImm` (3-6 bytes) instead of `LoadImm64` (10 bytes).
-    pub fn alloc_call_return_addr(&mut self) -> i32 {
-        let idx = self.next_call_return_idx;
-        self.next_call_return_idx += 1;
-        (idx + 1)
-            .checked_mul(2)
-            .and_then(|v| i32::try_from(v).ok())
-            .expect("alloc_call_return_addr: jump table index overflow (exceeds i32 range)")
-    }
-
-    /// Number of call return entries allocated by this function.
-    pub fn num_call_returns(&self) -> usize {
-        self.next_call_return_idx - self.call_return_base_idx
-    }
-
     // ── Slot allocation ──
 
     pub fn alloc_slot_for_key(&mut self, key: ValKey) -> i32 {
@@ -504,6 +526,35 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.reg_to_const = [None; 13];
     }
 
+    /// Take a snapshot of the current register cache state.
+    pub fn snapshot_cache(&self) -> CacheSnapshot {
+        CacheSnapshot {
+            slot_cache: self.slot_cache.clone(),
+            reg_to_slot: self.reg_to_slot,
+            reg_to_const: self.reg_to_const,
+        }
+    }
+
+    /// Restore register cache state from a snapshot.
+    pub fn restore_cache(&mut self, snapshot: &CacheSnapshot) {
+        self.slot_cache.clone_from(&snapshot.slot_cache);
+        self.reg_to_slot = snapshot.reg_to_slot;
+        self.reg_to_const = snapshot.reg_to_const;
+    }
+
+    /// Define a label without clearing the register cache.
+    /// Used for cross-block cache propagation when the cache will be restored from a snapshot.
+    pub fn define_label_preserving_cache(&mut self, label: usize) {
+        if self
+            .instructions
+            .last()
+            .is_some_and(|last| !last.is_terminating())
+        {
+            self.emit(Instruction::Fallthrough);
+        }
+        self.labels[label] = Some(self.current_offset());
+    }
+
     // ── Fixup resolution ──
 
     pub fn resolve_fixups(&mut self) -> Result<()> {
@@ -525,6 +576,7 @@ impl<'ctx> PvmEmitter<'ctx> {
 
             match &mut self.instructions[instr_idx] {
                 Instruction::Jump { offset }
+                | Instruction::LoadImmJump { offset, .. }
                 | Instruction::BranchNeImm { offset, .. }
                 | Instruction::BranchEqImm { offset, .. }
                 | Instruction::BranchGeSImm { offset, .. }
@@ -654,6 +706,12 @@ pub fn has_phi_from<'ctx>(current_bb: BasicBlock<'ctx>, target_bb: BasicBlock<'c
     false
 }
 
+/// Check whether a basic block starts with any phi nodes.
+pub fn block_has_phis(bb: BasicBlock<'_>) -> bool {
+    bb.get_first_instruction()
+        .is_some_and(|instr| instr.get_opcode() == inkwell::values::InstructionOpcode::Phi)
+}
+
 /// Pre-scan function to allocate labels and slots.
 ///
 /// Also determines which callee-saved registers are actually used (for shrink wrapping).
@@ -705,6 +763,35 @@ pub fn pre_scan_function<'ctx>(
     }
     // When shrink wrapping is disabled or is_main, keep defaults (all regs, FRAME_HEADER_SIZE).
 
+    // Compute single-predecessor map for cross-block register cache.
+    if emitter.config.cross_block_cache_enabled && emitter.config.register_cache_enabled {
+        let blocks = function.get_basic_blocks();
+        let mut pred_count: HashMap<BasicBlock<'ctx>, usize> = HashMap::new();
+        let mut pred_from: HashMap<BasicBlock<'ctx>, BasicBlock<'ctx>> = HashMap::new();
+
+        for bb in &blocks {
+            if let Some(term) = bb.get_terminator() {
+                let successors = collect_terminator_successors(term);
+                // Deduplicate successors per predecessor (e.g. switch cases targeting the same block)
+                // so that multiple edges from the same bb don't inflate the predecessor count.
+                let unique_succs: HashSet<_> = successors.into_iter().collect();
+                for succ in unique_succs {
+                    let count = pred_count.entry(succ).or_insert(0);
+                    *count += 1;
+                    pred_from.insert(succ, *bb);
+                }
+            }
+        }
+
+        for (bb, count) in &pred_count {
+            if *count == 1
+                && let Some(pred) = pred_from.get(bb)
+            {
+                emitter.block_single_pred.insert(*bb, *pred);
+            }
+        }
+    }
+
     // Allocate slots for function parameters.
     for param in function.get_params() {
         let key = val_key_basic(param);
@@ -726,6 +813,63 @@ pub fn pre_scan_function<'ctx>(
             }
         }
     }
+}
+
+/// Collect successor basic blocks from a terminator instruction.
+fn collect_terminator_successors(term: InstructionValue<'_>) -> Vec<BasicBlock<'_>> {
+    use inkwell::values::InstructionOpcode;
+    let mut successors = Vec::new();
+    match term.get_opcode() {
+        InstructionOpcode::Br => {
+            let num_ops = term.get_num_operands();
+            if num_ops == 1 {
+                // Unconditional: operand 0 is dest_bb
+                if let Some(bb) = term
+                    .get_operand(0)
+                    .and_then(inkwell::values::Operand::block)
+                {
+                    successors.push(bb);
+                }
+            } else {
+                // Conditional: operand 1 = false_bb, operand 2 = true_bb
+                if let Some(bb) = term
+                    .get_operand(1)
+                    .and_then(inkwell::values::Operand::block)
+                {
+                    successors.push(bb);
+                }
+                if let Some(bb) = term
+                    .get_operand(2)
+                    .and_then(inkwell::values::Operand::block)
+                {
+                    successors.push(bb);
+                }
+            }
+        }
+        InstructionOpcode::Switch => {
+            // Operand 1 = default_bb, then pairs of (case_val, case_bb)
+            if let Some(bb) = term
+                .get_operand(1)
+                .and_then(inkwell::values::Operand::block)
+            {
+                successors.push(bb);
+            }
+            let num_ops = term.get_num_operands();
+            let mut i = 3; // case_bb starts at operand 3
+            while i < num_ops {
+                if let Some(bb) = term
+                    .get_operand(i)
+                    .and_then(inkwell::values::Operand::block)
+                {
+                    successors.push(bb);
+                }
+                i += 2;
+            }
+        }
+        // Return, Unreachable — no successors
+        _ => {}
+    }
+    successors
 }
 
 fn instruction_produces_value(instr: InstructionValue<'_>) -> bool {

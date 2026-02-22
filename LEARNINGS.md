@@ -35,6 +35,27 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## StoreImm (TwoImm Encoding)
+
+- Opcodes 30-33: StoreImmU8/U16/U32/U64
+- TwoImm encoding: `[opcode, addr_len & 0x0F, address_bytes..., value_bytes...]`
+- Both address and value are variable-length signed immediates (0-4 bytes each)
+- Semantics: `mem[address] = value` (no registers involved)
+- Used for: `data.drop` (store 0 to segment length addr), `global.set` with constants
+- Savings: 3 instructions (LoadImm + LoadImm + StoreInd) → 1 instruction
+
+## ALU Immediate Opcode Folding
+
+### Immediate folding for binary operations
+- When one operand of a binary ALU op is a constant that fits in i32, use the *Imm variant (e.g., `And` + const → `AndImm`)
+- Saves 1 gas per folded instruction (no separate `LoadImm`/`LoadImm64` needed) + code size reduction
+- Available for: Add, Mul, And, Or, Xor, ShloL, ShloR, SharR (both 32-bit and 64-bit)
+- Sub with const RHS → `AddImm` with negated value; Sub with const LHS → `NegAddImm`
+- ICmp UGT/SGT with const RHS → `SetGtUImm`/`SetGtSImm` (avoids swap trick)
+- LLVM often constant-folds before reaching the PVM backend, so benefits are most visible in complex programs
+
+---
+
 ## CmovIzImm / CmovNzImm (TwoRegOneImm Encoding)
 
 - Opcodes 147-148: Conditional move with immediate value
@@ -64,6 +85,31 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## LoadImmJump for Direct Calls
+
+### Combined Instruction Replaces LoadImm64 + Jump
+
+- Direct function calls previously used two instructions: `LoadImm64 { reg: r0, value }` (10 bytes) + `Jump { offset }` (5 bytes) = 15 bytes, 2 gas
+- `LoadImmJump { reg: r0, value, offset }` (opcode 80) combines both into a single instruction: 6-10 bytes, 1 gas
+- Uses `encode_one_reg_one_imm_one_off` encoding: `opcode(1) + (imm_len|reg)(1) + imm(0-4) + offset(4)`
+- For typical call return addresses (small positive integers like 2, 4, 6), the imm field is 1 byte, so total is 7 bytes
+
+### Pre-Assignment of Jump Table Addresses
+
+- Same challenge as `LoadImm` for return addresses: `LoadImmJump` has variable-size encoding, so the value must be known at emission time
+- Solution: Thread a `next_call_return_idx` counter through the compilation pipeline, pre-computing `(index + 1) * 2` at emission time
+- During `resolve_call_fixups`, only the `offset` field is patched (always 4 bytes, size-stable)
+- The `value` field is verified via `debug_assert!` to match the actual jump table index
+
+### Bonus: Peephole Fallthrough Elimination
+
+- Since `LoadImmJump` is a terminating instruction, the peephole optimizer can remove a preceding `Fallthrough`
+- This saves an additional 1 byte per call site where a basic block boundary precedes the call
+- Total savings per call: -8 bytes (instruction) + -1 byte (Fallthrough removal) + -1 gas
+
+---
+
+
 ## Call Return Address Encoding
 
 ### LoadImm vs LoadImm64 for Call Return Addresses
@@ -73,10 +119,45 @@ Accumulated knowledge from development. Update after every task.
 - Previously used `LoadImm64` (10 bytes) with placeholder value 0, patched during fixup resolution
 - **Problem with late patching**: `LoadImm` has variable encoding size (2 bytes for value 0, 3 bytes for value 2), so changing the value after branch fixups are resolved corrupts relative offsets
 - **Solution**: Pre-assign jump table indices at emission time by threading a `next_call_return_idx` counter through the compilation pipeline. This way `LoadImm` values are known during emission, ensuring correct `byte_offset` tracking for branch fixup resolution
-- **Impact**: Saves 7 bytes per function call site. For the AS compiler (~870 calls), this saves ~6KB (1.2% code size reduction). No impact on programs where LLVM inlining eliminates all calls.
+- **Impact**: For direct calls, `LoadImmJump` already embeds the return address compactly. For indirect calls (`call_indirect`), `LoadImm` saves 7 bytes per call site vs `LoadImm64`.
 
 ### Why LoadImm64 was originally needed
 
 - `LoadImm64` has fixed 10-byte encoding regardless of value, so placeholder patching was safe
 - `LoadImm` with value 0 encodes to 2 bytes, but after patching to value 2 becomes 3 bytes
 - This size change would break branch fixups already resolved with the old instruction sizes
+
+---
+
+## PVM 32-bit Instruction Semantics
+
+### Sign Extension
+
+- All PVM 32-bit arithmetic/shift instructions produce `u32SignExtend(result)` — the lower 32 bits are computed, then sign-extended to fill the full 64-bit register
+- This means `AddImm32(x, x, 0)` after a 32-bit producer is a NOP (both sign-extend identically)
+- Confirmed in anan-as reference: `add_32`, `sub_32`, `mul_32`, `div_u_32`, `rem_u_32`, `shlo_l_32`, etc. all call `u32SignExtend()`
+
+### Peephole Truncation Pattern
+
+- The pattern `[32-bit-producer] → [AddImm32(x, x, 0)]` is eliminated by peephole when directly adjacent
+- In practice with LLVM passes enabled, `instcombine` already eliminates `trunc(32-bit-op)` at the LLVM IR level, so this peephole pattern fires rarely
+- The peephole is still valuable for `--no-llvm-passes` mode and as defense-in-depth
+- **Known limitation**: the pattern only matches directly adjacent instructions; a `StoreIndU64` between producer and truncation breaks the match
+
+---
+
+## Cross-Block Register Cache
+
+### Approach
+
+- Pre-scan computes `block_single_pred` map by scanning terminator successors
+- For each block with exactly 1 predecessor and no phi nodes, restore the predecessor's cache snapshot instead of clearing
+- Snapshot is taken **before** the terminator instruction to avoid capturing path-specific phi copies
+
+### Key Pitfall: Terminator Phi Copies
+
+- `lower_switch` emits phi copies for the default path inline (not in a trampoline)
+- These phi copies modify the register cache (storing values to phi slots)
+- If the exit cache includes these entries, they are WRONG for case targets (which don't take the default path)
+- Fix: snapshot before the terminator and invalidate TEMP1/TEMP2 (registers the terminator clobbers for operand loads)
+- Same issue can occur with conditional branches when one path has phis and the other doesn't (trampoline case)
