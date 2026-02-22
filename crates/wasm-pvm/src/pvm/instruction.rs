@@ -2045,16 +2045,26 @@ mod tests {
             let encoded = encode_one_reg_one_imm(opcode, reg, value);
 
             // Decode opcode
-            assert_eq!(encoded[0], opcode as u8, "opcode mismatch for reg={reg} value={value}");
+            assert_eq!(
+                encoded[0], opcode as u8,
+                "opcode mismatch for reg={reg} value={value}"
+            );
 
             // Decode register
             let decoded_reg = encoded[1] & 0x0F;
-            assert_eq!(decoded_reg, reg & 0x0F, "reg mismatch for reg={reg} value={value}");
+            assert_eq!(
+                decoded_reg,
+                reg & 0x0F,
+                "reg mismatch for reg={reg} value={value}"
+            );
 
             // Decode immediate (sign-extend from variable-length encoding)
             let imm_bytes = &encoded[2..];
             let decoded_value = decode_sign_extended_imm(imm_bytes);
-            assert_eq!(decoded_value, value, "value mismatch for reg={reg} value={value}");
+            assert_eq!(
+                decoded_value, value,
+                "value mismatch for reg={reg} value={value}"
+            );
         }
     }
 
@@ -2123,12 +2133,18 @@ mod tests {
             let imm1_len = (encoded[2] & 0x0F) as usize;
             let imm1_bytes = &encoded[3..3 + imm1_len];
             let decoded_imm1 = decode_sign_extended_imm(imm1_bytes);
-            assert_eq!(decoded_imm1, imm1, "imm1 mismatch for ({reg1},{reg2},{imm1},{imm2})");
+            assert_eq!(
+                decoded_imm1, imm1,
+                "imm1 mismatch for ({reg1},{reg2},{imm1},{imm2})"
+            );
 
             // Decode imm2 (remaining bytes)
             let imm2_bytes = &encoded[3 + imm1_len..];
             let decoded_imm2 = decode_sign_extended_imm(imm2_bytes);
-            assert_eq!(decoded_imm2, imm2, "imm2 mismatch for ({reg1},{reg2},{imm1},{imm2})");
+            assert_eq!(
+                decoded_imm2, imm2,
+                "imm2 mismatch for ({reg1},{reg2},{imm1},{imm2})"
+            );
         }
     }
 
