@@ -1990,3 +1990,121 @@ fn test_global_set_dynamic_uses_store_ind() {
         "global.set with dynamic value should NOT use StoreImmU32.\nInstructions: {instructions:#?}"
     );
 }
+
+// =============================================================================
+// ALU Immediate Opcode Folding
+// =============================================================================
+
+/// Helper: compile a WAT with one operation against a constant and check for an expected immediate opcode.
+fn assert_imm_folding(wat: &str, expected_opcode: Opcode, description: &str) {
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+    assert!(
+        has_opcode(&instructions, expected_opcode),
+        "{description}: expected {expected_opcode:?} in output.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {:?}", i))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn i32_and_const_produces_and_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 0xFF i32.and))"#,
+        Opcode::AndImm,
+        "i32.and with constant",
+    );
+}
+
+#[test]
+fn i32_or_const_produces_or_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 0x0F i32.or))"#,
+        Opcode::OrImm,
+        "i32.or with constant",
+    );
+}
+
+#[test]
+fn i32_xor_const_produces_xor_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 0x55 i32.xor))"#,
+        Opcode::XorImm,
+        "i32.xor with constant",
+    );
+}
+
+#[test]
+fn i32_mul_const_produces_mul_imm32() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 7 i32.mul))"#,
+        Opcode::MulImm32,
+        "i32.mul with constant",
+    );
+}
+
+#[test]
+fn i32_shl_const_produces_shlo_l_imm32() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 3 i32.shl))"#,
+        Opcode::ShloLImm32,
+        "i32.shl with constant",
+    );
+}
+
+#[test]
+fn i32_shr_u_const_produces_shlo_r_imm32() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 4 i32.shr_u))"#,
+        Opcode::ShloRImm32,
+        "i32.shr_u with constant",
+    );
+}
+
+#[test]
+fn i32_shr_s_const_produces_shar_r_imm32() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 2 i32.shr_s))"#,
+        Opcode::SharRImm32,
+        "i32.shr_s with constant",
+    );
+}
+
+#[test]
+fn i32_gt_s_const_produces_set_gt_s_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 5 i32.gt_s))"#,
+        Opcode::SetGtSImm,
+        "i32.gt_s with constant",
+    );
+}
+
+#[test]
+fn i32_gt_u_const_produces_set_gt_u_imm() {
+    assert_imm_folding(
+        r#"(module (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0 i32.const 10 i32.gt_u))"#,
+        Opcode::SetGtUImm,
+        "i32.gt_u with constant",
+    );
+}
