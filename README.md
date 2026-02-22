@@ -135,7 +135,9 @@ PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost
 | TRAP (interpreter overhead) | 29,255 | 23,520 (-20%) | - | - |
 | add(5,7) | 1,392,024 | 1,191,963 (-14%) | 39 | 30,563x |
 | AS fib(10) | 2,385,831 | 1,789,512 (-25%) | 343 | 5,217x |
-| JAM-SDK fib(10) | 8,837,888 | 6,815,363 (-23%) | 42 | 162,271x |
+| JAM-SDK fib(10)\* | 8,837,888 | 6,815,363 (-23%) | 42 | 162,271x |
+
+\*JAM-SDK fib(10) exits on an unhandled host call (ecalli 1) before the fibonacci computation runs. The gas cost reflects program parsing/loading only (26 KB binary), not execution.
 
 ## Supported WASM Features
 
