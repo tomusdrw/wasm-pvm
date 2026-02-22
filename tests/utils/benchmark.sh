@@ -78,6 +78,7 @@ PVM_IN_PVM_BENCHMARKS=(
   "as-fibonacci|0a000000|0|PiP AS fib(10)"
   "EXT:tests/fixtures/external/jam-sdk-fib.jam|0100000002000000030000000000000000000000|5|PiP JAM-SDK fib(10)"
   "EXT:tests/fixtures/external/jambrains-fib.jam|0100000002000000030000000000000000000000|5|PiP Jambrains fib(10)"
+  "EXT:tests/fixtures/external/jade-fib.jam|0100000002000000030000000000000000000000|5|PiP JADE fib(10)"
 )
 
 # Get WASM size from a source spec ("wat:<path>" or "wasm:<path>")

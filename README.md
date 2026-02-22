@@ -137,8 +137,9 @@ PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost
 | AS fib(10) | 2,385,831 | 1,789,512 (-25%) | 343 | 5,217x |
 | JAM-SDK fib(10)\* | 8,837,888 | 6,815,363 (-23%) | 42 | 162,271x |
 | Jambrains fib(10)\* | - | 6,478,389 | 1 | 6,478,389x |
+| JADE fib(10)\* | - | 18,572,053 | 504 | 36,849x |
 
-\*JAM-SDK fib(10) and Jambrains fib(10) exit on unhandled host calls (ecalli 1 and ecalli 0 respectively) before the fibonacci computation runs. The gas cost reflects program parsing/loading only (26 KB and 61 KB binaries), not execution.
+\*JAM-SDK fib(10), Jambrains fib(10), and JADE fib(10) exit on unhandled host calls before the fibonacci computation runs. The gas cost reflects program parsing/loading only (26 KB, 61 KB, and 67 KB binaries respectively), not execution.
 
 ## Supported WASM Features
 
