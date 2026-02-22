@@ -217,10 +217,13 @@ pub fn optimize(
         }
 
         // Pattern 1: Consecutive Fallthroughs — remove all but the last.
-        // Pattern 2: Fallthrough followed by Jump or Trap — remove the Fallthrough.
+        // Pattern 2: Fallthrough followed by a terminating jump or Trap — remove the Fallthrough.
         if matches!(instructions[i], Instruction::Fallthrough) && i + 1 < len {
             match &instructions[i + 1] {
-                Instruction::Fallthrough | Instruction::Jump { .. } | Instruction::Trap => {
+                Instruction::Fallthrough
+                | Instruction::Jump { .. }
+                | Instruction::LoadImmJump { .. }
+                | Instruction::Trap => {
                     keep[i] = false;
                 }
                 _ => {}
@@ -308,6 +311,43 @@ mod tests {
         assert!(matches!(instrs[0], Instruction::LoadImm { .. }));
         assert!(matches!(instrs[1], Instruction::Jump { .. }));
         assert_eq!(fixups[0].0, 1); // remapped from 2 to 1
+    }
+
+    #[test]
+    fn remove_fallthrough_before_load_imm_jump() {
+        let mut instrs = vec![
+            Instruction::Fallthrough,
+            Instruction::LoadImmJump {
+                reg: 0,
+                value: 2,
+                offset: 0,
+            },
+            Instruction::Fallthrough,
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![LlvmCallFixup {
+            return_addr_instr: 1,
+            jump_instr: 1,
+            target_func: 0,
+        }];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        // First Fallthrough removed (before LoadImmJump), second kept
+        assert_eq!(instrs.len(), 2);
+        assert!(matches!(instrs[0], Instruction::LoadImmJump { .. }));
+        assert!(matches!(instrs[1], Instruction::Fallthrough));
+        // Call fixup remapped from index 1 to 0
+        assert_eq!(call_fixups[0].return_addr_instr, 0);
+        assert_eq!(call_fixups[0].jump_instr, 0);
     }
 
     #[test]

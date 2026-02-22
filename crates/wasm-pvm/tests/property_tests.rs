@@ -251,6 +251,38 @@ proptest! {
         let decoded = i32::from_le_bytes(encoded[1..5].try_into().unwrap());
         prop_assert_eq!(decoded, offset);
     }
+
+    /// LoadImmJump encoding preserves reg, value, and offset for any inputs.
+    #[test]
+    fn load_imm_jump_roundtrip(
+        reg in 0u8..13,
+        value in any::<i32>(),
+        offset in any::<i32>(),
+    ) {
+        let instr = wasm_pvm::Instruction::LoadImmJump { reg, value, offset };
+        let encoded = instr.encode();
+        prop_assert_eq!(encoded[0], Opcode::LoadImmJump as u8);
+        // byte[1]: (imm_len << 4) | (reg & 0x0F)
+        prop_assert_eq!(encoded[1] & 0x0F, reg & 0x0F, "reg mismatch");
+        let imm_len = (encoded[1] >> 4) as usize;
+        // Decode value from imm_len bytes (sign-extended)
+        let mut imm_bytes = [0u8; 4];
+        imm_bytes[..imm_len].copy_from_slice(&encoded[2..2 + imm_len]);
+        // Sign-extend if needed
+        if imm_len > 0 && (imm_bytes[imm_len - 1] & 0x80) != 0 {
+            for b in imm_bytes.iter_mut().skip(imm_len) {
+                *b = 0xFF;
+            }
+        }
+        let decoded_value = i32::from_le_bytes(imm_bytes);
+        prop_assert_eq!(decoded_value, value, "value mismatch");
+        // Offset is last 4 bytes
+        let offset_start = 2 + imm_len;
+        let decoded_offset = i32::from_le_bytes(
+            encoded[offset_start..offset_start + 4].try_into().unwrap()
+        );
+        prop_assert_eq!(decoded_offset, offset, "offset mismatch");
+    }
 }
 
 // =============================================================================
