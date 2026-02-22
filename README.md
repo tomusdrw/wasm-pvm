@@ -117,18 +117,24 @@ All PVM-level optimizations disabled vs enabled (default):
 
 | Benchmark | WASM size | JAM (no opt) | JAM (opt) | Gas (no opt) | Gas (opt) |
 |-----------|----------|-------------|-----------|-------------|-----------|
-| add(5,7) | 66 B | 242 B | 206 B (-15%) | 48 | 38 (-21%) |
+| add(5,7) | 66 B | 242 B | 208 B (-14%) | 48 | 39 (-19%) |
 | fib(20) | 108 B | 304 B | 277 B (-9%) | 716 | 612 (-15%) |
 | factorial(10) | 100 B | 279 B | 255 B (-9%) | 333 | 279 (-16%) |
-| is_prime(25) | 160 B | 424 B | 338 B (-20%) | 108 | 80 (-26%) |
-| AS fib(10) | 266 B | 982 B | 791 B (-19%) | 443 | 347 (-22%) |
-| AS factorial(7) | 265 B | 967 B | 786 B (-19%) | 370 | 301 (-19%) |
-| AS gcd(2017,200) | 260 B | 986 B | 775 B (-21%) | 283 | 211 (-25%) |
-| AS decoder | 1.5 KB | 20.1 KB | 17.7 KB (-12%) | 979 | 721 (-26%) |
-| AS array | 1.4 KB | 18.8 KB | 16.7 KB (-11%) | 847 | 633 (-25%) |
-| anan-as PVM interpreter | 54 KB | 230 KB | 175 KB (-24%) | 31,007 | 22,457 (-28%) |
+| is_prime(25) | 160 B | 417 B | 337 B (-19%) | 106 | 80 (-25%) |
+| AS fib(10) | 266 B | 942 B | 759 B (-19%) | 425 | 343 (-19%) |
+| AS factorial(7) | 265 B | 931 B | 751 B (-19%) | 363 | 296 (-18%) |
+| AS gcd(2017,200) | 260 B | 950 B | 743 B (-22%) | 276 | 207 (-25%) |
+| AS decoder | 1.5 KB | 75.6 KB | 73.4 KB (-3%) | 942 | 778 (-17%) |
+| AS array | 1.4 KB | 74.3 KB | 72.4 KB (-3%) | 814 | 668 (-18%) |
+| anan-as PVM interpreter | 58.3 KB | 299.5 KB | 246.0 KB (-18%) | - | - |
 
-Gas for the anan-as PVM interpreter is the cost of running a 1-byte TRAP program through PVM-in-PVM (interpreter overhead only).
+PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
+
+| Benchmark | Gas (no opt) | Gas (opt) |
+|-----------|-------------|-----------|
+| TRAP (interpreter overhead) | 29,255 | 23,520 (-20%) |
+| add(5,7) | 1,392,024 | 1,191,963 (-14%) |
+| AS fib(10) | 2,385,831 | 1,789,512 (-25%) |
 
 ## Supported WASM Features
 
