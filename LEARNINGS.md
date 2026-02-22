@@ -46,6 +46,19 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## Conditional Move (CmovIz/CmovNz)
+
+### Branchless select lowering
+
+- `select i1 %cond, %true_val, %false_val` now uses `CmovNz` instead of a branch
+- Old: load false_val, branch on cond==0, load true_val, define label (5-6 instructions)
+- New: load false_val, load true_val, load cond, CmovNz (4 instructions, branchless)
+- CmovIz/CmovNz are ThreeReg encoded: `[opcode, (cond<<4)|src, dst]`
+- Semantics: `if reg[cond] == 0 (CmovIz) / != 0 (CmovNz) then reg[dst] = reg[src]`
+- Note: CmovNz conditionally writes dst — the register cache must invalidate dst after CmovNz/CmovIz since the write is conditional
+
+---
+
 ## CmovIzImm / CmovNzImm (TwoRegOneImm Encoding)
 
 - Opcodes 147-148: Conditional move with immediate value
@@ -96,6 +109,21 @@ Accumulated knowledge from development. Update after every task.
 - Since `LoadImmJump` is a terminating instruction, the peephole optimizer can remove a preceding `Fallthrough`
 - This saves an additional 1 byte per call site where a basic block boundary precedes the call
 - Total savings per call: -8 bytes (instruction) + -1 byte (Fallthrough removal) + -1 gas
+
+---
+
+## Call Return Address Encoding
+
+### LoadImm vs LoadImm64 for Call Return Addresses
+
+- Call return addresses are jump table addresses: `(jump_table_index + 1) * 2`
+- These are always small positive integers (2, 4, 6, ...) that fit in `LoadImm` (3-6 bytes)
+- Previously used `LoadImm64` (10 bytes) with placeholder value 0, patched during fixup resolution
+- **Problem with late patching**: `LoadImm` has variable encoding size (2 bytes for value 0, 3 bytes for value 2), so changing the value after branch fixups are resolved corrupts relative offsets
+- **Solution**: Pre-assign jump table indices at emission time by threading a `next_call_return_idx` counter through the compilation pipeline. This way `LoadImm` values are known during emission, ensuring correct `byte_offset` tracking for branch fixup resolution
+- For direct calls, `LoadImmJump` combines return address load + jump into one instruction, using the same pre-assigned index
+- For indirect calls (`call_indirect`), `LoadImm` + `JumpInd` is used since the jump target is in a register
+- **Impact**: Saves 7 bytes per indirect call site (LoadImm vs LoadImm64). Direct calls save even more via LoadImmJump fusion.
 
 ---
 

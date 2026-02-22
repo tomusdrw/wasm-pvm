@@ -91,6 +91,9 @@ pub enum Opcode {
     // Comparison (ThreeReg) - result is 0 or 1
     SetLtU = 216,
     SetLtS = 217,
+    // Conditional move (ThreeReg)
+    CmovIz = 218,
+    CmovNz = 219,
 }
 
 impl Opcode {

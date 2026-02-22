@@ -636,18 +636,20 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
     let false_val = get_operand(instr, 2)?;
     let slot = result_slot(e, instr)?;
 
-    // Start with false_val in result slot.
+    // Branchless select using CmovNz:
+    // 1. Load false_val as default result
+    // 2. Load true_val into a temp register
+    // 3. Load condition
+    // 4. CmovNz: if cond != 0, overwrite result with true_val
     e.load_operand(false_val, TEMP_RESULT)?;
-    e.store_to_slot(slot, TEMP_RESULT);
-
-    // If cond != 0, overwrite with true_val.
+    e.load_operand(true_val, TEMP2)?;
     e.load_operand(cond, TEMP1)?;
-    let skip_label = e.alloc_label();
-    e.emit_branch_eq_imm_to_label(TEMP1, 0, skip_label);
+    e.emit(Instruction::CmovNz {
+        dst: TEMP_RESULT,
+        src: TEMP2,
+        cond: TEMP1,
+    });
 
-    e.load_operand(true_val, TEMP_RESULT)?;
     e.store_to_slot(slot, TEMP_RESULT);
-
-    e.define_label(skip_label);
     Ok(())
 }

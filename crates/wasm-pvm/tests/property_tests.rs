@@ -283,6 +283,24 @@ proptest! {
         );
         prop_assert_eq!(decoded_offset, offset, "offset mismatch");
     }
+
+    /// CmovIz/CmovNz use ThreeReg encoding with correct register placement.
+    #[test]
+    fn cmov_encoding(dst in 0u8..13, src in 0u8..13, cond in 0u8..13) {
+        let cmov_iz = wasm_pvm::Instruction::CmovIz { dst, src, cond };
+        let enc_iz = cmov_iz.encode();
+        prop_assert_eq!(enc_iz[0], Opcode::CmovIz as u8);
+        prop_assert_eq!(enc_iz[1] & 0x0F, src & 0x0F, "CmovIz src nibble");
+        prop_assert_eq!(enc_iz[1] >> 4, cond & 0x0F, "CmovIz cond nibble");
+        prop_assert_eq!(enc_iz[2], dst & 0x0F, "CmovIz dst byte");
+
+        let cmov_nz = wasm_pvm::Instruction::CmovNz { dst, src, cond };
+        let enc_nz = cmov_nz.encode();
+        prop_assert_eq!(enc_nz[0], Opcode::CmovNz as u8);
+        prop_assert_eq!(enc_nz[1] & 0x0F, src & 0x0F, "CmovNz src nibble");
+        prop_assert_eq!(enc_nz[1] >> 4, cond & 0x0F, "CmovNz cond nibble");
+        prop_assert_eq!(enc_nz[2], dst & 0x0F, "CmovNz dst byte");
+    }
 }
 
 // =============================================================================
