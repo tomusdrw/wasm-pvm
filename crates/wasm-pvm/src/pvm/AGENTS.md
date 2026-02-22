@@ -9,7 +9,7 @@
 | `instruction.rs` | ~570 | Instruction enum, encoding logic |
 | `opcode.rs` | 118 | Opcode constants (86 opcodes) |
 | `blob.rs` | 143 | Program blob format with jump table |
-| `peephole.rs` | ~210 | Post-codegen peephole optimizer (removes redundant Fallthroughs) |
+| `peephole.rs` | ~290 | Post-codegen peephole optimizer (Fallthroughs, truncation NOPs, dead stores) |
 
 ## Key Patterns
 

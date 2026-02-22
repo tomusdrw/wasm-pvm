@@ -61,3 +61,20 @@ Accumulated knowledge from development. Update after every task.
 - Signature: `llvm.abs.i32(x, is_int_min_poison)` / `llvm.abs.i64(x, is_int_min_poison)`
 - Lowered as: `if x >= 0 then x else 0 - x`
 - For i32: must sign-extend first (zero-extension from load_operand makes negatives look positive in i64 comparisons)
+
+---
+
+## PVM 32-bit Instruction Semantics
+
+### Sign Extension
+
+- All PVM 32-bit arithmetic/shift instructions produce `u32SignExtend(result)` — the lower 32 bits are computed, then sign-extended to fill the full 64-bit register
+- This means `AddImm32(x, x, 0)` after a 32-bit producer is a NOP (both sign-extend identically)
+- Confirmed in anan-as reference: `add_32`, `sub_32`, `mul_32`, `div_u_32`, `rem_u_32`, `shlo_l_32`, etc. all call `u32SignExtend()`
+
+### Peephole Truncation Pattern
+
+- The pattern `[32-bit-producer] → [AddImm32(x, x, 0)]` is eliminated by peephole when directly adjacent
+- In practice with LLVM passes enabled, `instcombine` already eliminates `trunc(32-bit-op)` at the LLVM IR level, so this peephole pattern fires rarely
+- The peephole is still valuable for `--no-llvm-passes` mode and as defense-in-depth
+- **Known limitation**: the pattern only matches directly adjacent instructions; a `StoreIndU64` between producer and truncation breaks the match
