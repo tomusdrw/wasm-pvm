@@ -84,16 +84,14 @@ pub fn lower_function(
         let pred_info = emitter.block_single_pred.get(&bb).copied();
 
         let mut propagated = false;
-        if use_cross_block_cache {
-            if let Some(pred_bb) = pred_info {
-                if !emitter::block_has_phis(bb) {
-                    if let Some(snapshot) = block_exit_cache.get(&pred_bb).cloned() {
-                        emitter.define_label_preserving_cache(label);
-                        emitter.restore_cache(&snapshot);
-                        propagated = true;
-                    }
-                }
-            }
+        if use_cross_block_cache
+            && let Some(pred_bb) = pred_info
+            && !emitter::block_has_phis(bb)
+            && let Some(snapshot) = block_exit_cache.get(&pred_bb).cloned()
+        {
+            emitter.define_label_preserving_cache(label);
+            emitter.restore_cache(&snapshot);
+            propagated = true;
         }
 
         if !propagated {

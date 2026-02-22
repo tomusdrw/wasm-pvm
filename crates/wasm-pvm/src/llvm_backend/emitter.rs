@@ -779,10 +779,10 @@ pub fn pre_scan_function<'ctx>(
         }
 
         for (bb, count) in &pred_count {
-            if *count == 1 {
-                if let Some(pred) = pred_from.get(bb) {
-                    emitter.block_single_pred.insert(*bb, *pred);
-                }
+            if *count == 1
+                && let Some(pred) = pred_from.get(bb)
+            {
+                emitter.block_single_pred.insert(*bb, *pred);
             }
         }
     }
@@ -811,9 +811,7 @@ pub fn pre_scan_function<'ctx>(
 }
 
 /// Collect successor basic blocks from a terminator instruction.
-fn collect_terminator_successors<'ctx>(
-    term: InstructionValue<'ctx>,
-) -> Vec<BasicBlock<'ctx>> {
+fn collect_terminator_successors(term: InstructionValue<'_>) -> Vec<BasicBlock<'_>> {
     use inkwell::values::InstructionOpcode;
     let mut successors = Vec::new();
     match term.get_opcode() {
