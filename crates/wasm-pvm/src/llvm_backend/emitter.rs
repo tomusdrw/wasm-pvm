@@ -215,7 +215,10 @@ impl<'ctx> PvmEmitter<'ctx> {
     pub fn alloc_call_return_addr(&mut self) -> i32 {
         let idx = self.next_call_return_idx;
         self.next_call_return_idx += 1;
-        ((idx + 1) * 2) as i32
+        (idx + 1)
+            .checked_mul(2)
+            .and_then(|v| i32::try_from(v).ok())
+            .expect("alloc_call_return_addr: jump table index overflow (exceeds i32 range)")
     }
 
     /// Returns how many call return addresses this function allocated.
