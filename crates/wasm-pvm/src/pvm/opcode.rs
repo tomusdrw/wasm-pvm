@@ -11,9 +11,27 @@ pub enum Opcode {
     StoreImmU32 = 32,
     StoreImmU64 = 33,
     Jump = 40,
-    LoadImmJump = 80,
     JumpInd = 50,
     LoadImm = 51,
+    // Load/store absolute address (OneRegOneImm)
+    LoadU8 = 52,
+    LoadI8 = 53,
+    LoadU16 = 54,
+    LoadI16 = 55,
+    LoadU32 = 56,
+    LoadI32 = 57,
+    LoadU64 = 58,
+    StoreU8 = 59,
+    StoreU16 = 60,
+    StoreU32 = 61,
+    StoreU64 = 62,
+    // Store immediate indirect (OneRegTwoImm)
+    StoreImmIndU8 = 70,
+    StoreImmIndU16 = 71,
+    StoreImmIndU32 = 72,
+    StoreImmIndU64 = 73,
+    // Compound jump (OneRegOneImmOneOff)
+    LoadImmJump = 80,
     // Branch with immediate comparison (OneRegOneImmOneOff)
     BranchEqImm = 81,
     BranchNeImm = 82,
@@ -36,6 +54,7 @@ pub enum Opcode {
     SignExtend8 = 108,
     SignExtend16 = 109,
     ZeroExtend16 = 110,
+    ReverseBytes = 111,
     StoreIndU8 = 120,
     StoreIndU16 = 121,
     StoreIndU32 = 122,
@@ -45,6 +64,7 @@ pub enum Opcode {
     LoadIndU16 = 126,
     LoadIndI16 = 127,
     LoadIndU32 = 128,
+    LoadIndI32 = 129,
     LoadIndU64 = 130,
     AddImm32 = 131,
     AndImm = 132,
@@ -61,6 +81,10 @@ pub enum Opcode {
     NegAddImm32 = 141,
     SetGtUImm = 142,
     SetGtSImm = 143,
+    // Alternate shift immediates: dst = imm OP src (reversed operands, 32-bit)
+    ShloLImmAlt32 = 144,
+    ShloRImmAlt32 = 145,
+    SharRImmAlt32 = 146,
     // Conditional move with immediate (TwoRegOneImm)
     CmovIzImm = 147,
     CmovNzImm = 148,
@@ -70,6 +94,15 @@ pub enum Opcode {
     ShloRImm64 = 152,
     SharRImm64 = 153,
     NegAddImm64 = 154,
+    // Alternate shift immediates: dst = imm OP src (reversed operands, 64-bit)
+    ShloLImmAlt64 = 155,
+    ShloRImmAlt64 = 156,
+    SharRImmAlt64 = 157,
+    // Rotate right by immediate (TwoRegOneImm)
+    RotRImm64 = 158,
+    RotRImmAlt64 = 159,
+    RotRImm32 = 160,
+    RotRImmAlt32 = 161,
     // Branch with two registers (TwoRegOneOff)
     BranchEq = 170,
     BranchNe = 171,
@@ -77,6 +110,8 @@ pub enum Opcode {
     BranchLtS = 173,
     BranchGeU = 174,
     BranchGeS = 175,
+    // Compound indirect jump (TwoRegTwoImm)
+    LoadImmJumpInd = 180,
     // 32-bit three-register arithmetic
     Add32 = 190,
     Sub32 = 191,
@@ -85,6 +120,10 @@ pub enum Opcode {
     DivS32 = 194,
     RemU32 = 195,
     RemS32 = 196,
+    // 32-bit shift operations (ThreeReg)
+    ShloL32 = 197,
+    ShloR32 = 198,
+    SharR32 = 199,
     // 64-bit three-register arithmetic
     Add64 = 200,
     Sub64 = 201,
@@ -100,21 +139,30 @@ pub enum Opcode {
     And = 210,
     Xor = 211,
     Or = 212,
-    // Shift operations (ThreeReg)
-    ShloL32 = 197,
-    ShloR32 = 198,
-    SharR32 = 199,
-    // Store immediate indirect (OneRegTwoImm)
-    StoreImmIndU8 = 70,
-    StoreImmIndU16 = 71,
-    StoreImmIndU32 = 72,
-    StoreImmIndU64 = 73,
+    // Upper multiply (ThreeReg)
+    MulUpperSS = 213,
+    MulUpperUU = 214,
+    MulUpperSU = 215,
     // Comparison (ThreeReg) - result is 0 or 1
     SetLtU = 216,
     SetLtS = 217,
     // Conditional move (ThreeReg)
     CmovIz = 218,
     CmovNz = 219,
+    // Rotate (ThreeReg)
+    RotL64 = 220,
+    RotL32 = 221,
+    RotR64 = 222,
+    RotR32 = 223,
+    // Inverted bitwise (ThreeReg)
+    AndInv = 224,
+    OrInv = 225,
+    Xnor = 226,
+    // Min/Max (ThreeReg)
+    Max = 227,
+    MaxU = 228,
+    Min = 229,
+    MinU = 230,
 }
 
 impl Opcode {
@@ -143,6 +191,7 @@ impl Opcode {
                 | Self::BranchLtS
                 | Self::BranchGeU
                 | Self::BranchGeS
+                | Self::LoadImmJumpInd
         )
     }
 }
