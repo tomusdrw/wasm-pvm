@@ -180,6 +180,11 @@ pub struct PvmEmitter<'ctx> {
 
     /// Register allocation results (empty if disabled).
     pub(crate) regalloc: RegAllocResult,
+
+    /// Whether each allocated register currently holds a valid SSA value.
+    /// Allocated values are always write-through to stack slots, so a clobbered
+    /// allocated register can be lazily reloaded from its slot on next use.
+    alloc_reg_valid: [bool; 13],
 }
 
 /// Snapshot of the register cache state for cross-block propagation.
@@ -250,6 +255,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
             has_calls: true, // conservative default
             regalloc: RegAllocResult::default(),
+            alloc_reg_valid: [false; 13],
         }
     }
 
@@ -450,20 +456,35 @@ impl<'ctx> PvmEmitter<'ctx> {
     pub fn load_operand(&mut self, val: BasicValueEnum<'ctx>, temp_reg: u8) -> Result<()> {
         match val {
             BasicValueEnum::IntValue(iv) => {
+                let key = val_key_int(iv);
                 if let Some(signed_val) = iv.get_sign_extended_constant() {
                     self.emit_const_to_reg(temp_reg, signed_val as u64);
                 } else if let Some(const_val) = iv.get_zero_extended_constant() {
                     // Fallback for unsigned constants.
                     self.emit_const_to_reg(temp_reg, const_val);
-                } else if let Some(&alloc_reg) = self.regalloc.val_to_reg.get(&val_key_int(iv)) {
-                    // Value has an allocated register — use it directly.
+                } else if let Some(&alloc_reg) = self.regalloc.val_to_reg.get(&key) {
+                    // Value has an allocated register. If it was clobbered, reload
+                    // lazily from the canonical stack slot.
+                    if !self.alloc_reg_valid[alloc_reg as usize] {
+                        let slot = self.get_slot(key).ok_or_else(|| {
+                            Error::Internal(format!("no slot for allocated int value {key:?}"))
+                        })?;
+                        self.emit(Instruction::LoadIndU64 {
+                            dst: alloc_reg,
+                            base: STACK_PTR_REG,
+                            offset: slot,
+                        });
+                        self.alloc_reg_valid[alloc_reg as usize] = true;
+                        self.cache_slot(slot, alloc_reg);
+                    }
+
                     if alloc_reg != temp_reg {
                         self.emit(Instruction::MoveReg {
                             dst: temp_reg,
                             src: alloc_reg,
                         });
                     }
-                } else if let Some(slot) = self.get_slot(val_key_int(iv)) {
+                } else if let Some(slot) = self.get_slot(key) {
                     // Check register cache: skip load if value is already in a register.
                     if let Some(&cached_reg) = self.slot_cache.get(&slot) {
                         if cached_reg != temp_reg {
@@ -518,12 +539,19 @@ impl<'ctx> PvmEmitter<'ctx> {
                 src: src_reg,
             });
         }
+        if let Some(&alloc_reg) = self.regalloc.slot_to_reg.get(&slot_offset) {
+            self.alloc_reg_valid[alloc_reg as usize] = true;
+        }
         self.emit(Instruction::StoreIndU64 {
             base: STACK_PTR_REG,
             src: src_reg,
             offset: slot_offset,
         });
-        self.cache_slot(slot_offset, src_reg);
+        if let Some(&alloc_reg) = self.regalloc.slot_to_reg.get(&slot_offset) {
+            self.cache_slot(slot_offset, alloc_reg);
+        } else {
+            self.cache_slot(slot_offset, src_reg);
+        }
     }
 
     // ── Register allocation spill/reload ──
@@ -533,38 +561,31 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Callee-saved registers (r9-r12) are not spilled here because they are
     /// preserved by the callee-save convention and only used in leaf functions.
     pub fn spill_allocated_regs(&mut self) {
-        let entries: Vec<_> = self
-            .regalloc
-            .reg_to_slot
-            .iter()
-            .filter(|&(&r, _)| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
-            .map(|(&r, &s)| (r, s))
-            .collect();
-        for (reg, slot) in entries {
-            self.emit(Instruction::StoreIndU64 {
-                base: STACK_PTR_REG,
-                src: reg,
-                offset: slot,
-            });
-        }
+        // No-op: allocated values are already write-through in stack slots.
+        debug_assert!(
+            self.regalloc
+                .reg_to_slot
+                .keys()
+                .all(|&r| r != crate::abi::SCRATCH1 && r != crate::abi::SCRATCH2),
+            "r5/r6 allocation requires explicit spill handling"
+        );
     }
 
     /// Reload scratch register-allocated values (r5/r6) from their stack slots.
     /// Called after instructions that clobber r5/r6 (calls, memory intrinsics).
     pub fn reload_allocated_regs(&mut self) {
-        let entries: Vec<_> = self
+        // Mark clobbered scratch allocated registers as invalid. They will be
+        // reloaded lazily from stack slots when used again.
+        let regs: Vec<u8> = self
             .regalloc
             .reg_to_slot
-            .iter()
-            .filter(|&(&r, _)| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
-            .map(|(&r, &s)| (r, s))
+            .keys()
+            .copied()
+            .filter(|&r| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
             .collect();
-        for (reg, slot) in entries {
-            self.emit(Instruction::LoadIndU64 {
-                dst: reg,
-                base: STACK_PTR_REG,
-                offset: slot,
-            });
+        for reg in regs {
+            self.alloc_reg_valid[reg as usize] = false;
+            self.invalidate_reg(reg);
         }
     }
 
@@ -590,6 +611,9 @@ impl<'ctx> PvmEmitter<'ctx> {
     fn invalidate_reg(&mut self, reg: u8) {
         if let Some(slot) = self.reg_to_slot[reg as usize].take() {
             self.slot_cache.remove(&slot);
+        }
+        if self.regalloc.reg_to_slot.contains_key(&reg) {
+            self.alloc_reg_valid[reg as usize] = false;
         }
         self.reg_to_const[reg as usize] = None;
     }

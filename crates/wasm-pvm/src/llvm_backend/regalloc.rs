@@ -31,9 +31,12 @@ use inkwell::values::{FunctionValue, PhiValue};
 use super::emitter::{ValKey, val_key_basic, val_key_instr};
 use super::successors::collect_successors;
 
-/// Base registers available for allocation (r5 and r6).
-/// These are always allocatable and spilled/reloaded around clobbering ops.
-const BASE_ALLOCATABLE_REGS: &[u8] = &[5, 6];
+/// Base registers available for allocation.
+///
+/// We currently avoid allocating r5/r6 globally because they are reused as
+/// scratch registers by several lowering paths. Leaf-only callee-saved
+/// allocation (r9-r12, when available) remains enabled below.
+const BASE_ALLOCATABLE_REGS: &[u8] = &[];
 
 /// A live interval for an SSA value.
 #[derive(Debug, Clone)]

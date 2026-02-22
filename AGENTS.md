@@ -97,7 +97,7 @@ crates/
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
 │       │   ├── calls.rs         # Direct/indirect calls, import stubs (~190 lines)
 │       │   ├── intrinsics.rs    # PVM + LLVM intrinsic lowering (~440 lines)
-│       │   └── regalloc.rs      # Linear-scan register allocator (r5/r6) (~360 lines)
+│       │   └── regalloc.rs      # Linear-scan register allocator (leaf callee-saved regs) (~360 lines)
 │       ├── translate/     # Compilation orchestration
 │       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
 │       │   ├── adapter_merge.rs (WAT adapter merge into WASM before compilation)
@@ -143,9 +143,10 @@ crates/
 
 ### Key Design Decisions
 - **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
-- **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first). A **linear-scan register allocator** (`regalloc.rs`) assigns long-lived values to r5/r6, eliminating redundant memory traffic across block boundaries and loops.
+- **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first). A **linear-scan register allocator** (`regalloc.rs`) can assign long-lived values to available leaf callee-saved registers (r9-r12). Scratch registers r5/r6 are intentionally excluded from global allocation.
 - **Per-block register cache**: `PvmEmitter` tracks which stack slots are live in registers via `slot_cache`/`reg_to_slot`. Eliminates redundant `LoadIndU64` when a value is used shortly after being computed. Cache is cleared at block boundaries and after calls/ecalli. (~50% gas reduction, ~15-40% code size reduction)
 - **Cross-block register cache**: When a block has exactly one predecessor and no phi nodes, the predecessor's cache snapshot is propagated instead of clearing. The snapshot is taken before the terminator instruction with TEMP1/TEMP2 invalidated (since terminators load operands into those registers). Predecessor map is computed in `pre_scan_function` by scanning terminator successors.
+- **Trimmed RW data**: `build_rw_data()` trims trailing zero bytes before SPI encoding. Heap pages are zero-initialized, so omitted high-address zero tails are semantically equivalent and reduce blob size.
 - **heap_pages uses initial_pages**: SPI `heap_pages` reflects WASM `initial_pages` (not `max_pages`). Additional memory is allocated on demand via `sbrk`/`memory.grow`. Programs declaring `(memory 0)` get a minimum of 16 WASM pages (1MB).
 - **All values as i64**: PVM registers are 64-bit; simplifies translation
 - **LLVM backend**: inkwell (LLVM 18 bindings) is a required dependency
@@ -227,7 +228,7 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `constant_propagation` | `--no-const-prop` | Skip redundant `LoadImm`/`LoadImm64` when register already holds the constant | `llvm_backend/emitter.rs:emit()` |
 | `inlining` | `--no-inline` | LLVM function inlining for small callees (CGSCC inline pass) | `llvm_frontend/function_builder.rs:run_optimization_passes()` |
 | `cross_block_cache` | `--no-cross-block-cache` | Propagate register cache across single-predecessor block boundaries | `llvm_backend/mod.rs:lower_function()` |
-| `register_allocation` | `--no-register-alloc` | Linear-scan register allocation (r5/r6 for long-lived values) | `llvm_backend/mod.rs:lower_function()` → `regalloc.rs` |
+| `register_allocation` | `--no-register-alloc` | Linear-scan register allocation (leaf callee-saved regs for long-lived values) | `llvm_backend/mod.rs:lower_function()` → `regalloc.rs` |
 
 **Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`, `cross_block_cache_enabled`, `register_allocation_enabled`) → `PvmEmitter.config`. LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`.
 
@@ -252,7 +253,7 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `0x10000` | Read-only data (dispatch table, passive segments) |
 | `0x30000` | Globals storage (each global = 4 bytes) |
 | `0x32000` | Parameter overflow area (5th+ args for call_indirect) |
-| `0x32100+` | WASM linear memory base (spilled locals area removed) |
+| `0x40000+` | WASM linear memory base (64KB-aligned) |
 | `0xFEFE0000` | Stack segment end (stack grows downward) |
 | `0xFEFF0000` | Arguments (`args_ptr`) |
 | `0xFFFF0000` | EXIT address (HALT) |
@@ -269,10 +270,10 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | r1 | Stack pointer |
 | r2-r3 | Scratch temps (TEMP1/TEMP2 for loading spilled operands) |
 | r4 | Scratch temp (TEMP_RESULT for instruction results) |
-| r5-r6 | Allocatable registers (`abi::SCRATCH1`/`SCRATCH2`). Assigned by the linear-scan register allocator to long-lived SSA values. Spilled/reloaded around memory intrinsics and funnel shifts that clobber them. |
+| r5-r6 | Scratch registers (`abi::SCRATCH1`/`SCRATCH2`). Used by memory intrinsics and lowering helpers; not globally allocated by the current linear-scan allocator. |
 | r7 | Return value from calls / SPI args pointer |
 | r8 | SPI args length |
-| r9-r12 | Local variables (first 4) / callee-saved |
+| r9-r12 | Local variables (first 4) / callee-saved. In leaf functions, unused ones may be assigned by linear-scan register allocation. |
 
 ---
 
