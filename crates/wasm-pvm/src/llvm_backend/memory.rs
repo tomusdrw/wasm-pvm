@@ -86,14 +86,9 @@ pub fn lower_wasm_global_store<'ctx>(
             }
 
             e.load_operand(val, TEMP1)?;
-            e.emit(Instruction::LoadImm {
-                reg: TEMP2,
-                value: global_addr,
-            });
-            e.emit(Instruction::StoreIndU32 {
-                base: TEMP2,
+            e.emit(Instruction::StoreU32 {
                 src: TEMP1,
-                offset: 0,
+                address: global_addr,
             });
             return Ok(());
         }
@@ -269,14 +264,9 @@ pub fn emit_pvm_memory_size<'ctx>(
     let slot = result_slot(e, instr)?;
     let global_addr = abi::memory_size_global_offset(ctx.num_globals);
 
-    e.emit(Instruction::LoadImm {
-        reg: TEMP1,
-        value: global_addr,
-    });
-    e.emit(Instruction::LoadIndU32 {
+    e.emit(Instruction::LoadU32 {
         dst: TEMP_RESULT,
-        base: TEMP1,
-        offset: 0,
+        address: global_addr,
     });
     e.store_to_slot(slot, TEMP_RESULT);
     Ok(())
@@ -298,14 +288,9 @@ pub fn emit_pvm_memory_grow<'ctx>(
     e.load_operand(delta, SCRATCH1)?;
 
     // Load current memory size into TEMP_RESULT (this will be the return value on success).
-    e.emit(Instruction::LoadImm {
-        reg: TEMP1,
-        value: global_addr,
-    });
-    e.emit(Instruction::LoadIndU32 {
+    e.emit(Instruction::LoadU32 {
         dst: TEMP_RESULT,
-        base: TEMP1,
-        offset: 0,
+        address: global_addr,
     });
 
     // new_size = current + delta
@@ -346,14 +331,9 @@ pub fn emit_pvm_memory_grow<'ctx>(
     });
 
     // Success: store new_size.
-    e.emit(Instruction::LoadImm {
-        reg: SCRATCH1,
-        value: global_addr,
-    });
-    e.emit(Instruction::StoreIndU32 {
-        base: SCRATCH1,
+    e.emit(Instruction::StoreU32 {
         src: SCRATCH2,
-        offset: 0,
+        address: global_addr,
     });
 
     // SBRK: grow PVM memory by (delta * 65536) bytes.
@@ -836,14 +816,9 @@ pub fn emit_pvm_memory_init<'ctx>(
     });
     // SCRATCH2 = memory_size (in pages)
     let mem_size_addr = crate::abi::memory_size_global_offset(ctx.num_globals);
-    e.emit(Instruction::LoadImm {
-        reg: SCRATCH2,
-        value: mem_size_addr,
-    });
-    e.emit(Instruction::LoadIndU32 {
+    e.emit(Instruction::LoadU32 {
         dst: SCRATCH2,
-        base: SCRATCH2,
-        offset: 0,
+        address: mem_size_addr,
     });
     // SCRATCH2 = memory_size * 65536 (shift left by 16)
     e.emit(Instruction::LoadImm {
