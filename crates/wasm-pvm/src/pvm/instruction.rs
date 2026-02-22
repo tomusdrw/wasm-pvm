@@ -1146,12 +1146,8 @@ impl Instruction {
             Self::AndInv { dst, src1, src2 } => {
                 encode_three_reg(Opcode::AndInv, *dst, *src1, *src2)
             }
-            Self::OrInv { dst, src1, src2 } => {
-                encode_three_reg(Opcode::OrInv, *dst, *src1, *src2)
-            }
-            Self::Xnor { dst, src1, src2 } => {
-                encode_three_reg(Opcode::Xnor, *dst, *src1, *src2)
-            }
+            Self::OrInv { dst, src1, src2 } => encode_three_reg(Opcode::OrInv, *dst, *src1, *src2),
+            Self::Xnor { dst, src1, src2 } => encode_three_reg(Opcode::Xnor, *dst, *src1, *src2),
             // Min/Max (ThreeReg)
             Self::Max { dst, src1, src2 } => encode_three_reg(Opcode::Max, *dst, *src1, *src2),
             Self::MaxU { dst, src1, src2 } => encode_three_reg(Opcode::MaxU, *dst, *src1, *src2),
