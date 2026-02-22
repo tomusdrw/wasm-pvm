@@ -28,12 +28,14 @@ COMPILER_JAM=""
 NO_OPT=false
 
 NO_OPT_FLAGS=(
+  --no-llvm-passes
   --no-peephole
   --no-register-cache
   --no-icmp-fusion
   --no-shrink-wrap
   --no-dead-store-elim
   --no-const-prop
+  --no-inline
   --no-cross-block-cache
 )
 
@@ -47,7 +49,7 @@ BENCHMARKS=(
   "factorial|0a000000|0|factorial(10)|wat:tests/fixtures/wat/factorial.jam.wat"
   "is-prime|19000000|0|is_prime(25)|wat:tests/fixtures/wat/is-prime.jam.wat"
   "as-fibonacci|0a000000|0|AS fib(10)|wasm:tests/build/wasm/fibonacci.wasm"
-  "as-factorial|07000000|0|AS 7!|wasm:tests/build/wasm/factorial.wasm"
+  "as-factorial|07000000|0|AS factorial(7)|wasm:tests/build/wasm/factorial.wasm"
   "as-gcd|00e10700c8000000|0|AS gcd(2017,200)|wasm:tests/build/wasm/gcd.wasm"
   "as-decoder-test|00000000|0|AS decoder|wasm:tests/build/wasm/decoder-test.wasm"
   "as-array-test|00000000|0|AS array|wasm:tests/build/wasm/array-test.wasm"
@@ -155,6 +157,7 @@ compile_benchmark() {
 # Recompile all benchmark sources into a separate directory with no-opt flags.
 compile_noopt_jams() {
   local noopt_dir="$1"
+  rm -rf "$noopt_dir"
   mkdir -p "$noopt_dir"
 
   echo "Recompiling benchmarks without PVM optimizations..." >&2
@@ -165,7 +168,7 @@ compile_noopt_jams() {
       continue
     fi
     local output="$noopt_dir/$basename.jam"
-    compile_benchmark "$wasm_src" "$output" "$basename" "${NO_OPT_FLAGS[@]}" >&2 || true
+    compile_benchmark "$wasm_src" "$output" "$basename" "${NO_OPT_FLAGS[@]}" >&2
   done
 }
 

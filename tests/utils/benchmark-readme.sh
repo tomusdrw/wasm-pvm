@@ -16,10 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BENCHMARK_SH="$SCRIPT_DIR/benchmark.sh"
 
 echo "=== Running optimized benchmarks ===" >&2
-opt_output=$("$BENCHMARK_SH" 2>/dev/null)
+opt_output=$("$BENCHMARK_SH")
 
 echo "=== Running no-opt benchmarks ===" >&2
-noopt_output=$("$BENCHMARK_SH" --no-opt 2>/dev/null)
+noopt_output=$("$BENCHMARK_SH" --no-opt)
 
 # Parse both outputs and generate the README comparison table
 python3 - <<'PYEOF' "$opt_output" "$noopt_output"
@@ -177,8 +177,10 @@ if noopt_pip and opt_pip:
         _, noopt_gas = noopt_pip[desc]
         _, opt_gas = opt_pip.get(desc, ("?", "?"))
 
-        # Display name
+        # Display name: strip "PiP " prefix for cleaner table labels
         display = desc
+        if desc.startswith("PiP "):
+            display = desc[4:]
         if desc == "PiP TRAP":
             display = "TRAP (interpreter overhead)"
 
