@@ -58,6 +58,8 @@ pub struct LlvmFunctionTranslation {
     pub instructions: Vec<Instruction>,
     pub call_fixups: Vec<LlvmCallFixup>,
     pub indirect_call_fixups: Vec<LlvmIndirectCallFixup>,
+    /// Number of call return addresses allocated by this function.
+    pub num_call_returns: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +158,11 @@ pub struct PvmEmitter<'ctx> {
     /// Whether the function contains any call instructions.
     /// If false (leaf function), we can skip saving/restoring the return address register.
     pub(crate) has_calls: bool,
+
+    /// Next call return index to allocate (for pre-assigning jump table addresses).
+    next_call_return_idx: usize,
+    /// Base call return index for this function (to compute `num_call_returns`).
+    call_return_base_idx: usize,
 }
 
 /// Deferred `ICmp` info for branch fusion.
@@ -183,7 +190,7 @@ pub fn val_key_instr(val: InstructionValue<'_>) -> ValKey {
 }
 
 impl<'ctx> PvmEmitter<'ctx> {
-    pub fn new(config: EmitterConfig) -> Self {
+    pub fn new(config: EmitterConfig, call_return_base: usize) -> Self {
         Self {
             config,
             instructions: Vec::new(),
@@ -203,7 +210,25 @@ impl<'ctx> PvmEmitter<'ctx> {
             used_callee_regs: [true; 4],
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
             has_calls: true, // conservative default
+            next_call_return_idx: call_return_base,
+            call_return_base_idx: call_return_base,
         }
+    }
+
+    /// Allocate a call return address (jump table address) for a direct call site.
+    /// Returns the pre-computed jump table address `(index + 1) * 2`.
+    pub fn alloc_call_return_addr(&mut self) -> i32 {
+        let idx = self.next_call_return_idx;
+        self.next_call_return_idx += 1;
+        (idx + 1)
+            .checked_mul(2)
+            .and_then(|v| i32::try_from(v).ok())
+            .expect("alloc_call_return_addr: jump table index overflow (exceeds i32 range)")
+    }
+
+    /// Returns how many call return addresses this function allocated.
+    pub fn num_call_returns(&self) -> usize {
+        self.next_call_return_idx - self.call_return_base_idx
     }
 
     pub fn alloc_label(&mut self) -> usize {
@@ -498,6 +523,7 @@ impl<'ctx> PvmEmitter<'ctx> {
 
             match &mut self.instructions[instr_idx] {
                 Instruction::Jump { offset }
+                | Instruction::LoadImmJump { offset, .. }
                 | Instruction::BranchNeImm { offset, .. }
                 | Instruction::BranchEqImm { offset, .. }
                 | Instruction::BranchGeSImm { offset, .. }
