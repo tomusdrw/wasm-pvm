@@ -142,19 +142,42 @@ for desc in noopt_main:
 
 print()
 
-# Print PVM-in-PVM comparison table
+# Print PVM-in-PVM comparison table with direct gas and overhead
 if noopt_pip and opt_pip:
+    # Build a lookup from PiP desc -> direct gas (opt) by stripping "PiP " prefix
+    # and matching against the main table descriptions
+    def find_direct_gas(pip_desc):
+        """Try to find direct execution gas for a PiP benchmark."""
+        # Strip "PiP " prefix to get the program name
+        if pip_desc.startswith("PiP "):
+            prog_name = pip_desc[4:]
+            # Look for exact match in main table
+            if prog_name in opt_main:
+                _, _, gas = opt_main[prog_name]
+                try:
+                    return int(gas)
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    # Get TRAP gas for overhead calculation
+    trap_opt_gas = None
+    if "PiP TRAP" in opt_pip:
+        try:
+            trap_opt_gas = int(opt_pip["PiP TRAP"][1])
+        except (ValueError, TypeError):
+            pass
+
     print("PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):")
     print()
-    print("| Benchmark | Gas (no opt) | Gas (opt) |")
-    print("|-----------|-------------|-----------|")
+    print("| Benchmark | Gas (no opt) | Gas (opt) | Direct gas | Overhead |")
+    print("|-----------|-------------|-----------|------------|----------|")
 
-    # Map PiP descriptions: strip "PiP " prefix for display, use full key for lookup
     for desc in noopt_pip:
         _, noopt_gas = noopt_pip[desc]
         _, opt_gas = opt_pip.get(desc, ("?", "?"))
 
-        # Display name: replace "PiP TRAP" with "TRAP (interpreter overhead)"
+        # Display name
         display = desc
         if desc == "PiP TRAP":
             display = "TRAP (interpreter overhead)"
@@ -165,7 +188,24 @@ if noopt_pip and opt_pip:
             ng = noopt_gas
         og = fmt_with_pct(noopt_gas, opt_gas)
 
-        print(f"| {display} | {ng} | {og} |")
+        # Direct gas and overhead
+        direct = find_direct_gas(desc)
+        if direct is not None and direct > 0:
+            direct_str = f"{direct:,}"
+            try:
+                pip_gas = int(opt_gas)
+                ratio = pip_gas / direct
+                overhead_str = f"{ratio:,.0f}x"
+            except (ValueError, TypeError):
+                overhead_str = "-"
+        elif desc == "PiP TRAP":
+            direct_str = "-"
+            overhead_str = "-"
+        else:
+            direct_str = "-"
+            overhead_str = "-"
+
+        print(f"| {display} | {ng} | {og} | {direct_str} | {overhead_str} |")
 
     print()
 PYEOF

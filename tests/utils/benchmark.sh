@@ -37,19 +37,21 @@ NO_OPT_FLAGS=(
   --no-cross-block-cache
 )
 
-# Representative benchmarks: (jam_basename, args, description, wasm_source)
-# wasm_source: "wat:<path>" for WAT files, "wasm:<path>" for WASM files, empty to skip
+# Representative benchmarks: (jam_basename, args, pc, description, wasm_source)
+# jam_basename: name of the JAM file in JAM_DIR, or "EXT:<path>" for external JAM files.
+# wasm_source: "wat:<path>" for WAT files, "wasm:<path>" for WASM files, empty to skip.
+# pc: initial program counter (default 0).
 BENCHMARKS=(
-  "add|0500000007000000|add(5,7)|wat:tests/fixtures/wat/add.jam.wat"
-  "fibonacci|14000000|fib(20)|wat:tests/fixtures/wat/fibonacci.jam.wat"
-  "factorial|0a000000|factorial(10)|wat:tests/fixtures/wat/factorial.jam.wat"
-  "is-prime|19000000|is_prime(25)|wat:tests/fixtures/wat/is-prime.jam.wat"
-  "as-fibonacci|0a000000|AS fib(10)|wasm:tests/build/wasm/fibonacci.wasm"
-  "as-factorial|07000000|AS 7!|wasm:tests/build/wasm/factorial.wasm"
-  "as-gcd|00e10700c8000000|AS gcd(2017,200)|wasm:tests/build/wasm/gcd.wasm"
-  "as-decoder-test|00000000|AS decoder|wasm:tests/build/wasm/decoder-test.wasm"
-  "as-array-test|00000000|AS array|wasm:tests/build/wasm/array-test.wasm"
-  "anan-as-compiler||anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
+  "add|0500000007000000|0|add(5,7)|wat:tests/fixtures/wat/add.jam.wat"
+  "fibonacci|14000000|0|fib(20)|wat:tests/fixtures/wat/fibonacci.jam.wat"
+  "factorial|0a000000|0|factorial(10)|wat:tests/fixtures/wat/factorial.jam.wat"
+  "is-prime|19000000|0|is_prime(25)|wat:tests/fixtures/wat/is-prime.jam.wat"
+  "as-fibonacci|0a000000|0|AS fib(10)|wasm:tests/build/wasm/fibonacci.wasm"
+  "as-factorial|07000000|0|AS 7!|wasm:tests/build/wasm/factorial.wasm"
+  "as-gcd|00e10700c8000000|0|AS gcd(2017,200)|wasm:tests/build/wasm/gcd.wasm"
+  "as-decoder-test|00000000|0|AS decoder|wasm:tests/build/wasm/decoder-test.wasm"
+  "as-array-test|00000000|0|AS array|wasm:tests/build/wasm/array-test.wasm"
+  "anan-as-compiler||0|anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
 )
 
 # Return "imports_path|adapter_path" for benchmarks that need them, or empty.
@@ -155,8 +157,9 @@ compile_noopt_jams() {
 
   echo "Recompiling benchmarks without PVM optimizations..." >&2
   for entry in "${BENCHMARKS[@]}"; do
-    IFS='|' read -r basename _args _desc wasm_src <<< "$entry"
-    if [ -z "$wasm_src" ]; then
+    IFS='|' read -r basename _args _pc _desc wasm_src <<< "$entry"
+    # Skip external JAM files (can't recompile) and entries without sources
+    if [ -z "$wasm_src" ] || [[ "$basename" == EXT:* ]]; then
       continue
     fi
     local output="$noopt_dir/$basename.jam"
@@ -167,7 +170,8 @@ compile_noopt_jams() {
 benchmark_one() {
   local jam_file="$1"
   local args="$2"
-  local desc="$3"
+  local pc="$3"
+  local desc="$4"
   local size gas_used time_ms
 
   if [ ! -f "$jam_file" ]; then
@@ -190,7 +194,7 @@ benchmark_one() {
     local start_ns end_ns elapsed_ms output exit_code
     start_ns=$(python3 -c "import time; print(int(time.time_ns()))")
     exit_code=0
-    output=$(node "$ANAN_CLI" run --spi --no-logs --gas=$GAS_BUDGET "$jam_file" "0x$args" 2>&1) || exit_code=$?
+    output=$(node "$ANAN_CLI" run --spi --no-logs --gas=$GAS_BUDGET --pc="$pc" "$jam_file" "0x$args" 2>&1) || exit_code=$?
     end_ns=$(python3 -c "import time; print(int(time.time_ns()))")
     elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
 
@@ -346,12 +350,19 @@ run_benchmarks() {
   echo "|-----------|-----------|----------|----------|-------------------|"
 
   for entry in "${BENCHMARKS[@]}"; do
-    IFS='|' read -r basename args desc wasm_src <<< "$entry"
-    local jam_file="$JAM_DIR/$basename.jam"
+    IFS='|' read -r basename args pc desc wasm_src <<< "$entry"
+    pc="${pc:-0}"
+    local jam_file
+    if [[ "$basename" == EXT:* ]]; then
+      local ext_path="${basename#EXT:}"
+      jam_file="$PROJECT_ROOT/$ext_path"
+    else
+      jam_file="$JAM_DIR/$basename.jam"
+    fi
     local wsize
     wsize=$(wasm_size "$wasm_src")
     local result
-    result=$(benchmark_one "$jam_file" "$args" "$desc")
+    result=$(benchmark_one "$jam_file" "$args" "$pc" "$desc")
 
     IFS='|' read -r status rdesc size gas time <<< "$result"
     if [ "$status" = "OK" ]; then
