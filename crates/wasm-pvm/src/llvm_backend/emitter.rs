@@ -528,13 +528,16 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     // ── Register allocation spill/reload ──
 
-    /// Spill all register-allocated values to their stack slots.
+    /// Spill scratch register-allocated values (r5/r6) to their stack slots.
     /// Called before instructions that clobber r5/r6 (calls, memory intrinsics).
+    /// Callee-saved registers (r9-r12) are not spilled here because they are
+    /// preserved by the callee-save convention and only used in leaf functions.
     pub fn spill_allocated_regs(&mut self) {
         let entries: Vec<_> = self
             .regalloc
             .reg_to_slot
             .iter()
+            .filter(|&(&r, _)| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
             .map(|(&r, &s)| (r, s))
             .collect();
         for (reg, slot) in entries {
@@ -546,13 +549,14 @@ impl<'ctx> PvmEmitter<'ctx> {
         }
     }
 
-    /// Reload all register-allocated values from their stack slots.
+    /// Reload scratch register-allocated values (r5/r6) from their stack slots.
     /// Called after instructions that clobber r5/r6 (calls, memory intrinsics).
     pub fn reload_allocated_regs(&mut self) {
         let entries: Vec<_> = self
             .regalloc
             .reg_to_slot
             .iter()
+            .filter(|&(&r, _)| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
             .map(|(&r, &s)| (r, s))
             .collect();
         for (reg, slot) in entries {
@@ -854,7 +858,7 @@ pub fn pre_scan_function<'ctx>(
 
         for bb in &blocks {
             if let Some(term) = bb.get_terminator() {
-                let successors = collect_terminator_successors(term);
+                let successors = super::successors::collect_successors(term);
                 // Deduplicate successors per predecessor (e.g. switch cases targeting the same block)
                 // so that multiple edges from the same bb don't inflate the predecessor count.
                 let unique_succs: HashSet<_> = successors.into_iter().collect();
@@ -896,63 +900,6 @@ pub fn pre_scan_function<'ctx>(
             }
         }
     }
-}
-
-/// Collect successor basic blocks from a terminator instruction.
-fn collect_terminator_successors(term: InstructionValue<'_>) -> Vec<BasicBlock<'_>> {
-    use inkwell::values::InstructionOpcode;
-    let mut successors = Vec::new();
-    match term.get_opcode() {
-        InstructionOpcode::Br => {
-            let num_ops = term.get_num_operands();
-            if num_ops == 1 {
-                // Unconditional: operand 0 is dest_bb
-                if let Some(bb) = term
-                    .get_operand(0)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-            } else {
-                // Conditional: operand 1 = false_bb, operand 2 = true_bb
-                if let Some(bb) = term
-                    .get_operand(1)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-                if let Some(bb) = term
-                    .get_operand(2)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-            }
-        }
-        InstructionOpcode::Switch => {
-            // Operand 1 = default_bb, then pairs of (case_val, case_bb)
-            if let Some(bb) = term
-                .get_operand(1)
-                .and_then(inkwell::values::Operand::block)
-            {
-                successors.push(bb);
-            }
-            let num_ops = term.get_num_operands();
-            let mut i = 3; // case_bb starts at operand 3
-            while i < num_ops {
-                if let Some(bb) = term
-                    .get_operand(i)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-                i += 2;
-            }
-        }
-        // Return, Unreachable — no successors
-        _ => {}
-    }
-    successors
 }
 
 fn instruction_produces_value(instr: InstructionValue<'_>) -> bool {

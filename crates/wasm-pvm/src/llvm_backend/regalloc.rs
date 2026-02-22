@@ -1,12 +1,22 @@
 // Linear-scan register allocator for the PVM backend.
 //
-// Allocates long-lived SSA values to physical registers (r5, r6) so they
-// persist across basic block boundaries — particularly loop back-edges where
-// the per-block register cache is cleared.
+// Allocates long-lived SSA values to physical registers so they persist across
+// basic block boundaries — particularly loop back-edges where the per-block
+// register cache is cleared.
+//
+// Allocatable registers:
+//   - r5, r6 (`abi::SCRATCH1`/`SCRATCH2`) — always available, spilled/reloaded
+//     around memory intrinsics and funnel shifts that clobber them.
+//   - r9-r12 (`abi::FIRST_LOCAL_REG`..+4) — available in leaf functions only,
+//     for registers beyond the parameter count.
 //
 // The allocator operates on LLVM IR (before PVM lowering) and produces a
 // mapping from `ValKey` → physical register. The emitter then uses this mapping
 // in `load_operand`/`store_to_slot` to avoid redundant memory traffic.
+//
+// Functions without loops are skipped entirely — the per-block register cache
+// already handles within-block forwarding, and adding spill/reload around calls
+// would be a net negative.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -16,15 +26,14 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use inkwell::basic_block::BasicBlock;
-use inkwell::values::{FunctionValue, InstructionOpcode, InstructionValue, PhiValue};
+use inkwell::values::{FunctionValue, PhiValue};
 
 use super::emitter::{ValKey, val_key_basic, val_key_instr};
+use super::successors::collect_successors;
 
-/// Registers available for allocation. Currently r5 and r6 (`abi::SCRATCH1`/`SCRATCH2`).
-/// These are only used by memory intrinsics (fill/copy/grow/init) and funnel shifts,
-/// which explicitly spill/reload around their usage.
-const ALLOCATABLE_REGS: &[u8] = &[5, 6];
+/// Base registers available for allocation (r5 and r6).
+/// These are always allocatable and spilled/reloaded around clobbering ops.
+const BASE_ALLOCATABLE_REGS: &[u8] = &[5, 6];
 
 /// A live interval for an SSA value.
 #[derive(Debug, Clone)]
@@ -53,7 +62,14 @@ pub struct RegAllocResult {
 /// Run register allocation for a function.
 ///
 /// `value_slots` maps `ValKey` → stack slot offset (from the pre-scan bump allocator).
-pub fn run(function: FunctionValue<'_>, value_slots: &HashMap<ValKey, i32>) -> RegAllocResult {
+/// `is_leaf` indicates whether the function contains no call instructions.
+/// `num_params` is the number of function parameters (for determining available callee-saved regs).
+pub fn run(
+    function: FunctionValue<'_>,
+    value_slots: &HashMap<ValKey, i32>,
+    is_leaf: bool,
+    num_params: usize,
+) -> RegAllocResult {
     let blocks = function.get_basic_blocks();
     if blocks.is_empty() {
         return RegAllocResult::default();
@@ -62,24 +78,40 @@ pub fn run(function: FunctionValue<'_>, value_slots: &HashMap<ValKey, i32>) -> R
     // Phase 1: Linearize instructions and compute block index ranges.
     let (instr_index, block_ranges) = linearize(&blocks);
 
-    // Phase 2: Compute live intervals.
-    let intervals = compute_live_intervals(&blocks, &instr_index, &block_ranges, value_slots);
+    // Phase 2: Compute live intervals + detect loops.
+    let (intervals, has_loops) =
+        compute_live_intervals(&blocks, &instr_index, &block_ranges, value_slots);
 
-    if intervals.is_empty() {
+    // Skip allocation for functions without loops — the per-block register cache
+    // already handles within-block forwarding, and spill/reload around calls
+    // would be a net cost.
+    if !has_loops || intervals.is_empty() {
         return RegAllocResult::default();
     }
 
-    // Phase 3: Linear scan allocation.
-    linear_scan(intervals)
+    // Phase 3: Build the allocatable register set.
+    let mut allocatable_regs: Vec<u8> = BASE_ALLOCATABLE_REGS.to_vec();
+
+    // For leaf functions, add unused callee-saved registers (r9-r12) beyond
+    // parameter count. These are saved/restored in prologue/epilogue anyway,
+    // so using them for allocation is free.
+    if is_leaf {
+        for i in num_params..crate::abi::MAX_LOCAL_REGS {
+            allocatable_regs.push(crate::abi::FIRST_LOCAL_REG + i as u8);
+        }
+    }
+
+    // Phase 4: Linear scan allocation.
+    linear_scan(intervals, &allocatable_regs)
 }
 
 /// Maps each LLVM instruction to a linearized index.
 /// Also returns the (start, end) index range for each basic block.
 fn linearize<'ctx>(
-    blocks: &[BasicBlock<'ctx>],
+    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
 ) -> (
     HashMap<ValKey, usize>,
-    HashMap<BasicBlock<'ctx>, (usize, usize)>,
+    HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
 ) {
     let mut instr_index = HashMap::new();
     let mut block_ranges = HashMap::new();
@@ -100,22 +132,25 @@ fn linearize<'ctx>(
 }
 
 /// Compute live intervals for all SSA values (parameters and instruction results).
+/// Also returns whether any loops were detected (back-edges exist).
 fn compute_live_intervals<'ctx>(
-    blocks: &[BasicBlock<'ctx>],
+    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
     instr_index: &HashMap<ValKey, usize>,
-    block_ranges: &HashMap<BasicBlock<'ctx>, (usize, usize)>,
+    block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
     value_slots: &HashMap<ValKey, i32>,
-) -> Vec<LiveInterval> {
+) -> (Vec<LiveInterval>, bool) {
+    use inkwell::values::InstructionOpcode;
+
     let mut def_point: HashMap<ValKey, usize> = HashMap::new();
     let mut last_use: HashMap<ValKey, usize> = HashMap::new();
     let mut use_count: HashMap<ValKey, usize> = HashMap::new();
 
     // Collect block index mapping for back-edge detection.
-    let block_order: HashMap<BasicBlock<'_>, usize> =
+    let block_order: HashMap<inkwell::basic_block::BasicBlock<'_>, usize> =
         blocks.iter().enumerate().map(|(i, &bb)| (bb, i)).collect();
 
     // Detect loop back-edges: successor has a lower block index than the source.
-    let mut loop_headers: HashMap<BasicBlock<'_>, usize> = HashMap::new();
+    let mut loop_headers: HashMap<inkwell::basic_block::BasicBlock<'_>, usize> = HashMap::new();
     for &bb in blocks {
         if let Some(term) = bb.get_terminator() {
             let successors = collect_successors(term);
@@ -132,6 +167,8 @@ fn compute_live_intervals<'ctx>(
             }
         }
     }
+
+    let has_loops = !loop_headers.is_empty();
 
     // Walk all instructions to find defs and uses.
     for &bb in blocks {
@@ -215,7 +252,7 @@ fn compute_live_intervals<'ctx>(
         });
     }
 
-    intervals
+    (intervals, has_loops)
 }
 
 fn update_use(
@@ -230,7 +267,7 @@ fn update_use(
 }
 
 /// Standard linear-scan register allocation.
-fn linear_scan(mut intervals: Vec<LiveInterval>) -> RegAllocResult {
+fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> RegAllocResult {
     // Sort by start point (ascending), then by use_count descending (prefer allocating
     // heavily-used values when two intervals start at the same point).
     intervals.sort_by(|a, b| {
@@ -243,7 +280,7 @@ fn linear_scan(mut intervals: Vec<LiveInterval>) -> RegAllocResult {
 
     // Active intervals sorted by end point (using BTreeSet of (end, index)).
     let mut active: BTreeSet<(usize, usize)> = BTreeSet::new();
-    let mut free_regs: Vec<u8> = ALLOCATABLE_REGS.to_vec();
+    let mut free_regs: Vec<u8> = allocatable_regs.to_vec();
     let mut assigned: HashMap<usize, u8> = HashMap::new();
 
     for (i, interval) in intervals.iter().enumerate() {
@@ -267,11 +304,10 @@ fn linear_scan(mut intervals: Vec<LiveInterval>) -> RegAllocResult {
             && furthest_end > interval.end
         {
             // Evict the interval with the furthest end, give its register to us.
-            let reg = assigned.remove(&furthest_idx).unwrap();
+            let reg = assigned
+                .remove(&furthest_idx)
+                .expect("active interval must have an assigned register");
             active.remove(&(furthest_end, furthest_idx));
-            let evicted = &intervals[furthest_idx];
-            result.val_to_reg.remove(&evicted.val_key);
-            result.slot_to_reg.remove(&evicted.slot);
 
             assigned.insert(i, reg);
             active.insert((interval.end, i));
@@ -279,69 +315,13 @@ fn linear_scan(mut intervals: Vec<LiveInterval>) -> RegAllocResult {
         // else: no free register and current interval ends further — spill it.
     }
 
-    // Build result from assigned intervals.
-    // Only include intervals that weren't evicted (still in val_to_reg after all insertions).
+    // Build result from assigned intervals (single pass).
     for (&idx, &reg) in &assigned {
         let interval = &intervals[idx];
         result.val_to_reg.insert(interval.val_key, reg);
         result.slot_to_reg.insert(interval.slot, reg);
-    }
-
-    // Build reg_to_slot for spill/reload (only non-evicted intervals).
-    for (&idx, &reg) in &assigned {
-        let interval = &intervals[idx];
-        if result.val_to_reg.contains_key(&interval.val_key) {
-            result.reg_to_slot.insert(reg, interval.slot);
-        }
+        result.reg_to_slot.insert(reg, interval.slot);
     }
 
     result
-}
-
-/// Collect successor basic blocks from a terminator instruction.
-fn collect_successors(term: InstructionValue<'_>) -> Vec<BasicBlock<'_>> {
-    let mut successors = Vec::new();
-    match term.get_opcode() {
-        InstructionOpcode::Br => {
-            let num_ops = term.get_num_operands();
-            if num_ops == 1 {
-                if let Some(bb) = term
-                    .get_operand(0)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-            } else {
-                for op_idx in [1, 2] {
-                    if let Some(bb) = term
-                        .get_operand(op_idx)
-                        .and_then(inkwell::values::Operand::block)
-                    {
-                        successors.push(bb);
-                    }
-                }
-            }
-        }
-        InstructionOpcode::Switch => {
-            if let Some(bb) = term
-                .get_operand(1)
-                .and_then(inkwell::values::Operand::block)
-            {
-                successors.push(bb);
-            }
-            let num_ops = term.get_num_operands();
-            let mut i = 3;
-            while i < num_ops {
-                if let Some(bb) = term
-                    .get_operand(i)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-                i += 2;
-            }
-        }
-        _ => {}
-    }
-    successors
 }
