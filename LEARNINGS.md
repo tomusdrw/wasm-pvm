@@ -44,6 +44,21 @@ Accumulated knowledge from development. Update after every task.
 - Used for: `data.drop` (store 0 to segment length addr), `global.set` with constants
 - Savings: 3 instructions (LoadImm + LoadImm + StoreInd) → 1 instruction
 
+## StoreImmInd (Store Immediate Indirect)
+
+### Encoding (OneRegTwoImm)
+
+- Format: `[opcode, (offset_len << 4) | (base & 0x0F), offset_bytes..., value_bytes...]`
+- Both offset and value use variable-length signed encoding (`encode_imm`)
+- Opcodes: StoreImmIndU8=70, StoreImmIndU16=71, StoreImmIndU32=72, StoreImmIndU64=73
+- Semantics: `mem[reg[base] + sign_extend(offset)] = value` (truncated/sign-extended per width)
+- For U64: `value` is sign-extended from i32 to i64
+
+### Optimization Triggers
+
+- `emit_pvm_store`: When WASM store value is a compile-time constant fitting i32
+- Saves 1 instruction (LoadImm) per constant store to WASM linear memory
+
 ## ALU Immediate Opcode Folding
 
 ### Immediate folding for binary operations

@@ -945,6 +945,58 @@ fn test_i64_store() {
     assert!(has_opcode(&instructions, Opcode::StoreIndU64));
 }
 
+/// Storing a constant value to memory should use StoreImmInd (no LoadImm for value).
+#[test]
+fn test_store_const_uses_store_imm_ind() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32) (result i32)
+                ;; store constant 42 at address from param
+                local.get 0
+                i32.const 42
+                i32.store
+                i32.const 0
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Should use StoreImmIndU32 instead of LoadImm + StoreIndU32
+    assert!(
+        has_opcode(&instructions, Opcode::StoreImmIndU32),
+        "Storing constant should use StoreImmIndU32.\nInstructions: {:?}",
+        instructions
+    );
+}
+
+/// Storing a constant i64 value should use StoreImmIndU64.
+#[test]
+fn test_i64_store_const_uses_store_imm_ind() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                i64.const 0
+                i64.store
+                i32.const 0
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::StoreImmIndU64),
+        "Storing constant i64 should use StoreImmIndU64.\nInstructions: {:?}",
+        instructions
+    );
+}
+
 // =============================================================================
 // Control Flow: br_table / switch
 // =============================================================================
@@ -1027,10 +1079,11 @@ fn test_global_load_store() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Globals should use StoreIndU32/LoadIndU32 at fixed addresses (0x30000+)
+    // Globals should use StoreIndU32/StoreImmIndU32 at fixed addresses (0x30000+)
     assert!(
         has_opcode(&instructions, Opcode::StoreIndU32)
-            || has_opcode(&instructions, Opcode::StoreIndU64),
+            || has_opcode(&instructions, Opcode::StoreIndU64)
+            || has_opcode(&instructions, Opcode::StoreImmIndU32),
         "global.set should emit a store"
     );
     assert!(
