@@ -458,12 +458,8 @@ impl Instruction {
             Self::SetLtS { dst, src1, src2 } => {
                 encode_three_reg(Opcode::SetLtS, *dst, *src1, *src2)
             }
-            Self::CmovIz { dst, src, cond } => {
-                encode_three_reg(Opcode::CmovIz, *dst, *src, *cond)
-            }
-            Self::CmovNz { dst, src, cond } => {
-                encode_three_reg(Opcode::CmovNz, *dst, *src, *cond)
-            }
+            Self::CmovIz { dst, src, cond } => encode_three_reg(Opcode::CmovIz, *dst, *src, *cond),
+            Self::CmovNz { dst, src, cond } => encode_three_reg(Opcode::CmovNz, *dst, *src, *cond),
             Self::And { dst, src1, src2 } => encode_three_reg(Opcode::And, *dst, *src1, *src2),
             Self::Xor { dst, src1, src2 } => encode_three_reg(Opcode::Xor, *dst, *src1, *src2),
             Self::Or { dst, src1, src2 } => encode_three_reg(Opcode::Or, *dst, *src1, *src2),
@@ -1143,11 +1139,21 @@ mod tests {
     #[test]
     fn test_cmov_dest_reg() {
         assert_eq!(
-            Instruction::CmovIz { dst: 5, src: 1, cond: 2 }.dest_reg(),
+            Instruction::CmovIz {
+                dst: 5,
+                src: 1,
+                cond: 2
+            }
+            .dest_reg(),
             Some(5)
         );
         assert_eq!(
-            Instruction::CmovNz { dst: 8, src: 3, cond: 4 }.dest_reg(),
+            Instruction::CmovNz {
+                dst: 8,
+                src: 3,
+                cond: 4
+            }
+            .dest_reg(),
             Some(8)
         );
     }
