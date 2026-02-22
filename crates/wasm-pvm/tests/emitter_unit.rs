@@ -853,7 +853,7 @@ fn test_direct_calls_use_load_imm_jump() {
         "LoadImm64 with reg 0 should not be used for direct calls (LoadImmJump replaces it)"
     );
 
-    // Verify jump table addresses are sequential: (1+1)*2=4, (2+1)*2=6, etc.
+    // Verify jump table addresses are sequential: (0+1)*2=2, (1+1)*2=4, (2+1)*2=6, etc.
     let jump_addrs: Vec<i32> = instrs
         .iter()
         .filter_map(|i| match i {
