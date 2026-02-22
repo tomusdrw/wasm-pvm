@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execSync } from "node:child_process";
 import { JAM_DIR, PROJECT_ROOT, ANAN_AS_CLI } from "./paths";
 
@@ -66,8 +67,20 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
   // Write args to a temp binary file to avoid E2BIG (arg list too long) on Linux
   // when the inner JAM program is large. The anan-as CLI accepts a file path as args.
   const argsBuf = Buffer.from(argsHex, "hex");
-  const tmpFile = path.join(os.tmpdir(), `pvm-in-pvm-args-${process.pid}-${Date.now()}.bin`);
+  const debug = process.env.PVM_IN_PVM_DEBUG === "1";
+  const keepArgs = process.env.PVM_IN_PVM_KEEP_ARGS === "1";
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pvm-in-pvm-"));
+  const tmpFile = path.join(
+    tmpDir,
+    `args-${process.pid}-${Date.now()}-${crypto.randomUUID()}.bin`,
+  );
   fs.writeFileSync(tmpFile, argsBuf);
+  if (debug) {
+    const sha = crypto.createHash("sha256").update(argsBuf).digest("hex");
+    console.log(
+      `[pvm-in-pvm] args tmp=${tmpFile} bytes=${argsBuf.length} sha256=${sha}`,
+    );
+  }
 
   const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=${OUTER_GAS} ${COMPILER_JAM} ${tmpFile}`;
 
@@ -81,7 +94,9 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
       timeout: timeoutMs,
     });
   } catch (error: any) {
-    fs.rmSync(tmpFile, { force: true });
+    if (!keepArgs) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
     if (error.killed || error.signal === "SIGTERM") {
       throw new PvmInPvmTimeout(timeoutMs ?? 0);
     }
@@ -95,7 +110,9 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
       );
     }
   }
-  fs.rmSync(tmpFile, { force: true });
+  if (!keepArgs) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 
   // Check if the outer interpreter itself panicked
   const statusMatch = stdout.match(/Status:\s*(\d+)/);
@@ -127,6 +144,19 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
     const gasMatch = stdout.match(/Gas remaining:\s*(\d+)/);
     const pcMatch = stdout.match(/Program counter:\s*(\d+)/);
     const regsMatch = stdout.match(/Registers:\s*\[([^\]]*)\]/);
+    if (debug) {
+      const jamPath = COMPILER_JAM;
+      const jamBytes = fs.readFileSync(jamPath);
+      const jamSha = crypto.createHash("sha256").update(jamBytes).digest("hex");
+      console.log(
+        `[pvm-in-pvm] compiler jam=${jamPath} bytes=${jamBytes.length} sha256=${jamSha}`,
+      );
+      if (keepArgs) {
+        console.log(
+          `[pvm-in-pvm] kept args file: ${tmpFile} (dir ${tmpDir})`,
+        );
+      }
+    }
     throw new Error(
       `Result too short (${resultBuffer.length} bytes, need >= 17): 0x${resultHex}\n` +
         `Outer status=${outerStatus}, gas=${gasMatch?.[1] ?? "?"}, pc=${pcMatch?.[1] ?? "?"}\n` +
