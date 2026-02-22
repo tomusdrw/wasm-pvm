@@ -1360,7 +1360,14 @@ impl Instruction {
             | Self::StoreImmU8 { .. }
             | Self::StoreImmU16 { .. }
             | Self::StoreImmU32 { .. }
-            | Self::StoreImmU64 { .. } => [None, None, None],
+            | Self::StoreImmU64 { .. }
+            | Self::LoadU8 { .. }
+            | Self::LoadI8 { .. }
+            | Self::LoadU16 { .. }
+            | Self::LoadI16 { .. }
+            | Self::LoadU32 { .. }
+            | Self::LoadI32 { .. }
+            | Self::LoadU64 { .. } => [None, None, None],
 
             Self::MoveReg { src, .. }
             | Self::Sbrk { src, .. }
@@ -1374,11 +1381,13 @@ impl Instruction {
             | Self::SignExtend16 { src, .. }
             | Self::ZeroExtend16 { src, .. }
             | Self::JumpInd { reg: src, .. }
+            | Self::LoadImmJumpInd { base: src, .. }
             | Self::LoadIndU8 { base: src, .. }
             | Self::LoadIndI8 { base: src, .. }
             | Self::LoadIndU16 { base: src, .. }
             | Self::LoadIndI16 { base: src, .. }
             | Self::LoadIndU32 { base: src, .. }
+            | Self::LoadIndI32 { base: src, .. }
             | Self::LoadIndU64 { base: src, .. }
             | Self::StoreImmIndU8 { base: src, .. }
             | Self::StoreImmIndU16 { base: src, .. }
@@ -1412,7 +1421,22 @@ impl Instruction {
             | Self::NegAddImm32 { src, .. }
             | Self::NegAddImm64 { src, .. }
             | Self::SetGtUImm { src, .. }
-            | Self::SetGtSImm { src, .. } => [Some(*src), None, None],
+            | Self::SetGtSImm { src, .. }
+            | Self::StoreU8 { src, .. }
+            | Self::StoreU16 { src, .. }
+            | Self::StoreU32 { src, .. }
+            | Self::StoreU64 { src, .. }
+            | Self::ReverseBytes { src, .. }
+            | Self::ShloLImmAlt32 { src, .. }
+            | Self::ShloRImmAlt32 { src, .. }
+            | Self::SharRImmAlt32 { src, .. }
+            | Self::ShloLImmAlt64 { src, .. }
+            | Self::ShloRImmAlt64 { src, .. }
+            | Self::SharRImmAlt64 { src, .. }
+            | Self::RotRImm64 { src, .. }
+            | Self::RotRImmAlt64 { src, .. }
+            | Self::RotRImm32 { src, .. }
+            | Self::RotRImmAlt32 { src, .. } => [Some(*src), None, None],
 
             Self::StoreIndU8 { base, src, .. }
             | Self::StoreIndU16 { base, src, .. }
@@ -1483,7 +1507,21 @@ impl Instruction {
             | Self::Or { src1, src2, .. }
             | Self::ShloL32 { src1, src2, .. }
             | Self::ShloR32 { src1, src2, .. }
-            | Self::SharR32 { src1, src2, .. } => [Some(*src1), Some(*src2), None],
+            | Self::SharR32 { src1, src2, .. }
+            | Self::MulUpperSS { src1, src2, .. }
+            | Self::MulUpperUU { src1, src2, .. }
+            | Self::MulUpperSU { src1, src2, .. }
+            | Self::RotL64 { src1, src2, .. }
+            | Self::RotL32 { src1, src2, .. }
+            | Self::RotR64 { src1, src2, .. }
+            | Self::RotR32 { src1, src2, .. }
+            | Self::AndInv { src1, src2, .. }
+            | Self::OrInv { src1, src2, .. }
+            | Self::Xnor { src1, src2, .. }
+            | Self::Max { src1, src2, .. }
+            | Self::MaxU { src1, src2, .. }
+            | Self::Min { src1, src2, .. }
+            | Self::MinU { src1, src2, .. } => [Some(*src1), Some(*src2), None],
 
             // CmovIzImm/CmovNzImm read from the cond register only (value is an immediate).
             Self::CmovIzImm { cond, .. } | Self::CmovNzImm { cond, .. } => {
@@ -2309,15 +2347,15 @@ mod tests {
         assert_eq!(from_instr, from_helper);
     }
 
-    /// Helper: decode a variable-length sign-extended immediate (same logic as test_cmov_imm_roundtrip)
+    /// Helper: decode a variable-length sign-extended immediate (same logic as `test_cmov_imm_roundtrip`)
     fn decode_sign_extended_imm(imm_bytes: &[u8]) -> i32 {
         let mut buf = [0u8; 4];
         buf[..imm_bytes.len()].copy_from_slice(imm_bytes);
-        if let Some(&last) = imm_bytes.last() {
-            if last & 0x80 != 0 {
-                for b in buf.iter_mut().skip(imm_bytes.len()) {
-                    *b = 0xFF;
-                }
+        if let Some(&last) = imm_bytes.last()
+            && last & 0x80 != 0
+        {
+            for b in buf.iter_mut().skip(imm_bytes.len()) {
+                *b = 0xFF;
             }
         }
         i32::from_le_bytes(buf)
