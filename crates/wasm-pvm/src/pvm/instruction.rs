@@ -487,6 +487,223 @@ pub enum Instruction {
         offset: i32,
         value: i32,
     },
+    /// Load from absolute address: reg[dst] = `zero_extend(mem[address])` (u8)
+    LoadU8 {
+        dst: u8,
+        address: i32,
+    },
+    /// Load from absolute address: reg[dst] = `sign_extend(mem[address])` (i8)
+    LoadI8 {
+        dst: u8,
+        address: i32,
+    },
+    /// Load from absolute address: reg[dst] = `zero_extend(mem[address])` (u16)
+    LoadU16 {
+        dst: u8,
+        address: i32,
+    },
+    /// Load from absolute address: reg[dst] = `sign_extend(mem[address])` (i16)
+    LoadI16 {
+        dst: u8,
+        address: i32,
+    },
+    /// Load from absolute address: reg[dst] = `zero_extend(mem[address])` (u32)
+    LoadU32 {
+        dst: u8,
+        address: i32,
+    },
+    /// Load from absolute address: reg[dst] = `sign_extend(mem[address])` (i32)
+    LoadI32 {
+        dst: u8,
+        address: i32,
+    },
+    /// Load from absolute address: reg[dst] = mem[address] (u64)
+    LoadU64 {
+        dst: u8,
+        address: i32,
+    },
+    /// Store to absolute address: mem[address] = reg[src] (u8)
+    StoreU8 {
+        src: u8,
+        address: i32,
+    },
+    /// Store to absolute address: mem[address] = reg[src] (u16)
+    StoreU16 {
+        src: u8,
+        address: i32,
+    },
+    /// Store to absolute address: mem[address] = reg[src] (u32)
+    StoreU32 {
+        src: u8,
+        address: i32,
+    },
+    /// Store to absolute address: mem[address] = reg[src] (u64)
+    StoreU64 {
+        src: u8,
+        address: i32,
+    },
+    /// Load indirect with sign extension: reg[dst] = `sign_extend(mem[reg[base] + offset])` (i32)
+    LoadIndI32 {
+        dst: u8,
+        base: u8,
+        offset: i32,
+    },
+    /// Reverse byte order: reg[dst] = bswap(reg[src])
+    ReverseBytes {
+        dst: u8,
+        src: u8,
+    },
+    /// Alternate shift left immediate (32-bit): reg[dst] = `sign_extend(value)` << reg[src]
+    ShloLImmAlt32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Alternate shift logical right immediate (32-bit): reg[dst] = `sign_extend(value)` >> reg[src]
+    ShloRImmAlt32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Alternate shift arithmetic right immediate (32-bit): reg[dst] = `sign_extend(value)` >>> reg[src]
+    SharRImmAlt32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Alternate shift left immediate (64-bit): reg[dst] = `sign_extend(value)` << reg[src]
+    ShloLImmAlt64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Alternate shift logical right immediate (64-bit): reg[dst] = `sign_extend(value)` >> reg[src]
+    ShloRImmAlt64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Alternate shift arithmetic right immediate (64-bit): reg[dst] = `sign_extend(value)` >>> reg[src]
+    SharRImmAlt64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Rotate right by immediate (64-bit): reg[dst] = reg[src] ROR value
+    RotRImm64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Alternate rotate right (64-bit): reg[dst] = `sign_extend(value)` ROR reg[src]
+    RotRImmAlt64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Rotate right by immediate (32-bit): reg[dst] = reg[src] ROR value
+    RotRImm32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Alternate rotate right (32-bit): reg[dst] = `sign_extend(value)` ROR reg[src]
+    RotRImmAlt32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    /// Combined load-immediate + indirect jump: `reg[dst] = sign_extend(value); jump to reg[base] + sign_extend(offset)`
+    LoadImmJumpInd {
+        base: u8,
+        dst: u8,
+        value: i32,
+        offset: i32,
+    },
+    /// Upper 64 bits of signed*signed 128-bit multiply
+    MulUpperSS {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Upper 64 bits of unsigned*unsigned 128-bit multiply
+    MulUpperUU {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Upper 64 bits of signed*unsigned 128-bit multiply
+    MulUpperSU {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Rotate left (64-bit): reg[dst] = reg[src1] ROL reg[src2]
+    RotL64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Rotate left (32-bit): reg[dst] = reg[src1] ROL reg[src2]
+    RotL32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Rotate right (64-bit): reg[dst] = reg[src1] ROR reg[src2]
+    RotR64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Rotate right (32-bit): reg[dst] = reg[src1] ROR reg[src2]
+    RotR32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// AND with inverted second operand: reg[dst] = reg[src1] & ~reg[src2]
+    AndInv {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// OR with inverted second operand: reg[dst] = reg[src1] | ~reg[src2]
+    OrInv {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// XNOR: reg[dst] = ~(reg[src1] ^ reg[src2])
+    Xnor {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Signed maximum: reg[dst] = max(reg[src1], reg[src2])
+    Max {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Unsigned maximum: reg[dst] = `max_u(reg[src1], reg[src2])`
+    MaxU {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Signed minimum: reg[dst] = min(reg[src1], reg[src2])
+    Min {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    /// Unsigned minimum: reg[dst] = `min_u(reg[src1], reg[src2])`
+    MinU {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
     Ecalli {
         index: u32,
     },
@@ -824,6 +1041,118 @@ impl Instruction {
                 offset,
                 value,
             } => encode_one_reg_two_imm(Opcode::StoreImmIndU64, *base, *offset, *value),
+            // Load/store absolute (OneRegOneImm encoding)
+            Self::LoadU8 { dst, address } => encode_one_reg_one_imm(Opcode::LoadU8, *dst, *address),
+            Self::LoadI8 { dst, address } => encode_one_reg_one_imm(Opcode::LoadI8, *dst, *address),
+            Self::LoadU16 { dst, address } => {
+                encode_one_reg_one_imm(Opcode::LoadU16, *dst, *address)
+            }
+            Self::LoadI16 { dst, address } => {
+                encode_one_reg_one_imm(Opcode::LoadI16, *dst, *address)
+            }
+            Self::LoadU32 { dst, address } => {
+                encode_one_reg_one_imm(Opcode::LoadU32, *dst, *address)
+            }
+            Self::LoadI32 { dst, address } => {
+                encode_one_reg_one_imm(Opcode::LoadI32, *dst, *address)
+            }
+            Self::LoadU64 { dst, address } => {
+                encode_one_reg_one_imm(Opcode::LoadU64, *dst, *address)
+            }
+            Self::StoreU8 { src, address } => {
+                encode_one_reg_one_imm(Opcode::StoreU8, *src, *address)
+            }
+            Self::StoreU16 { src, address } => {
+                encode_one_reg_one_imm(Opcode::StoreU16, *src, *address)
+            }
+            Self::StoreU32 { src, address } => {
+                encode_one_reg_one_imm(Opcode::StoreU32, *src, *address)
+            }
+            Self::StoreU64 { src, address } => {
+                encode_one_reg_one_imm(Opcode::StoreU64, *src, *address)
+            }
+            Self::LoadIndI32 { dst, base, offset } => {
+                let mut bytes = vec![
+                    Opcode::LoadIndI32 as u8,
+                    (*base & 0x0F) << 4 | (*dst & 0x0F),
+                ];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::ReverseBytes { dst, src } => encode_two_reg(Opcode::ReverseBytes, *dst, *src),
+            // Alternate shift immediates (TwoRegOneImm)
+            Self::ShloLImmAlt32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::ShloLImmAlt32, *dst, *src, *value)
+            }
+            Self::ShloRImmAlt32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::ShloRImmAlt32, *dst, *src, *value)
+            }
+            Self::SharRImmAlt32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::SharRImmAlt32, *dst, *src, *value)
+            }
+            Self::ShloLImmAlt64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::ShloLImmAlt64, *dst, *src, *value)
+            }
+            Self::ShloRImmAlt64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::ShloRImmAlt64, *dst, *src, *value)
+            }
+            Self::SharRImmAlt64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::SharRImmAlt64, *dst, *src, *value)
+            }
+            // Rotate immediates (TwoRegOneImm)
+            Self::RotRImm64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::RotRImm64, *dst, *src, *value)
+            }
+            Self::RotRImmAlt64 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::RotRImmAlt64, *dst, *src, *value)
+            }
+            Self::RotRImm32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::RotRImm32, *dst, *src, *value)
+            }
+            Self::RotRImmAlt32 { dst, src, value } => {
+                encode_two_reg_one_imm(Opcode::RotRImmAlt32, *dst, *src, *value)
+            }
+            // LoadImmJumpInd (TwoRegTwoImm)
+            Self::LoadImmJumpInd {
+                base,
+                dst,
+                value,
+                offset,
+            } => encode_two_reg_two_imm(Opcode::LoadImmJumpInd, *base, *dst, *value, *offset),
+            // Upper multiply (ThreeReg)
+            Self::MulUpperSS { dst, src1, src2 } => {
+                encode_three_reg(Opcode::MulUpperSS, *dst, *src1, *src2)
+            }
+            Self::MulUpperUU { dst, src1, src2 } => {
+                encode_three_reg(Opcode::MulUpperUU, *dst, *src1, *src2)
+            }
+            Self::MulUpperSU { dst, src1, src2 } => {
+                encode_three_reg(Opcode::MulUpperSU, *dst, *src1, *src2)
+            }
+            // Rotate (ThreeReg)
+            Self::RotL64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::RotL64, *dst, *src1, *src2)
+            }
+            Self::RotL32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::RotL32, *dst, *src1, *src2)
+            }
+            Self::RotR64 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::RotR64, *dst, *src1, *src2)
+            }
+            Self::RotR32 { dst, src1, src2 } => {
+                encode_three_reg(Opcode::RotR32, *dst, *src1, *src2)
+            }
+            // Inverted bitwise (ThreeReg)
+            Self::AndInv { dst, src1, src2 } => {
+                encode_three_reg(Opcode::AndInv, *dst, *src1, *src2)
+            }
+            Self::OrInv { dst, src1, src2 } => encode_three_reg(Opcode::OrInv, *dst, *src1, *src2),
+            Self::Xnor { dst, src1, src2 } => encode_three_reg(Opcode::Xnor, *dst, *src1, *src2),
+            // Min/Max (ThreeReg)
+            Self::Max { dst, src1, src2 } => encode_three_reg(Opcode::Max, *dst, *src1, *src2),
+            Self::MaxU { dst, src1, src2 } => encode_three_reg(Opcode::MaxU, *dst, *src1, *src2),
+            Self::Min { dst, src1, src2 } => encode_three_reg(Opcode::Min, *dst, *src1, *src2),
+            Self::MinU { dst, src1, src2 } => encode_three_reg(Opcode::MinU, *dst, *src1, *src2),
             Self::Ecalli { index } => {
                 let mut bytes = vec![Opcode::Ecalli as u8];
                 bytes.extend_from_slice(&encode_uimm(*index));
@@ -902,6 +1231,40 @@ impl Instruction {
             | Self::NegAddImm64 { dst, .. }
             | Self::SetGtUImm { dst, .. }
             | Self::SetGtSImm { dst, .. }
+            | Self::LoadIndI32 { dst, .. }
+            | Self::ReverseBytes { dst, .. }
+            | Self::ShloLImmAlt32 { dst, .. }
+            | Self::ShloRImmAlt32 { dst, .. }
+            | Self::SharRImmAlt32 { dst, .. }
+            | Self::ShloLImmAlt64 { dst, .. }
+            | Self::ShloRImmAlt64 { dst, .. }
+            | Self::SharRImmAlt64 { dst, .. }
+            | Self::RotRImm64 { dst, .. }
+            | Self::RotRImmAlt64 { dst, .. }
+            | Self::RotRImm32 { dst, .. }
+            | Self::RotRImmAlt32 { dst, .. }
+            | Self::MulUpperSS { dst, .. }
+            | Self::MulUpperUU { dst, .. }
+            | Self::MulUpperSU { dst, .. }
+            | Self::RotL64 { dst, .. }
+            | Self::RotL32 { dst, .. }
+            | Self::RotR64 { dst, .. }
+            | Self::RotR32 { dst, .. }
+            | Self::AndInv { dst, .. }
+            | Self::OrInv { dst, .. }
+            | Self::Xnor { dst, .. }
+            | Self::Max { dst, .. }
+            | Self::MaxU { dst, .. }
+            | Self::Min { dst, .. }
+            | Self::MinU { dst, .. }
+            | Self::LoadU8 { dst, .. }
+            | Self::LoadI8 { dst, .. }
+            | Self::LoadU16 { dst, .. }
+            | Self::LoadI16 { dst, .. }
+            | Self::LoadU32 { dst, .. }
+            | Self::LoadI32 { dst, .. }
+            | Self::LoadU64 { dst, .. }
+            | Self::LoadImmJumpInd { dst, .. }
             | Self::MoveReg { dst, .. } => Some(*dst),
             // LoadImmJump writes to a register AND jumps, but since it's
             // terminating, the dest_reg is used only by peephole for cache
@@ -934,6 +1297,10 @@ impl Instruction {
             | Self::StoreIndU16 { .. }
             | Self::StoreIndU32 { .. }
             | Self::StoreIndU64 { .. }
+            | Self::StoreU8 { .. }
+            | Self::StoreU16 { .. }
+            | Self::StoreU32 { .. }
+            | Self::StoreU64 { .. }
             | Self::StoreImmU8 { .. }
             | Self::StoreImmU16 { .. }
             | Self::StoreImmU32 { .. }
@@ -972,6 +1339,7 @@ impl Instruction {
                 | Self::BranchLtU { .. }
                 | Self::BranchLtS { .. }
                 | Self::BranchGeS { .. }
+                | Self::LoadImmJumpInd { .. }
         )
     }
 }
@@ -1007,6 +1375,26 @@ fn encode_one_reg_two_imm(opcode: Opcode, reg: u8, imm1: i32, imm2: i32) -> Vec<
     let imm1_len = imm1_enc.len() as u8;
     let imm2_enc = encode_imm(imm2);
     let mut bytes = vec![opcode as u8, (imm1_len << 4) | (reg & 0x0F)];
+    bytes.extend_from_slice(&imm1_enc);
+    bytes.extend_from_slice(&imm2_enc);
+    bytes
+}
+
+fn encode_one_reg_one_imm(opcode: Opcode, reg: u8, value: i32) -> Vec<u8> {
+    let mut bytes = vec![opcode as u8, reg & 0x0F];
+    bytes.extend_from_slice(&encode_imm(value));
+    bytes
+}
+
+fn encode_two_reg_two_imm(opcode: Opcode, reg1: u8, reg2: u8, imm1: i32, imm2: i32) -> Vec<u8> {
+    let imm1_enc = encode_imm(imm1);
+    let imm1_len = imm1_enc.len() as u8;
+    let imm2_enc = encode_imm(imm2);
+    let mut bytes = vec![
+        opcode as u8,
+        (reg1 & 0x0F) << 4 | (reg2 & 0x0F),
+        imm1_len & 0x0F,
+    ];
     bytes.extend_from_slice(&imm1_enc);
     bytes.extend_from_slice(&imm2_enc);
     bytes
@@ -1609,5 +1997,182 @@ mod tests {
                 instr
             );
         }
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_encoding_layout() {
+        // encode_one_reg_one_imm: [opcode, reg & 0x0F, imm...]
+        let encoded = encode_one_reg_one_imm(Opcode::LoadU32, 7, 0x30000);
+        assert_eq!(encoded[0], Opcode::LoadU32 as u8);
+        assert_eq!(encoded[1], 0x07); // reg=7, low nibble only
+        assert_eq!(&encoded[2..], &encode_imm(0x30000));
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_zero_value() {
+        let encoded = encode_one_reg_one_imm(Opcode::LoadU64, 3, 0);
+        assert_eq!(encoded.len(), 2); // opcode + reg, no imm bytes for value=0
+        assert_eq!(encoded[0], Opcode::LoadU64 as u8);
+        assert_eq!(encoded[1], 0x03);
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_negative_value() {
+        let encoded = encode_one_reg_one_imm(Opcode::StoreU8, 12, -1);
+        assert_eq!(encoded[0], Opcode::StoreU8 as u8);
+        assert_eq!(encoded[1], 0x0C); // reg=12
+        assert_eq!(&encoded[2..], &encode_imm(-1));
+        assert_eq!(encoded[2], 0xFF); // -1 as 1-byte signed
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_high_nibble_masked() {
+        // Register 0xF7 should be masked to 0x07
+        let encoded = encode_one_reg_one_imm(Opcode::LoadI8, 0xF7, 42);
+        assert_eq!(encoded[1], 0x07); // only low nibble kept
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_roundtrip() {
+        // Roundtrip: encode then manually decode and verify fields match
+        for (opcode, reg, value) in [
+            (Opcode::LoadU8, 0u8, 0i32),
+            (Opcode::LoadI16, 5, 42),
+            (Opcode::LoadU32, 12, 0x30000),
+            (Opcode::StoreU64, 7, -128),
+            (Opcode::LoadU64, 3, 8_388_607), // max 3-byte signed
+        ] {
+            let encoded = encode_one_reg_one_imm(opcode, reg, value);
+
+            // Decode opcode
+            assert_eq!(
+                encoded[0], opcode as u8,
+                "opcode mismatch for reg={reg} value={value}"
+            );
+
+            // Decode register
+            let decoded_reg = encoded[1] & 0x0F;
+            assert_eq!(
+                decoded_reg,
+                reg & 0x0F,
+                "reg mismatch for reg={reg} value={value}"
+            );
+
+            // Decode immediate (sign-extend from variable-length encoding)
+            let imm_bytes = &encoded[2..];
+            let decoded_value = decode_sign_extended_imm(imm_bytes);
+            assert_eq!(
+                decoded_value, value,
+                "value mismatch for reg={reg} value={value}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_via_instruction_encode() {
+        // Verify Instruction::encode() for LoadU32 matches direct helper call
+        let instr = Instruction::LoadU32 {
+            dst: 5,
+            address: 0x30000,
+        };
+        let from_instr = instr.encode();
+        let from_helper = encode_one_reg_one_imm(Opcode::LoadU32, 5, 0x30000);
+        assert_eq!(from_instr, from_helper);
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_encoding_layout() {
+        // encode_two_reg_two_imm: [opcode, (reg1<<4)|reg2, imm1_len, imm1..., imm2...]
+        let encoded = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, 3, 7, 42, 100);
+        assert_eq!(encoded[0], Opcode::LoadImmJumpInd as u8);
+        assert_eq!(encoded[1], 0x37); // reg1=3 high nibble, reg2=7 low nibble
+        let imm1_enc = encode_imm(42);
+        let imm2_enc = encode_imm(100);
+        assert_eq!(encoded[2], imm1_enc.len() as u8); // imm1 length
+        assert_eq!(&encoded[3..3 + imm1_enc.len()], &imm1_enc);
+        assert_eq!(&encoded[3 + imm1_enc.len()..], &imm2_enc);
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_zero_immediates() {
+        let encoded = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, 0, 5, 0, 0);
+        // [opcode, 0x05, 0x00] — no imm bytes for either
+        assert_eq!(encoded.len(), 3);
+        assert_eq!(encoded[0], Opcode::LoadImmJumpInd as u8);
+        assert_eq!(encoded[1], 0x05);
+        assert_eq!(encoded[2], 0x00); // imm1_len = 0
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_register_masking() {
+        // High bits should be masked off
+        let encoded = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, 0xA3, 0xB7, 1, 2);
+        assert_eq!(encoded[1], 0x37); // only low nibbles: 3 and 7
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_roundtrip() {
+        for (reg1, reg2, imm1, imm2) in [
+            (0u8, 0u8, 0i32, 0i32),
+            (3, 7, 42, 100),
+            (12, 1, -1, 0x30000),
+            (5, 9, 8_388_607, -8_388_608), // max/min 3-byte signed
+        ] {
+            let encoded = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, reg1, reg2, imm1, imm2);
+
+            // Decode opcode
+            assert_eq!(encoded[0], Opcode::LoadImmJumpInd as u8);
+
+            // Decode registers
+            let decoded_reg1 = (encoded[1] >> 4) & 0x0F;
+            let decoded_reg2 = encoded[1] & 0x0F;
+            assert_eq!(decoded_reg1, reg1 & 0x0F, "reg1 mismatch");
+            assert_eq!(decoded_reg2, reg2 & 0x0F, "reg2 mismatch");
+
+            // Decode imm1 length + imm1
+            let imm1_len = (encoded[2] & 0x0F) as usize;
+            let imm1_bytes = &encoded[3..3 + imm1_len];
+            let decoded_imm1 = decode_sign_extended_imm(imm1_bytes);
+            assert_eq!(
+                decoded_imm1, imm1,
+                "imm1 mismatch for ({reg1},{reg2},{imm1},{imm2})"
+            );
+
+            // Decode imm2 (remaining bytes)
+            let imm2_bytes = &encoded[3 + imm1_len..];
+            let decoded_imm2 = decode_sign_extended_imm(imm2_bytes);
+            assert_eq!(
+                decoded_imm2, imm2,
+                "imm2 mismatch for ({reg1},{reg2},{imm1},{imm2})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_via_instruction_encode() {
+        // Verify Instruction::encode() for LoadImmJumpInd matches direct helper call
+        let instr = Instruction::LoadImmJumpInd {
+            base: 3,
+            dst: 7,
+            value: 42,
+            offset: 100,
+        };
+        let from_instr = instr.encode();
+        let from_helper = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, 3, 7, 42, 100);
+        assert_eq!(from_instr, from_helper);
+    }
+
+    /// Helper: decode a variable-length sign-extended immediate (same logic as test_cmov_imm_roundtrip)
+    fn decode_sign_extended_imm(imm_bytes: &[u8]) -> i32 {
+        let mut buf = [0u8; 4];
+        buf[..imm_bytes.len()].copy_from_slice(imm_bytes);
+        if let Some(&last) = imm_bytes.last() {
+            if last & 0x80 != 0 {
+                for b in buf.iter_mut().skip(imm_bytes.len()) {
+                    *b = 0xFF;
+                }
+            }
+        }
+        i32::from_le_bytes(buf)
     }
 }
