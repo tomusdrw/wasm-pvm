@@ -203,12 +203,14 @@ fn emit_prologue<'ctx>(
     });
 
     if !is_main {
-        // Save return address.
-        e.emit(Instruction::StoreIndU64 {
-            base: abi::STACK_PTR_REG,
-            src: abi::RETURN_ADDR_REG,
-            offset: 0,
-        });
+        // Save return address (only if function makes calls).
+        if e.has_calls {
+            e.emit(Instruction::StoreIndU64 {
+                base: abi::STACK_PTR_REG,
+                src: abi::RETURN_ADDR_REG,
+                offset: 0,
+            });
+        }
 
         // Save callee-saved registers r9-r12 (only those actually used).
         for i in 0..abi::MAX_LOCAL_REGS {

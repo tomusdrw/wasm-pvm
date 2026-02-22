@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execSync } from "node:child_process";
 import { JAM_DIR, PROJECT_ROOT, ANAN_AS_CLI } from "./paths";
 
@@ -66,7 +67,11 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
   // Write args to a temp binary file to avoid E2BIG (arg list too long) on Linux
   // when the inner JAM program is large. The anan-as CLI accepts a file path as args.
   const argsBuf = Buffer.from(argsHex, "hex");
-  const tmpFile = path.join(os.tmpdir(), `pvm-in-pvm-args-${process.pid}-${Date.now()}.bin`);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pvm-in-pvm-"));
+  const tmpFile = path.join(
+    tmpDir,
+    `args-${process.pid}-${Date.now()}-${crypto.randomUUID()}.bin`,
+  );
   fs.writeFileSync(tmpFile, argsBuf);
 
   const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=${OUTER_GAS} ${COMPILER_JAM} ${tmpFile}`;
@@ -81,7 +86,6 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
       timeout: timeoutMs,
     });
   } catch (error: any) {
-    fs.rmSync(tmpFile, { force: true });
     if (error.killed || error.signal === "SIGTERM") {
       throw new PvmInPvmTimeout(timeoutMs ?? 0);
     }
@@ -94,8 +98,9 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
         `Outer execution failed: ${error.message.split("\n")[0]}\nstderr: ${errStderr.substring(0, 500)}`,
       );
     }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
-  fs.rmSync(tmpFile, { force: true });
 
   // Check if the outer interpreter itself panicked
   const statusMatch = stdout.match(/Status:\s*(\d+)/);
@@ -123,8 +128,14 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
 
   // Minimum: status(1) + exitCode(4) + gas(8) + pc(4) = 17 bytes
   if (resultBuffer.length < 17) {
+    const gasMatch = stdout.match(/Gas remaining:\s*(\d+)/);
+    const pcMatch = stdout.match(/Program counter:\s*(\d+)/);
+    const regsMatch = stdout.match(/Registers:\s*\[([^\]]*)\]/);
     throw new Error(
-      `Result too short (${resultBuffer.length} bytes, need >= 17): 0x${resultHex}`,
+      `Result too short (${resultBuffer.length} bytes, need >= 17): 0x${resultHex}\n` +
+        `Outer status=${outerStatus}, gas=${gasMatch?.[1] ?? "?"}, pc=${pcMatch?.[1] ?? "?"}\n` +
+        `Registers: ${regsMatch?.[1] ?? "?"}\n` +
+        `Full output (first 1000 chars): ${stdout.substring(0, 1000)}`,
     );
   }
 

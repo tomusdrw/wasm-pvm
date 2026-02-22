@@ -3,7 +3,7 @@
 use wasm_pvm::test_harness::*;
 
 #[test]
-#[ignore] // Requires examples-as build artifacts (npm run build:nested-repro)
+#[ignore = "Requires examples-as build artifacts (npm run build:nested-repro)"]
 fn test_as_nested_repro() {
     let wat = std::fs::read_to_string("../../examples-as/build/nested-repro.wat")
         .expect("Failed to read nested-repro.wat");

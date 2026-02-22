@@ -275,12 +275,14 @@ fn emit_epilogue(e: &mut PvmEmitter<'_>, is_main: bool) {
             }
         }
 
-        // Restore return address.
-        e.emit(Instruction::LoadIndU64 {
-            dst: abi::RETURN_ADDR_REG,
-            base: abi::STACK_PTR_REG,
-            offset: 0,
-        });
+        // Restore return address (only if function makes calls).
+        if e.has_calls {
+            e.emit(Instruction::LoadIndU64 {
+                dst: abi::RETURN_ADDR_REG,
+                base: abi::STACK_PTR_REG,
+                offset: 0,
+            });
+        }
 
         // Deallocate frame.
         e.emit(Instruction::AddImm64 {

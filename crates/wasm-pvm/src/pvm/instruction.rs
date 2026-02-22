@@ -1342,6 +1342,193 @@ impl Instruction {
                 | Self::LoadImmJumpInd { .. }
         )
     }
+
+    /// Returns the source registers read by this instruction.
+    /// Used by dead code elimination to determine liveness.
+    /// Returns up to 3 registers (most instructions use 0-2, some 3).
+    #[must_use]
+    pub const fn src_regs(&self) -> [Option<u8>; 3] {
+        match self {
+            Self::Trap
+            | Self::Fallthrough
+            | Self::Jump { .. }
+            | Self::Ecalli { .. }
+            | Self::Unknown { .. }
+            | Self::LoadImm { .. }
+            | Self::LoadImm64 { .. }
+            | Self::LoadImmJump { .. }
+            | Self::StoreImmU8 { .. }
+            | Self::StoreImmU16 { .. }
+            | Self::StoreImmU32 { .. }
+            | Self::StoreImmU64 { .. }
+            | Self::LoadU8 { .. }
+            | Self::LoadI8 { .. }
+            | Self::LoadU16 { .. }
+            | Self::LoadI16 { .. }
+            | Self::LoadU32 { .. }
+            | Self::LoadI32 { .. }
+            | Self::LoadU64 { .. } => [None, None, None],
+
+            Self::MoveReg { src, .. }
+            | Self::Sbrk { src, .. }
+            | Self::CountSetBits64 { src, .. }
+            | Self::CountSetBits32 { src, .. }
+            | Self::LeadingZeroBits64 { src, .. }
+            | Self::LeadingZeroBits32 { src, .. }
+            | Self::TrailingZeroBits64 { src, .. }
+            | Self::TrailingZeroBits32 { src, .. }
+            | Self::SignExtend8 { src, .. }
+            | Self::SignExtend16 { src, .. }
+            | Self::ZeroExtend16 { src, .. }
+            | Self::JumpInd { reg: src, .. }
+            | Self::LoadImmJumpInd { base: src, .. }
+            | Self::LoadIndU8 { base: src, .. }
+            | Self::LoadIndI8 { base: src, .. }
+            | Self::LoadIndU16 { base: src, .. }
+            | Self::LoadIndI16 { base: src, .. }
+            | Self::LoadIndU32 { base: src, .. }
+            | Self::LoadIndI32 { base: src, .. }
+            | Self::LoadIndU64 { base: src, .. }
+            | Self::StoreImmIndU8 { base: src, .. }
+            | Self::StoreImmIndU16 { base: src, .. }
+            | Self::StoreImmIndU32 { base: src, .. }
+            | Self::StoreImmIndU64 { base: src, .. }
+            | Self::BranchEqImm { reg: src, .. }
+            | Self::BranchNeImm { reg: src, .. }
+            | Self::BranchLtUImm { reg: src, .. }
+            | Self::BranchLeUImm { reg: src, .. }
+            | Self::BranchGeUImm { reg: src, .. }
+            | Self::BranchGtUImm { reg: src, .. }
+            | Self::BranchLtSImm { reg: src, .. }
+            | Self::BranchLeSImm { reg: src, .. }
+            | Self::BranchGeSImm { reg: src, .. }
+            | Self::BranchGtSImm { reg: src, .. }
+            | Self::AddImm32 { src, .. }
+            | Self::AddImm64 { src, .. }
+            | Self::SetLtUImm { src, .. }
+            | Self::SetLtSImm { src, .. }
+            | Self::AndImm { src, .. }
+            | Self::XorImm { src, .. }
+            | Self::OrImm { src, .. }
+            | Self::MulImm32 { src, .. }
+            | Self::MulImm64 { src, .. }
+            | Self::ShloLImm32 { src, .. }
+            | Self::ShloRImm32 { src, .. }
+            | Self::SharRImm32 { src, .. }
+            | Self::ShloLImm64 { src, .. }
+            | Self::ShloRImm64 { src, .. }
+            | Self::SharRImm64 { src, .. }
+            | Self::NegAddImm32 { src, .. }
+            | Self::NegAddImm64 { src, .. }
+            | Self::SetGtUImm { src, .. }
+            | Self::SetGtSImm { src, .. }
+            | Self::StoreU8 { src, .. }
+            | Self::StoreU16 { src, .. }
+            | Self::StoreU32 { src, .. }
+            | Self::StoreU64 { src, .. }
+            | Self::ReverseBytes { src, .. }
+            | Self::ShloLImmAlt32 { src, .. }
+            | Self::ShloRImmAlt32 { src, .. }
+            | Self::SharRImmAlt32 { src, .. }
+            | Self::ShloLImmAlt64 { src, .. }
+            | Self::ShloRImmAlt64 { src, .. }
+            | Self::SharRImmAlt64 { src, .. }
+            | Self::RotRImm64 { src, .. }
+            | Self::RotRImmAlt64 { src, .. }
+            | Self::RotRImm32 { src, .. }
+            | Self::RotRImmAlt32 { src, .. } => [Some(*src), None, None],
+
+            Self::StoreIndU8 { base, src, .. }
+            | Self::StoreIndU16 { base, src, .. }
+            | Self::StoreIndU32 { base, src, .. }
+            | Self::StoreIndU64 { base, src, .. }
+            | Self::BranchEq {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchNe {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchLtU {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchLtS {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchGeU {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::BranchGeS {
+                reg1: base,
+                reg2: src,
+                ..
+            }
+            | Self::CmovIz {
+                src: base,
+                cond: src,
+                ..
+            }
+            | Self::CmovNz {
+                src: base,
+                cond: src,
+                ..
+            } => [Some(*base), Some(*src), None],
+
+            Self::Add32 { src1, src2, .. }
+            | Self::Sub32 { src1, src2, .. }
+            | Self::Mul32 { src1, src2, .. }
+            | Self::DivU32 { src1, src2, .. }
+            | Self::DivS32 { src1, src2, .. }
+            | Self::RemU32 { src1, src2, .. }
+            | Self::RemS32 { src1, src2, .. }
+            | Self::Add64 { src1, src2, .. }
+            | Self::Sub64 { src1, src2, .. }
+            | Self::Mul64 { src1, src2, .. }
+            | Self::DivU64 { src1, src2, .. }
+            | Self::DivS64 { src1, src2, .. }
+            | Self::RemU64 { src1, src2, .. }
+            | Self::RemS64 { src1, src2, .. }
+            | Self::ShloL64 { src1, src2, .. }
+            | Self::ShloR64 { src1, src2, .. }
+            | Self::SharR64 { src1, src2, .. }
+            | Self::SetLtU { src1, src2, .. }
+            | Self::SetLtS { src1, src2, .. }
+            | Self::And { src1, src2, .. }
+            | Self::Xor { src1, src2, .. }
+            | Self::Or { src1, src2, .. }
+            | Self::ShloL32 { src1, src2, .. }
+            | Self::ShloR32 { src1, src2, .. }
+            | Self::SharR32 { src1, src2, .. }
+            | Self::MulUpperSS { src1, src2, .. }
+            | Self::MulUpperUU { src1, src2, .. }
+            | Self::MulUpperSU { src1, src2, .. }
+            | Self::RotL64 { src1, src2, .. }
+            | Self::RotL32 { src1, src2, .. }
+            | Self::RotR64 { src1, src2, .. }
+            | Self::RotR32 { src1, src2, .. }
+            | Self::AndInv { src1, src2, .. }
+            | Self::OrInv { src1, src2, .. }
+            | Self::Xnor { src1, src2, .. }
+            | Self::Max { src1, src2, .. }
+            | Self::MaxU { src1, src2, .. }
+            | Self::Min { src1, src2, .. }
+            | Self::MinU { src1, src2, .. } => [Some(*src1), Some(*src2), None],
+
+            // CmovIzImm/CmovNzImm read from the cond register only (value is an immediate).
+            Self::CmovIzImm { cond, .. } | Self::CmovNzImm { cond, .. } => {
+                [Some(*cond), None, None]
+            }
+        }
+    }
 }
 
 fn encode_three_reg(opcode: Opcode, dst: u8, src1: u8, src2: u8) -> Vec<u8> {
@@ -1564,11 +1751,11 @@ mod tests {
                 let mut buf = [0u8; 4];
                 buf[..imm_bytes.len()].copy_from_slice(imm_bytes);
                 // Sign-extend: if top bit of last written byte is set, fill with 0xFF
-                if let Some(&last) = imm_bytes.last() {
-                    if last & 0x80 != 0 {
-                        for b in buf.iter_mut().skip(imm_bytes.len()) {
-                            *b = 0xFF;
-                        }
+                if let Some(&last) = imm_bytes.last()
+                    && last & 0x80 != 0
+                {
+                    for b in buf.iter_mut().skip(imm_bytes.len()) {
+                        *b = 0xFF;
                     }
                 }
                 let decoded_value = i32::from_le_bytes(buf);
@@ -1901,11 +2088,10 @@ mod tests {
             let encoded = instr.encode();
             assert_eq!(
                 encoded[0], *expected_opcode as u8,
-                "Wrong opcode for {:?}",
-                instr
+                "Wrong opcode for {instr:?}"
             );
             // Verify encoding is at least 2 bytes (opcode + reg byte)
-            assert!(encoded.len() >= 2, "Encoding too short for {:?}", instr);
+            assert!(encoded.len() >= 2, "Encoding too short for {instr:?}");
         }
     }
 
@@ -1993,8 +2179,7 @@ mod tests {
             assert_eq!(
                 instr.dest_reg(),
                 Some(*expected),
-                "Wrong dest_reg for {:?}",
-                instr
+                "Wrong dest_reg for {instr:?}"
             );
         }
     }
@@ -2162,15 +2347,15 @@ mod tests {
         assert_eq!(from_instr, from_helper);
     }
 
-    /// Helper: decode a variable-length sign-extended immediate (same logic as test_cmov_imm_roundtrip)
+    /// Helper: decode a variable-length sign-extended immediate (same logic as `test_cmov_imm_roundtrip`)
     fn decode_sign_extended_imm(imm_bytes: &[u8]) -> i32 {
         let mut buf = [0u8; 4];
         buf[..imm_bytes.len()].copy_from_slice(imm_bytes);
-        if let Some(&last) = imm_bytes.last() {
-            if last & 0x80 != 0 {
-                for b in buf.iter_mut().skip(imm_bytes.len()) {
-                    *b = 0xFF;
-                }
+        if let Some(&last) = imm_bytes.last()
+            && last & 0x80 != 0
+        {
+            for b in buf.iter_mut().skip(imm_bytes.len()) {
+                *b = 0xFF;
             }
         }
         i32::from_le_bytes(buf)

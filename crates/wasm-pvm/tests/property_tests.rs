@@ -6,6 +6,8 @@
 //! - Arithmetic WAT modules produce correct opcodes for random operands
 //! - Edge cases (overflow, division by zero) are handled correctly
 
+use std::fmt::Write;
+
 use proptest::prelude::*;
 use wasm_pvm::Opcode;
 use wasm_pvm::test_harness::*;
@@ -535,7 +537,7 @@ proptest! {
         }
         body.push_str("nop");
         for _ in 0..depth {
-            body.push_str(")");
+            body.push(')');
         }
 
         let wat = format!(
@@ -557,7 +559,7 @@ proptest! {
         let ops = ["i32.add", "i32.sub", "i32.mul", "i32.and", "i32.or", "i32.xor"];
         let mut body = String::from("local.get 0\n");
         for i in 0..chain_len {
-            body.push_str(&format!("i32.const {}\n", i + 1));
+            writeln!(body, "i32.const {}", i + 1).unwrap();
             body.push_str(ops[i % ops.len()]);
             body.push('\n');
         }

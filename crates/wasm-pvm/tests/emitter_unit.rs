@@ -1,4 +1,4 @@
-//! Unit tests for PvmEmitter: slot allocation, label management, fixup resolution,
+//! Unit tests for `PvmEmitter`: slot allocation, label management, fixup resolution,
 //! and constant emission — the core "stack machine" logic (issue #32).
 
 use wasm_pvm::test_harness::*;
@@ -87,7 +87,7 @@ fn test_multiple_slot_allocation() {
 
 // ── Constant Loading ──
 
-/// Small constants (fits in i32) should use LoadImm, not LoadImm64.
+/// Small constants (fits in i32) should use `LoadImm`, not `LoadImm64`.
 #[test]
 fn test_small_constant_uses_load_imm() {
     let program = compile_wat(
@@ -117,7 +117,7 @@ fn test_small_constant_uses_load_imm() {
     assert!(has_42, "Expected LoadImm with value 42");
 }
 
-/// Large i64 constants that don't fit in i32 should use LoadImm64.
+/// Large i64 constants that don't fit in i32 should use `LoadImm64`.
 #[test]
 fn test_large_constant_uses_load_imm64() {
     let program = compile_wat(
@@ -139,7 +139,7 @@ fn test_large_constant_uses_load_imm64() {
     );
 }
 
-/// Negative i32 constants should use sign-extended LoadImm (compact encoding).
+/// Negative i32 constants should use sign-extended `LoadImm` (compact encoding).
 #[test]
 fn test_negative_constant_uses_load_imm() {
     let program = compile_wat(
@@ -358,26 +358,39 @@ fn test_function_prologue_adjusts_sp() {
     );
 }
 
-/// Function call saves/restores return address to stack.
+/// Function call saves/restores return address to stack (for non-leaf non-main functions).
+/// Requires inlining disabled to preserve call structure.
 #[test]
 fn test_call_saves_return_address() {
-    let program = compile_wat(
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    let program = compile_wat_with_options(
         r#"
         (module
-            (func $helper (param i32) (result i32)
-                local.get 0
+            (func $leaf (result i32)
+                i32.const 42
             )
-            (func (export "main") (param i32) (result i32)
-                local.get 0
-                call $helper
+            (func $caller (result i32)
+                call $leaf
+            )
+            (func (export "main") (result i32)
+                call $caller
             )
         )
         "#,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
     )
     .expect("compile");
     let instructions = extract_instructions(&program);
 
-    // The caller should save the return address (r0) to the stack frame.
+    // The caller ($caller) calls $leaf, so it must save r0.
     assert_has_pattern(
         &instructions,
         &[InstructionPattern::StoreIndU64 {
@@ -535,19 +548,11 @@ fn test_if_else_result_phi_slots() {
     .expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Both branches store their result to the phi's slot.
-    // We should see LoadImm 10, StoreIndU64, ... LoadImm 20, StoreIndU64
-    let has_10 = instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::LoadImm { value: 10, .. }));
-    let has_20 = instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::LoadImm { value: 20, .. }));
-    assert!(has_10, "Expected LoadImm 10 for if-branch");
-    assert!(has_20, "Expected LoadImm 20 for else-branch");
-
     // Both branch values should be stored to slots (phi nodes in the merge block).
-    let store_count = count_opcode(&instructions, Opcode::StoreIndU64);
+    let store_count = count_opcode(&instructions, Opcode::StoreIndU32)
+        + count_opcode(&instructions, Opcode::StoreIndU64)
+        + count_opcode(&instructions, Opcode::StoreImmIndU32)
+        + count_opcode(&instructions, Opcode::StoreImmIndU64);
     assert!(
         store_count >= 2,
         "Expected at least 2 StoreIndU64 for phi values, got {store_count}"
@@ -632,7 +637,7 @@ fn test_no_shrink_wrap_saves_all() {
     // $leaf should save all 4 callee-saved regs (r9=9, r10=10, r11=11, r12=12).
     // Look for the 4 stores to SP-relative offsets 8, 16, 24, 32.
     for (i, offset) in [8, 16, 24, 32].iter().enumerate() {
-        let reg = 9 + i as u8;
+        let reg = u8::try_from(9 + i).unwrap();
         let has_save = instructions.iter().any(|instr| {
             matches!(
                 instr,
@@ -647,7 +652,7 @@ fn test_no_shrink_wrap_saves_all() {
 }
 
 /// Shrink wrapping: leaf function with 0 params should NOT save any callee-saved
-/// registers (no StoreIndU64 at offsets 8/16/24/32 with r9-r12 as source).
+/// registers (no `StoreIndU64` at offsets 8/16/24/32 with r9-r12 as source).
 #[test]
 fn test_shrink_wrap_leaf_0_params_no_saves() {
     let program = compile_wat(
@@ -669,7 +674,7 @@ fn test_shrink_wrap_leaf_0_params_no_saves() {
     // Entry function (main) never saves callee-saved registers.
     // So there should be no StoreIndU64 at offsets 8-32 targeting r9-r12.
     for (i, offset) in [8i32, 16, 24, 32].iter().enumerate() {
-        let reg = 9 + i as u8;
+        let reg = u8::try_from(9 + i).unwrap();
         let has_save = instructions.iter().any(|instr| {
             matches!(
                 instr,
@@ -715,7 +720,7 @@ fn test_shrink_wrap_calling_function_saves_all() {
     // $caller calls $leaf → must save all 4 callee-saved regs.
     // Check all 4 stores exist (at consecutive offsets 8, 16, 24, 32).
     for (i, offset) in [8, 16, 24, 32].iter().enumerate() {
-        let reg = 9 + i as u8;
+        let reg = u8::try_from(9 + i).unwrap();
         let has_save = instructions.iter().any(|instr| {
             matches!(
                 instr,
@@ -799,11 +804,188 @@ fn test_inlining_changes_codegen() {
         "Inlining should reduce LoadImmJump count (call overhead): inlined={inlined_call_count}, no-inline={noinline_call_count}"
     );
 }
+/// Leaf function optimization: leaf function (no calls) should NOT save return address (r0).
+#[test]
+fn test_leaf_function_optimization_skips_ra_save() {
+    let program = compile_wat(
+        r#"
+        (module
+            (func (export "main") (result i32)
+                i32.const 42
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
 
-/// Test that direct calls use the compact LoadImmJump instruction instead of
-/// separate LoadImm64 + Jump, saving 1 instruction (1 gas) per call site.
+    // Should NOT save RA (r0) to stack (offset 0).
+    // StoreIndU64 { base: 1, src: 0, offset: 0 } should NOT exist.
+    let has_ra_save = instructions.iter().any(|i| {
+        matches!(
+            i,
+            Instruction::StoreIndU64 {
+                base: 1,
+                src: 0,
+                offset: 0
+            }
+        )
+    });
+    assert!(
+        !has_ra_save,
+        "Leaf function should NOT save return address (r0)"
+    );
+}
+
+/// Leaf function optimization: a non-main leaf function should NOT save RA,
+/// even when that module also has a non-leaf function.
+/// Inlining is disabled so helper functions are compiled as standalone functions.
+/// Verifies that adding a non-leaf caller does not cause the leaf function to save RA;
+/// by comparing RA save count between a module with two non-leaf callers vs.
+/// one non-leaf caller + one leaf callee.
+#[test]
+fn test_non_main_leaf_function_skips_ra_save() {
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    let opts = CompileOptions {
+        optimizations: OptimizationFlags {
+            inlining: false,
+            ..OptimizationFlags::default()
+        },
+        ..CompileOptions::default()
+    };
+
+    // Module A: $helper is a leaf (no calls). $caller calls $helper. $main calls $caller.
+    // Expected: $helper saves 0 RA, $caller saves 1 RA.
+    let program_leaf = compile_wat_with_options(
+        r#"
+        (module
+            (func $helper (result i32)
+                i32.const 42
+            )
+            (func $caller (result i32)
+                call $helper
+            )
+            (func (export "main") (result i32)
+                call $caller
+            )
+        )
+        "#,
+        &opts,
+    )
+    .expect("compile leaf module");
+
+    // Module B: $helper2 also calls something, making it non-leaf.
+    // $caller calls $helper2. $main calls $caller.
+    // Expected: $helper2 saves 1 RA, $caller saves 1 RA — total 2.
+    let program_nonleaf = compile_wat_with_options(
+        r#"
+        (module
+            (func $inner (result i32)
+                i32.const 1
+            )
+            (func $helper2 (result i32)
+                call $inner
+            )
+            (func $caller (result i32)
+                call $helper2
+            )
+            (func (export "main") (result i32)
+                call $caller
+            )
+        )
+        "#,
+        &opts,
+    )
+    .expect("compile non-leaf module");
+
+    let count_ra_saves = |instrs: &[wasm_pvm::pvm::Instruction]| {
+        instrs
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i,
+                    wasm_pvm::pvm::Instruction::StoreIndU64 {
+                        base: 1,
+                        src: 0,
+                        offset: 0
+                    }
+                )
+            })
+            .count()
+    };
+
+    let leaf_ra_saves = count_ra_saves(&extract_instructions(&program_leaf));
+    let nonleaf_ra_saves = count_ra_saves(&extract_instructions(&program_nonleaf));
+
+    assert!(
+        leaf_ra_saves < nonleaf_ra_saves,
+        "Leaf $helper should save fewer RA than non-leaf $helper2: leaf={leaf_ra_saves}, nonleaf={nonleaf_ra_saves}"
+    );
+}
+
+/// Non-leaf function (has calls) MUST save return address (r0).
+/// Requires inlining disabled to preserve call structure.
+#[test]
+fn test_non_leaf_function_saves_ra() {
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    let program = compile_wat_with_options(
+        r#"
+        (module
+            (func $leaf (result i32)
+                i32.const 42
+            )
+            (func $caller (result i32)
+                call $leaf
+            )
+            (func (export "main") (result i32)
+                call $caller
+            )
+        )
+        "#,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // We expect at least one RA save (from $caller).
+    // StoreIndU64 { base: 1, src: 0, offset: 0 }
+    let ra_save_count = instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i,
+                Instruction::StoreIndU64 {
+                    base: 1,
+                    src: 0,
+                    offset: 0
+                }
+            )
+        })
+        .count();
+
+    assert!(
+        ra_save_count >= 1,
+        "Non-leaf function ($caller) MUST save return address (r0)"
+    );
+}
+
+/// Test that direct calls use the compact `LoadImmJump` instruction instead of
+/// separate `LoadImm64` + Jump, saving 1 instruction (1 gas) per call site.
 #[test]
 fn test_direct_calls_use_load_imm_jump() {
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
     let wat = r#"
         (module
             (func $helper (param i32) (result i32)
@@ -862,7 +1044,7 @@ fn test_direct_calls_use_load_imm_jump() {
         })
         .collect();
     for (i, addr) in jump_addrs.iter().enumerate() {
-        let expected = ((i + 1) * 2) as i32;
+        let expected = i32::try_from((i + 1) * 2).unwrap();
         assert_eq!(
             *addr, expected,
             "Jump table address mismatch at call {i}: expected {expected}, got {addr}"

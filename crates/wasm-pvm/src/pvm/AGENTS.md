@@ -64,6 +64,11 @@ pub fn dest_reg(&self) -> Option<u8> {
 }
 ```
 
+### Peephole Notes
+- Dead-code elimination runs only when a function has no labels (single-block code). Multi-block
+  functions skip DCE to avoid incorrect liveness across control flow.
+
+
 ## Where to Look
 
 | Task | Location |

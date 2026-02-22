@@ -107,7 +107,7 @@ fn test_local_tee_preserves_stack_value() {
 }
 
 /// local.tee immediately after a push to spill depth, where the value has a pending spill.
-/// This tests the pending_spill detection path in local.tee.
+/// This tests the `pending_spill` detection path in local.tee.
 #[test]
 fn test_local_tee_with_pending_spill() {
     let program = compile_wat(

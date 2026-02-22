@@ -10,10 +10,10 @@
 //! PVM Address Space:
 //!   0x00000 - 0x0FFFF   Reserved (fault on access)
 //!   0x10000 - 0x1FFFF   Read-only data segment (RO_DATA_BASE)
-//!   0x30000 - 0x3FEFF   Globals + user heap (GLOBAL_MEMORY_BASE)
-//!   0x3FF00 - 0x3FFFF   Parameter overflow area (PARAM_OVERFLOW_BASE)
-//!   0x40000 - 0x4FFFF+  Spilled locals (SPILLED_LOCALS_BASE)
-//!   0x50000+            WASM linear memory (computed dynamically)
+//!   0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
+//!   0x32000 - 0x320FF   Parameter overflow area (PARAM_OVERFLOW_BASE)
+//!   0x32100+            Spilled locals base (SPILLED_LOCALS_BASE)
+//!   0x40000+            WASM linear memory (64KB-aligned, computed dynamically)
 //!   ...
 //!   0xFEFE0000          Stack segment end (stack grows downward)
 //!   0xFFFF0000          Exit address (EXIT_ADDRESS)
@@ -29,15 +29,17 @@ pub const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 /// Temporary area for passing overflow parameters (5th+ args) during `call_indirect`.
 /// The caller writes here, and the callee's prologue copies to its spilled local addresses.
 /// Supports up to 8 overflow parameters (64 bytes).
-pub const PARAM_OVERFLOW_BASE: i32 = 0x3FF00;
+/// Reduced from 0x3FF00 to save space (allows 8KB for globals).
+pub const PARAM_OVERFLOW_BASE: i32 = 0x32000;
 
 /// Base address for spilled locals in memory.
-/// Layout: 0x30000+ globals, 0x40000+ spilled locals.
+/// Layout: 0x30000+ globals, 0x32000 overflow, 0x32100+ spilled locals.
 /// User programs should use `heap.alloc()` (AS) or `memory.grow` (WASM) for dynamic allocation.
-pub const SPILLED_LOCALS_BASE: i32 = 0x40000;
+pub const SPILLED_LOCALS_BASE: i32 = 0x32100;
 
-/// Bytes allocated per function for spilled locals (64 locals * 8 bytes).
-pub const SPILLED_LOCALS_PER_FUNC: i32 = 512;
+/// Bytes allocated per function for spilled locals.
+/// Set to 0 as modern compiler spills to stack (r1-relative).
+pub const SPILLED_LOCALS_PER_FUNC: i32 = 0;
 
 /// Stack segment end address (where the stack pointer starts, grows downward).
 pub const STACK_SEGMENT_END: i32 = 0xFEFE_0000u32 as i32;
@@ -65,13 +67,12 @@ pub fn stack_limit(stack_size: u32) -> i32 {
 /// WASM memory address 0 maps to this PVM address.
 /// All `i32.load`/`i32.store` operations add this offset to the WASM address.
 #[must_use]
-pub fn compute_wasm_memory_base(num_local_funcs: usize) -> i32 {
-    let spilled_locals_end =
-        SPILLED_LOCALS_BASE + (num_local_funcs as i32) * SPILLED_LOCALS_PER_FUNC;
-    // Align up to 64KB boundary (0x10000) for clean page alignment
-    let aligned = (spilled_locals_end + 0xFFFF) & !0xFFFF;
-    // Minimum of 0x50000 to maintain backward compatibility for small modules
-    aligned.max(0x50000)
+pub fn compute_wasm_memory_base(_num_local_funcs: usize) -> i32 {
+    // No per-function allocation (spills are on stack).
+    // Must be 64KB-aligned: the SPI format uses segment-aligned regions
+    // and the anan-as interpreter requires page-aligned WASM memory base
+    // for correct memory mapping in pvm-in-pvm execution.
+    (SPILLED_LOCALS_BASE + 0xFFFF) & !0xFFFF
 }
 
 /// Offset within `GLOBAL_MEMORY_BASE` for the compiler-managed memory size global.
