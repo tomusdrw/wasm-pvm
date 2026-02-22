@@ -30,6 +30,9 @@ pub use emitter::{
     EmitterConfig, LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup, LoweringContext,
 };
 
+use std::collections::HashMap;
+
+use inkwell::basic_block::BasicBlock;
 use inkwell::values::{FunctionValue, InstructionOpcode};
 
 use crate::pvm::Instruction;
@@ -60,6 +63,7 @@ pub fn lower_function(
         icmp_fusion_enabled: ctx.optimizations.icmp_branch_fusion,
         shrink_wrap_enabled: ctx.optimizations.shrink_wrap_callee_saves,
         constant_propagation_enabled: ctx.optimizations.constant_propagation,
+        cross_block_cache_enabled: ctx.optimizations.cross_block_cache,
     };
     let mut emitter = PvmEmitter::new(config, call_return_base);
 
@@ -71,12 +75,53 @@ pub fn lower_function(
     emit_prologue(&mut emitter, function, ctx, is_main)?;
 
     // Phase 3: Lower each basic block.
+    let use_cross_block_cache =
+        emitter.config.register_cache_enabled && emitter.config.cross_block_cache_enabled;
+    let mut block_exit_cache: HashMap<BasicBlock<'_>, emitter::CacheSnapshot> = HashMap::new();
+
     for bb in function.get_basic_blocks() {
         let label = emitter.block_labels[&bb];
-        emitter.define_label(label);
+        let pred_info = emitter.block_single_pred.get(&bb).copied();
 
-        for instruction in bb.get_instructions() {
-            lower_instruction(&mut emitter, instruction, bb, ctx, is_main)?;
+        let mut propagated = false;
+        if use_cross_block_cache
+            && let Some(pred_bb) = pred_info
+            && !emitter::block_has_phis(bb)
+            && let Some(snapshot) = block_exit_cache.get(&pred_bb).cloned()
+        {
+            emitter.define_label_preserving_cache(label);
+            emitter.restore_cache(&snapshot);
+            propagated = true;
+        }
+
+        if !propagated {
+            emitter.define_label(label);
+        }
+
+        // Process instructions, saving cache snapshot before the terminator.
+        // The terminator (branch/switch) may emit path-specific phi copies that
+        // corrupt the cache for other successors. By snapshotting before the
+        // terminator and invalidating temp registers it may clobber, we get a
+        // cache that's valid for ALL successors.
+        let instructions: Vec<_> = bb.get_instructions().collect();
+        if use_cross_block_cache && !instructions.is_empty() {
+            let term_idx = instructions.len() - 1;
+            for &instruction in &instructions[..term_idx] {
+                lower_instruction(&mut emitter, instruction, bb, ctx, is_main)?;
+            }
+            // Snapshot before terminator, then invalidate temp registers that
+            // the terminator's operand loads may overwrite (TEMP1/TEMP2 for
+            // branch conditions, switch values, fused ICmp operands).
+            let mut snap = emitter.snapshot_cache();
+            snap.invalidate_reg(TEMP1);
+            snap.invalidate_reg(TEMP2);
+            block_exit_cache.insert(bb, snap);
+            // Now lower the terminator.
+            lower_instruction(&mut emitter, instructions[term_idx], bb, ctx, is_main)?;
+        } else {
+            for &instruction in &instructions {
+                lower_instruction(&mut emitter, instruction, bb, ctx, is_main)?;
+            }
         }
     }
 

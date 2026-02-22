@@ -47,6 +47,8 @@ pub struct OptimizationFlags {
     pub constant_propagation: bool,
     /// Inline small functions at the LLVM IR level to eliminate call overhead.
     pub inlining: bool,
+    /// Propagate register cache across single-predecessor block boundaries.
+    pub cross_block_cache: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -60,6 +62,7 @@ impl Default for OptimizationFlags {
             dead_store_elimination: true,
             constant_propagation: true,
             inlining: true,
+            cross_block_cache: true,
         }
     }
 }

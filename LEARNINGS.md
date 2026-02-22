@@ -113,3 +113,21 @@ Accumulated knowledge from development. Update after every task.
 - In practice with LLVM passes enabled, `instcombine` already eliminates `trunc(32-bit-op)` at the LLVM IR level, so this peephole pattern fires rarely
 - The peephole is still valuable for `--no-llvm-passes` mode and as defense-in-depth
 - **Known limitation**: the pattern only matches directly adjacent instructions; a `StoreIndU64` between producer and truncation breaks the match
+
+---
+
+## Cross-Block Register Cache
+
+### Approach
+
+- Pre-scan computes `block_single_pred` map by scanning terminator successors
+- For each block with exactly 1 predecessor and no phi nodes, restore the predecessor's cache snapshot instead of clearing
+- Snapshot is taken **before** the terminator instruction to avoid capturing path-specific phi copies
+
+### Key Pitfall: Terminator Phi Copies
+
+- `lower_switch` emits phi copies for the default path inline (not in a trampoline)
+- These phi copies modify the register cache (storing values to phi slots)
+- If the exit cache includes these entries, they are WRONG for case targets (which don't take the default path)
+- Fix: snapshot before the terminator and invalidate TEMP1/TEMP2 (registers the terminator clobbers for operand loads)
+- Same issue can occur with conditional branches when one path has phis and the other doesn't (trampoline case)
