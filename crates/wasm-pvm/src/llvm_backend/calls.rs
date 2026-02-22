@@ -439,11 +439,12 @@ pub fn lower_pvm_call_indirect<'ctx>(
         offset: 0,
     });
 
-    // Emit indirect call: LoadImm64 for return address + JumpInd.
+    // Emit indirect call: LoadImm for return address + JumpInd.
     let return_addr_instr = e.instructions.len();
-    e.emit(Instruction::LoadImm64 {
+    let call_return_addr = e.alloc_call_return_addr();
+    e.emit(Instruction::LoadImm {
         reg: abi::RETURN_ADDR_REG,
-        value: 0, // patched during fixup resolution
+        value: call_return_addr,
     });
     let jump_ind_instr = e.instructions.len();
     e.emit(Instruction::JumpInd {

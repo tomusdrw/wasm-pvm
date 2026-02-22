@@ -58,7 +58,7 @@ pub struct LlvmFunctionTranslation {
     pub instructions: Vec<Instruction>,
     pub call_fixups: Vec<LlvmCallFixup>,
     pub indirect_call_fixups: Vec<LlvmIndirectCallFixup>,
-    /// Number of call return addresses allocated by this function.
+    /// Number of call return addresses allocated by this function (for jump table indexing).
     pub num_call_returns: usize,
 }
 
@@ -150,6 +150,13 @@ pub struct PvmEmitter<'ctx> {
     /// register already holds the same constant and skip the load if so.
     reg_to_const: [Option<u64>; 13],
 
+    /// Next jump table index for call return addresses.
+    /// Incremented each time a call is emitted, starting from `call_return_base_idx`.
+    pub(crate) next_call_return_idx: usize,
+
+    /// Base index for call return addresses (set from the global counter).
+    call_return_base_idx: usize,
+
     /// For each block with exactly one predecessor, maps block → its single predecessor.
     /// Used for cross-block register cache propagation.
     pub(crate) block_single_pred: HashMap<BasicBlock<'ctx>, BasicBlock<'ctx>>,
@@ -161,11 +168,6 @@ pub struct PvmEmitter<'ctx> {
     /// Frame offset for each callee-saved register (r9-r12), if saved.
     /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
     pub(crate) callee_save_offsets: [Option<i32>; 4],
-
-    /// Next call return index to allocate (for pre-assigning jump table addresses).
-    next_call_return_idx: usize,
-    /// Base call return index for this function (to compute `num_call_returns`).
-    call_return_base_idx: usize,
 }
 
 /// Snapshot of the register cache state for cross-block propagation.
@@ -230,10 +232,10 @@ impl<'ctx> PvmEmitter<'ctx> {
             reg_to_const: [None; 13],
             pending_fused_icmp: None,
             block_single_pred: HashMap::new(),
-            used_callee_regs: [true; 4],
-            callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
             next_call_return_idx: call_return_base,
             call_return_base_idx: call_return_base,
+            used_callee_regs: [true; 4],
+            callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
         }
     }
 

@@ -109,6 +109,7 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+
 ## Call Return Address Encoding
 
 ### LoadImm vs LoadImm64 for Call Return Addresses
