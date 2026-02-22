@@ -16,7 +16,9 @@ use inkwell::values::InstructionValue;
 use crate::Result;
 use crate::pvm::Instruction;
 
-use super::emitter::{LoweringContext, PvmEmitter, get_operand, operand_bit_width, result_slot};
+use super::emitter::{
+    LoweringContext, PvmEmitter, get_operand, operand_bit_width, result_slot, val_key_basic,
+};
 use super::memory::{
     PvmLoadKind, PvmStoreKind, emit_pvm_data_drop, emit_pvm_load, emit_pvm_memory_copy,
     emit_pvm_memory_fill, emit_pvm_memory_grow, emit_pvm_memory_init, emit_pvm_memory_size,
@@ -68,7 +70,7 @@ pub fn lower_pvm_intrinsic<'ctx>(
     }
 }
 
-/// Lower an LLVM intrinsic call (ctlz, cttz, ctpop, fshl, fshr, assume).
+/// Lower an LLVM intrinsic call (smax, smin, umax, umin, bswap, abs, ctlz, cttz, ctpop, fshl, fshr, assume).
 pub fn lower_llvm_intrinsic<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -95,21 +97,12 @@ pub fn lower_llvm_intrinsic<'ctx>(
         e.load_operand(a, TEMP1)?;
         e.load_operand(b, TEMP2)?;
 
-        // Determine which comparison to use and which operand is the "winner".
-        // For smax: result = a >= b ? a : b → if a < b (signed), result = b, else a
-        // For smin: result = a <= b ? a : b → if b < a (signed), result = b, else a
-        // For umax: result = a >= b ? a : b → if a < b (unsigned), result = b, else a
-        // For umin: result = a <= b ? a : b → if b < a (unsigned), result = b, else a
-        //
-        // Strategy: SetLt(S/U) dst, src1, src2 → dst = (src1 < src2) ? 1 : 0
-        // Then branch on result to select.
         let is_signed = name.contains("smax") || name.contains("smin");
         let is_max = name.contains("max");
         let bits = operand_bit_width(instr);
 
-        // For i32 signed comparisons, load_operand zero-extends, so negative
-        // i32 values appear as large positive i64 values. We must sign-extend
-        // before using SetLtS. AddImm32 with value 0 sign-extends in PVM.
+        // For i32 signed operations, sign-extend operands since load_operand
+        // zero-extends and PVM min/max compare full 64-bit values.
         if is_signed && bits == 32 {
             e.emit(Instruction::AddImm32 {
                 dst: TEMP1,
@@ -123,53 +116,31 @@ pub fn lower_llvm_intrinsic<'ctx>(
             });
         }
 
-        // For max: SetLt(a, b) → 1 if a < b → pick b; else pick a
-        // For min: SetLt(b, a) → 1 if b < a → pick b; else pick a (which is smaller)
-        // Wait, for min: we want the smaller one. SetLt(a, b) → 1 if a < b → pick a; else pick b
-        // Let's use: SetLt(a, b) and then:
-        //   max: if a < b → result = b, else result = a
-        //   min: if a < b → result = a, else result = b
-
-        if is_signed {
-            e.emit(Instruction::SetLtS {
+        // Emit single-instruction min/max.
+        match (is_max, is_signed) {
+            (true, true) => e.emit(Instruction::Max {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            });
-        } else {
-            e.emit(Instruction::SetLtU {
+            }),
+            (true, false) => e.emit(Instruction::MaxU {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
-            });
+            }),
+            (false, true) => e.emit(Instruction::Min {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            }),
+            (false, false) => e.emit(Instruction::MinU {
+                dst: TEMP_RESULT,
+                src1: TEMP1,
+                src2: TEMP2,
+            }),
         }
 
-        // TEMP_RESULT = 1 if a < b, 0 otherwise
-        let done_label = e.alloc_label();
-        let pick_second_label = e.alloc_label();
-
-        // Branch if a < b (TEMP_RESULT != 0)
-        e.emit_branch_ne_imm_to_label(TEMP_RESULT, 0, pick_second_label);
-
-        if is_max {
-            // a >= b: pick a
-            e.store_to_slot(slot, TEMP1);
-        } else {
-            // a >= b: pick b (for min)
-            e.store_to_slot(slot, TEMP2);
-        }
-        e.emit_jump_to_label(done_label);
-
-        e.define_label(pick_second_label);
-        if is_max {
-            // a < b: pick b
-            e.store_to_slot(slot, TEMP2);
-        } else {
-            // a < b: pick a (for min)
-            e.store_to_slot(slot, TEMP1);
-        }
-
-        e.define_label(done_label);
+        e.store_to_slot(slot, TEMP_RESULT);
         return Ok(());
     }
 
@@ -179,42 +150,28 @@ pub fn lower_llvm_intrinsic<'ctx>(
         e.load_operand(val, TEMP1)?;
         let bits = operand_bit_width(instr);
 
-        // We'll build the result byte-by-byte using shifts and masks.
-        // Use TEMP_RESULT as accumulator, TEMP2 as scratch for each byte.
-        e.emit(Instruction::LoadImm {
-            reg: TEMP_RESULT,
-            value: 0,
+        // Use ReverseBytes to swap all 8 bytes of the 64-bit register.
+        // For sub-64-bit types, shift right to move the reversed bytes to the low bits.
+        e.emit(Instruction::ReverseBytes {
+            dst: TEMP_RESULT,
+            src: TEMP1,
         });
 
         if bits == 16 {
-            // i16: swap 2 bytes
-            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 0, 8);
-            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 8, 0);
+            // Reversed bytes are in the top 2 positions; shift right by 48.
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 48,
+            });
         } else if bits == 32 {
-            // Byte 0 (bits 0-7) → bits 24-31
-            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 0, 24);
-            // Byte 1 (bits 8-15) → bits 16-23
-            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 8, 16);
-            // Byte 2 (bits 16-23) → bits 8-15
-            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 16, 8);
-            // Byte 3 (bits 24-31) → bits 0-7
-            emit_extract_and_place_byte(e, TEMP1, TEMP2, SCRATCH1, TEMP_RESULT, 24, 0);
-        } else if bits == 64 {
-            // i64: 8 bytes to swap
-            for i in 0..8u32 {
-                let src_shift = i * 8;
-                let dst_shift = (7 - i) * 8;
-                emit_extract_and_place_byte(
-                    e,
-                    TEMP1,
-                    TEMP2,
-                    SCRATCH1,
-                    TEMP_RESULT,
-                    src_shift,
-                    dst_shift,
-                );
-            }
-        } else {
+            // Reversed bytes are in the top 4 positions; shift right by 32.
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 32,
+            });
+        } else if bits != 64 {
             return Err(crate::Error::Unsupported(format!(
                 "bswap with unsupported bit width: {bits}"
             )));
@@ -342,6 +299,42 @@ pub fn lower_llvm_intrinsic<'ctx>(
         let bits = operand_bit_width(instr);
         let is_32 = bits == 32;
 
+        // Rotation detection: when a and b are the same SSA value, use RotL/RotR.
+        if val_key_basic(a) == val_key_basic(b) {
+            e.load_operand(a, TEMP1)?;
+            e.load_operand(amt, TEMP2)?;
+            let rot = if name.contains("fshl") {
+                if is_32 {
+                    Instruction::RotL32 {
+                        dst: TEMP_RESULT,
+                        src1: TEMP1,
+                        src2: TEMP2,
+                    }
+                } else {
+                    Instruction::RotL64 {
+                        dst: TEMP_RESULT,
+                        src1: TEMP1,
+                        src2: TEMP2,
+                    }
+                }
+            } else if is_32 {
+                Instruction::RotR32 {
+                    dst: TEMP_RESULT,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                }
+            } else {
+                Instruction::RotR64 {
+                    dst: TEMP_RESULT,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                }
+            };
+            e.emit(rot);
+            e.store_to_slot(slot, TEMP_RESULT);
+            return Ok(());
+        }
+
         e.load_operand(a, TEMP1)?;
         e.load_operand(b, TEMP2)?;
         e.load_operand(amt, SCRATCH1)?;
@@ -441,64 +434,4 @@ pub fn lower_llvm_intrinsic<'ctx>(
     Err(crate::Error::Unsupported(format!(
         "unsupported LLVM intrinsic: {name}"
     )))
-}
-
-/// Extract a byte at `src_shift` bit position from `src_reg`, shift it to `dst_shift`,
-/// and OR it into `acc_reg`. Uses `tmp_reg` and `mask_reg` as scratch.
-fn emit_extract_and_place_byte(
-    e: &mut PvmEmitter<'_>,
-    src_reg: u8,
-    tmp_reg: u8,
-    mask_reg: u8,
-    acc_reg: u8,
-    src_shift: u32,
-    dst_shift: u32,
-) {
-    // tmp = src >> src_shift
-    if src_shift > 0 {
-        e.emit(Instruction::LoadImm {
-            reg: mask_reg,
-            value: src_shift as i32,
-        });
-        e.emit(Instruction::ShloR64 {
-            dst: tmp_reg,
-            src1: src_reg,
-            src2: mask_reg,
-        });
-    } else {
-        // Just copy
-        e.emit(Instruction::AddImm64 {
-            dst: tmp_reg,
-            src: src_reg,
-            value: 0,
-        });
-    }
-    // tmp &= 0xFF
-    e.emit(Instruction::LoadImm {
-        reg: mask_reg,
-        value: 0xFF,
-    });
-    e.emit(Instruction::And {
-        dst: tmp_reg,
-        src1: tmp_reg,
-        src2: mask_reg,
-    });
-    // tmp <<= dst_shift
-    if dst_shift > 0 {
-        e.emit(Instruction::LoadImm {
-            reg: mask_reg,
-            value: dst_shift as i32,
-        });
-        e.emit(Instruction::ShloL64 {
-            dst: tmp_reg,
-            src1: tmp_reg,
-            src2: mask_reg,
-        });
-    }
-    // acc |= tmp
-    e.emit(Instruction::Or {
-        dst: acc_reg,
-        src1: acc_reg,
-        src2: tmp_reg,
-    });
 }

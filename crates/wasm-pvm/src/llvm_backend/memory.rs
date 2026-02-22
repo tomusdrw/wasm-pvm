@@ -39,14 +39,9 @@ pub fn lower_wasm_global_load<'ctx>(
             .and_then(|s| s.parse::<u32>().ok())
         {
             let global_addr = abi::global_addr(idx);
-            e.emit(Instruction::LoadImm {
-                reg: TEMP1,
-                value: global_addr,
-            });
-            e.emit(Instruction::LoadIndU32 {
+            e.emit(Instruction::LoadU32 {
                 dst: TEMP_RESULT,
-                base: TEMP1,
-                offset: 0,
+                address: global_addr,
             });
             e.store_to_slot(slot, TEMP_RESULT);
             return Ok(());
@@ -171,16 +166,11 @@ pub fn emit_pvm_load<'ctx>(
             offset,
         }),
         PvmLoadKind::I32S => {
-            // Load as u32 then sign-extend from 32 bits.
-            e.emit(Instruction::LoadIndU32 {
+            // Signed i32 load (sign-extends to 64 bits).
+            e.emit(Instruction::LoadIndI32 {
                 dst: TEMP_RESULT,
                 base: TEMP1,
                 offset,
-            });
-            e.emit(Instruction::AddImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP_RESULT,
-                value: 0,
             });
         }
         PvmLoadKind::U64 => e.emit(Instruction::LoadIndU64 {

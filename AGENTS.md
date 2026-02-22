@@ -92,11 +92,11 @@ crates/
 │       ├── llvm_backend/  # LLVM IR → PVM bytecode
 │       │   ├── mod.rs           # Public API + main lowering dispatch
 │       │   ├── emitter.rs       # EmitterConfig + PvmEmitter struct + value management + register cache (~470 lines)
-│       │   ├── alu.rs           # Arithmetic, logic, comparisons, conversions (~380 lines)
-│       │   ├── memory.rs        # Load/store, memory intrinsics, word-sized bulk ops (~890 lines)
+│       │   ├── alu.rs           # Arithmetic, logic, comparisons, conversions (~760 lines)
+│       │   ├── memory.rs        # Load/store, memory intrinsics, word-sized bulk ops (~920 lines)
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
 │       │   ├── calls.rs         # Direct/indirect calls, import stubs (~190 lines)
-│       │   └── intrinsics.rs    # PVM + LLVM intrinsic lowering (~280 lines)
+│       │   └── intrinsics.rs    # PVM + LLVM intrinsic lowering (~440 lines)
 │       ├── translate/     # Compilation orchestration
 │       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
 │       │   ├── adapter_merge.rs (WAT adapter merge into WASM before compilation)
@@ -191,7 +191,7 @@ crates/
 | Fix compilation pipeline | `translate/mod.rs` | `compile()` |
 | Fix adapter merge | `translate/adapter_merge.rs` | WAT adapter → merged WASM binary |
 | Add integration test | `tests/layer{1,2,3}/*.test.ts` | Each file calls `defineSuite()` with hex args, little-endian |
-| Add operator unit test | `crates/wasm-pvm/tests/operator_coverage.rs` | WASM operator → PVM opcode verification (72 tests) |
+| Add operator unit test | `crates/wasm-pvm/tests/operator_coverage.rs` | WASM operator → PVM opcode verification (91 tests) |
 | Add emitter unit test | `crates/wasm-pvm/tests/emitter_unit.rs` | Slot allocation, labels, fixups, frame layout (19 tests) |
 | Add stack spill test | `crates/wasm-pvm/tests/deep_stack_spill.rs` | Deep stack, spill across calls (8 tests) |
 | Add/modify import adapter | `tests/fixtures/imports/*.adapter.wat` | WAT adapter files for complex import resolution |
