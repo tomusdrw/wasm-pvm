@@ -137,6 +137,7 @@ Accumulated knowledge from development. Update after every task.
 - For typical call return addresses (small positive integers like 2, 4, 6), the imm field is 1 byte, so total is 7 bytes
 - `LoadImmJump` does not read any source registers; treat it like `LoadImm`/`LoadImm64` in `Instruction::src_regs` for DCE
 - PVM-in-PVM args are passed via a temp binary file; use a unique temp dir + random filename to avoid collisions under concurrent `bun test` workers. Debug knobs: `PVM_IN_PVM_DEBUG=1` for extra logging, `PVM_IN_PVM_KEEP_ARGS=1` to retain the temp args file on disk.
+- DCE `src_regs`: Imm ALU ops read only `src`; `StoreImm*` reads no regs; `StoreImmInd*` reads base only.
 
 ### Pre-Assignment of Jump Table Addresses
 

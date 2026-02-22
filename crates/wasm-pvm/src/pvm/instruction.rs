@@ -988,7 +988,11 @@ impl Instruction {
             | Self::Unknown { .. }
             | Self::LoadImm { .. }
             | Self::LoadImm64 { .. }
-            | Self::LoadImmJump { .. } => [None, None, None],
+            | Self::LoadImmJump { .. }
+            | Self::StoreImmU8 { .. }
+            | Self::StoreImmU16 { .. }
+            | Self::StoreImmU32 { .. }
+            | Self::StoreImmU64 { .. } => [None, None, None],
 
             Self::MoveReg { src, .. }
             | Self::Sbrk { src, .. }
@@ -1008,6 +1012,10 @@ impl Instruction {
             | Self::LoadIndI16 { base: src, .. }
             | Self::LoadIndU32 { base: src, .. }
             | Self::LoadIndU64 { base: src, .. }
+            | Self::StoreImmIndU8 { base: src, .. }
+            | Self::StoreImmIndU16 { base: src, .. }
+            | Self::StoreImmIndU32 { base: src, .. }
+            | Self::StoreImmIndU64 { base: src, .. }
             | Self::BranchEqImm { reg: src, .. }
             | Self::BranchNeImm { reg: src, .. }
             | Self::BranchLtUImm { reg: src, .. }
@@ -1021,7 +1029,22 @@ impl Instruction {
             | Self::AddImm32 { src, .. }
             | Self::AddImm64 { src, .. }
             | Self::SetLtUImm { src, .. }
-            | Self::SetLtSImm { src, .. } => [Some(*src), None, None],
+            | Self::SetLtSImm { src, .. }
+            | Self::AndImm { src, .. }
+            | Self::XorImm { src, .. }
+            | Self::OrImm { src, .. }
+            | Self::MulImm32 { src, .. }
+            | Self::MulImm64 { src, .. }
+            | Self::ShloLImm32 { src, .. }
+            | Self::ShloRImm32 { src, .. }
+            | Self::SharRImm32 { src, .. }
+            | Self::ShloLImm64 { src, .. }
+            | Self::ShloRImm64 { src, .. }
+            | Self::SharRImm64 { src, .. }
+            | Self::NegAddImm32 { src, .. }
+            | Self::NegAddImm64 { src, .. }
+            | Self::SetGtUImm { src, .. }
+            | Self::SetGtSImm { src, .. } => [Some(*src), None, None],
 
             Self::StoreIndU8 { base, src, .. }
             | Self::StoreIndU16 { base, src, .. }
@@ -1056,7 +1079,9 @@ impl Instruction {
                 reg1: base,
                 reg2: src,
                 ..
-            } => [Some(*base), Some(*src), None],
+            }
+            | Self::CmovIz { src: base, cond: src, .. }
+            | Self::CmovNz { src: base, cond: src, .. } => [Some(*base), Some(*src), None],
 
             Self::Add32 { src1, src2, .. }
             | Self::Sub32 { src1, src2, .. }
