@@ -517,8 +517,9 @@ fn return_addr_jump_table_idx(
     return_addr_instr: usize,
 ) -> Result<usize> {
     let value = match instructions.get(return_addr_instr) {
-        Some(Instruction::LoadImm { value, .. }) => Some(*value),
-        Some(Instruction::LoadImmJump { value, .. }) => Some(*value),
+        Some(Instruction::LoadImm { value, .. } | Instruction::LoadImmJump { value, .. }) => {
+            Some(*value)
+        }
         _ => None,
     };
     match value {
