@@ -273,4 +273,6 @@ jobs:
             /tmp/anan-as-compiler.jam.b64
 
       - name: Run pvm-in-pvm varU32 cases only
-        run: cd tests && bun test layer5/pvm-in-pvm.test.ts --test-name-pattern "AS: varU32 decode"
+        run: |
+          cd tests
+          bun test layer5/pvm-in-pvm.test.ts --test-name-pattern "AS: varU32 decode"
