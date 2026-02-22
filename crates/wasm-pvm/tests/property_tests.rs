@@ -547,4 +547,32 @@ proptest! {
         let decoded = u64::from_le_bytes(encoded[2..10].try_into().unwrap());
         prop_assert_eq!(decoded, value);
     }
+
+    /// CmovIzImm/CmovNzImm TwoRegOneImm encoding roundtrip.
+    #[test]
+    fn cmov_imm_encoding(cond in 0u8..13, dst in 0u8..13, value in any::<i32>()) {
+        let variants: Vec<(Opcode, wasm_pvm::Instruction)> = vec![
+            (Opcode::CmovIzImm, wasm_pvm::Instruction::CmovIzImm { cond, dst, value }),
+            (Opcode::CmovNzImm, wasm_pvm::Instruction::CmovNzImm { cond, dst, value }),
+        ];
+
+        for (opcode, instr) in &variants {
+            let encoded = instr.encode();
+            prop_assert_eq!(encoded[0], *opcode as u8, "wrong opcode for {:?}", opcode);
+            prop_assert!(encoded.len() >= 2, "too short for {:?}", opcode);
+
+            // Decode registers from byte 1
+            let decoded_cond = (encoded[1] >> 4) & 0x0F;
+            let decoded_dst = encoded[1] & 0x0F;
+            prop_assert_eq!(decoded_cond, cond, "cond mismatch for {:?}", opcode);
+            prop_assert_eq!(decoded_dst, dst, "dst mismatch for {:?}", opcode);
+
+            // Decode immediate value
+            let imm_bytes = &encoded[2..];
+            let mut padded = if value < 0 { [0xFFu8; 4] } else { [0u8; 4] };
+            padded[..imm_bytes.len()].copy_from_slice(imm_bytes);
+            let decoded_val = i32::from_le_bytes(padded);
+            prop_assert_eq!(decoded_val, value, "value mismatch for {:?}", opcode);
+        }
+    }
 }

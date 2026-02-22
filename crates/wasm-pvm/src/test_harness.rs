@@ -388,6 +388,16 @@ pub enum InstructionPattern {
         dst: Pat<u8>,
         src: Pat<u8>,
     },
+    CmovIzImm {
+        cond: Pat<u8>,
+        dst: Pat<u8>,
+        value: Pat<i32>,
+    },
+    CmovNzImm {
+        cond: Pat<u8>,
+        dst: Pat<u8>,
+        value: Pat<i32>,
+    },
     Trap,
     Fallthrough,
     Ecalli {
@@ -841,6 +851,22 @@ impl InstructionPattern {
                 },
                 Instruction::ZeroExtend16 { dst, src },
             ) => d_pat.matches(dst) && s_pat.matches(src),
+            (
+                P::CmovIzImm {
+                    cond: c_pat,
+                    dst: d_pat,
+                    value: v_pat,
+                },
+                Instruction::CmovIzImm { cond, dst, value },
+            ) => c_pat.matches(cond) && d_pat.matches(dst) && v_pat.matches(value),
+            (
+                P::CmovNzImm {
+                    cond: c_pat,
+                    dst: d_pat,
+                    value: v_pat,
+                },
+                Instruction::CmovNzImm { cond, dst, value },
+            ) => c_pat.matches(cond) && d_pat.matches(dst) && v_pat.matches(value),
             (P::Ecalli { index: i_pat }, Instruction::Ecalli { index }) => i_pat.matches(index),
             _ => false,
         }
@@ -1027,6 +1053,8 @@ impl InstructionExt for Instruction {
             Instruction::LoadIndI16 { .. } => Some(Opcode::LoadIndI16),
             Instruction::StoreIndU8 { .. } => Some(Opcode::StoreIndU8),
             Instruction::StoreIndU16 { .. } => Some(Opcode::StoreIndU16),
+            Instruction::CmovIzImm { .. } => Some(Opcode::CmovIzImm),
+            Instruction::CmovNzImm { .. } => Some(Opcode::CmovNzImm),
             Instruction::Ecalli { .. } => Some(Opcode::Ecalli),
             Instruction::Unknown { .. } => None,
         }
