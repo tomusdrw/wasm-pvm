@@ -684,11 +684,12 @@ impl Instruction {
             | Self::CmovIzImm { dst, .. }
             | Self::CmovNzImm { dst, .. }
             | Self::MoveReg { dst, .. } => Some(*dst),
-            Self::LoadImm { reg, .. } | Self::LoadImm64 { reg, .. } => Some(*reg),
             // LoadImmJump writes to a register AND jumps, but since it's
             // terminating, the dest_reg is used only by peephole for cache
             // invalidation. We report the register it writes to.
-            Self::LoadImmJump { reg, .. } => Some(*reg),
+            Self::LoadImm { reg, .. }
+            | Self::LoadImm64 { reg, .. }
+            | Self::LoadImmJump { reg, .. } => Some(*reg),
             // No destination register:
             Self::Trap
             | Self::Fallthrough

@@ -157,7 +157,7 @@ pub struct PvmEmitter<'ctx> {
 
     /// Next call return index to allocate (for pre-assigning jump table addresses).
     next_call_return_idx: usize,
-    /// Base call return index for this function (to compute num_call_returns).
+    /// Base call return index for this function (to compute `num_call_returns`).
     call_return_base_idx: usize,
 }
 
