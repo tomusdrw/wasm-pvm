@@ -1077,10 +1077,14 @@ fn test_global_load_store() {
             || has_opcode(&instructions, Opcode::StoreImmIndU32),
         "global.set should emit a store"
     );
+    // global.get may be eliminated by LLVM GVN (forwarding store→load), in which case
+    // the value comes from a register (MoveReg) or stack load instead of a global load.
     assert!(
         has_opcode(&instructions, Opcode::LoadIndU32)
-            || has_opcode(&instructions, Opcode::LoadIndU64),
-        "global.get should emit a load"
+            || has_opcode(&instructions, Opcode::LoadIndU64)
+            || has_opcode(&instructions, Opcode::LoadU32)
+            || has_opcode(&instructions, Opcode::MoveReg),
+        "global.get should emit a load or register move"
     );
 }
 

@@ -105,39 +105,39 @@ The compiler pipeline:
 
 ### Key Design Decisions
 
-- **Stack-slot approach**: every SSA value gets a dedicated 8-byte memory offset from SP. Correctness-first — a proper register allocator is future work
+- **Stack-slot approach**: every SSA value gets a dedicated 8-byte memory offset from SP, with a **linear-scan register allocator** that assigns long-lived values to r5/r6 to eliminate redundant memory traffic across block boundaries and loops
 - **Per-block register cache**: eliminates redundant loads when a value is reused shortly after being computed (~50% gas reduction)
 - **No `unsafe` code**: `deny(unsafe_code)` enforced at workspace level
 - **No floating point**: PVM lacks FP support; WASM floats are rejected at compile time
-- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--no-cross-block-cache`
+- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--no-cross-block-cache`, `--no-register-alloc`
 
 ### Benchmark: Optimizations Impact
 
 All PVM-level optimizations disabled vs enabled (default):
 
-| Benchmark | WASM size | JAM (no opt) | JAM (opt) | Gas (no opt) | Gas (opt) |
-|-----------|----------|-------------|-----------|-------------|-----------|
-| add(5,7) | 66 B | 242 B | 208 B (-14%) | 48 | 39 (-19%) |
-| fib(20) | 108 B | 304 B | 277 B (-9%) | 716 | 612 (-15%) |
-| factorial(10) | 100 B | 279 B | 255 B (-9%) | 333 | 279 (-16%) |
-| is_prime(25) | 160 B | 417 B | 337 B (-19%) | 106 | 80 (-25%) |
-| AS fib(10) | 266 B | 942 B | 759 B (-19%) | 425 | 343 (-19%) |
-| AS factorial(7) | 265 B | 931 B | 751 B (-19%) | 363 | 296 (-18%) |
-| AS gcd(2017,200) | 260 B | 950 B | 743 B (-22%) | 276 | 207 (-25%) |
-| AS decoder | 1.5 KB | 75.6 KB | 73.4 KB (-3%) | 942 | 778 (-17%) |
-| AS array | 1.4 KB | 74.3 KB | 72.4 KB (-3%) | 814 | 668 (-18%) |
-| anan-as PVM interpreter | 58.3 KB | 299.5 KB | 246.0 KB (-18%) | - | - |
+| Benchmark | WASM size | JAM size | Gas Used |
+|-----------|----------|----------|----------|
+| add(5,7) | 66 B | 208 B | 39 |
+| fib(20) | 108 B | 268 B | 612 |
+| factorial(10) | 100 B | 245 B | 279 |
+| is_prime(25) | 160 B | 327 B | 82 |
+| AS fib(10) | 266 B | 786 B | 348 |
+| AS factorial(7) | 265 B | 796 B | 311 |
+| AS gcd(2017,200) | 260 B | 770 B | 212 |
+| AS decoder | 1.5 KB | 73.5 KB | 782 |
+| AS array | 1.4 KB | 72.7 KB | 687 |
+| anan-as PVM interpreter | 54.5 KB | 221.2 KB | - |
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
-| Benchmark | Gas (no opt) | Gas (opt) | Direct gas | Overhead |
-|-----------|-------------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 29,255 | 23,520 (-20%) | - | - |
-| add(5,7) | 1,392,024 | 1,191,963 (-14%) | 39 | 30,563x |
-| AS fib(10) | 2,385,831 | 1,789,512 (-25%) | 343 | 5,217x |
-| JAM-SDK fib(10)\* | 8,837,888 | 6,815,363 (-23%) | 42 | 162,271x |
-| Jambrains fib(10)\* | - | 6,478,389 | 1 | 6,478,389x |
-| JADE fib(10)\* | - | 18,572,053 | 504 | 36,849x |
+| Benchmark | JAM Size | Outer Gas | Direct Gas | Overhead |
+|-----------|----------|-----------|------------|----------|
+| TRAP (interpreter overhead) | 1 B | 23,413 | - | - |
+| add(5,7) | 208 B | 1,190,590 | 39 | 30,528x |
+| AS fib(10) | 786 B | 1,786,299 | 348 | 5,132x |
+| JAM-SDK fib(10)\* | 25.4 KB | 6,856,481 | 42 | 163,249x |
+| Jambrains fib(10)\* | 61.1 KB | 6,728,752 | 1 | 6,728,752x |
+| JADE fib(10)\* | 67.3 KB | 18,671,683 | 504 | 37,046x |
 
 \*JAM-SDK fib(10), Jambrains fib(10), and JADE fib(10) exit on unhandled host calls before the fibonacci computation runs. The gas cost reflects program parsing/loading only (26 KB, 61 KB, and 67 KB binaries respectively), not execution.
 
@@ -173,7 +173,8 @@ wasm-pvm compile input.wasm -o output.jam --no-inline --no-peephole
 wasm-pvm compile input.wasm -o output.jam \
   --no-llvm-passes --no-peephole --no-register-cache \
   --no-icmp-fusion --no-shrink-wrap --no-dead-store-elim \
-  --no-const-prop --no-inline --no-cross-block-cache
+  --no-const-prop --no-inline --no-cross-block-cache \
+  --no-register-alloc
 ```
 
 See the [Import Handling](#import-handling) section for details on resolving WASM imports.

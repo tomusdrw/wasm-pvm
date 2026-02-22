@@ -28,6 +28,8 @@ use crate::{Error, Result};
 use crate::abi::{FRAME_HEADER_SIZE, STACK_PTR_REG};
 use crate::translate::OptimizationFlags;
 
+use super::regalloc::RegAllocResult;
+
 /// Context for lowering functions from a single WASM module.
 pub struct LoweringContext {
     pub wasm_memory_base: i32,
@@ -106,6 +108,9 @@ pub struct EmitterConfig {
 
     /// Whether cross-block register cache propagation is enabled.
     pub cross_block_cache_enabled: bool,
+
+    /// Whether register allocation (r5/r6 for long-lived values) is enabled.
+    pub register_allocation_enabled: bool,
 }
 
 /// PVM code emitter for a single function.
@@ -172,6 +177,9 @@ pub struct PvmEmitter<'ctx> {
     /// Whether the function contains any call instructions.
     /// If false (leaf function), we can skip saving/restoring the return address register.
     pub(crate) has_calls: bool,
+
+    /// Register allocation results (empty if disabled).
+    pub(crate) regalloc: RegAllocResult,
 }
 
 /// Snapshot of the register cache state for cross-block propagation.
@@ -241,6 +249,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             used_callee_regs: [true; 4],
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
             has_calls: true, // conservative default
+            regalloc: RegAllocResult::default(),
         }
     }
 
@@ -446,6 +455,14 @@ impl<'ctx> PvmEmitter<'ctx> {
                 } else if let Some(const_val) = iv.get_zero_extended_constant() {
                     // Fallback for unsigned constants.
                     self.emit_const_to_reg(temp_reg, const_val);
+                } else if let Some(&alloc_reg) = self.regalloc.val_to_reg.get(&val_key_int(iv)) {
+                    // Value has an allocated register — use it directly.
+                    if alloc_reg != temp_reg {
+                        self.emit(Instruction::MoveReg {
+                            dst: temp_reg,
+                            src: alloc_reg,
+                        });
+                    }
                 } else if let Some(slot) = self.get_slot(val_key_int(iv)) {
                     // Check register cache: skip load if value is already in a register.
                     if let Some(&cached_reg) = self.slot_cache.get(&slot) {
@@ -490,12 +507,65 @@ impl<'ctx> PvmEmitter<'ctx> {
     }
 
     pub fn store_to_slot(&mut self, slot_offset: i32, src_reg: u8) {
+        // If this slot has an allocated register, copy the value into it.
+        // The stack store is still emitted (write-through); DSE will remove it
+        // if the slot is never loaded from stack.
+        if let Some(&alloc_reg) = self.regalloc.slot_to_reg.get(&slot_offset)
+            && src_reg != alloc_reg
+        {
+            self.emit(Instruction::MoveReg {
+                dst: alloc_reg,
+                src: src_reg,
+            });
+        }
         self.emit(Instruction::StoreIndU64 {
             base: STACK_PTR_REG,
             src: src_reg,
             offset: slot_offset,
         });
         self.cache_slot(slot_offset, src_reg);
+    }
+
+    // ── Register allocation spill/reload ──
+
+    /// Spill scratch register-allocated values (r5/r6) to their stack slots.
+    /// Called before instructions that clobber r5/r6 (calls, memory intrinsics).
+    /// Callee-saved registers (r9-r12) are not spilled here because they are
+    /// preserved by the callee-save convention and only used in leaf functions.
+    pub fn spill_allocated_regs(&mut self) {
+        let entries: Vec<_> = self
+            .regalloc
+            .reg_to_slot
+            .iter()
+            .filter(|&(&r, _)| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
+            .map(|(&r, &s)| (r, s))
+            .collect();
+        for (reg, slot) in entries {
+            self.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: reg,
+                offset: slot,
+            });
+        }
+    }
+
+    /// Reload scratch register-allocated values (r5/r6) from their stack slots.
+    /// Called after instructions that clobber r5/r6 (calls, memory intrinsics).
+    pub fn reload_allocated_regs(&mut self) {
+        let entries: Vec<_> = self
+            .regalloc
+            .reg_to_slot
+            .iter()
+            .filter(|&(&r, _)| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
+            .map(|(&r, &s)| (r, s))
+            .collect();
+        for (reg, slot) in entries {
+            self.emit(Instruction::LoadIndU64 {
+                dst: reg,
+                base: STACK_PTR_REG,
+                offset: slot,
+            });
+        }
     }
 
     // ── Register cache ──
@@ -788,7 +858,7 @@ pub fn pre_scan_function<'ctx>(
 
         for bb in &blocks {
             if let Some(term) = bb.get_terminator() {
-                let successors = collect_terminator_successors(term);
+                let successors = super::successors::collect_successors(term);
                 // Deduplicate successors per predecessor (e.g. switch cases targeting the same block)
                 // so that multiple edges from the same bb don't inflate the predecessor count.
                 let unique_succs: HashSet<_> = successors.into_iter().collect();
@@ -830,63 +900,6 @@ pub fn pre_scan_function<'ctx>(
             }
         }
     }
-}
-
-/// Collect successor basic blocks from a terminator instruction.
-fn collect_terminator_successors(term: InstructionValue<'_>) -> Vec<BasicBlock<'_>> {
-    use inkwell::values::InstructionOpcode;
-    let mut successors = Vec::new();
-    match term.get_opcode() {
-        InstructionOpcode::Br => {
-            let num_ops = term.get_num_operands();
-            if num_ops == 1 {
-                // Unconditional: operand 0 is dest_bb
-                if let Some(bb) = term
-                    .get_operand(0)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-            } else {
-                // Conditional: operand 1 = false_bb, operand 2 = true_bb
-                if let Some(bb) = term
-                    .get_operand(1)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-                if let Some(bb) = term
-                    .get_operand(2)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-            }
-        }
-        InstructionOpcode::Switch => {
-            // Operand 1 = default_bb, then pairs of (case_val, case_bb)
-            if let Some(bb) = term
-                .get_operand(1)
-                .and_then(inkwell::values::Operand::block)
-            {
-                successors.push(bb);
-            }
-            let num_ops = term.get_num_operands();
-            let mut i = 3; // case_bb starts at operand 3
-            while i < num_ops {
-                if let Some(bb) = term
-                    .get_operand(i)
-                    .and_then(inkwell::values::Operand::block)
-                {
-                    successors.push(bb);
-                }
-                i += 2;
-            }
-        }
-        // Return, Unreachable — no successors
-        _ => {}
-    }
-    successors
 }
 
 fn instruction_produces_value(instr: InstructionValue<'_>) -> bool {

@@ -25,6 +25,8 @@ mod control_flow;
 mod emitter;
 mod intrinsics;
 mod memory;
+pub(crate) mod regalloc;
+mod successors;
 
 pub use emitter::{
     EmitterConfig, LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup, LoweringContext,
@@ -64,12 +66,40 @@ pub fn lower_function(
         shrink_wrap_enabled: ctx.optimizations.shrink_wrap_callee_saves,
         constant_propagation_enabled: ctx.optimizations.constant_propagation,
         cross_block_cache_enabled: ctx.optimizations.cross_block_cache,
+        register_allocation_enabled: ctx.optimizations.register_allocation,
     };
     let mut emitter = PvmEmitter::new(config, call_return_base);
 
     // Phase 1: Pre-scan — allocate labels for blocks and slots for all SSA values.
     pre_scan_function(&mut emitter, function, is_main);
     emitter.frame_size = emitter.next_slot_offset;
+
+    // Phase 1b: Register allocation — assign long-lived values to physical registers.
+    if emitter.config.register_allocation_enabled {
+        emitter.regalloc = regalloc::run(
+            function,
+            &emitter.value_slots,
+            !emitter.has_calls,
+            function.count_params() as usize,
+        );
+
+        // If regalloc allocated any callee-saved registers (r9-r12), mark them
+        // as used so shrink wrapping saves/restores them in prologue/epilogue.
+        for &reg in emitter.regalloc.reg_to_slot.keys() {
+            if reg >= crate::abi::FIRST_LOCAL_REG
+                && reg < crate::abi::FIRST_LOCAL_REG + crate::abi::MAX_LOCAL_REGS as u8
+            {
+                let idx = (reg - crate::abi::FIRST_LOCAL_REG) as usize;
+                if !emitter.used_callee_regs[idx] {
+                    emitter.used_callee_regs[idx] = true;
+                    // Assign a frame offset for this newly-used callee-save reg.
+                    emitter.callee_save_offsets[idx] = Some(emitter.next_slot_offset);
+                    emitter.next_slot_offset += 8;
+                    emitter.frame_size = emitter.next_slot_offset;
+                }
+            }
+        }
+    }
 
     // Phase 2: Emit prologue.
     emit_prologue(&mut emitter, function, ctx, is_main)?;
