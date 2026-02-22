@@ -68,9 +68,8 @@ fn test_unknown_import_fails_compilation() {
 
     let wasm = wat_to_wasm(wat).expect("Failed to parse WAT");
     let result = wasm_pvm::compile(&wasm);
-    let err = match result {
-        Err(e) => e,
-        Ok(_) => panic!("Unknown imports should fail compilation"),
+    let Err(err) = result else {
+        panic!("Unknown imports should fail compilation")
     };
     assert!(
         matches!(err, wasm_pvm::Error::UnresolvedImport(_)),

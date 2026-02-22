@@ -1325,11 +1325,11 @@ mod tests {
                 let mut buf = [0u8; 4];
                 buf[..imm_bytes.len()].copy_from_slice(imm_bytes);
                 // Sign-extend: if top bit of last written byte is set, fill with 0xFF
-                if let Some(&last) = imm_bytes.last() {
-                    if last & 0x80 != 0 {
-                        for b in buf.iter_mut().skip(imm_bytes.len()) {
-                            *b = 0xFF;
-                        }
+                if let Some(&last) = imm_bytes.last()
+                    && last & 0x80 != 0
+                {
+                    for b in buf.iter_mut().skip(imm_bytes.len()) {
+                        *b = 0xFF;
                     }
                 }
                 let decoded_value = i32::from_le_bytes(buf);
@@ -1662,11 +1662,10 @@ mod tests {
             let encoded = instr.encode();
             assert_eq!(
                 encoded[0], *expected_opcode as u8,
-                "Wrong opcode for {:?}",
-                instr
+                "Wrong opcode for {instr:?}"
             );
             // Verify encoding is at least 2 bytes (opcode + reg byte)
-            assert!(encoded.len() >= 2, "Encoding too short for {:?}", instr);
+            assert!(encoded.len() >= 2, "Encoding too short for {instr:?}");
         }
     }
 
@@ -1754,8 +1753,7 @@ mod tests {
             assert_eq!(
                 instr.dest_reg(),
                 Some(*expected),
-                "Wrong dest_reg for {:?}",
-                instr
+                "Wrong dest_reg for {instr:?}"
             );
         }
     }

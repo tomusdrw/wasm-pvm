@@ -37,7 +37,7 @@ fn test_i32_div_emits_trap_guard() {
     );
 }
 
-/// Signed division should also emit a signed overflow trap (INT_MIN / -1).
+/// Signed division should also emit a signed overflow trap (`INT_MIN` / -1).
 #[test]
 fn test_i32_div_s_emits_overflow_trap() {
     let wat = r#"
@@ -133,7 +133,7 @@ fn test_i32_rem_emits_trap_guard() {
     );
 }
 
-/// Signed remainder should handle the INT_MIN % -1 edge case.
+/// Signed remainder should handle the `INT_MIN` % -1 edge case.
 #[test]
 fn test_i32_rem_s_compiles() {
     let wat = r#"
@@ -160,7 +160,7 @@ fn test_i32_rem_s_compiles() {
 // Bit Manipulation: CLZ, CTZ, POPCNT
 // =============================================================================
 
-/// i32.clz should emit LeadingZeroBits32.
+/// i32.clz should emit `LeadingZeroBits32`.
 #[test]
 fn test_i32_clz() {
     let wat = r#"
@@ -181,7 +181,7 @@ fn test_i32_clz() {
     );
 }
 
-/// i64.clz should emit LeadingZeroBits64.
+/// i64.clz should emit `LeadingZeroBits64`.
 #[test]
 fn test_i64_clz() {
     let wat = r#"
@@ -202,7 +202,7 @@ fn test_i64_clz() {
     );
 }
 
-/// i32.ctz should emit TrailingZeroBits32.
+/// i32.ctz should emit `TrailingZeroBits32`.
 #[test]
 fn test_i32_ctz() {
     let wat = r#"
@@ -223,7 +223,7 @@ fn test_i32_ctz() {
     );
 }
 
-/// i64.ctz should emit TrailingZeroBits64.
+/// i64.ctz should emit `TrailingZeroBits64`.
 #[test]
 fn test_i64_ctz() {
     let wat = r#"
@@ -244,7 +244,7 @@ fn test_i64_ctz() {
     );
 }
 
-/// i32.popcnt should emit CountSetBits32.
+/// i32.popcnt should emit `CountSetBits32`.
 #[test]
 fn test_i32_popcnt() {
     let wat = r#"
@@ -265,7 +265,7 @@ fn test_i32_popcnt() {
     );
 }
 
-/// i64.popcnt should emit CountSetBits64.
+/// i64.popcnt should emit `CountSetBits64`.
 #[test]
 fn test_i64_popcnt() {
     let wat = r#"
@@ -290,9 +290,9 @@ fn test_i64_popcnt() {
 // Sign Extension Operators
 // =============================================================================
 
-/// i32.extend8_s should compile correctly.
+/// `i32.extend8_s` should compile correctly.
 /// Note: LLVM instcombine may fold sign extensions into shift pairs (shl+ashr),
-/// so we accept either SignExtend8 or the folded form.
+/// so we accept either `SignExtend8` or the folded form.
 #[test]
 fn test_i32_extend8_s() {
     let wat = r#"
@@ -321,7 +321,7 @@ fn test_i32_extend8_s() {
     );
 }
 
-/// i32.extend16_s should compile correctly.
+/// `i32.extend16_s` should compile correctly.
 #[test]
 fn test_i32_extend16_s() {
     let wat = r#"
@@ -348,7 +348,7 @@ fn test_i32_extend16_s() {
     );
 }
 
-/// i64.extend8_s should compile correctly.
+/// `i64.extend8_s` should compile correctly.
 #[test]
 fn test_i64_extend8_s() {
     let wat = r#"
@@ -373,7 +373,7 @@ fn test_i64_extend8_s() {
     );
 }
 
-/// i64.extend16_s should compile correctly.
+/// `i64.extend16_s` should compile correctly.
 #[test]
 fn test_i64_extend16_s() {
     let wat = r#"
@@ -402,7 +402,7 @@ fn test_i64_extend16_s() {
 // Type Conversion Operators
 // =============================================================================
 
-/// i32.wrap_i64 should compile and produce a truncating operation.
+/// `i32.wrap_i64` should compile and produce a truncating operation.
 #[test]
 fn test_i32_wrap_i64() {
     let wat = r#"
@@ -428,7 +428,7 @@ fn test_i32_wrap_i64() {
     );
 }
 
-/// i64.extend_i32_s should emit sign extension for 32-bit to 64-bit.
+/// `i64.extend_i32_s` should emit sign extension for 32-bit to 64-bit.
 #[test]
 fn test_i64_extend_i32_s() {
     let wat = r#"
@@ -453,7 +453,7 @@ fn test_i64_extend_i32_s() {
     );
 }
 
-/// i64.extend_i32_u should emit zero extension for 32-bit to 64-bit.
+/// `i64.extend_i32_u` should emit zero extension for 32-bit to 64-bit.
 #[test]
 fn test_i64_extend_i32_u() {
     let wat = r#"
@@ -482,7 +482,7 @@ fn test_i64_extend_i32_u() {
 // Shift Operations (all widths)
 // =============================================================================
 
-/// i32.shl should lower to ShloL32.
+/// i32.shl should lower to `ShloL32`.
 #[test]
 fn test_i32_shl() {
     let wat = r#"
@@ -501,7 +501,7 @@ fn test_i32_shl() {
     assert!(has_opcode(&instructions, Opcode::ShloL32));
 }
 
-/// i32.shr_u should lower to ShloR32.
+/// `i32.shr_u` should lower to `ShloR32`.
 #[test]
 fn test_i32_shr_u() {
     let wat = r#"
@@ -520,7 +520,7 @@ fn test_i32_shr_u() {
     assert!(has_opcode(&instructions, Opcode::ShloR32));
 }
 
-/// i32.shr_s should lower to SharR32 (arithmetic shift right).
+/// `i32.shr_s` should lower to `SharR32` (arithmetic shift right).
 #[test]
 fn test_i32_shr_s() {
     let wat = r#"
@@ -539,7 +539,7 @@ fn test_i32_shr_s() {
     assert!(has_opcode(&instructions, Opcode::SharR32));
 }
 
-/// i64.shl should lower to ShloL64.
+/// i64.shl should lower to `ShloL64`.
 #[test]
 fn test_i64_shl() {
     let wat = r#"
@@ -558,7 +558,7 @@ fn test_i64_shl() {
     assert!(has_opcode(&instructions, Opcode::ShloL64));
 }
 
-/// i64.shr_u should lower to ShloR64.
+/// `i64.shr_u` should lower to `ShloR64`.
 #[test]
 fn test_i64_shr_u() {
     let wat = r#"
@@ -577,7 +577,7 @@ fn test_i64_shr_u() {
     assert!(has_opcode(&instructions, Opcode::ShloR64));
 }
 
-/// i64.shr_s should lower to SharR64.
+/// `i64.shr_s` should lower to `SharR64`.
 #[test]
 fn test_i64_shr_s() {
     let wat = r#"
@@ -600,7 +600,7 @@ fn test_i64_shr_s() {
 // Comparison Operations (signed/unsigned, all variants)
 // =============================================================================
 
-/// i32.lt_s should lower to SetLtS.
+/// `i32.lt_s` should lower to `SetLtS`.
 #[test]
 fn test_i32_lt_s() {
     let wat = r#"
@@ -619,7 +619,7 @@ fn test_i32_lt_s() {
     assert!(has_opcode(&instructions, Opcode::SetLtS));
 }
 
-/// i32.gt_u is implemented as reversed i32.lt_u (swap operands).
+/// `i32.gt_u` is implemented as reversed `i32.lt_u` (swap operands).
 #[test]
 fn test_i32_gt_u() {
     let wat = r#"
@@ -639,7 +639,7 @@ fn test_i32_gt_u() {
     assert!(has_opcode(&instructions, Opcode::SetLtU));
 }
 
-/// i32.le_u is implemented as !(b < a) i.e. NOT(lt_u with swapped operands).
+/// `i32.le_u` is implemented as !(b < a) i.e. `NOT(lt_u` with swapped operands).
 #[test]
 fn test_i32_le_u() {
     let wat = r#"
@@ -662,7 +662,7 @@ fn test_i32_le_u() {
     );
 }
 
-/// i32.ge_s is implemented as !(a < b) i.e. NOT(lt_s).
+/// `i32.ge_s` is implemented as !(a < b) i.e. `NOT(lt_s)`.
 #[test]
 fn test_i32_ge_s() {
     let wat = r#"
@@ -786,7 +786,7 @@ fn test_i64_eqz() {
 // Memory Load/Store Variants (different widths)
 // =============================================================================
 
-/// i32.load8_u should emit LoadIndU8.
+/// `i32.load8_u` should emit `LoadIndU8`.
 #[test]
 fn test_i32_load8_u() {
     let wat = r#"
@@ -805,7 +805,7 @@ fn test_i32_load8_u() {
     assert!(has_opcode(&instructions, Opcode::LoadIndU8));
 }
 
-/// i32.load8_s should emit LoadIndI8.
+/// `i32.load8_s` should emit `LoadIndI8`.
 #[test]
 fn test_i32_load8_s() {
     let wat = r#"
@@ -824,7 +824,7 @@ fn test_i32_load8_s() {
     assert!(has_opcode(&instructions, Opcode::LoadIndI8));
 }
 
-/// i32.load16_u should emit LoadIndU16.
+/// `i32.load16_u` should emit `LoadIndU16`.
 #[test]
 fn test_i32_load16_u() {
     let wat = r#"
@@ -843,7 +843,7 @@ fn test_i32_load16_u() {
     assert!(has_opcode(&instructions, Opcode::LoadIndU16));
 }
 
-/// i32.load16_s should emit LoadIndI16.
+/// `i32.load16_s` should emit `LoadIndI16`.
 #[test]
 fn test_i32_load16_s() {
     let wat = r#"
@@ -862,7 +862,7 @@ fn test_i32_load16_s() {
     assert!(has_opcode(&instructions, Opcode::LoadIndI16));
 }
 
-/// i32.store8 should emit StoreIndU8.
+/// i32.store8 should emit `StoreIndU8`.
 #[test]
 fn test_i32_store8() {
     let wat = r#"
@@ -883,7 +883,7 @@ fn test_i32_store8() {
     assert!(has_opcode(&instructions, Opcode::StoreIndU8));
 }
 
-/// i32.store16 should emit StoreIndU16.
+/// i32.store16 should emit `StoreIndU16`.
 #[test]
 fn test_i32_store16() {
     let wat = r#"
@@ -904,7 +904,7 @@ fn test_i32_store16() {
     assert!(has_opcode(&instructions, Opcode::StoreIndU16));
 }
 
-/// i64.load should emit LoadIndU64 (for linear memory access).
+/// i64.load should emit `LoadIndU64` (for linear memory access).
 #[test]
 fn test_i64_load() {
     let wat = r#"
@@ -924,7 +924,7 @@ fn test_i64_load() {
     assert!(has_opcode(&instructions, Opcode::LoadIndU64));
 }
 
-/// i64.store should emit StoreIndU64 (for linear memory access).
+/// i64.store should emit `StoreIndU64` (for linear memory access).
 #[test]
 fn test_i64_store() {
     let wat = r#"
@@ -945,7 +945,7 @@ fn test_i64_store() {
     assert!(has_opcode(&instructions, Opcode::StoreIndU64));
 }
 
-/// Storing a constant value to memory should use StoreImmInd (no LoadImm for value).
+/// Storing a constant value to memory should use `StoreImmInd` (no `LoadImm` for value).
 #[test]
 fn test_store_const_uses_store_imm_ind() {
     let wat = r#"
@@ -967,12 +967,11 @@ fn test_store_const_uses_store_imm_ind() {
     // Should use StoreImmIndU32 instead of LoadImm + StoreIndU32
     assert!(
         has_opcode(&instructions, Opcode::StoreImmIndU32),
-        "Storing constant should use StoreImmIndU32.\nInstructions: {:?}",
-        instructions
+        "Storing constant should use StoreImmIndU32.\nInstructions: {instructions:?}"
     );
 }
 
-/// Storing a constant i64 value should use StoreImmIndU64.
+/// Storing a constant i64 value should use `StoreImmIndU64`.
 #[test]
 fn test_i64_store_const_uses_store_imm_ind() {
     let wat = r#"
@@ -992,8 +991,7 @@ fn test_i64_store_const_uses_store_imm_ind() {
 
     assert!(
         has_opcode(&instructions, Opcode::StoreImmIndU64),
-        "Storing constant i64 should use StoreImmIndU64.\nInstructions: {:?}",
-        instructions
+        "Storing constant i64 should use StoreImmIndU64.\nInstructions: {instructions:?}"
     );
 }
 
@@ -1001,7 +999,7 @@ fn test_i64_store_const_uses_store_imm_ind() {
 // Control Flow: br_table / switch
 // =============================================================================
 
-/// br_table should compile to a series of branches (switch lowering).
+/// `br_table` should compile to a series of branches (switch lowering).
 #[test]
 fn test_br_table() {
     let wat = r#"
@@ -1369,7 +1367,7 @@ fn test_no_register_cache_produces_more_loads() {
     );
 }
 
-/// Disabling constant propagation should produce more LoadImm instructions.
+/// Disabling constant propagation should produce more `LoadImm` instructions.
 #[test]
 fn test_no_const_prop_produces_more_load_imm() {
     use wasm_pvm::{CompileOptions, OptimizationFlags};
@@ -1565,7 +1563,7 @@ fn test_i64_mul() {
     assert!(has_opcode(&instructions, Opcode::Mul64));
 }
 
-/// i64.rem_u should lower to RemU64 with a trap guard.
+/// `i64.rem_u` should lower to `RemU64` with a trap guard.
 #[test]
 fn test_i64_rem_u() {
     let wat = r#"
@@ -1588,7 +1586,7 @@ fn test_i64_rem_u() {
     );
 }
 
-/// i64.rem_s should lower to RemS64 with trap guards.
+/// `i64.rem_s` should lower to `RemS64` with trap guards.
 #[test]
 fn test_i64_rem_s() {
     let wat = r#"
@@ -1751,7 +1749,7 @@ fn test_multiple_functions() {
 // Indirect Call (call_indirect)
 // =============================================================================
 
-/// call_indirect should compile and use JumpInd.
+/// `call_indirect` should compile and use `JumpInd`.
 #[test]
 fn test_call_indirect() {
     let wat = r#"
@@ -1895,7 +1893,7 @@ fn test_i64_rotr() {
 // i64.extend32_s
 // =============================================================================
 
-/// i64.extend32_s should sign-extend from 32 to 64 bits.
+/// `i64.extend32_s` should sign-extend from 32 to 64 bits.
 #[test]
 fn test_i64_extend32_s() {
     let wat = r#"
@@ -1974,8 +1972,8 @@ fn test_dse_multiple_stores_same_offset() {
 // StoreImm optimization: store constant to absolute address
 // =============================================================================
 
-/// global.set with a constant value should use StoreImmU32 (1 instruction)
-/// instead of LoadImm + LoadImm + StoreIndU32 (3 instructions).
+/// global.set with a constant value should use `StoreImmU32` (1 instruction)
+/// instead of `LoadImm` + `LoadImm` + `StoreIndU32` (3 instructions).
 #[test]
 fn test_global_set_const_uses_store_imm() {
     let wat = r#"
@@ -1997,7 +1995,7 @@ fn test_global_set_const_uses_store_imm() {
     );
 }
 
-/// global.set with a non-constant value should NOT use StoreImm.
+/// global.set with a non-constant value should NOT use `StoreImm`.
 #[test]
 fn test_global_set_dynamic_uses_store_ind() {
     let wat = r#"
@@ -2051,7 +2049,7 @@ fn test_select_uses_cmov_nz() {
         "select should produce CmovNz instruction.\nInstructions:\n{}",
         instructions
             .iter()
-            .map(|i| format!("  {:?}", i))
+            .map(|i| format!("  {i:?}"))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -2075,7 +2073,7 @@ fn assert_imm_folding(wat: &str, expected_opcode: Opcode, description: &str) {
         "{description}: expected {expected_opcode:?} in output.\nInstructions:\n{}",
         instructions
             .iter()
-            .map(|i| format!("  {:?}", i))
+            .map(|i| format!("  {i:?}"))
             .collect::<Vec<_>>()
             .join("\n")
     );

@@ -1,4 +1,4 @@
-//! Unit tests for PvmEmitter: slot allocation, label management, fixup resolution,
+//! Unit tests for `PvmEmitter`: slot allocation, label management, fixup resolution,
 //! and constant emission — the core "stack machine" logic (issue #32).
 
 use wasm_pvm::test_harness::*;
@@ -87,7 +87,7 @@ fn test_multiple_slot_allocation() {
 
 // ── Constant Loading ──
 
-/// Small constants (fits in i32) should use LoadImm, not LoadImm64.
+/// Small constants (fits in i32) should use `LoadImm`, not `LoadImm64`.
 #[test]
 fn test_small_constant_uses_load_imm() {
     let program = compile_wat(
@@ -117,7 +117,7 @@ fn test_small_constant_uses_load_imm() {
     assert!(has_42, "Expected LoadImm with value 42");
 }
 
-/// Large i64 constants that don't fit in i32 should use LoadImm64.
+/// Large i64 constants that don't fit in i32 should use `LoadImm64`.
 #[test]
 fn test_large_constant_uses_load_imm64() {
     let program = compile_wat(
@@ -139,7 +139,7 @@ fn test_large_constant_uses_load_imm64() {
     );
 }
 
-/// Negative i32 constants should use sign-extended LoadImm (compact encoding).
+/// Negative i32 constants should use sign-extended `LoadImm` (compact encoding).
 #[test]
 fn test_negative_constant_uses_load_imm() {
     let program = compile_wat(
@@ -637,7 +637,7 @@ fn test_no_shrink_wrap_saves_all() {
     // $leaf should save all 4 callee-saved regs (r9=9, r10=10, r11=11, r12=12).
     // Look for the 4 stores to SP-relative offsets 8, 16, 24, 32.
     for (i, offset) in [8, 16, 24, 32].iter().enumerate() {
-        let reg = 9 + i as u8;
+        let reg = u8::try_from(9 + i).unwrap();
         let has_save = instructions.iter().any(|instr| {
             matches!(
                 instr,
@@ -652,7 +652,7 @@ fn test_no_shrink_wrap_saves_all() {
 }
 
 /// Shrink wrapping: leaf function with 0 params should NOT save any callee-saved
-/// registers (no StoreIndU64 at offsets 8/16/24/32 with r9-r12 as source).
+/// registers (no `StoreIndU64` at offsets 8/16/24/32 with r9-r12 as source).
 #[test]
 fn test_shrink_wrap_leaf_0_params_no_saves() {
     let program = compile_wat(
@@ -674,7 +674,7 @@ fn test_shrink_wrap_leaf_0_params_no_saves() {
     // Entry function (main) never saves callee-saved registers.
     // So there should be no StoreIndU64 at offsets 8-32 targeting r9-r12.
     for (i, offset) in [8i32, 16, 24, 32].iter().enumerate() {
-        let reg = 9 + i as u8;
+        let reg = u8::try_from(9 + i).unwrap();
         let has_save = instructions.iter().any(|instr| {
             matches!(
                 instr,
@@ -720,7 +720,7 @@ fn test_shrink_wrap_calling_function_saves_all() {
     // $caller calls $leaf → must save all 4 callee-saved regs.
     // Check all 4 stores exist (at consecutive offsets 8, 16, 24, 32).
     for (i, offset) in [8, 16, 24, 32].iter().enumerate() {
-        let reg = 9 + i as u8;
+        let reg = u8::try_from(9 + i).unwrap();
         let has_save = instructions.iter().any(|instr| {
             matches!(
                 instr,
@@ -979,8 +979,8 @@ fn test_non_leaf_function_saves_ra() {
     );
 }
 
-/// Test that direct calls use the compact LoadImmJump instruction instead of
-/// separate LoadImm64 + Jump, saving 1 instruction (1 gas) per call site.
+/// Test that direct calls use the compact `LoadImmJump` instruction instead of
+/// separate `LoadImm64` + Jump, saving 1 instruction (1 gas) per call site.
 #[test]
 fn test_direct_calls_use_load_imm_jump() {
     use wasm_pvm::test_harness::compile_wat_with_options;
@@ -1044,7 +1044,7 @@ fn test_direct_calls_use_load_imm_jump() {
         })
         .collect();
     for (i, addr) in jump_addrs.iter().enumerate() {
-        let expected = ((i + 1) * 2) as i32;
+        let expected = i32::try_from((i + 1) * 2).unwrap();
         assert_eq!(
             *addr, expected,
             "Jump table address mismatch at call {i}: expected {expected}, got {addr}"
