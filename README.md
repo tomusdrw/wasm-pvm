@@ -109,7 +109,7 @@ The compiler pipeline:
 - **Per-block register cache**: eliminates redundant loads when a value is reused shortly after being computed (~50% gas reduction)
 - **No `unsafe` code**: `deny(unsafe_code)` enforced at workspace level
 - **No floating point**: PVM lacks FP support; WASM floats are rejected at compile time
-- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`
+- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--no-cross-block-cache`
 
 ### Benchmark: Optimizations Impact
 
@@ -173,7 +173,7 @@ wasm-pvm compile input.wasm -o output.jam --no-inline --no-peephole
 wasm-pvm compile input.wasm -o output.jam \
   --no-llvm-passes --no-peephole --no-register-cache \
   --no-icmp-fusion --no-shrink-wrap --no-dead-store-elim \
-  --no-const-prop --no-inline
+  --no-const-prop --no-inline --no-cross-block-cache
 ```
 
 See the [Import Handling](#import-handling) section for details on resolving WASM imports.
