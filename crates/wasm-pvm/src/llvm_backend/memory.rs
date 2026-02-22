@@ -16,7 +16,7 @@ use inkwell::values::{BasicValueEnum, InstructionValue};
 use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
-use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_slot};
+use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_slot, try_get_constant};
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 /// Lower a load from a WASM global variable.
@@ -75,6 +75,18 @@ pub fn lower_wasm_global_store<'ctx>(
             .and_then(|s| s.parse::<u32>().ok())
         {
             let global_addr = abi::global_addr(idx);
+
+            // If value is a compile-time constant that fits in i32, use StoreImm.
+            if let Some(val_const) = try_get_constant(val)
+                && i32::try_from(val_const).is_ok()
+            {
+                e.emit(Instruction::StoreImmU32 {
+                    address: global_addr,
+                    value: val_const as i32,
+                });
+                return Ok(());
+            }
+
             e.load_operand(val, TEMP1)?;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
@@ -695,18 +707,9 @@ pub fn emit_pvm_data_drop<'ctx>(
         .ok_or_else(|| Error::Internal(format!("unknown passive data segment index {seg_idx}")))?;
 
     // Store 0 to the segment's effective length address.
-    e.emit(Instruction::LoadImm {
-        reg: TEMP1,
-        value: length_addr,
-    });
-    e.emit(Instruction::LoadImm {
-        reg: TEMP2,
+    e.emit(Instruction::StoreImmU32 {
+        address: length_addr,
         value: 0,
-    });
-    e.emit(Instruction::StoreIndU32 {
-        base: TEMP1,
-        src: TEMP2,
-        offset: 0,
     });
 
     Ok(())

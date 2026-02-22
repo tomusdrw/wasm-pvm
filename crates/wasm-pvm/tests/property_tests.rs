@@ -607,4 +607,39 @@ proptest! {
             prop_assert_eq!(decoded_val, value, "value mismatch for {:?}", opcode);
         }
     }
+
+    /// StoreImm TwoImm encoding roundtrip: both immediates are recoverable.
+    #[test]
+    fn store_imm_encoding(address in any::<i32>(), value in any::<i32>()) {
+        let variants: Vec<(Opcode, wasm_pvm::Instruction)> = vec![
+            (Opcode::StoreImmU8, wasm_pvm::Instruction::StoreImmU8 { address, value }),
+            (Opcode::StoreImmU16, wasm_pvm::Instruction::StoreImmU16 { address, value }),
+            (Opcode::StoreImmU32, wasm_pvm::Instruction::StoreImmU32 { address, value }),
+            (Opcode::StoreImmU64, wasm_pvm::Instruction::StoreImmU64 { address, value }),
+        ];
+
+        for (opcode, instr) in &variants {
+            let encoded = instr.encode();
+            prop_assert_eq!(encoded[0], *opcode as u8, "wrong opcode for {:?}", opcode);
+            prop_assert!(encoded.len() >= 2, "too short for {:?}", opcode);
+
+            // Decode: low nibble of byte 1 = address immediate length
+            let addr_len = (encoded[1] & 0x0F) as usize;
+            prop_assert!(addr_len <= 4, "addr_len out of range for {:?}", opcode);
+
+            // Decode first immediate (address)
+            let mut addr_bytes = if address < 0 { [0xFFu8; 4] } else { [0u8; 4] };
+            addr_bytes[..addr_len].copy_from_slice(&encoded[2..2 + addr_len]);
+            let decoded_addr = i32::from_le_bytes(addr_bytes);
+            prop_assert_eq!(decoded_addr, address, "address mismatch for {:?}", opcode);
+
+            // Decode second immediate (value)
+            let val_start = 2 + addr_len;
+            let val_len = encoded.len() - val_start;
+            let mut val_bytes = if value < 0 { [0xFFu8; 4] } else { [0u8; 4] };
+            val_bytes[..val_len].copy_from_slice(&encoded[val_start..]);
+            let decoded_val = i32::from_le_bytes(val_bytes);
+            prop_assert_eq!(decoded_val, value, "value mismatch for {:?}", opcode);
+        }
+    }
 }

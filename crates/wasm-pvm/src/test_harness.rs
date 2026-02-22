@@ -398,6 +398,22 @@ pub enum InstructionPattern {
         dst: Pat<u8>,
         value: Pat<i32>,
     },
+    StoreImmU8 {
+        address: Pat<i32>,
+        value: Pat<i32>,
+    },
+    StoreImmU16 {
+        address: Pat<i32>,
+        value: Pat<i32>,
+    },
+    StoreImmU32 {
+        address: Pat<i32>,
+        value: Pat<i32>,
+    },
+    StoreImmU64 {
+        address: Pat<i32>,
+        value: Pat<i32>,
+    },
     Trap,
     Fallthrough,
     Ecalli {
@@ -867,6 +883,34 @@ impl InstructionPattern {
                 },
                 Instruction::CmovNzImm { cond, dst, value },
             ) => c_pat.matches(cond) && d_pat.matches(dst) && v_pat.matches(value),
+            (
+                P::StoreImmU8 {
+                    address: a_pat,
+                    value: v_pat,
+                },
+                Instruction::StoreImmU8 { address, value },
+            ) => a_pat.matches(address) && v_pat.matches(value),
+            (
+                P::StoreImmU16 {
+                    address: a_pat,
+                    value: v_pat,
+                },
+                Instruction::StoreImmU16 { address, value },
+            ) => a_pat.matches(address) && v_pat.matches(value),
+            (
+                P::StoreImmU32 {
+                    address: a_pat,
+                    value: v_pat,
+                },
+                Instruction::StoreImmU32 { address, value },
+            ) => a_pat.matches(address) && v_pat.matches(value),
+            (
+                P::StoreImmU64 {
+                    address: a_pat,
+                    value: v_pat,
+                },
+                Instruction::StoreImmU64 { address, value },
+            ) => a_pat.matches(address) && v_pat.matches(value),
             (P::Ecalli { index: i_pat }, Instruction::Ecalli { index }) => i_pat.matches(index),
             _ => false,
         }
@@ -1057,6 +1101,10 @@ impl InstructionExt for Instruction {
             Instruction::CmovIzImm { .. } => Some(Opcode::CmovIzImm),
             Instruction::CmovNzImm { .. } => Some(Opcode::CmovNzImm),
             Instruction::Ecalli { .. } => Some(Opcode::Ecalli),
+            Instruction::StoreImmU8 { .. } => Some(Opcode::StoreImmU8),
+            Instruction::StoreImmU16 { .. } => Some(Opcode::StoreImmU16),
+            Instruction::StoreImmU32 { .. } => Some(Opcode::StoreImmU32),
+            Instruction::StoreImmU64 { .. } => Some(Opcode::StoreImmU64),
             Instruction::Unknown { .. } => None,
         }
     }

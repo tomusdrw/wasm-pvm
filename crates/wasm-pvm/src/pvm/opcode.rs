@@ -5,6 +5,11 @@ pub enum Opcode {
     Fallthrough = 1,
     Ecalli = 10,
     LoadImm64 = 20,
+    // Store immediate to absolute address (TwoImm)
+    StoreImmU8 = 30,
+    StoreImmU16 = 31,
+    StoreImmU32 = 32,
+    StoreImmU64 = 33,
     Jump = 40,
     LoadImmJump = 80,
     JumpInd = 50,

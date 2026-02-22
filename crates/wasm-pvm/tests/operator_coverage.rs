@@ -1936,3 +1936,57 @@ fn test_dse_multiple_stores_same_offset() {
         "DSE should not increase store count: {stores_with} > {stores_without}"
     );
 }
+
+// =============================================================================
+// StoreImm optimization: store constant to absolute address
+// =============================================================================
+
+/// global.set with a constant value should use StoreImmU32 (1 instruction)
+/// instead of LoadImm + LoadImm + StoreIndU32 (3 instructions).
+#[test]
+fn test_global_set_const_uses_store_imm() {
+    let wat = r#"
+        (module
+            (global $g (mut i32) (i32.const 0))
+            (func (export "main")
+                i32.const 42
+                global.set $g
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::StoreImmU32),
+        "global.set with constant value should use StoreImmU32.\nInstructions: {instructions:#?}"
+    );
+}
+
+/// global.set with a non-constant value should NOT use StoreImm.
+#[test]
+fn test_global_set_dynamic_uses_store_ind() {
+    let wat = r#"
+        (module
+            (global $g (mut i32) (i32.const 0))
+            (func (export "main") (param i32)
+                local.get 0
+                global.set $g
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Dynamic value should use register-based store
+    assert!(
+        has_opcode(&instructions, Opcode::StoreIndU32),
+        "global.set with dynamic value should use StoreIndU32.\nInstructions: {instructions:#?}"
+    );
+    assert!(
+        !has_opcode(&instructions, Opcode::StoreImmU32),
+        "global.set with dynamic value should NOT use StoreImmU32.\nInstructions: {instructions:#?}"
+    );
+}
