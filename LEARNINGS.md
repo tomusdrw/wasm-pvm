@@ -61,3 +61,22 @@ Accumulated knowledge from development. Update after every task.
 - Signature: `llvm.abs.i32(x, is_int_min_poison)` / `llvm.abs.i64(x, is_int_min_poison)`
 - Lowered as: `if x >= 0 then x else 0 - x`
 - For i32: must sign-extend first (zero-extension from load_operand makes negatives look positive in i64 comparisons)
+
+---
+
+## Call Return Address Encoding
+
+### LoadImm vs LoadImm64 for Call Return Addresses
+
+- Call return addresses are jump table addresses: `(jump_table_index + 1) * 2`
+- These are always small positive integers (2, 4, 6, ...) that fit in `LoadImm` (3-6 bytes)
+- Previously used `LoadImm64` (10 bytes) with placeholder value 0, patched during fixup resolution
+- **Problem with late patching**: `LoadImm` has variable encoding size (2 bytes for value 0, 3 bytes for value 2), so changing the value after branch fixups are resolved corrupts relative offsets
+- **Solution**: Pre-assign jump table indices at emission time by threading a `next_call_return_idx` counter through the compilation pipeline. This way `LoadImm` values are known during emission, ensuring correct `byte_offset` tracking for branch fixup resolution
+- **Impact**: Saves 7 bytes per function call site. For the AS compiler (~870 calls), this saves ~6KB (1.2% code size reduction). No impact on programs where LLVM inlining eliminates all calls.
+
+### Why LoadImm64 was originally needed
+
+- `LoadImm64` has fixed 10-byte encoding regardless of value, so placeholder patching was safe
+- `LoadImm` with value 0 encodes to 2 bytes, but after patching to value 2 becomes 3 bytes
+- This size change would break branch fixups already resolved with the old instruction sizes

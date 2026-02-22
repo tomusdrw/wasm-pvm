@@ -779,23 +779,104 @@ fn test_inlining_changes_codegen() {
         "Inlining should change the generated code"
     );
 
-    // Without inlining, we expect LoadImm64 for the return address (call overhead).
+    // Without inlining, we expect a LoadImm for the return address in r0 (call overhead).
     // With inlining, this overhead is eliminated.
     let noinline_instrs = extract_instructions(&without_inline);
-    let noinline_load_imm64_count = noinline_instrs
+    let noinline_call_return_count = noinline_instrs
         .iter()
-        .filter(|i| matches!(i, Instruction::LoadImm64 { .. }))
+        .filter(|i| matches!(i, Instruction::LoadImm { reg: 0, .. }))
         .count();
 
     let inlined_instrs = extract_instructions(&with_inline);
-    let inlined_load_imm64_count = inlined_instrs
+    let inlined_call_return_count = inlined_instrs
         .iter()
-        .filter(|i| matches!(i, Instruction::LoadImm64 { .. }))
+        .filter(|i| matches!(i, Instruction::LoadImm { reg: 0, .. }))
         .count();
 
-    // Without inlining needs LoadImm64 for return address; with inlining doesn't.
+    // Without inlining needs LoadImm for return address; with inlining doesn't.
     assert!(
-        inlined_load_imm64_count < noinline_load_imm64_count,
-        "Inlining should reduce LoadImm64 count (call overhead): inlined={inlined_load_imm64_count}, no-inline={noinline_load_imm64_count}"
+        inlined_call_return_count < noinline_call_return_count,
+        "Inlining should reduce call return LoadImm count (call overhead): inlined={inlined_call_return_count}, no-inline={noinline_call_return_count}"
     );
+}
+
+/// Call return addresses use compact LoadImm (not LoadImm64) with correct jump table addresses.
+#[test]
+fn test_call_return_uses_compact_load_imm() {
+    let wat = r#"
+        (module
+            (func $helper (param i32) (result i32)
+                local.get 0
+                i32.const 10
+                i32.add
+            )
+            (func $helper2 (param i32) (result i32)
+                local.get 0
+                i32.const 5
+                i32.mul
+            )
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                call $helper
+                call $helper2
+            )
+        )
+    "#;
+
+    let program = compile_wat_with_options(
+        wat,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile");
+
+    let instructions = extract_instructions(&program);
+
+    // Should have LoadImm (not LoadImm64) for call return addresses.
+    let call_return_load_imms: Vec<_> = instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::LoadImm { reg: 0, .. }))
+        .collect();
+
+    assert!(
+        call_return_load_imms.len() >= 2,
+        "Expected at least 2 call return LoadImm instructions, got {}",
+        call_return_load_imms.len()
+    );
+
+    // Verify no LoadImm64 is used for call return addresses (reg 0).
+    let load_imm64_r0_count = instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::LoadImm64 { reg: 0, .. }))
+        .count();
+
+    assert_eq!(
+        load_imm64_r0_count, 0,
+        "Call return addresses should use LoadImm, not LoadImm64"
+    );
+
+    // Verify jump table addresses are sequential: (1)*2=2, (2)*2=4, ...
+    let return_addrs: Vec<i32> = instructions
+        .iter()
+        .filter_map(|i| {
+            if let Instruction::LoadImm { reg: 0, value } = i {
+                Some(*value)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (i, addr) in return_addrs.iter().enumerate() {
+        let expected = ((i + 1) * 2) as i32;
+        assert_eq!(
+            *addr, expected,
+            "Call return address {i} should be {expected}, got {addr}"
+        );
+    }
 }

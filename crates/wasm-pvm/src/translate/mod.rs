@@ -218,6 +218,7 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
     let mut all_call_fixups: Vec<(usize, CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, IndirectCallFixup)> = Vec::new();
     let mut function_offsets: Vec<usize> = Vec::new();
+    let mut next_call_return_idx: usize = 0;
 
     // Entry header
     all_instructions.push(Instruction::Jump { offset: 0 });
@@ -289,10 +290,14 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
             });
 
             // Call start function.
+            // Pre-assign jump table index so LoadImm has the correct value
+            // at emission time (avoids fixup size instability).
+            let call_return_addr = ((next_call_return_idx + 1) * 2) as i32;
+            next_call_return_idx += 1;
             let current_instr_idx = all_instructions.len();
-            all_instructions.push(Instruction::LoadImm64 {
+            all_instructions.push(Instruction::LoadImm {
                 reg: RETURN_ADDR_REG,
-                value: 0,
+                value: call_return_addr,
             });
             all_instructions.push(Instruction::Jump { offset: 0 });
 
@@ -330,7 +335,9 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
             global_func_idx,
             result_globals,
             entry_returns_ptr_len,
+            next_call_return_idx,
         )?;
+        next_call_return_idx += translation.num_call_returns;
 
         let instr_base = all_instructions.len();
         for fixup in translation.call_fixups {
@@ -506,6 +513,8 @@ fn resolve_call_fixups(
 ) -> Result<(Vec<u32>, usize)> {
     let mut jump_table: Vec<u32> = Vec::new();
 
+    // Call return addresses (LoadImm values) are pre-assigned at emission time,
+    // so we only need to compute byte offsets for the jump table and Jump targets.
     for (instr_base, fixup) in call_fixups {
         let target_offset = function_offsets
             .get(fixup.target_func as usize)
@@ -513,7 +522,6 @@ fn resolve_call_fixups(
                 Error::Unsupported(format!("call to unknown function {}", fixup.target_func))
             })?;
 
-        let return_addr_idx = instr_base + fixup.return_addr_instr;
         let jump_idx = instr_base + fixup.jump_instr;
 
         let return_addr_offset: usize = instructions[..=jump_idx]
@@ -521,14 +529,7 @@ fn resolve_call_fixups(
             .map(|i| i.encode().len())
             .sum();
 
-        let jump_table_index = jump_table.len();
         jump_table.push(return_addr_offset as u32);
-
-        let jump_table_address = (jump_table_index as u64 + 1) * 2;
-
-        if let Instruction::LoadImm64 { value, .. } = &mut instructions[return_addr_idx] {
-            *value = jump_table_address;
-        }
 
         let jump_start_offset: usize = instructions[..jump_idx]
             .iter()
@@ -542,7 +543,6 @@ fn resolve_call_fixups(
     }
 
     for (instr_base, fixup) in indirect_call_fixups {
-        let return_addr_idx = instr_base + fixup.return_addr_instr;
         let jump_ind_idx = instr_base + fixup.jump_ind_instr;
 
         let return_addr_offset: usize = instructions[..=jump_ind_idx]
@@ -550,14 +550,7 @@ fn resolve_call_fixups(
             .map(|i| i.encode().len())
             .sum();
 
-        let jump_table_index = jump_table.len();
         jump_table.push(return_addr_offset as u32);
-
-        let jump_table_address = (jump_table_index as u64 + 1) * 2;
-
-        if let Instruction::LoadImm64 { value, .. } = &mut instructions[return_addr_idx] {
-            *value = jump_table_address;
-        }
     }
 
     let func_entry_base = jump_table.len();

@@ -58,6 +58,8 @@ pub struct LlvmFunctionTranslation {
     pub instructions: Vec<Instruction>,
     pub call_fixups: Vec<LlvmCallFixup>,
     pub indirect_call_fixups: Vec<LlvmIndirectCallFixup>,
+    /// Number of call return entries allocated by this function (for jump table indexing).
+    pub num_call_returns: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +147,13 @@ pub struct PvmEmitter<'ctx> {
     /// register already holds the same constant and skip the load if so.
     reg_to_const: [Option<u64>; 13],
 
+    /// Next jump table index for call return addresses.
+    /// Incremented each time a call is emitted, starting from `call_return_base_idx`.
+    pub(crate) next_call_return_idx: usize,
+
+    /// Base index for call return addresses (set from the global counter).
+    call_return_base_idx: usize,
+
     /// Which callee-saved registers (r9-r12) are actually used by this function.
     /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
     pub(crate) used_callee_regs: [bool; 4],
@@ -179,7 +188,7 @@ pub fn val_key_instr(val: InstructionValue<'_>) -> ValKey {
 }
 
 impl<'ctx> PvmEmitter<'ctx> {
-    pub fn new(config: EmitterConfig) -> Self {
+    pub fn new(config: EmitterConfig, call_return_base: usize) -> Self {
         Self {
             config,
             instructions: Vec::new(),
@@ -196,6 +205,8 @@ impl<'ctx> PvmEmitter<'ctx> {
             reg_to_slot: [None; 13],
             reg_to_const: [None; 13],
             pending_fused_icmp: None,
+            next_call_return_idx: call_return_base,
+            call_return_base_idx: call_return_base,
             used_callee_regs: [true; 4],
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
         }
@@ -348,6 +359,24 @@ impl<'ctx> PvmEmitter<'ctx> {
             reg2,
             offset: 0,
         });
+    }
+
+    // ── Call return address allocation ──
+
+    /// Allocate a jump table index for a call return address and return the
+    /// corresponding jump table address as an i32 suitable for `LoadImm`.
+    ///
+    /// Jump table addresses are `(index + 1) * 2`, which is always a small
+    /// positive value that fits in `LoadImm` (3-6 bytes) instead of `LoadImm64` (10 bytes).
+    pub fn alloc_call_return_addr(&mut self) -> i32 {
+        let idx = self.next_call_return_idx;
+        self.next_call_return_idx += 1;
+        ((idx + 1) * 2) as i32
+    }
+
+    /// Number of call return entries allocated by this function.
+    pub fn num_call_returns(&self) -> usize {
+        self.next_call_return_idx - self.call_return_base_idx
     }
 
     // ── Slot allocation ──

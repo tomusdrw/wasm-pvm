@@ -50,6 +50,7 @@ pub fn lower_function(
     _func_idx: usize,
     result_globals: Option<(u32, u32)>,
     entry_returns_ptr_len: bool,
+    call_return_base: usize,
 ) -> Result<LlvmFunctionTranslation> {
     let config = EmitterConfig {
         result_globals,
@@ -60,7 +61,7 @@ pub fn lower_function(
         shrink_wrap_enabled: ctx.optimizations.shrink_wrap_callee_saves,
         constant_propagation_enabled: ctx.optimizations.constant_propagation,
     };
-    let mut emitter = PvmEmitter::new(config);
+    let mut emitter = PvmEmitter::new(config, call_return_base);
 
     // Phase 1: Pre-scan — allocate labels for blocks and slots for all SSA values.
     pre_scan_function(&mut emitter, function, is_main);
@@ -103,10 +104,12 @@ pub fn lower_function(
 
     emitter.resolve_fixups()?;
 
+    let num_call_returns = emitter.num_call_returns();
     Ok(LlvmFunctionTranslation {
         instructions: emitter.instructions,
         call_fixups: emitter.call_fixups,
         indirect_call_fixups: emitter.indirect_call_fixups,
+        num_call_returns,
     })
 }
 
