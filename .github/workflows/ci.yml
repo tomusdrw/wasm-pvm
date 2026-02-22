@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master, td-opti]
+    branches: [main]
   pull_request:
-    branches: [main, master, td-opti]
+    branches: [main]
   workflow_dispatch:
 
 env:
