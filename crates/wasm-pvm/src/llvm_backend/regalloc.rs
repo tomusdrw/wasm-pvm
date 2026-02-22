@@ -292,8 +292,8 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
             .collect();
         for (end, idx) in expired {
             active.remove(&(end, idx));
-            if let Some(reg) = assigned.get(&idx) {
-                free_regs.push(*reg);
+            if let Some(reg) = assigned.remove(&idx) {
+                free_regs.push(reg);
             }
         }
 
