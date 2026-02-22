@@ -779,23 +779,93 @@ fn test_inlining_changes_codegen() {
         "Inlining should change the generated code"
     );
 
-    // Without inlining, we expect LoadImm64 for the return address (call overhead).
+    // Without inlining, we expect LoadImmJump for the call (combined return addr load + jump).
     // With inlining, this overhead is eliminated.
     let noinline_instrs = extract_instructions(&without_inline);
-    let noinline_load_imm64_count = noinline_instrs
+    let noinline_call_count = noinline_instrs
         .iter()
-        .filter(|i| matches!(i, Instruction::LoadImm64 { .. }))
+        .filter(|i| matches!(i, Instruction::LoadImmJump { .. }))
         .count();
 
     let inlined_instrs = extract_instructions(&with_inline);
-    let inlined_load_imm64_count = inlined_instrs
+    let inlined_call_count = inlined_instrs
         .iter()
-        .filter(|i| matches!(i, Instruction::LoadImm64 { .. }))
+        .filter(|i| matches!(i, Instruction::LoadImmJump { .. }))
         .count();
 
-    // Without inlining needs LoadImm64 for return address; with inlining doesn't.
+    // Without inlining needs LoadImmJump for direct call; with inlining doesn't.
     assert!(
-        inlined_load_imm64_count < noinline_load_imm64_count,
-        "Inlining should reduce LoadImm64 count (call overhead): inlined={inlined_load_imm64_count}, no-inline={noinline_load_imm64_count}"
+        inlined_call_count < noinline_call_count,
+        "Inlining should reduce LoadImmJump count (call overhead): inlined={inlined_call_count}, no-inline={noinline_call_count}"
     );
+}
+
+/// Test that direct calls use the compact LoadImmJump instruction instead of
+/// separate LoadImm64 + Jump, saving 1 instruction (1 gas) per call site.
+#[test]
+fn test_direct_calls_use_load_imm_jump() {
+    let wat = r#"
+        (module
+            (func $helper (param i32) (result i32)
+                local.get 0
+                i32.const 1
+                i32.add
+            )
+            (func (export "main") (param i32) (result i32)
+                local.get 0
+                call $helper
+                call $helper
+            )
+        )
+    "#;
+
+    let program = compile_wat_with_options(
+        wat,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("should compile");
+
+    let instrs = extract_instructions(&program);
+
+    // Direct calls should use LoadImmJump (not separate LoadImm64 + Jump).
+    let load_imm_jump_count = instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::LoadImmJump { reg: 0, .. }))
+        .count();
+    assert!(
+        load_imm_jump_count >= 2,
+        "Expected at least 2 LoadImmJump instructions for 2 calls, got {load_imm_jump_count}"
+    );
+
+    // No LoadImm64 should be used for return addresses (reg 0).
+    let load_imm64_r0_count = instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::LoadImm64 { reg: 0, .. }))
+        .count();
+    assert_eq!(
+        load_imm64_r0_count, 0,
+        "LoadImm64 with reg 0 should not be used for direct calls (LoadImmJump replaces it)"
+    );
+
+    // Verify jump table addresses are sequential: (1+1)*2=4, (2+1)*2=6, etc.
+    let jump_addrs: Vec<i32> = instrs
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::LoadImmJump { reg: 0, value, .. } => Some(*value),
+            _ => None,
+        })
+        .collect();
+    for (i, addr) in jump_addrs.iter().enumerate() {
+        let expected = ((i + 1) * 2) as i32;
+        assert_eq!(
+            *addr, expected,
+            "Jump table address mismatch at call {i}: expected {expected}, got {addr}"
+        );
+    }
 }

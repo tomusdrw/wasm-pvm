@@ -110,6 +110,12 @@ pub enum Instruction {
     Jump {
         offset: i32,
     },
+    /// Combined load-immediate + jump: `reg = sign_extend(value); goto(PC + offset)`
+    LoadImmJump {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
     JumpInd {
         reg: u8,
         offset: i32,
@@ -428,6 +434,9 @@ impl Instruction {
                 bytes.extend_from_slice(&offset.to_le_bytes());
                 bytes
             }
+            Self::LoadImmJump { reg, value, offset } => {
+                encode_one_reg_one_imm_one_off(Opcode::LoadImmJump, *reg, *value, *offset)
+            }
             Self::JumpInd { reg, offset } => {
                 let mut bytes = vec![Opcode::JumpInd as u8, *reg & 0x0F];
                 bytes.extend_from_slice(&encode_imm(*offset));
@@ -676,6 +685,10 @@ impl Instruction {
             | Self::CmovNzImm { dst, .. }
             | Self::MoveReg { dst, .. } => Some(*dst),
             Self::LoadImm { reg, .. } | Self::LoadImm64 { reg, .. } => Some(*reg),
+            // LoadImmJump writes to a register AND jumps, but since it's
+            // terminating, the dest_reg is used only by peephole for cache
+            // invalidation. We report the register it writes to.
+            Self::LoadImmJump { reg, .. } => Some(*reg),
             // No destination register:
             Self::Trap
             | Self::Fallthrough
@@ -713,6 +726,7 @@ impl Instruction {
             Self::Trap
                 | Self::Fallthrough
                 | Self::Jump { .. }
+                | Self::LoadImmJump { .. }
                 | Self::JumpInd { .. }
                 | Self::BranchNeImm { .. }
                 | Self::BranchEqImm { .. }
@@ -936,5 +950,62 @@ mod tests {
             let decoded = u32::from_le_bytes(bytes);
             assert_eq!(decoded, index, "roundtrip failed for index {index}");
         }
+    }
+
+    #[test]
+    fn test_load_imm_jump_encoding() {
+        // Typical call return address: value=2 (small), offset patched later
+        let instr = Instruction::LoadImmJump {
+            reg: 0,
+            value: 2,
+            offset: 100,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::LoadImmJump as u8);
+        // Second byte: (imm_len << 4) | reg. value=2 fits in 1 byte, so imm_len=1.
+        assert_eq!(encoded[1], 0x10); // (1 << 4) | 0
+        assert_eq!(encoded[2], 2); // imm = 2
+        // Offset is last 4 bytes
+        let offset_bytes = &encoded[3..7];
+        assert_eq!(i32::from_le_bytes(offset_bytes.try_into().unwrap()), 100);
+        // Total: 7 bytes (opcode + reg/len + imm + offset)
+        assert_eq!(encoded.len(), 7);
+    }
+
+    #[test]
+    fn test_load_imm_jump_encoding_zero_value() {
+        // value=0 → 0 imm bytes
+        let instr = Instruction::LoadImmJump {
+            reg: 0,
+            value: 0,
+            offset: -50,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::LoadImmJump as u8);
+        assert_eq!(encoded[1], 0x00); // (0 << 4) | 0
+        // No imm bytes, offset starts at byte 2
+        assert_eq!(encoded.len(), 6); // opcode + reg/len + offset(4)
+        let offset_bytes = &encoded[2..6];
+        assert_eq!(i32::from_le_bytes(offset_bytes.try_into().unwrap()), -50);
+    }
+
+    #[test]
+    fn test_load_imm_jump_is_terminating() {
+        let instr = Instruction::LoadImmJump {
+            reg: 0,
+            value: 2,
+            offset: 0,
+        };
+        assert!(instr.is_terminating());
+    }
+
+    #[test]
+    fn test_load_imm_jump_dest_reg() {
+        let instr = Instruction::LoadImmJump {
+            reg: 5,
+            value: 10,
+            offset: 0,
+        };
+        assert_eq!(instr.dest_reg(), Some(5));
     }
 }

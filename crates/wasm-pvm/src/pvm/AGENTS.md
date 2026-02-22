@@ -7,7 +7,7 @@
 | File | Lines | Role |
 |------|-------|------|
 | `instruction.rs` | ~570 | Instruction enum, encoding logic |
-| `opcode.rs` | 118 | Opcode constants (86 opcodes) |
+| `opcode.rs` | ~120 | Opcode constants (86+ opcodes including LoadImmJump) |
 | `blob.rs` | 143 | Program blob format with jump table |
 | `peephole.rs` | ~290 | Post-codegen peephole optimizer (Fallthroughs, truncation NOPs, dead stores) |
 
@@ -38,7 +38,7 @@ Instructions that end a basic block:
 ```rust
 pub fn is_terminating(&self) -> bool {
     matches!(self,
-        Trap | Fallthrough | Jump {..} | JumpInd {..} |
+        Trap | Fallthrough | Jump {..} | LoadImmJump {..} | JumpInd {..} |
         BranchNeImm {..} | BranchEqImm {..} | ...)
 }
 ```
