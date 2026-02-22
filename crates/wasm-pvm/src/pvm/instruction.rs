@@ -843,6 +843,11 @@ impl Instruction {
             | Self::ShloL32 { src1, src2, .. }
             | Self::ShloR32 { src1, src2, .. }
             | Self::SharR32 { src1, src2, .. } => [Some(*src1), Some(*src2), None],
+
+            // CmovIzImm/CmovNzImm read from the cond register only (value is an immediate).
+            Self::CmovIzImm { cond, .. } | Self::CmovNzImm { cond, .. } => {
+                [Some(*cond), None, None]
+            }
         }
     }
 }
