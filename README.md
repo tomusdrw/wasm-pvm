@@ -117,27 +117,27 @@ All PVM-level optimizations disabled vs enabled (default):
 
 | Benchmark | WASM size | JAM size | Gas Used |
 |-----------|----------|----------|----------|
-| add(5,7) | 66 B | 208 B | 40 |
+| add(5,7) | 66 B | 208 B | 39 |
 | fib(20) | 108 B | 268 B | 612 |
 | factorial(10) | 100 B | 245 B | 279 |
-| is_prime(25) | 160 B | 325 B | 82 |
-| AS fib(10) | 266 B | 791 B | 373 |
-| AS factorial(7) | 265 B | 767 B | 306 |
-| AS gcd(2017,200) | 260 B | 767 B | 226 |
-| AS decoder | 1.5 KB | 73.6 KB | 836 |
-| AS array | 1.4 KB | 72.6 KB | 718 |
-| anan-as PVM interpreter | 54.5 KB | 225.0 KB | - |
+| is_prime(25) | 160 B | 327 B | 82 |
+| AS fib(10) | 266 B | 786 B | 348 |
+| AS factorial(7) | 265 B | 796 B | 311 |
+| AS gcd(2017,200) | 260 B | 770 B | 212 |
+| AS decoder | 1.5 KB | 73.5 KB | 782 |
+| AS array | 1.4 KB | 72.7 KB | 687 |
+| anan-as PVM interpreter | 54.5 KB | 221.2 KB | - |
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
 | Benchmark | JAM Size | Outer Gas | Direct Gas | Overhead |
 |-----------|----------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 1 B | 24,890 | - | - |
-| add(5,7) | 208 B | 1,206,497 | 40 | 30,162x |
-| AS fib(10) | 791 B | 1,776,170 | 373 | 4,762x |
-| JAM-SDK fib(10)\* | 25.4 KB | 6,861,026 | 42 | 163,358x |
-| Jambrains fib(10)\* | 61.1 KB | 6,730,247 | 1 | 6,730,247x |
-| JADE fib(10)\* | 67.3 KB | 18,680,289 | 504 | 37,064x |
+| TRAP (interpreter overhead) | 1 B | 23,413 | - | - |
+| add(5,7) | 208 B | 1,190,590 | 39 | 30,528x |
+| AS fib(10) | 786 B | 1,786,299 | 348 | 5,132x |
+| JAM-SDK fib(10)\* | 25.4 KB | 6,856,481 | 42 | 163,249x |
+| Jambrains fib(10)\* | 61.1 KB | 6,728,752 | 1 | 6,728,752x |
+| JADE fib(10)\* | 67.3 KB | 18,671,683 | 504 | 37,046x |
 
 \*JAM-SDK fib(10), Jambrains fib(10), and JADE fib(10) exit on unhandled host calls before the fibonacci computation runs. The gas cost reflects program parsing/loading only (26 KB, 61 KB, and 67 KB binaries respectively), not execution.
 
