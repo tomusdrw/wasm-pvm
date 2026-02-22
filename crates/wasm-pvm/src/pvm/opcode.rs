@@ -104,6 +104,11 @@ pub enum Opcode {
     ShloL32 = 197,
     ShloR32 = 198,
     SharR32 = 199,
+    // Store immediate indirect (OneRegTwoImm)
+    StoreImmIndU8 = 70,
+    StoreImmIndU16 = 71,
+    StoreImmIndU32 = 72,
+    StoreImmIndU64 = 73,
     // Comparison (ThreeReg) - result is 0 or 1
     SetLtU = 216,
     SetLtS = 217,

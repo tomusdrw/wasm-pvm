@@ -59,6 +59,9 @@ pub fn lower_wasm_global_load<'ctx>(
 }
 
 /// Lower a store to a WASM global variable.
+///
+/// When the value is a compile-time constant that fits in i32, uses `StoreImmIndU32`
+/// to avoid loading the value into a register.
 pub fn lower_wasm_global_store<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -192,6 +195,9 @@ pub fn emit_pvm_load<'ctx>(
 }
 
 /// Emit a PVM store intrinsic.
+///
+/// When the value being stored is a compile-time constant that fits in i32,
+/// uses `StoreImmInd*` to avoid an extra `LoadImm` instruction.
 pub fn emit_pvm_store<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -202,10 +208,42 @@ pub fn emit_pvm_store<'ctx>(
     let addr = get_operand(instr, 0)?;
     let val = get_operand(instr, 1)?;
 
+    let offset = ctx.wasm_memory_base;
+
+    // Try immediate store: if value is a constant that fits in i32, use StoreImmInd*.
+    if let Some(val_const) = try_get_constant(val)
+        && i32::try_from(val_const).is_ok()
+    {
+        let imm = val_const as i32;
+        e.load_operand(addr, TEMP1)?;
+        match kind {
+            PvmStoreKind::U8 => e.emit(Instruction::StoreImmIndU8 {
+                base: TEMP1,
+                offset,
+                value: imm,
+            }),
+            PvmStoreKind::U16 => e.emit(Instruction::StoreImmIndU16 {
+                base: TEMP1,
+                offset,
+                value: imm,
+            }),
+            PvmStoreKind::U32 => e.emit(Instruction::StoreImmIndU32 {
+                base: TEMP1,
+                offset,
+                value: imm,
+            }),
+            PvmStoreKind::U64 => e.emit(Instruction::StoreImmIndU64 {
+                base: TEMP1,
+                offset,
+                value: imm,
+            }),
+        }
+        return Ok(());
+    }
+
     e.load_operand(addr, TEMP1)?;
     e.load_operand(val, TEMP2)?;
 
-    let offset = ctx.wasm_memory_base;
     match kind {
         PvmStoreKind::U8 => e.emit(Instruction::StoreIndU8 {
             base: TEMP1,

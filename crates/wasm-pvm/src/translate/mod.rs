@@ -519,14 +519,17 @@ fn return_addr_jump_table_idx(
     instructions: &[Instruction],
     return_addr_instr: usize,
 ) -> Result<usize> {
-    match instructions.get(return_addr_instr) {
-        Some(Instruction::LoadImmJump { value, .. } | Instruction::LoadImm { value, .. })
-            if *value > 0 && *value % 2 == 0 =>
-        {
-            Ok((*value as usize / 2) - 1)
+    let value = match instructions.get(return_addr_instr) {
+        Some(Instruction::LoadImmJump { value, .. } | Instruction::LoadImm { value, .. }) => {
+            Some(*value)
         }
-        other => Err(Error::Internal(format!(
-            "expected LoadImmJump or LoadImm((idx+1)*2) at return_addr_instr {return_addr_instr}, got {other:?}"
+        _ => None,
+    };
+    match value {
+        Some(v) if v > 0 && v % 2 == 0 => Ok((v as usize / 2) - 1),
+        _ => Err(Error::Internal(format!(
+            "expected LoadImmJump/LoadImm((idx+1)*2) at return_addr_instr {return_addr_instr}, got {:?}",
+            instructions.get(return_addr_instr)
         ))),
     }
 }
