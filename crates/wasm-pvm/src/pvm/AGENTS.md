@@ -65,10 +65,9 @@ pub fn dest_reg(&self) -> Option<u8> {
 ```
 
 ### Peephole Notes
-- Dead-code elimination is skipped when the instruction stream contains any `StoreImm*` variants.
-- Dead-code elimination treats all `Store*`/`StoreImm*` instructions as side-effecting and conservatively
-  marks all registers live when they occur.
-- Address-calculation propagation is reset after terminating instructions to avoid crossing control-flow edges.
+- Dead-code elimination runs only when a function has no labels (single-block code). Multi-block
+  functions skip DCE to avoid incorrect liveness across control flow.
+
 
 ## Where to Look
 
