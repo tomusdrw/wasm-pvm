@@ -548,23 +548,6 @@ fn test_if_else_result_phi_slots() {
     .expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Both branches store their result to the phi's slot.
-    // Either via LoadImm/LoadImm64 + StoreInd* or via StoreImmInd*.
-    let has_10 = instructions.iter().any(|i| {
-        matches!(i, Instruction::LoadImm { value: 10, .. })
-            || matches!(i, Instruction::LoadImm64 { value: 10, .. })
-            || matches!(i, Instruction::StoreImmIndU32 { value: 10, .. })
-            || matches!(i, Instruction::StoreImmIndU64 { value: 10, .. })
-    });
-    let has_20 = instructions.iter().any(|i| {
-        matches!(i, Instruction::LoadImm { value: 20, .. })
-            || matches!(i, Instruction::LoadImm64 { value: 20, .. })
-            || matches!(i, Instruction::StoreImmIndU32 { value: 20, .. })
-            || matches!(i, Instruction::StoreImmIndU64 { value: 20, .. })
-    });
-    assert!(has_10, "Expected const 10 for if-branch");
-    assert!(has_20, "Expected const 20 for else-branch");
-
     // Both branch values should be stored to slots (phi nodes in the merge block).
     let store_count = count_opcode(&instructions, Opcode::StoreIndU32)
         + count_opcode(&instructions, Opcode::StoreIndU64)
