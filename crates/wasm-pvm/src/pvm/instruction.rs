@@ -74,6 +74,10 @@ pub enum Instruction {
     LoadIndU16 { dst: u8, base: u8, offset: i32 },
     LoadIndI16 { dst: u8, base: u8, offset: i32 },
     StoreIndU16 { base: u8, src: u8, offset: i32 },
+    /// Conditional move if zero with immediate: if reg[cond] == 0 then reg[dst] = sign_extend(value)
+    CmovIzImm { cond: u8, dst: u8, value: i32 },
+    /// Conditional move if non-zero with immediate: if reg[cond] != 0 then reg[dst] = sign_extend(value)
+    CmovNzImm { cond: u8, dst: u8, value: i32 },
     Ecalli { index: u32 },
     Unknown { opcode: u8, raw_bytes: Vec<u8> },
 }
@@ -322,6 +326,18 @@ impl Instruction {
                 bytes.extend_from_slice(&encode_imm(*offset));
                 bytes
             }
+            Self::CmovIzImm { cond, dst, value } => {
+                let mut bytes =
+                    vec![Opcode::CmovIzImm as u8, (*cond & 0x0F) << 4 | (*dst & 0x0F)];
+                bytes.extend_from_slice(&encode_imm(*value));
+                bytes
+            }
+            Self::CmovNzImm { cond, dst, value } => {
+                let mut bytes =
+                    vec![Opcode::CmovNzImm as u8, (*cond & 0x0F) << 4 | (*dst & 0x0F)];
+                bytes.extend_from_slice(&encode_imm(*value));
+                bytes
+            }
             Self::Ecalli { index } => {
                 let mut bytes = vec![Opcode::Ecalli as u8];
                 bytes.extend_from_slice(&encode_uimm(*index));
@@ -381,6 +397,8 @@ impl Instruction {
             | Self::LoadIndU64 { dst, .. }
             | Self::AddImm32 { dst, .. }
             | Self::AddImm64 { dst, .. }
+            | Self::CmovIzImm { dst, .. }
+            | Self::CmovNzImm { dst, .. }
             | Self::MoveReg { dst, .. } => Some(*dst),
             Self::LoadImm { reg, .. } | Self::LoadImm64 { reg, .. } => Some(*reg),
             // No destination register:
@@ -546,6 +564,34 @@ mod tests {
         assert_eq!(encoded[0], Opcode::Add64 as u8);
         assert_eq!(encoded[1], 0xC0); // src2=12 in high nibble, src1=0 in low nibble
         assert_eq!(encoded[2], 0x0C); // dst=12
+    }
+
+    #[test]
+    fn test_cmov_imm_encoding() {
+        // CmovNzImm with cond=3, dst=5, value=42
+        let instr = Instruction::CmovNzImm {
+            cond: 3,
+            dst: 5,
+            value: 42,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::CmovNzImm as u8);
+        assert_eq!(encoded[1], 0x35); // cond=3 in high nibble, dst=5 in low nibble
+        assert_eq!(encoded[2], 42); // value as 1-byte immediate
+    }
+
+    #[test]
+    fn test_cmov_iz_imm_encoding() {
+        // CmovIzImm with cond=0, dst=7, value=0
+        let instr = Instruction::CmovIzImm {
+            cond: 0,
+            dst: 7,
+            value: 0,
+        };
+        let encoded = instr.encode();
+        assert_eq!(encoded[0], Opcode::CmovIzImm as u8);
+        assert_eq!(encoded[1], 0x07); // cond=0 in high nibble, dst=7 in low nibble
+        assert_eq!(encoded.len(), 2); // value=0 → no immediate bytes
     }
 
     #[test]

@@ -44,6 +44,9 @@ pub enum Opcode {
     // Set if less than immediate (TwoRegOneImm)
     SetLtUImm = 136,
     SetLtSImm = 137,
+    // Conditional move with immediate (TwoRegOneImm)
+    CmovIzImm = 147,
+    CmovNzImm = 148,
     AddImm64 = 149,
     // Branch with two registers (TwoRegOneOff)
     BranchEq = 170,
