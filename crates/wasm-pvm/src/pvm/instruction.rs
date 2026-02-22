@@ -1998,4 +1998,165 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_one_reg_one_imm_encoding_layout() {
+        // encode_one_reg_one_imm: [opcode, reg & 0x0F, imm...]
+        let encoded = encode_one_reg_one_imm(Opcode::LoadU32, 7, 0x30000);
+        assert_eq!(encoded[0], Opcode::LoadU32 as u8);
+        assert_eq!(encoded[1], 0x07); // reg=7, low nibble only
+        assert_eq!(&encoded[2..], &encode_imm(0x30000));
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_zero_value() {
+        let encoded = encode_one_reg_one_imm(Opcode::LoadU64, 3, 0);
+        assert_eq!(encoded.len(), 2); // opcode + reg, no imm bytes for value=0
+        assert_eq!(encoded[0], Opcode::LoadU64 as u8);
+        assert_eq!(encoded[1], 0x03);
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_negative_value() {
+        let encoded = encode_one_reg_one_imm(Opcode::StoreU8, 12, -1);
+        assert_eq!(encoded[0], Opcode::StoreU8 as u8);
+        assert_eq!(encoded[1], 0x0C); // reg=12
+        assert_eq!(&encoded[2..], &encode_imm(-1));
+        assert_eq!(encoded[2], 0xFF); // -1 as 1-byte signed
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_high_nibble_masked() {
+        // Register 0xF7 should be masked to 0x07
+        let encoded = encode_one_reg_one_imm(Opcode::LoadI8, 0xF7, 42);
+        assert_eq!(encoded[1], 0x07); // only low nibble kept
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_roundtrip() {
+        // Roundtrip: encode then manually decode and verify fields match
+        for (opcode, reg, value) in [
+            (Opcode::LoadU8, 0u8, 0i32),
+            (Opcode::LoadI16, 5, 42),
+            (Opcode::LoadU32, 12, 0x30000),
+            (Opcode::StoreU64, 7, -128),
+            (Opcode::LoadU64, 3, 8_388_607), // max 3-byte signed
+        ] {
+            let encoded = encode_one_reg_one_imm(opcode, reg, value);
+
+            // Decode opcode
+            assert_eq!(encoded[0], opcode as u8, "opcode mismatch for reg={reg} value={value}");
+
+            // Decode register
+            let decoded_reg = encoded[1] & 0x0F;
+            assert_eq!(decoded_reg, reg & 0x0F, "reg mismatch for reg={reg} value={value}");
+
+            // Decode immediate (sign-extend from variable-length encoding)
+            let imm_bytes = &encoded[2..];
+            let decoded_value = decode_sign_extended_imm(imm_bytes);
+            assert_eq!(decoded_value, value, "value mismatch for reg={reg} value={value}");
+        }
+    }
+
+    #[test]
+    fn test_one_reg_one_imm_via_instruction_encode() {
+        // Verify Instruction::encode() for LoadU32 matches direct helper call
+        let instr = Instruction::LoadU32 {
+            dst: 5,
+            address: 0x30000,
+        };
+        let from_instr = instr.encode();
+        let from_helper = encode_one_reg_one_imm(Opcode::LoadU32, 5, 0x30000);
+        assert_eq!(from_instr, from_helper);
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_encoding_layout() {
+        // encode_two_reg_two_imm: [opcode, (reg1<<4)|reg2, imm1_len, imm1..., imm2...]
+        let encoded = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, 3, 7, 42, 100);
+        assert_eq!(encoded[0], Opcode::LoadImmJumpInd as u8);
+        assert_eq!(encoded[1], 0x37); // reg1=3 high nibble, reg2=7 low nibble
+        let imm1_enc = encode_imm(42);
+        let imm2_enc = encode_imm(100);
+        assert_eq!(encoded[2], imm1_enc.len() as u8); // imm1 length
+        assert_eq!(&encoded[3..3 + imm1_enc.len()], &imm1_enc);
+        assert_eq!(&encoded[3 + imm1_enc.len()..], &imm2_enc);
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_zero_immediates() {
+        let encoded = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, 0, 5, 0, 0);
+        // [opcode, 0x05, 0x00] — no imm bytes for either
+        assert_eq!(encoded.len(), 3);
+        assert_eq!(encoded[0], Opcode::LoadImmJumpInd as u8);
+        assert_eq!(encoded[1], 0x05);
+        assert_eq!(encoded[2], 0x00); // imm1_len = 0
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_register_masking() {
+        // High bits should be masked off
+        let encoded = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, 0xA3, 0xB7, 1, 2);
+        assert_eq!(encoded[1], 0x37); // only low nibbles: 3 and 7
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_roundtrip() {
+        for (reg1, reg2, imm1, imm2) in [
+            (0u8, 0u8, 0i32, 0i32),
+            (3, 7, 42, 100),
+            (12, 1, -1, 0x30000),
+            (5, 9, 8_388_607, -8_388_608), // max/min 3-byte signed
+        ] {
+            let encoded = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, reg1, reg2, imm1, imm2);
+
+            // Decode opcode
+            assert_eq!(encoded[0], Opcode::LoadImmJumpInd as u8);
+
+            // Decode registers
+            let decoded_reg1 = (encoded[1] >> 4) & 0x0F;
+            let decoded_reg2 = encoded[1] & 0x0F;
+            assert_eq!(decoded_reg1, reg1 & 0x0F, "reg1 mismatch");
+            assert_eq!(decoded_reg2, reg2 & 0x0F, "reg2 mismatch");
+
+            // Decode imm1 length + imm1
+            let imm1_len = (encoded[2] & 0x0F) as usize;
+            let imm1_bytes = &encoded[3..3 + imm1_len];
+            let decoded_imm1 = decode_sign_extended_imm(imm1_bytes);
+            assert_eq!(decoded_imm1, imm1, "imm1 mismatch for ({reg1},{reg2},{imm1},{imm2})");
+
+            // Decode imm2 (remaining bytes)
+            let imm2_bytes = &encoded[3 + imm1_len..];
+            let decoded_imm2 = decode_sign_extended_imm(imm2_bytes);
+            assert_eq!(decoded_imm2, imm2, "imm2 mismatch for ({reg1},{reg2},{imm1},{imm2})");
+        }
+    }
+
+    #[test]
+    fn test_two_reg_two_imm_via_instruction_encode() {
+        // Verify Instruction::encode() for LoadImmJumpInd matches direct helper call
+        let instr = Instruction::LoadImmJumpInd {
+            base: 3,
+            dst: 7,
+            value: 42,
+            offset: 100,
+        };
+        let from_instr = instr.encode();
+        let from_helper = encode_two_reg_two_imm(Opcode::LoadImmJumpInd, 3, 7, 42, 100);
+        assert_eq!(from_instr, from_helper);
+    }
+
+    /// Helper: decode a variable-length sign-extended immediate (same logic as test_cmov_imm_roundtrip)
+    fn decode_sign_extended_imm(imm_bytes: &[u8]) -> i32 {
+        let mut buf = [0u8; 4];
+        buf[..imm_bytes.len()].copy_from_slice(imm_bytes);
+        if let Some(&last) = imm_bytes.last() {
+            if last & 0x80 != 0 {
+                for b in buf.iter_mut().skip(imm_bytes.len()) {
+                    *b = 0xFF;
+                }
+            }
+        }
+        i32::from_le_bytes(buf)
+    }
 }
