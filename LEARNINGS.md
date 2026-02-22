@@ -75,6 +75,30 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## LoadImmJump for Direct Calls
+
+### Combined Instruction Replaces LoadImm64 + Jump
+
+- Direct function calls previously used two instructions: `LoadImm64 { reg: r0, value }` (10 bytes) + `Jump { offset }` (5 bytes) = 15 bytes, 2 gas
+- `LoadImmJump { reg: r0, value, offset }` (opcode 80) combines both into a single instruction: 6-10 bytes, 1 gas
+- Uses `encode_one_reg_one_imm_one_off` encoding: `opcode(1) + (imm_len|reg)(1) + imm(0-4) + offset(4)`
+- For typical call return addresses (small positive integers like 2, 4, 6), the imm field is 1 byte, so total is 7 bytes
+
+### Pre-Assignment of Jump Table Addresses
+
+- Same challenge as `LoadImm` for return addresses: `LoadImmJump` has variable-size encoding, so the value must be known at emission time
+- Solution: Thread a `next_call_return_idx` counter through the compilation pipeline, pre-computing `(index + 1) * 2` at emission time
+- During `resolve_call_fixups`, only the `offset` field is patched (always 4 bytes, size-stable)
+- The `value` field is verified via `debug_assert!` to match the actual jump table index
+
+### Bonus: Peephole Fallthrough Elimination
+
+- Since `LoadImmJump` is a terminating instruction, the peephole optimizer can remove a preceding `Fallthrough`
+- This saves an additional 1 byte per call site where a basic block boundary precedes the call
+- Total savings per call: -8 bytes (instruction) + -1 byte (Fallthrough removal) + -1 gas
+
+---
+
 ## PVM 32-bit Instruction Semantics
 
 ### Sign Extension

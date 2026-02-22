@@ -11,6 +11,7 @@ pub enum Opcode {
     StoreImmU32 = 32,
     StoreImmU64 = 33,
     Jump = 40,
+    LoadImmJump = 80,
     JumpInd = 50,
     LoadImm = 51,
     // Branch with immediate comparison (OneRegOneImmOneOff)
@@ -100,6 +101,7 @@ impl Opcode {
             Self::Trap
                 | Self::Fallthrough
                 | Self::Jump
+                | Self::LoadImmJump
                 | Self::JumpInd
                 | Self::BranchEqImm
                 | Self::BranchNeImm

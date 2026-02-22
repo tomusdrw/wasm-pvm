@@ -1049,6 +1049,7 @@ impl InstructionExt for Instruction {
             Instruction::AddImm32 { .. } => Some(Opcode::AddImm32),
             Instruction::AddImm64 { .. } => Some(Opcode::AddImm64),
             Instruction::Jump { .. } => Some(Opcode::Jump),
+            Instruction::LoadImmJump { .. } => Some(Opcode::LoadImmJump),
             Instruction::JumpInd { .. } => Some(Opcode::JumpInd),
             Instruction::LoadIndU32 { .. } => Some(Opcode::LoadIndU32),
             Instruction::StoreIndU32 { .. } => Some(Opcode::StoreIndU32),

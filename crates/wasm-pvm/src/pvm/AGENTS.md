@@ -40,7 +40,7 @@ Instructions that end a basic block:
 ```rust
 pub fn is_terminating(&self) -> bool {
     matches!(self,
-        Trap | Fallthrough | Jump {..} | JumpInd {..} |
+        Trap | Fallthrough | Jump {..} | LoadImmJump {..} | JumpInd {..} |
         BranchNeImm {..} | BranchEqImm {..} | ...)
 }
 ```
