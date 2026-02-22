@@ -14,7 +14,7 @@
     clippy::cast_sign_loss
 )]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
@@ -770,7 +770,10 @@ pub fn pre_scan_function<'ctx>(
         for bb in &blocks {
             if let Some(term) = bb.get_terminator() {
                 let successors = collect_terminator_successors(term);
-                for succ in successors {
+                // Deduplicate successors per predecessor (e.g. switch cases targeting the same block)
+                // so that multiple edges from the same bb don't inflate the predecessor count.
+                let unique_succs: HashSet<_> = successors.into_iter().collect();
+                for succ in unique_succs {
                     let count = pred_count.entry(succ).or_insert(0);
                     *count += 1;
                     pred_from.insert(succ, *bb);
