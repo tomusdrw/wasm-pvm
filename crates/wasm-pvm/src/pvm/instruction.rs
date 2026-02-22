@@ -1080,8 +1080,16 @@ impl Instruction {
                 reg2: src,
                 ..
             }
-            | Self::CmovIz { src: base, cond: src, .. }
-            | Self::CmovNz { src: base, cond: src, .. } => [Some(*base), Some(*src), None],
+            | Self::CmovIz {
+                src: base,
+                cond: src,
+                ..
+            }
+            | Self::CmovNz {
+                src: base,
+                cond: src,
+                ..
+            } => [Some(*base), Some(*src), None],
 
             Self::Add32 { src1, src2, .. }
             | Self::Sub32 { src1, src2, .. }
