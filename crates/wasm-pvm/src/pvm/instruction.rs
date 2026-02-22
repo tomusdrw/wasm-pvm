@@ -4,82 +4,359 @@ use super::Opcode;
 pub enum Instruction {
     Trap,
     Fallthrough,
-    LoadImm64 { reg: u8, value: u64 },
-    LoadImm { reg: u8, value: i32 },
-    Add32 { dst: u8, src1: u8, src2: u8 },
-    Sub32 { dst: u8, src1: u8, src2: u8 },
-    Mul32 { dst: u8, src1: u8, src2: u8 },
-    DivU32 { dst: u8, src1: u8, src2: u8 },
-    DivS32 { dst: u8, src1: u8, src2: u8 },
-    RemU32 { dst: u8, src1: u8, src2: u8 },
-    RemS32 { dst: u8, src1: u8, src2: u8 },
-    Add64 { dst: u8, src1: u8, src2: u8 },
-    Sub64 { dst: u8, src1: u8, src2: u8 },
-    Mul64 { dst: u8, src1: u8, src2: u8 },
-    DivU64 { dst: u8, src1: u8, src2: u8 },
-    DivS64 { dst: u8, src1: u8, src2: u8 },
-    RemU64 { dst: u8, src1: u8, src2: u8 },
-    RemS64 { dst: u8, src1: u8, src2: u8 },
-    ShloL64 { dst: u8, src1: u8, src2: u8 },
-    ShloR64 { dst: u8, src1: u8, src2: u8 },
-    SharR64 { dst: u8, src1: u8, src2: u8 },
-    AddImm32 { dst: u8, src: u8, value: i32 },
-    AddImm64 { dst: u8, src: u8, value: i32 },
-    Jump { offset: i32 },
-    JumpInd { reg: u8, offset: i32 },
-    LoadIndU32 { dst: u8, base: u8, offset: i32 },
-    StoreIndU32 { base: u8, src: u8, offset: i32 },
-    LoadIndU64 { dst: u8, base: u8, offset: i32 },
-    StoreIndU64 { base: u8, src: u8, offset: i32 },
-    BranchNeImm { reg: u8, value: i32, offset: i32 },
-    BranchEqImm { reg: u8, value: i32, offset: i32 },
-    BranchGeSImm { reg: u8, value: i32, offset: i32 },
-    BranchLtUImm { reg: u8, value: i32, offset: i32 },
-    BranchLeUImm { reg: u8, value: i32, offset: i32 },
-    BranchGeUImm { reg: u8, value: i32, offset: i32 },
-    BranchGtUImm { reg: u8, value: i32, offset: i32 },
-    BranchLtSImm { reg: u8, value: i32, offset: i32 },
-    BranchLeSImm { reg: u8, value: i32, offset: i32 },
-    BranchGtSImm { reg: u8, value: i32, offset: i32 },
-    MoveReg { dst: u8, src: u8 },
-    BranchEq { reg1: u8, reg2: u8, offset: i32 },
-    BranchNe { reg1: u8, reg2: u8, offset: i32 },
-    BranchGeU { reg1: u8, reg2: u8, offset: i32 },
-    BranchLtU { reg1: u8, reg2: u8, offset: i32 },
-    BranchLtS { reg1: u8, reg2: u8, offset: i32 },
-    BranchGeS { reg1: u8, reg2: u8, offset: i32 },
-    SetLtU { dst: u8, src1: u8, src2: u8 },
-    SetLtS { dst: u8, src1: u8, src2: u8 },
-    And { dst: u8, src1: u8, src2: u8 },
-    Xor { dst: u8, src1: u8, src2: u8 },
-    Or { dst: u8, src1: u8, src2: u8 },
-    SetLtUImm { dst: u8, src: u8, value: i32 },
-    SetLtSImm { dst: u8, src: u8, value: i32 },
-    ShloL32 { dst: u8, src1: u8, src2: u8 },
-    ShloR32 { dst: u8, src1: u8, src2: u8 },
-    SharR32 { dst: u8, src1: u8, src2: u8 },
-    Sbrk { dst: u8, src: u8 },
-    CountSetBits64 { dst: u8, src: u8 },
-    CountSetBits32 { dst: u8, src: u8 },
-    LeadingZeroBits64 { dst: u8, src: u8 },
-    LeadingZeroBits32 { dst: u8, src: u8 },
-    TrailingZeroBits64 { dst: u8, src: u8 },
-    TrailingZeroBits32 { dst: u8, src: u8 },
-    SignExtend8 { dst: u8, src: u8 },
-    SignExtend16 { dst: u8, src: u8 },
-    ZeroExtend16 { dst: u8, src: u8 },
-    LoadIndU8 { dst: u8, base: u8, offset: i32 },
-    LoadIndI8 { dst: u8, base: u8, offset: i32 },
-    StoreIndU8 { base: u8, src: u8, offset: i32 },
-    LoadIndU16 { dst: u8, base: u8, offset: i32 },
-    LoadIndI16 { dst: u8, base: u8, offset: i32 },
-    StoreIndU16 { base: u8, src: u8, offset: i32 },
-    /// Conditional move if zero with immediate: if reg[cond] == 0 then reg[dst] = sign_extend(value)
-    CmovIzImm { cond: u8, dst: u8, value: i32 },
-    /// Conditional move if non-zero with immediate: if reg[cond] != 0 then reg[dst] = sign_extend(value)
-    CmovNzImm { cond: u8, dst: u8, value: i32 },
-    Ecalli { index: u32 },
-    Unknown { opcode: u8, raw_bytes: Vec<u8> },
+    LoadImm64 {
+        reg: u8,
+        value: u64,
+    },
+    LoadImm {
+        reg: u8,
+        value: i32,
+    },
+    Add32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    Sub32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    Mul32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    DivU32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    DivS32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    RemU32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    RemS32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    Add64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    Sub64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    Mul64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    DivU64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    DivS64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    RemU64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    RemS64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    ShloL64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    ShloR64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    SharR64 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    AddImm32 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    AddImm64 {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    Jump {
+        offset: i32,
+    },
+    JumpInd {
+        reg: u8,
+        offset: i32,
+    },
+    LoadIndU32 {
+        dst: u8,
+        base: u8,
+        offset: i32,
+    },
+    StoreIndU32 {
+        base: u8,
+        src: u8,
+        offset: i32,
+    },
+    LoadIndU64 {
+        dst: u8,
+        base: u8,
+        offset: i32,
+    },
+    StoreIndU64 {
+        base: u8,
+        src: u8,
+        offset: i32,
+    },
+    BranchNeImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchEqImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchGeSImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchLtUImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchLeUImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchGeUImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchGtUImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchLtSImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchLeSImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    BranchGtSImm {
+        reg: u8,
+        value: i32,
+        offset: i32,
+    },
+    MoveReg {
+        dst: u8,
+        src: u8,
+    },
+    BranchEq {
+        reg1: u8,
+        reg2: u8,
+        offset: i32,
+    },
+    BranchNe {
+        reg1: u8,
+        reg2: u8,
+        offset: i32,
+    },
+    BranchGeU {
+        reg1: u8,
+        reg2: u8,
+        offset: i32,
+    },
+    BranchLtU {
+        reg1: u8,
+        reg2: u8,
+        offset: i32,
+    },
+    BranchLtS {
+        reg1: u8,
+        reg2: u8,
+        offset: i32,
+    },
+    BranchGeS {
+        reg1: u8,
+        reg2: u8,
+        offset: i32,
+    },
+    SetLtU {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    SetLtS {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    And {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    Xor {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    Or {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    SetLtUImm {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    SetLtSImm {
+        dst: u8,
+        src: u8,
+        value: i32,
+    },
+    ShloL32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    ShloR32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    SharR32 {
+        dst: u8,
+        src1: u8,
+        src2: u8,
+    },
+    Sbrk {
+        dst: u8,
+        src: u8,
+    },
+    CountSetBits64 {
+        dst: u8,
+        src: u8,
+    },
+    CountSetBits32 {
+        dst: u8,
+        src: u8,
+    },
+    LeadingZeroBits64 {
+        dst: u8,
+        src: u8,
+    },
+    LeadingZeroBits32 {
+        dst: u8,
+        src: u8,
+    },
+    TrailingZeroBits64 {
+        dst: u8,
+        src: u8,
+    },
+    TrailingZeroBits32 {
+        dst: u8,
+        src: u8,
+    },
+    SignExtend8 {
+        dst: u8,
+        src: u8,
+    },
+    SignExtend16 {
+        dst: u8,
+        src: u8,
+    },
+    ZeroExtend16 {
+        dst: u8,
+        src: u8,
+    },
+    LoadIndU8 {
+        dst: u8,
+        base: u8,
+        offset: i32,
+    },
+    LoadIndI8 {
+        dst: u8,
+        base: u8,
+        offset: i32,
+    },
+    StoreIndU8 {
+        base: u8,
+        src: u8,
+        offset: i32,
+    },
+    LoadIndU16 {
+        dst: u8,
+        base: u8,
+        offset: i32,
+    },
+    LoadIndI16 {
+        dst: u8,
+        base: u8,
+        offset: i32,
+    },
+    StoreIndU16 {
+        base: u8,
+        src: u8,
+        offset: i32,
+    },
+    /// Conditional move if zero with immediate: if reg[cond] == 0 then reg[dst] = `sign_extend(value)`
+    CmovIzImm {
+        dst: u8,
+        cond: u8,
+        value: i32,
+    },
+    /// Conditional move if non-zero with immediate: if reg[cond] != 0 then reg[dst] = `sign_extend(value)`
+    CmovNzImm {
+        dst: u8,
+        cond: u8,
+        value: i32,
+    },
+    Ecalli {
+        index: u32,
+    },
+    Unknown {
+        opcode: u8,
+        raw_bytes: Vec<u8>,
+    },
 }
 
 impl Instruction {
@@ -327,14 +604,12 @@ impl Instruction {
                 bytes
             }
             Self::CmovIzImm { cond, dst, value } => {
-                let mut bytes =
-                    vec![Opcode::CmovIzImm as u8, (*cond & 0x0F) << 4 | (*dst & 0x0F)];
+                let mut bytes = vec![Opcode::CmovIzImm as u8, (*cond & 0x0F) << 4 | (*dst & 0x0F)];
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
             }
             Self::CmovNzImm { cond, dst, value } => {
-                let mut bytes =
-                    vec![Opcode::CmovNzImm as u8, (*cond & 0x0F) << 4 | (*dst & 0x0F)];
+                let mut bytes = vec![Opcode::CmovNzImm as u8, (*cond & 0x0F) << 4 | (*dst & 0x0F)];
                 bytes.extend_from_slice(&encode_imm(*value));
                 bytes
             }

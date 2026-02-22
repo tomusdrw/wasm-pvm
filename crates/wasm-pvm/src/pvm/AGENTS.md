@@ -21,12 +21,13 @@ pub enum Instruction {
     MoveReg { dst: u8, src: u8 },
     BranchLtUImm { reg: u8, value: i32, offset: i32 },
     BranchEq { reg1: u8, reg2: u8, offset: i32 },
-    CmovIzImm { cond: u8, dst: u8, value: i32 },  // TwoRegOneImm encoding
+    CmovIzImm { dst: u8, cond: u8, value: i32 },  // TwoRegOneImm encoding
     // ... 78 variants total
 }
 ```
 
 ### Encoding Helpers
+
 - `encode_three_reg(opcode, dst, src1, src2)` - ALU ops
 - `encode_two_reg(opcode, dst, src)` - Moves/conversions
 - `encode_imm(value)` - Variable-length immediate (0-4 bytes)
