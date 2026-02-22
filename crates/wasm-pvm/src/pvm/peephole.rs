@@ -232,7 +232,6 @@ pub fn optimize(
         // The truncation target must match the producer's destination register.
         if i + 1 < len
             && is_32bit_sign_extending_producer(&instructions[i])
-            && keep[i]
             && let Instruction::AddImm32 { dst, src, value: 0 } = &instructions[i + 1]
             && let Some(prod_dst) = instructions[i].dest_reg()
             && *dst == prod_dst
