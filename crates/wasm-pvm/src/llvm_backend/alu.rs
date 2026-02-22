@@ -122,51 +122,123 @@ pub fn lower_binary_arith<'ctx>(
     let slot = result_slot(e, instr)?;
     let bits = operand_bit_width(instr);
 
-    // Try immediate folding for Add/Sub with constant RHS.
-    if let Some(rhs_const) = try_get_constant(rhs) {
-        match op {
-            BinaryOp::Add if i32::try_from(rhs_const).is_ok() => {
-                e.load_operand(lhs, TEMP1)?;
-                let imm = rhs_const as i32;
-                if bits <= 32 {
-                    e.emit(Instruction::AddImm32 {
-                        dst: TEMP_RESULT,
-                        src: TEMP1,
-                        value: imm,
-                    });
-                } else {
-                    e.emit(Instruction::AddImm64 {
-                        dst: TEMP_RESULT,
-                        src: TEMP1,
-                        value: imm,
-                    });
-                }
-                e.store_to_slot(slot, TEMP_RESULT);
-                return Ok(());
+    // Try immediate folding for operations with constant RHS.
+    if let Some(rhs_const) = try_get_constant(rhs)
+        && i32::try_from(rhs_const).is_ok()
+    {
+        let imm = rhs_const as i32;
+        let folded = match (op, bits <= 32) {
+            (BinaryOp::Add, true) => Some(Instruction::AddImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Add, false) => Some(Instruction::AddImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Sub, true) if rhs_const != i64::from(i32::MIN) => {
+                Some(Instruction::AddImm32 {
+                    dst: TEMP_RESULT,
+                    src: TEMP1,
+                    value: -imm,
+                })
             }
-            BinaryOp::Sub
-                if i32::try_from(rhs_const).is_ok() && rhs_const != i64::from(i32::MIN) =>
-            {
-                e.load_operand(lhs, TEMP1)?;
-                let imm = -(rhs_const as i32);
-                if bits <= 32 {
-                    e.emit(Instruction::AddImm32 {
-                        dst: TEMP_RESULT,
-                        src: TEMP1,
-                        value: imm,
-                    });
-                } else {
-                    e.emit(Instruction::AddImm64 {
-                        dst: TEMP_RESULT,
-                        src: TEMP1,
-                        value: imm,
-                    });
-                }
-                e.store_to_slot(slot, TEMP_RESULT);
-                return Ok(());
+            (BinaryOp::Sub, false) if rhs_const != i64::from(i32::MIN) => {
+                Some(Instruction::AddImm64 {
+                    dst: TEMP_RESULT,
+                    src: TEMP1,
+                    value: -imm,
+                })
             }
-            _ => {} // Fall through to two-register path.
+            (BinaryOp::And, _) => Some(Instruction::AndImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Or, _) => Some(Instruction::OrImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Xor, _) => Some(Instruction::XorImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Mul, true) => Some(Instruction::MulImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Mul, false) => Some(Instruction::MulImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Shl, true) => Some(Instruction::ShloLImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Shl, false) => Some(Instruction::ShloLImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::LShr, true) => Some(Instruction::ShloRImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::LShr, false) => Some(Instruction::ShloRImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::AShr, true) => Some(Instruction::SharRImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::AShr, false) => Some(Instruction::SharRImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            _ => None, // Div/Rem: fall through (need div-by-zero trap).
+        };
+        if let Some(instr) = folded {
+            e.load_operand(lhs, TEMP1)?;
+            e.emit(instr);
+            e.store_to_slot(slot, TEMP_RESULT);
+            return Ok(());
         }
+    }
+
+    // Try immediate folding for Sub with constant LHS: `const - x` → NegAddImm.
+    if let Some(lhs_const) = try_get_constant(lhs)
+        && let BinaryOp::Sub = op
+        && i32::try_from(lhs_const).is_ok()
+    {
+        let imm = lhs_const as i32;
+        e.load_operand(rhs, TEMP1)?;
+        if bits <= 32 {
+            e.emit(Instruction::NegAddImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            });
+        } else {
+            e.emit(Instruction::NegAddImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            });
+        }
+        e.store_to_slot(slot, TEMP_RESULT);
+        return Ok(());
     }
 
     e.load_operand(lhs, TEMP1)?;
@@ -365,33 +437,39 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         return Ok(());
     }
 
-    // Try immediate folding for ULT/SLT with constant RHS.
+    // Try immediate folding for comparisons with constant RHS.
     if let Some(rhs_const) = try_get_constant(rhs)
         && i32::try_from(rhs_const).is_ok()
     {
         let imm = rhs_const as i32;
-        match pred {
-            IntPredicate::ULT => {
-                e.load_operand(lhs, TEMP1)?;
-                e.emit(Instruction::SetLtUImm {
-                    dst: TEMP_RESULT,
-                    src: TEMP1,
-                    value: imm,
-                });
-                e.store_to_slot(slot, TEMP_RESULT);
-                return Ok(());
-            }
-            IntPredicate::SLT => {
-                e.load_operand(lhs, TEMP1)?;
-                e.emit(Instruction::SetLtSImm {
-                    dst: TEMP_RESULT,
-                    src: TEMP1,
-                    value: imm,
-                });
-                e.store_to_slot(slot, TEMP_RESULT);
-                return Ok(());
-            }
-            _ => {} // Fall through to two-register path.
+        let folded = match pred {
+            IntPredicate::ULT => Some(Instruction::SetLtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            IntPredicate::SLT => Some(Instruction::SetLtSImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            IntPredicate::UGT => Some(Instruction::SetGtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            IntPredicate::SGT => Some(Instruction::SetGtSImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            _ => None,
+        };
+        if let Some(instr) = folded {
+            e.load_operand(lhs, TEMP1)?;
+            e.emit(instr);
+            e.store_to_slot(slot, TEMP_RESULT);
+            return Ok(());
         }
     }
 

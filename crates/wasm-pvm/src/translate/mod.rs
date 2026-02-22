@@ -47,6 +47,8 @@ pub struct OptimizationFlags {
     pub constant_propagation: bool,
     /// Inline small functions at the LLVM IR level to eliminate call overhead.
     pub inlining: bool,
+    /// Propagate register cache across single-predecessor block boundaries.
+    pub cross_block_cache: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -60,6 +62,7 @@ impl Default for OptimizationFlags {
             dead_store_elimination: true,
             constant_propagation: true,
             inlining: true,
+            cross_block_cache: true,
         }
     }
 }
@@ -511,13 +514,13 @@ pub(crate) fn build_rw_data(
 /// (which would desync when a function mixes direct and indirect calls).
 ///
 /// Direct calls use `LoadImmJump` (combined return addr + jump), while
-/// indirect calls use `LoadImm` (separate return addr load + JumpInd).
+/// indirect calls use `LoadImm` (separate return addr load + `JumpInd`).
 fn return_addr_jump_table_idx(
     instructions: &[Instruction],
     return_addr_instr: usize,
 ) -> Result<usize> {
     match instructions.get(return_addr_instr) {
-        Some(Instruction::LoadImmJump { value, .. }) | Some(Instruction::LoadImm { value, .. })
+        Some(Instruction::LoadImmJump { value, .. } | Instruction::LoadImm { value, .. })
             if *value > 0 && *value % 2 == 0 =>
         {
             Ok((*value as usize / 2) - 1)

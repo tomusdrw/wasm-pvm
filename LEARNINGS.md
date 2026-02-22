@@ -44,6 +44,16 @@ Accumulated knowledge from development. Update after every task.
 - Used for: `data.drop` (store 0 to segment length addr), `global.set` with constants
 - Savings: 3 instructions (LoadImm + LoadImm + StoreInd) → 1 instruction
 
+## ALU Immediate Opcode Folding
+
+### Immediate folding for binary operations
+- When one operand of a binary ALU op is a constant that fits in i32, use the *Imm variant (e.g., `And` + const → `AndImm`)
+- Saves 1 gas per folded instruction (no separate `LoadImm`/`LoadImm64` needed) + code size reduction
+- Available for: Add, Mul, And, Or, Xor, ShloL, ShloR, SharR (both 32-bit and 64-bit)
+- Sub with const RHS → `AddImm` with negated value; Sub with const LHS → `NegAddImm`
+- ICmp UGT/SGT with const RHS → `SetGtUImm`/`SetGtSImm` (avoids swap trick)
+- LLVM often constant-folds before reaching the PVM backend, so benefits are most visible in complex programs
+
 ---
 
 ## Conditional Move (CmovIz/CmovNz)
@@ -125,6 +135,12 @@ Accumulated knowledge from development. Update after every task.
 - For indirect calls (`call_indirect`), `LoadImm` + `JumpInd` is used since the jump target is in a register
 - **Impact**: Saves 7 bytes per indirect call site (LoadImm vs LoadImm64). Direct calls save even more via LoadImmJump fusion.
 
+### Why LoadImm64 was originally needed
+
+- `LoadImm64` has fixed 10-byte encoding regardless of value, so placeholder patching was safe
+- `LoadImm` with value 0 encodes to 2 bytes, but after patching to value 2 becomes 3 bytes
+- This size change would break branch fixups already resolved with the old instruction sizes
+
 ---
 
 ## PVM 32-bit Instruction Semantics
@@ -141,3 +157,21 @@ Accumulated knowledge from development. Update after every task.
 - In practice with LLVM passes enabled, `instcombine` already eliminates `trunc(32-bit-op)` at the LLVM IR level, so this peephole pattern fires rarely
 - The peephole is still valuable for `--no-llvm-passes` mode and as defense-in-depth
 - **Known limitation**: the pattern only matches directly adjacent instructions; a `StoreIndU64` between producer and truncation breaks the match
+
+---
+
+## Cross-Block Register Cache
+
+### Approach
+
+- Pre-scan computes `block_single_pred` map by scanning terminator successors
+- For each block with exactly 1 predecessor and no phi nodes, restore the predecessor's cache snapshot instead of clearing
+- Snapshot is taken **before** the terminator instruction to avoid capturing path-specific phi copies
+
+### Key Pitfall: Terminator Phi Copies
+
+- `lower_switch` emits phi copies for the default path inline (not in a trampoline)
+- These phi copies modify the register cache (storing values to phi slots)
+- If the exit cache includes these entries, they are WRONG for case targets (which don't take the default path)
+- Fix: snapshot before the terminator and invalidate TEMP1/TEMP2 (registers the terminator clobbers for operand loads)
+- Same issue can occur with conditional branches when one path has phis and the other doesn't (trampoline case)
