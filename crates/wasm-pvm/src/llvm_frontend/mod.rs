@@ -7,6 +7,8 @@ pub use function_builder::WasmToLlvm;
 use inkwell::context::Context;
 use inkwell::module::Module;
 
+use std::collections::HashSet;
+
 use crate::Result;
 use crate::translate::wasm_module::WasmModule;
 
@@ -20,12 +22,15 @@ use crate::translate::wasm_module::WasmModule;
 ///
 /// `run_llvm_passes` gates the entire optimization pipeline (all three phases).
 /// `run_inlining` enables/disables Phase 2 independently (requires `run_llvm_passes = true`).
+/// `reachable_locals` when `Some`, limits translation to only those local function indices.
+#[allow(clippy::implicit_hasher)]
 pub fn translate_wasm_to_llvm<'ctx>(
     context: &'ctx Context,
     wasm_module: &WasmModule,
     run_llvm_passes: bool,
     run_inlining: bool,
+    reachable_locals: Option<&HashSet<usize>>,
 ) -> Result<Module<'ctx>> {
     let translator = WasmToLlvm::new(context, "wasm_module");
-    translator.translate_module(wasm_module, run_llvm_passes, run_inlining)
+    translator.translate_module(wasm_module, run_llvm_passes, run_inlining, reachable_locals)
 }
