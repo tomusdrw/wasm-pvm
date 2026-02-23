@@ -74,6 +74,9 @@ enum Commands {
             help = "Disable register allocation (r5/r6 for long-lived values)"
         )]
         no_register_alloc: bool,
+
+        #[arg(long, help = "Disable dead function elimination")]
+        no_dead_function_elim: bool,
     },
 }
 
@@ -100,6 +103,7 @@ fn main() -> Result<()> {
             no_inline,
             no_cross_block_cache,
             no_register_alloc,
+            no_dead_function_elim,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -138,6 +142,7 @@ fn main() -> Result<()> {
                     inlining: !no_inline,
                     cross_block_cache: !no_cross_block_cache,
                     register_allocation: !no_register_alloc,
+                    dead_function_elimination: !no_dead_function_elim,
                 },
             };
 

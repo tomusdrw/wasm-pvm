@@ -6,6 +6,7 @@
 )]
 
 pub mod adapter_merge;
+pub mod dead_function_elimination;
 pub mod memory_layout;
 pub mod wasm_module;
 
@@ -51,6 +52,8 @@ pub struct OptimizationFlags {
     pub cross_block_cache: bool,
     /// Allocate long-lived SSA values to physical registers (r5, r6) across block boundaries.
     pub register_allocation: bool,
+    /// Eliminate unreachable functions not called from entry points or the function table.
+    pub dead_function_elimination: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -66,6 +69,7 @@ impl Default for OptimizationFlags {
             inlining: true,
             cross_block_cache: true,
             register_allocation: true,
+            dead_function_elimination: true,
         }
     }
 }
@@ -156,6 +160,13 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
     use crate::llvm_frontend;
     use inkwell::context::Context;
 
+    // Phase 0: Dead function elimination — compute reachable set.
+    let reachable_locals = if options.optimizations.dead_function_elimination {
+        Some(dead_function_elimination::reachable_functions(module)?)
+    } else {
+        None
+    };
+
     // Phase 1: WASM → LLVM IR
     let context = Context::create();
     let llvm_module = llvm_frontend::translate_wasm_to_llvm(
@@ -163,6 +174,7 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         module,
         options.optimizations.llvm_passes,
         options.optimizations.inlining,
+        reachable_locals.as_ref(),
     )?;
 
     // Calculate RO_DATA offsets and lengths for passive data segments
@@ -245,6 +257,18 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
     );
 
     for local_func_idx in 0..module.functions.len() {
+        // Dead functions: emit a single Trap as a placeholder.
+        // The function offset is still recorded so dispatch table indices stay valid.
+        if reachable_locals
+            .as_ref()
+            .is_some_and(|r| !r.contains(&local_func_idx))
+        {
+            let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
+            function_offsets.push(func_start_offset);
+            all_instructions.push(Instruction::Trap);
+            continue;
+        }
+
         let global_func_idx = module.num_imported_funcs as usize + local_func_idx;
         let fn_name = format!("wasm_func_{global_func_idx}");
         let llvm_func = llvm_module
