@@ -59,25 +59,25 @@ pub fn lower_pvm_intrinsic<'ctx>(
         // These intrinsics use abi::SCRATCH1/SCRATCH2 (r5/r6) internally.
         // Spill/reload register-allocated values around them.
         "__pvm_memory_grow" => {
-            e.spill_allocated_regs();
+            e.spill_allocated_regs()?;
             let result = emit_pvm_memory_grow(e, instr, ctx);
             e.reload_allocated_regs();
             result
         }
         "__pvm_memory_fill" => {
-            e.spill_allocated_regs();
+            e.spill_allocated_regs()?;
             let result = emit_pvm_memory_fill(e, instr, ctx);
             e.reload_allocated_regs();
             result
         }
         "__pvm_memory_copy" => {
-            e.spill_allocated_regs();
+            e.spill_allocated_regs()?;
             let result = emit_pvm_memory_copy(e, instr, ctx);
             e.reload_allocated_regs();
             result
         }
         "__pvm_memory_init" => {
-            e.spill_allocated_regs();
+            e.spill_allocated_regs()?;
             let result = emit_pvm_memory_init(e, instr, ctx);
             e.reload_allocated_regs();
             result
@@ -360,7 +360,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
 
         // Non-rotation funnel shift uses abi::SCRATCH1/SCRATCH2 (r5/r6).
         // Spill any register-allocated values in those registers.
-        e.spill_allocated_regs();
+        e.spill_allocated_regs()?;
 
         e.load_operand(a, TEMP1)?;
         e.load_operand(b, TEMP2)?;

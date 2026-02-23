@@ -530,6 +530,14 @@ pub(crate) fn build_rw_data(
         }
     }
 
+    // Trim trailing zeros to reduce SPI size. Heap pages are zero-initialized,
+    // so omitted high-address zero bytes are semantically equivalent.
+    if let Some(last_non_zero) = rw_data.iter().rposition(|&b| b != 0) {
+        rw_data.truncate(last_non_zero + 1);
+    } else {
+        rw_data.clear();
+    }
+
     rw_data
 }
 
@@ -642,4 +650,50 @@ fn resolve_call_fixups(
     }
 
     Ok((jump_table, func_entry_base))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::build_rw_data;
+    use super::memory_layout;
+    use super::wasm_module::DataSegment;
+
+    #[test]
+    fn build_rw_data_trims_all_zero_tail_to_empty() {
+        let rw = build_rw_data(&[], &[], 0, 0x30000, &HashMap::new(), &HashMap::new());
+        assert!(rw.is_empty());
+    }
+
+    #[test]
+    fn build_rw_data_preserves_internal_zeros_and_trims_trailing_zeros() {
+        let data_segments = vec![DataSegment {
+            offset: Some(0),
+            data: vec![1, 0, 2, 0, 0],
+        }];
+
+        let rw = build_rw_data(
+            &data_segments,
+            &[],
+            0,
+            0x30000,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert_eq!(rw, vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn build_rw_data_keeps_non_zero_passive_length_bytes() {
+        let mut addrs = HashMap::new();
+        addrs.insert(0u32, memory_layout::GLOBAL_MEMORY_BASE + 4);
+        let mut lengths = HashMap::new();
+        lengths.insert(0u32, 7u32);
+
+        let rw = build_rw_data(&[], &[], 0, 0x30000, &addrs, &lengths);
+
+        assert_eq!(rw, vec![0, 0, 0, 0, 7]);
+    }
 }

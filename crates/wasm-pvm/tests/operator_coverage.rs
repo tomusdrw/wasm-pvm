@@ -1819,7 +1819,7 @@ fn test_i32_rotl() {
     );
 }
 
-/// i32.rotr should compile (uses llvm.fshr intrinsic → RotR32).
+/// i32.rotr should compile (uses llvm.fshr intrinsic → `RotR32`).
 #[test]
 fn test_i32_rotr() {
     let wat = r#"
@@ -1842,7 +1842,7 @@ fn test_i32_rotr() {
     );
 }
 
-/// i64.rotl should compile (uses llvm.fshl intrinsic → RotL64).
+/// i64.rotl should compile (uses llvm.fshl intrinsic → `RotL64`).
 #[test]
 fn test_i64_rotl() {
     let wat = r#"
@@ -1865,7 +1865,7 @@ fn test_i64_rotl() {
     );
 }
 
-/// i64.rotr should compile (uses llvm.fshr intrinsic → RotR64).
+/// i64.rotr should compile (uses llvm.fshr intrinsic → `RotR64`).
 #[test]
 fn test_i64_rotr() {
     let wat = r#"
@@ -2181,7 +2181,7 @@ fn i32_gt_u_const_produces_set_gt_u_imm() {
 // Specialized Instruction Emission (Issues #104 + #105)
 // =============================================================================
 
-/// Global load should emit LoadU32 (absolute address) instead of LoadImm+LoadIndU32.
+/// Global load should emit `LoadU32` (absolute address) instead of `LoadImm`+`LoadIndU32`.
 #[test]
 fn test_global_load_emits_load_u32() {
     let wat = r#"
@@ -2207,7 +2207,7 @@ fn test_global_load_emits_load_u32() {
     );
 }
 
-/// Signed i32 load from linear memory should emit LoadIndI32 (not LoadIndU32+AddImm32).
+/// Signed i32 load from linear memory should emit `LoadIndI32` (not `LoadIndU32`+`AddImm32`).
 #[test]
 fn test_i32_load_s_emits_load_ind_i32() {
     let wat = r#"
@@ -2229,7 +2229,7 @@ fn test_i32_load_s_emits_load_ind_i32() {
     );
 }
 
-/// select with a constant operand should emit CmovNzImm or CmovIzImm.
+/// select with a constant operand should emit `CmovNzImm` or `CmovIzImm`.
 /// LLVM may invert the condition, so either variant is acceptable.
 #[test]
 fn test_select_with_constant_emits_cmov_imm() {
@@ -2261,7 +2261,7 @@ fn test_select_with_constant_emits_cmov_imm() {
 }
 
 /// smax: LLVM may or may not convert `select(gt_s, a, b)` to `llvm.smax`.
-/// When it does, we emit Max; otherwise CmovNz handles the select.
+/// When it does, we emit Max; otherwise `CmovNz` handles the select.
 #[test]
 fn test_smax_emits_max_or_cmov() {
     let wat = r#"
@@ -2374,7 +2374,7 @@ fn test_umin_emits_min_u_or_cmov() {
     );
 }
 
-/// select with both constants should use CmovNzImm/CmovIzImm (not register CmovNz).
+/// select with both constants should use `CmovNzImm`/`CmovIzImm` (not register `CmovNz`).
 #[test]
 fn test_select_both_constants_emits_cmov_imm() {
     let wat = r#"

@@ -254,11 +254,23 @@ Accumulated knowledge from development. Update after every task.
 
 ### Linear-Scan Register Allocation
 
-- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to r5/r6
+- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to available leaf callee-saved registers (r9-r12)
 - Operates on LLVM IR before PVM lowering; produces `ValKey` → physical register mapping
 - `load_operand` checks regalloc before slot lookup: uses `MoveReg` from allocated reg instead of `LoadIndU64` from stack
 - `store_to_slot` uses write-through: copies to allocated reg AND stores to stack; DSE removes the stack store if never loaded
-- Spill/reload around clobbering operations: memory intrinsics (`memory.fill/copy/grow/init`), funnel shifts, and all call types
-- r5 (`abi::SCRATCH1`) and r6 (`abi::SCRATCH2`) are NOT the same as `emitter.rs` re-exports of `SCRATCH1`/`SCRATCH2` (which are r8/r7)
+- r5/r6 are excluded from global allocation because they are heavily reused as scratch in lowering paths
+- Clobbered allocated scratch regs (when present) are handled with lazy invalidation/reload instead of eager spill+reload
 - Values with ≤1 use are skipped (not worth a register)
 - Loop extension: back-edges detected by successor having lower block index; live ranges extended to cover the back-edge source
+
+### RW Data Trimming
+
+- `translate::build_rw_data()` now trims trailing zero bytes before SPI encoding.
+- Semantics remain correct because heap pages are zero-initialized; omitted high-address zero tail bytes are equivalent.
+- This is a low-risk blob-size optimization and does not materially affect gas.
+
+### Memory Layout Sensitivity (PVM-in-PVM)
+
+- A compact globals/overflow layout directly below `0x40000` can drastically shrink blob sizes, but breaks pvm-in-pvm interpreter compatibility.
+- Empirical result: direct/unit tests can pass while layer4/layer5 pvm-in-pvm suites fail with outer interpreter panic.
+- Conclusion: memory layout changes must always be validated with pvm-in-pvm tests, not just direct execution and layer1.
