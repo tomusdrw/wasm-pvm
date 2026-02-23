@@ -1996,7 +1996,7 @@ fn test_global_set_const_uses_store_imm() {
 
 /// global.set with a non-constant value should NOT use `StoreImm`.
 #[test]
-fn test_global_set_dynamic_uses_store_ind() {
+fn test_global_set_dynamic_uses_store_u32() {
     let wat = r#"
         (module
             (global $g (mut i32) (i32.const 0))
@@ -2010,10 +2010,10 @@ fn test_global_set_dynamic_uses_store_ind() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Dynamic value should use LoadImm + StoreIndU32 (not StoreImmU32, which is for constants)
+    // Dynamic value should use StoreU32 (absolute address, not StoreImmU32 which is for constants)
     assert!(
-        has_opcode(&instructions, Opcode::StoreIndU32),
-        "global.set with dynamic value should use StoreIndU32.\nInstructions: {instructions:#?}"
+        has_opcode(&instructions, Opcode::StoreU32),
+        "global.set with dynamic value should use StoreU32.\nInstructions: {instructions:#?}"
     );
     assert!(
         !has_opcode(&instructions, Opcode::StoreImmU32),
