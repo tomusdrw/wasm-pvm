@@ -262,7 +262,7 @@ When both `--imports` and `--adapter` are provided, the adapter runs first, then
 
 - **[PVM Debugger](https://github.com/fluffylabs/pvm-debugger)** — upload `.jam` files for disassembly, step-by-step execution, and register/gas inspection
 - **[JAM Gray Paper](https://graypaper.com/)** — the JAM protocol specification (PVM is defined in Appendix A)
-- **[PolkaVM](https://github.com/paritytech/polkavm)** — the reference PVM implementation
+- **[ananas (anan-as)](https://github.com/tomusdrw/anan-as)** — the reference PVM implementation
 - **[AssemblyScript](https://www.assemblyscript.org/)** — TypeScript-like language that compiles to WASM
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** — register conventions, calling convention, stack frame layout, memory map
 - **[LEARNINGS.md](./LEARNINGS.md)** — technical reference and debugging journal
