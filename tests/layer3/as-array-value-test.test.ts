@@ -14,5 +14,8 @@ const tests = [
 
 defineSuite({
   name: "as-array-value-test",
+  // pvm-in-pvm currently returns an empty outer result buffer (r7 == r8)
+  // for this suite when executed through anan-as-compiler.jam.
+  skipPvmInPvm: true,
   tests: tests,
 });

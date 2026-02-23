@@ -56,7 +56,7 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
    - **Layer 4**: PVM-in-PVM smoke tests (3 tests) - Quick pvm-in-pvm sanity check
    - **Layer 5**: Comprehensive PVM-in-PVM tests (all compatible suites) - Runs in CI after regular tests pass
      - Run with: `bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"`
-     - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): host-call-log (ecalli 100 unhandled), as-life (timeout), i64-ops (timeout)
+     - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): host-call-log (ecalli 100 unhandled), as-life (timeout), i64-ops (timeout), as-array-value-test (empty outer result buffer), as-memload-condition-test (empty outer result buffer)
    - **Differential**: PVM vs native WASM (~142 tests) - Verifies PVM output matches Bun's WebAssembly engine
      - Run with: `cd tests && bun run test:differential`
      - Auto-skips modules with function imports (AssemblyScript (AS) modules, host-call-log)
