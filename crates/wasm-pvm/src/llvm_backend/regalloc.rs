@@ -5,9 +5,10 @@
 // register cache is cleared.
 //
 // Allocatable registers:
-//   - r5, r6 (`abi::SCRATCH1`/`SCRATCH2`) — always available, spilled/reloaded
-//     around memory intrinsics and funnel shifts that clobber them.
-//   - r9-r12 (`abi::FIRST_LOCAL_REG`..+4) — available in leaf functions only,
+//   - `BASE_ALLOCATABLE_REGS` is currently empty: we intentionally avoid global
+//     allocation of r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) because several lowering
+//     paths reuse them as scratch registers.
+//   - r9-r12 (`abi::FIRST_LOCAL_REG`..+4) remain available in leaf functions only,
 //     for registers beyond the parameter count.
 //
 // The allocator operates on LLVM IR (before PVM lowering) and produces a

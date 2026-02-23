@@ -560,15 +560,19 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Called before instructions that clobber r5/r6 (calls, memory intrinsics).
     /// Callee-saved registers (r9-r12) are not spilled here because they are
     /// preserved by the callee-save convention and only used in leaf functions.
-    pub fn spill_allocated_regs(&mut self) {
+    pub fn spill_allocated_regs(&mut self) -> Result<()> {
         // No-op: allocated values are already write-through in stack slots.
-        debug_assert!(
-            self.regalloc
-                .reg_to_slot
-                .keys()
-                .all(|&r| r != crate::abi::SCRATCH1 && r != crate::abi::SCRATCH2),
-            "r5/r6 allocation requires explicit spill handling"
-        );
+        if !self
+            .regalloc
+            .reg_to_slot
+            .keys()
+            .all(|&r| r != crate::abi::SCRATCH1 && r != crate::abi::SCRATCH2)
+        {
+            return Err(Error::Internal(
+                "r5/r6 allocation requires explicit spill handling".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Reload scratch register-allocated values (r5/r6) from their stack slots.
