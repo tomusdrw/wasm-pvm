@@ -241,6 +241,63 @@ pub fn lower_binary_arith<'ctx>(
         return Ok(());
     }
 
+    // Commutative constant-LHS folding: `const op x` → `x op const` for commutative ops.
+    // LLVM's instcombine usually canonicalizes constants to RHS, but this helps edge cases
+    // and --no-llvm-passes mode.
+    if let Some(lhs_const) = try_get_constant(lhs)
+        && i32::try_from(lhs_const).is_ok()
+        && matches!(
+            op,
+            BinaryOp::Add | BinaryOp::Mul | BinaryOp::And | BinaryOp::Or | BinaryOp::Xor
+        )
+    {
+        let imm = lhs_const as i32;
+        let folded = match (op, bits <= 32) {
+            (BinaryOp::Add, true) => Some(Instruction::AddImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Add, false) => Some(Instruction::AddImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Mul, true) => Some(Instruction::MulImm32 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Mul, false) => Some(Instruction::MulImm64 {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::And, _) => Some(Instruction::AndImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Or, _) => Some(Instruction::OrImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            (BinaryOp::Xor, _) => Some(Instruction::XorImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            _ => None,
+        };
+        if let Some(instr) = folded {
+            e.load_operand(rhs, TEMP1)?;
+            e.emit(instr);
+            e.store_to_slot(slot, TEMP_RESULT);
+            return Ok(());
+        }
+    }
+
     e.load_operand(lhs, TEMP1)?;
     e.load_operand(rhs, TEMP2)?;
 
@@ -467,6 +524,44 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         };
         if let Some(instr) = folded {
             e.load_operand(lhs, TEMP1)?;
+            e.emit(instr);
+            e.store_to_slot(slot, TEMP_RESULT);
+            return Ok(());
+        }
+    }
+
+    // Constant-LHS folding: `const <op> x` → `x <flipped_op> const`.
+    if let Some(lhs_const) = try_get_constant(lhs)
+        && i32::try_from(lhs_const).is_ok()
+    {
+        let imm = lhs_const as i32;
+        let folded = match pred {
+            // const < x ⟺ x > const
+            IntPredicate::ULT => Some(Instruction::SetGtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            IntPredicate::SLT => Some(Instruction::SetGtSImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            // const > x ⟺ x < const
+            IntPredicate::UGT => Some(Instruction::SetLtUImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            IntPredicate::SGT => Some(Instruction::SetLtSImm {
+                dst: TEMP_RESULT,
+                src: TEMP1,
+                value: imm,
+            }),
+            _ => None,
+        };
+        if let Some(instr) = folded {
+            e.load_operand(rhs, TEMP1)?;
             e.emit(instr);
             e.store_to_slot(slot, TEMP_RESULT);
             return Ok(());

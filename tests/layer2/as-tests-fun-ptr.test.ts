@@ -6,5 +6,5 @@ const tests = [
 
 defineSuite({
   name: "as-tests-fun-ptr",
-  tests: tests,
+  tests,
 });

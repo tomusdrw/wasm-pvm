@@ -438,6 +438,86 @@ impl<'ctx> PvmEmitter<'ctx> {
         });
     }
 
+    pub fn emit_branch_lt_u_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchLtUImm {
+            reg,
+            value,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_le_u_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchLeUImm {
+            reg,
+            value,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_ge_u_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchGeUImm {
+            reg,
+            value,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_gt_u_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchGtUImm {
+            reg,
+            value,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_lt_s_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchLtSImm {
+            reg,
+            value,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_le_s_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchLeSImm {
+            reg,
+            value,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_ge_s_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchGeSImm {
+            reg,
+            value,
+            offset: 0,
+        });
+    }
+
+    pub fn emit_branch_gt_s_imm_to_label(&mut self, reg: u8, value: i32, label: usize) {
+        let fixup_idx = self.instructions.len();
+        self.fixups.push((fixup_idx, label));
+        self.emit(Instruction::BranchGtSImm {
+            reg,
+            value,
+            offset: 0,
+        });
+    }
+
     // ── Slot allocation ──
 
     pub fn alloc_slot_for_key(&mut self, key: ValKey) -> i32 {

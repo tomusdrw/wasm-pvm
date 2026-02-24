@@ -20,6 +20,7 @@ use crate::{Error, Result, abi};
 
 use super::emitter::{
     PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, result_slot,
+    try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -323,6 +324,54 @@ fn emit_fused_branch<'a>(
     fused: &super::emitter::FusedIcmp<'a>,
     true_label: usize,
 ) -> Result<()> {
+    // Try immediate folding: branch-imm instructions avoid loading one operand.
+    // BranchXxxImm { reg, value, offset } branches if reg <op> sign_extend(value).
+
+    // RHS constant → load only LHS, use branch-imm directly.
+    if let Some(rhs_const) = try_get_constant(fused.rhs)
+        && i32::try_from(rhs_const).is_ok()
+    {
+        let imm = rhs_const as i32;
+        e.load_operand(fused.lhs, TEMP1)?;
+        match fused.predicate {
+            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::NE => e.emit_branch_ne_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::ULT => e.emit_branch_lt_u_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::ULE => e.emit_branch_le_u_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::UGT => e.emit_branch_gt_u_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::UGE => e.emit_branch_ge_u_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::SLT => e.emit_branch_lt_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::SLE => e.emit_branch_le_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::SGT => e.emit_branch_gt_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::SGE => e.emit_branch_ge_s_imm_to_label(TEMP1, imm, true_label),
+        }
+        return Ok(());
+    }
+
+    // LHS constant → load only RHS, flip the predicate direction.
+    // "const <op> x" ⟺ "x <flipped_op> const"
+    if let Some(lhs_const) = try_get_constant(fused.lhs)
+        && i32::try_from(lhs_const).is_ok()
+    {
+        let imm = lhs_const as i32;
+        e.load_operand(fused.rhs, TEMP1)?;
+        match fused.predicate {
+            // Symmetric predicates — no flip needed.
+            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::NE => e.emit_branch_ne_imm_to_label(TEMP1, imm, true_label),
+            // Flip: const < x ⟺ x > const
+            IntPredicate::ULT => e.emit_branch_gt_u_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::ULE => e.emit_branch_ge_u_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::UGT => e.emit_branch_lt_u_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::UGE => e.emit_branch_le_u_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::SLT => e.emit_branch_gt_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::SLE => e.emit_branch_ge_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::SGT => e.emit_branch_lt_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::SGE => e.emit_branch_le_s_imm_to_label(TEMP1, imm, true_label),
+        }
+        return Ok(());
+    }
+
     e.load_operand(fused.lhs, TEMP1)?;
     e.load_operand(fused.rhs, TEMP2)?;
 
