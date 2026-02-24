@@ -121,7 +121,6 @@ pub fn lower_function(
             .get(block_idx + 1)
             .and_then(|next_bb| emitter.block_labels.get(next_bb).copied());
 
-
         let mut propagated = false;
         if use_cross_block_cache
             && let Some(pred_bb) = pred_info

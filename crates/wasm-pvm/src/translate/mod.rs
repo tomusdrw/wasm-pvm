@@ -258,9 +258,7 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         }
     }
     for idx in 0..module.functions.len() {
-        if idx != module.main_func_local_idx
-            && module.secondary_entry_local_idx != Some(idx)
-        {
+        if idx != module.main_func_local_idx && module.secondary_entry_local_idx != Some(idx) {
             emission_order.push(idx);
         }
     }
