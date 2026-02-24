@@ -1,6 +1,6 @@
 // Memory addresses
 let RESULT_HEAP: usize = 0;
-const NODE_HEAP: u32 = 0x40000;
+let NODE_HEAP: usize = 0;
 
 // Globals
 export let result_ptr: i32 = 0;
@@ -31,10 +31,8 @@ function sumList(head: i32): i32 {
 
 export function main(args_ptr: i32, args_len: i32): void {
   RESULT_HEAP = heap.alloc(256);
+  NODE_HEAP = heap.alloc(32); // 3 nodes * 8 bytes each = 24 bytes
   // Create list: 10 -> 20 -> 30 -> null
-  // Node 1 at 0x40000
-  // Node 2 at 0x40008
-  // Node 3 at 0x40010
 
   createNode(NODE_HEAP, 10, NODE_HEAP + 8);
   createNode(NODE_HEAP + 8, 20, NODE_HEAP + 16);

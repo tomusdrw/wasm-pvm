@@ -1,6 +1,6 @@
 // Memory addresses
 let RESULT_HEAP: usize = 0;
-const ARRAY_HEAP: u32 = 0x40000;
+let ARRAY_HEAP: usize = 0;
 
 // Globals
 export let result_ptr: i32 = 0;
@@ -34,6 +34,7 @@ function arraySum(arrPtr: i32): i32 {
 
 export function main(args_ptr: i32, args_len: i32): void {
   RESULT_HEAP = heap.alloc(256);
+  ARRAY_HEAP = heap.alloc(32); // length + 5 ints = 24 bytes
   const arr = ARRAY_HEAP;
   const len = 5;
   store<i32>(arr, len);

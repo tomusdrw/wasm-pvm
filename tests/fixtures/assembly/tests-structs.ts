@@ -1,6 +1,6 @@
 // Memory addresses
 let RESULT_HEAP: usize = 0;
-const STRUCT_HEAP: u32 = 0x40000;
+let STRUCT_HEAP: usize = 0;
 
 // Globals
 export let result_ptr: i32 = 0;
@@ -39,6 +39,7 @@ function dotProduct(ptr1: i32, ptr2: i32): i32 {
 
 export function main(args_ptr: i32, args_len: i32): void {
   RESULT_HEAP = heap.alloc(256);
+  STRUCT_HEAP = heap.alloc(32); // 2 structs * 12 bytes each
   const p1 = STRUCT_HEAP;
   const p2 = STRUCT_HEAP + 16;
 
