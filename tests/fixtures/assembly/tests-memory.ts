@@ -1,6 +1,6 @@
 // Memory addresses
 let RESULT_HEAP: usize = 0;
-const DATA_HEAP: u32 = 0x40000; // Arbitrary safe location for data
+let DATA_HEAP: usize = 0;
 
 // Globals
 export let result_ptr: i32 = 0;
@@ -14,6 +14,7 @@ function writeResult(val: i32): void {
 
 export function main(args_ptr: i32, args_len: i32): void {
   RESULT_HEAP = heap.alloc(256);
+  DATA_HEAP = heap.alloc(16);
   // Store 8-bit values
   store<u8>(DATA_HEAP, 0xAA);
   store<u8>(DATA_HEAP + 1, 0xBB);
