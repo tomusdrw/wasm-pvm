@@ -192,6 +192,20 @@ fn is_32bit_sign_extending_producer(instr: &Instruction) -> bool {
     )
 }
 
+/// Returns true when `instr` writes a value that makes
+/// `(x << 32) >> 32` redundant for `reg`.
+fn is_redundant_zext_source(instr: &Instruction, reg: u8) -> bool {
+    if instr.dest_reg() != Some(reg) {
+        return false;
+    }
+
+    is_32bit_sign_extending_producer(instr)
+        || matches!(
+            instr,
+            Instruction::LoadIndU32 { .. } | Instruction::LoadU32 { .. }
+        )
+}
+
 /// Run peephole optimizations on a function's instruction stream.
 ///
 /// Must be called **before** `resolve_fixups()` since it removes instructions
@@ -203,8 +217,7 @@ pub fn optimize(
     indirect_call_fixups: &mut [LlvmIndirectCallFixup],
     labels: &mut [Option<usize>],
 ) {
-    let len = instructions.len();
-    if len == 0 {
+    if instructions.is_empty() {
         return;
     }
 
@@ -225,10 +238,20 @@ pub fn optimize(
         );
     }
 
-    // 3. Simple peephole patterns (redundant fallthroughs).
+    // 3. Simple peephole patterns (redundant fallthroughs and truncation/zext cleanup).
     // Mark instructions for removal (true = keep, false = remove).
     let len = instructions.len();
     let mut keep = vec![true; len];
+    let mut offsets = Vec::with_capacity(len);
+    let mut running = 0usize;
+    for instr in instructions.iter() {
+        offsets.push(running);
+        running += instr.encode().len();
+    }
+    let mut label_offsets = HashSet::new();
+    for label in labels.iter().flatten() {
+        label_offsets.insert(*label);
+    }
 
     for i in 0..len {
         if !keep[i] {
@@ -260,6 +283,44 @@ pub fn optimize(
             && *src == prod_dst
         {
             keep[i + 1] = false;
+        }
+
+        // Pattern 4: Redundant i32 zext shift pair.
+        // Match:
+        //   [producer writes x]
+        //   LoadImm { reg: b, value: 32 }
+        //   ShloL64 { dst: x, src1: x, src2: b }
+        //   ShloR64 { dst: x, src1: x, src2: b }
+        //
+        // Remove the two shifts when x comes from a 32-bit producer/load that already
+        // establishes the intended 32-bit value shape.
+        if i > 0
+            && i + 2 < len
+            && !label_offsets.contains(&offsets[i + 1])
+            && !label_offsets.contains(&offsets[i + 2])
+            && let Instruction::LoadImm {
+                reg: shift_reg,
+                value: 32,
+            } = &instructions[i]
+            && let Instruction::ShloL64 {
+                dst: shl_dst,
+                src1: shl_src1,
+                src2: shl_src2,
+            } = &instructions[i + 1]
+            && let Instruction::ShloR64 {
+                dst: shr_dst,
+                src1: shr_src1,
+                src2: shr_src2,
+            } = &instructions[i + 2]
+            && *shl_src2 == *shift_reg
+            && *shr_src2 == *shift_reg
+            && *shl_dst == *shl_src1
+            && *shr_dst == *shl_dst
+            && *shr_src1 == *shl_dst
+            && is_redundant_zext_source(&instructions[i - 1], *shl_dst)
+        {
+            keep[i + 1] = false;
+            keep[i + 2] = false;
         }
     }
 
@@ -1152,6 +1213,130 @@ mod tests {
 
         assert_eq!(instrs.len(), 3);
         assert_eq!(fixups[0].0, 2); // remapped from 3 to 2
+    }
+
+    #[test]
+    fn removes_zext_shift_pair_after_add32_source() {
+        let mut instrs = vec![
+            Instruction::Add32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::LoadImm { reg: 2, value: 32 },
+            Instruction::ShloL64 {
+                dst: 5,
+                src1: 5,
+                src2: 2,
+            },
+            Instruction::ShloR64 {
+                dst: 5,
+                src1: 5,
+                src2: 2,
+            },
+            Instruction::LoadImm { reg: 0, value: 99 },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        // Non-empty labels disables DCE so this test exercises only peephole pattern matching.
+        let mut labels = vec![Some(0)];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 3);
+        assert!(matches!(instrs[0], Instruction::Add32 { dst: 5, .. }));
+        assert!(matches!(
+            instrs[1],
+            Instruction::LoadImm { reg: 2, value: 32 }
+        ));
+        assert!(matches!(
+            instrs[2],
+            Instruction::LoadImm { reg: 0, value: 99 }
+        ));
+    }
+
+    #[test]
+    fn keeps_zext_shift_pair_after_non_32bit_source() {
+        let mut instrs = vec![
+            Instruction::Add64 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::LoadImm { reg: 2, value: 32 },
+            Instruction::ShloL64 {
+                dst: 5,
+                src1: 5,
+                src2: 2,
+            },
+            Instruction::ShloR64 {
+                dst: 5,
+                src1: 5,
+                src2: 2,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let mut labels = vec![Some(0)];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 4);
+        assert!(matches!(instrs[2], Instruction::ShloL64 { .. }));
+        assert!(matches!(instrs[3], Instruction::ShloR64 { .. }));
+    }
+
+    #[test]
+    fn keeps_zext_shift_pair_when_shift_is_label_target() {
+        let mut instrs = vec![
+            Instruction::Add32 {
+                dst: 5,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::LoadImm { reg: 2, value: 32 },
+            Instruction::ShloL64 {
+                dst: 5,
+                src1: 5,
+                src2: 2,
+            },
+            Instruction::ShloR64 {
+                dst: 5,
+                src1: 5,
+                src2: 2,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        let shlo_offset = instrs[0].encode().len() + instrs[1].encode().len();
+        let mut labels = vec![Some(shlo_offset)];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 4);
+        assert!(matches!(instrs[2], Instruction::ShloL64 { .. }));
+        assert!(matches!(instrs[3], Instruction::ShloR64 { .. }));
     }
 
     // ── Dead code elimination tests ──

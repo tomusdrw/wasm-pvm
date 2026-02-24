@@ -202,6 +202,15 @@ Accumulated knowledge from development. Update after every task.
 - The peephole is still valuable for `--no-llvm-passes` mode and as defense-in-depth
 - **Known limitation**: the pattern only matches directly adjacent instructions; a `StoreIndU64` between producer and truncation breaks the match
 
+### Peephole ZExt Shift-Pair Pattern
+
+- The backend emits i32 zero-extension as `LoadImm 32` + `ShloL64` + `ShloR64`
+- Peephole removes the `ShloL64+ShloR64` pair when it follows a compatible source producer:
+  - 32-bit sign-extending ALU producers (`Add32`, `Mul32`, `AddImm32`, etc.)
+  - `LoadIndU32` / `LoadU32`
+- Safety guard: do not remove the shift instructions if either shift is a label target
+- `LoadImm 32` is intentionally left in place by this pass; DCE may remove it in separate no-label flows
+
 ---
 
 ## Cross-Block Register Cache
