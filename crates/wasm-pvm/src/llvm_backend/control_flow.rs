@@ -149,10 +149,10 @@ pub fn lower_switch<'ctx>(
 
     // Default: emit phi copies inline + jump.
     // Disable fallthrough optimization when trampolines follow the default Jump.
-    let saved_next = if !trampolines.is_empty() {
-        e.next_block_label.take()
-    } else {
+    let saved_next = if trampolines.is_empty() {
         None
+    } else {
+        e.next_block_label.take()
     };
     emit_phi_copies(e, current_bb, default_bb)?;
     e.emit_jump_to_label(default_label);

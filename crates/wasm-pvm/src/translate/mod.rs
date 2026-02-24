@@ -252,10 +252,10 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
     // This places main immediately after the entry header, minimizing the entry Jump distance.
     let mut emission_order: Vec<usize> = Vec::with_capacity(module.functions.len());
     emission_order.push(module.main_func_local_idx);
-    if let Some(secondary_idx) = module.secondary_entry_local_idx {
-        if secondary_idx != module.main_func_local_idx {
-            emission_order.push(secondary_idx);
-        }
+    if let Some(secondary_idx) = module.secondary_entry_local_idx
+        && secondary_idx != module.main_func_local_idx
+    {
+        emission_order.push(secondary_idx);
     }
     for idx in 0..module.functions.len() {
         if idx != module.main_func_local_idx && module.secondary_entry_local_idx != Some(idx) {
