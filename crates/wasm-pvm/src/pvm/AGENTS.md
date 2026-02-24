@@ -48,6 +48,7 @@ pub enum Instruction {
 ### Decoding Helpers
 
 - `Instruction::decode(bytes)` dispatches by opcode and returns `(instruction, consumed_bytes)`
+- `Opcode::from_u8` / `Opcode::try_from` provide explicit opcode-byte to enum conversion
 - `decode_imm_signed` / `decode_imm_unsigned` handle 0-4 byte immediate expansion
 - `decode_offset_at` reads fixed 4-byte branch/jump offsets
 - For formats where the trailing immediate has no explicit length (`OneImm`, `OneRegOneImm`, `TwoRegOneImm`, `TwoImm`, `OneRegTwoImm`, `TwoRegTwoImm`), decode consumes the remaining bytes as that immediate

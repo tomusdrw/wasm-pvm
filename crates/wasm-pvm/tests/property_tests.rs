@@ -424,11 +424,15 @@ fn instruction_roundtrip_strategy() -> impl Strategy<Value = Instruction> {
             3 => Instruction::StoreImmU64 { address, value },
             _ => unreachable!("kind bounded to 0..4"),
         }),
-        (231u8..=255u8, prop::collection::vec(any::<u8>(), 0..4)).prop_map(|(opcode, mut tail)| {
-            let mut raw_bytes = vec![opcode];
-            raw_bytes.append(&mut tail);
-            Instruction::Unknown { opcode, raw_bytes }
-        }),
+        (any::<u8>(), prop::collection::vec(any::<u8>(), 0..4))
+            .prop_filter("opcode must not map to a known Opcode", |(opcode, _)| {
+                Opcode::from_u8(*opcode).is_none()
+            })
+            .prop_map(|(opcode, mut tail)| {
+                let mut raw_bytes = vec![opcode];
+                raw_bytes.append(&mut tail);
+                Instruction::Unknown { opcode, raw_bytes }
+            }),
     ]
 }
 

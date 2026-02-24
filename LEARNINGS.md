@@ -88,6 +88,7 @@ Accumulated knowledge from development. Update after every task.
 ## Instruction Decoder (`Instruction::decode`)
 
 - `instruction.rs` now has `Instruction::decode(&[u8]) -> Result<(Instruction, usize)>` so roundtrip tests and disassembly-style tooling can share one decode path.
+- `Opcode::from_u8` / `TryFrom<u8>` are now the canonical byte→opcode conversion helpers for code and tests.
 - Fixed-width formats (`Zero`, `ThreeReg`, `TwoReg`, `OneOff`, `TwoRegOneOff`, `OneRegOneExtImm`, `OneRegOneImmOneOff`) return exact consumed length.
 - Formats with trailing variable-length immediates but no explicit terminal length marker (`OneImm`, `OneRegOneImm`, `TwoRegOneImm`, `TwoImm`, `OneRegTwoImm`, `TwoRegTwoImm`) are decoded by consuming the remaining bytes for that trailing immediate.
 - Unknown opcode passthrough is explicit: decode returns `Instruction::Unknown { opcode, raw_bytes }` with original bytes preserved.
