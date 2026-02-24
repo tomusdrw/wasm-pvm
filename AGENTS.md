@@ -229,8 +229,10 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `inlining` | `--no-inline` | LLVM function inlining for small callees (CGSCC inline pass) | `llvm_frontend/function_builder.rs:run_optimization_passes()` |
 | `cross_block_cache` | `--no-cross-block-cache` | Propagate register cache across single-predecessor block boundaries | `llvm_backend/mod.rs:lower_function()` |
 | `register_allocation` | `--no-register-alloc` | Linear-scan register allocation (leaf callee-saved regs for long-lived values) | `llvm_backend/mod.rs:lower_function()` → `regalloc.rs` |
+| `dead_function_elimination` | `--no-dead-function-elim` | Remove unreachable functions from output | `translate/mod.rs:compile_via_llvm()` |
+| `fallthrough_jumps` | `--no-fallthrough-jumps` | Skip redundant Jump when target is next block in layout order | `llvm_backend/emitter.rs:emit_jump_to_label()` |
 
-**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`, `cross_block_cache_enabled`, `register_allocation_enabled`) → `PvmEmitter.config`. LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`.
+**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`, `cross_block_cache_enabled`, `register_allocation_enabled`, `fallthrough_jumps_enabled`) → `PvmEmitter.config`. LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`.
 
 **Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `EmitterConfig`, guard the optimization with `e.config.<flag>`, add a `--no-*` CLI flag.
 

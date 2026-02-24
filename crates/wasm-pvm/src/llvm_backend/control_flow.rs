@@ -75,6 +75,10 @@ pub fn lower_br<'ctx>(
             }
         } else {
             // Need per-edge phi copies. Create trampolines.
+            // Disable fallthrough optimization: the Jump to else_label is followed
+            // by trampoline code (not the next block's define_label), so eliminating
+            // it would cause the else path to fall through into the then trampoline.
+            let saved_next = e.next_block_label.take();
             let then_trampoline = e.alloc_label();
             if let Some(fused) = fused {
                 emit_fused_branch(e, &fused, then_trampoline)?;
@@ -91,6 +95,7 @@ pub fn lower_br<'ctx>(
             e.define_label(then_trampoline);
             emit_phi_copies(e, current_bb, then_bb)?;
             e.emit_jump_to_label(then_label);
+            e.next_block_label = saved_next;
         }
     }
     Ok(())
@@ -143,6 +148,12 @@ pub fn lower_switch<'ctx>(
     }
 
     // Default: emit phi copies inline + jump.
+    // Disable fallthrough optimization when trampolines follow the default Jump.
+    let saved_next = if !trampolines.is_empty() {
+        e.next_block_label.take()
+    } else {
+        None
+    };
     emit_phi_copies(e, current_bb, default_bb)?;
     e.emit_jump_to_label(default_label);
 
@@ -155,6 +166,9 @@ pub fn lower_switch<'ctx>(
         e.define_label(trampoline_label);
         emit_phi_copies(e, current_bb, case_bb)?;
         e.emit_jump_to_label(case_label);
+    }
+    if let Some(saved) = saved_next {
+        e.next_block_label = Some(saved);
     }
 
     Ok(())

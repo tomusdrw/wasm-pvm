@@ -54,6 +54,8 @@ pub struct OptimizationFlags {
     pub register_allocation: bool,
     /// Eliminate unreachable functions not called from entry points or the function table.
     pub dead_function_elimination: bool,
+    /// Eliminate unconditional jumps to the immediately following block (fallthrough).
+    pub fallthrough_jumps: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -70,6 +72,7 @@ impl Default for OptimizationFlags {
             cross_block_cache: true,
             register_allocation: true,
             dead_function_elimination: true,
+            fallthrough_jumps: true,
         }
     }
 }
@@ -108,8 +111,6 @@ pub struct IndirectCallFixup {
     pub return_addr_instr: usize,
     pub jump_ind_instr: usize,
 }
-
-const ENTRY_HEADER_SIZE: usize = 10;
 
 /// `RO_DATA` region size is 64KB (0x10000 to 0x1FFFF)
 const RO_DATA_SIZE: usize = 64 * 1024;
@@ -235,28 +236,36 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
     let mut all_instructions: Vec<Instruction> = Vec::new();
     let mut all_call_fixups: Vec<(usize, CallFixup)> = Vec::new();
     let mut all_indirect_call_fixups: Vec<(usize, IndirectCallFixup)> = Vec::new();
-    let mut function_offsets: Vec<usize> = Vec::new();
+    let mut function_offsets: Vec<usize> = vec![0; module.functions.len()];
     let mut next_call_return_idx: usize = 0;
 
-    // Entry header
+    // Entry header: Jump to main (PC=0) + Trap or secondary Jump (PC=5).
+    // When there's no secondary entry, we omit the Fallthrough padding (6 bytes instead of 10).
     all_instructions.push(Instruction::Jump { offset: 0 });
     if module.has_secondary_entry {
         all_instructions.push(Instruction::Jump { offset: 0 });
     } else {
         all_instructions.push(Instruction::Trap);
-        all_instructions.push(Instruction::Fallthrough);
-        all_instructions.push(Instruction::Fallthrough);
-        all_instructions.push(Instruction::Fallthrough);
-        all_instructions.push(Instruction::Fallthrough);
     }
 
-    let entry_header_bytes: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
-    debug_assert_eq!(
-        entry_header_bytes, ENTRY_HEADER_SIZE,
-        "Entry header must be exactly 10 bytes"
-    );
+    // Build emission order: main first, then secondary (if any), then remaining in index order.
+    // This places main immediately after the entry header, minimizing the entry Jump distance.
+    let mut emission_order: Vec<usize> = Vec::with_capacity(module.functions.len());
+    emission_order.push(module.main_func_local_idx);
+    if let Some(secondary_idx) = module.secondary_entry_local_idx {
+        if secondary_idx != module.main_func_local_idx {
+            emission_order.push(secondary_idx);
+        }
+    }
+    for idx in 0..module.functions.len() {
+        if idx != module.main_func_local_idx
+            && module.secondary_entry_local_idx != Some(idx)
+        {
+            emission_order.push(idx);
+        }
+    }
 
-    for local_func_idx in 0..module.functions.len() {
+    for &local_func_idx in &emission_order {
         // Dead functions: emit a single Trap as a placeholder.
         // The function offset is still recorded so dispatch table indices stay valid.
         if reachable_locals
@@ -264,7 +273,7 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
             .is_some_and(|r| !r.contains(&local_func_idx))
         {
             let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
-            function_offsets.push(func_start_offset);
+            function_offsets[local_func_idx] = func_start_offset;
             all_instructions.push(Instruction::Trap);
             continue;
         }
@@ -298,7 +307,7 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         };
 
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
-        function_offsets.push(func_start_offset);
+        function_offsets[local_func_idx] = func_start_offset;
 
         // If entry function and there's a start function, call it first.
         if let Some(start_local_idx) = module.start_func_local_idx.filter(|_| is_entry) {

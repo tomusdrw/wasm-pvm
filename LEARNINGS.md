@@ -269,6 +269,15 @@ Accumulated knowledge from development. Update after every task.
 - Semantics remain correct because heap pages are zero-initialized; omitted high-address zero tail bytes are equivalent.
 - This is a low-risk blob-size optimization and does not materially affect gas.
 
+### Fallthrough Jump Elimination
+
+- When LLVM block N ends with an unconditional branch to block N+1 (next in layout order), the `Jump` can be skipped — execution falls through naturally.
+- Controlled by `fallthrough_jumps` optimization flag (`--no-fallthrough-jumps` to disable).
+- Implementation: `PvmEmitter.next_block_label` tracks the label of the next block. `emit_jump_to_label()` skips the `Jump` when the target matches `next_block_label`.
+- **Critical pitfall — phi node trampolines**: When conditional branches target blocks with phi nodes, the codegen emits per-edge trampoline code (phi copies + Jump) between blocks. The `emit_jump_to_label()` in trampoline code must NOT be eliminated, because the jump is not the last instruction before the next block's `define_label`. Fix: `lower_br` and `lower_switch` temporarily clear `next_block_label` during trampoline emission.
+- Entry header shrunk from 10 to 6 bytes when no secondary entry (removed 4 Fallthrough padding after Trap).
+- Main function emitted first (right after entry header) to minimize Jump distance.
+
 ### Memory Layout Sensitivity (PVM-in-PVM)
 
 - A compact globals/overflow layout directly below `0x40000` can drastically shrink blob sizes, but breaks pvm-in-pvm interpreter compatibility.
