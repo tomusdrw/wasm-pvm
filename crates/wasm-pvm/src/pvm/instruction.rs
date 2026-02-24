@@ -1,6 +1,7 @@
 use super::Opcode;
+use crate::{Error, Result};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction {
     Trap,
     Fallthrough,
@@ -714,6 +715,771 @@ pub enum Instruction {
 }
 
 impl Instruction {
+    /// Decode a single instruction from a byte slice.
+    ///
+    /// Returns `(instruction, consumed_bytes)`.
+    ///
+    /// For encodings where the last immediate does not carry an explicit length
+    /// (`OneImm`, `OneRegOneImm`, `TwoRegOneImm`, `TwoImm`, `OneRegTwoImm`,
+    /// `TwoRegTwoImm`), this decoder consumes the remaining bytes as that
+    /// immediate.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, usize)> {
+        if bytes.is_empty() {
+            return Err(Error::Internal(
+                "cannot decode instruction from an empty slice".to_string(),
+            ));
+        }
+
+        let opcode = bytes[0];
+
+        match opcode {
+            op if op == Opcode::Trap as u8 => Ok((Self::Trap, 1)),
+            op if op == Opcode::Fallthrough as u8 => Ok((Self::Fallthrough, 1)),
+
+            op if op == Opcode::LoadImm64 as u8 => {
+                ensure_min_len(bytes, 10, "LoadImm64")?;
+                let reg = bytes[1] & 0x0F;
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(&bytes[2..10]);
+                Ok((
+                    Self::LoadImm64 {
+                        reg,
+                        value: u64::from_le_bytes(raw),
+                    },
+                    10,
+                ))
+            }
+
+            op if op == Opcode::Jump as u8 => {
+                let offset = decode_offset_at(bytes, 1, "Jump")?;
+                Ok((Self::Jump { offset }, 5))
+            }
+
+            op if op == Opcode::Ecalli as u8 => {
+                let index = decode_imm_unsigned(&bytes[1..], "Ecalli index")?;
+                Ok((Self::Ecalli { index }, bytes.len()))
+            }
+
+            op if op == Opcode::LoadImm as u8
+                || op == Opcode::JumpInd as u8
+                || op == Opcode::LoadU8 as u8
+                || op == Opcode::LoadI8 as u8
+                || op == Opcode::LoadU16 as u8
+                || op == Opcode::LoadI16 as u8
+                || op == Opcode::LoadU32 as u8
+                || op == Opcode::LoadI32 as u8
+                || op == Opcode::LoadU64 as u8
+                || op == Opcode::StoreU8 as u8
+                || op == Opcode::StoreU16 as u8
+                || op == Opcode::StoreU32 as u8
+                || op == Opcode::StoreU64 as u8 =>
+            {
+                ensure_min_len(bytes, 2, "OneRegOneImm")?;
+                let reg = bytes[1] & 0x0F;
+                let value = decode_imm_signed(&bytes[2..], "OneRegOneImm immediate")?;
+
+                let instruction = match op {
+                    op if op == Opcode::LoadImm as u8 => Self::LoadImm { reg, value },
+                    op if op == Opcode::JumpInd as u8 => Self::JumpInd { reg, offset: value },
+                    op if op == Opcode::LoadU8 as u8 => Self::LoadU8 {
+                        dst: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::LoadI8 as u8 => Self::LoadI8 {
+                        dst: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::LoadU16 as u8 => Self::LoadU16 {
+                        dst: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::LoadI16 as u8 => Self::LoadI16 {
+                        dst: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::LoadU32 as u8 => Self::LoadU32 {
+                        dst: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::LoadI32 as u8 => Self::LoadI32 {
+                        dst: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::LoadU64 as u8 => Self::LoadU64 {
+                        dst: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::StoreU8 as u8 => Self::StoreU8 {
+                        src: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::StoreU16 as u8 => Self::StoreU16 {
+                        src: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::StoreU32 as u8 => Self::StoreU32 {
+                        src: reg,
+                        address: value,
+                    },
+                    op if op == Opcode::StoreU64 as u8 => Self::StoreU64 {
+                        src: reg,
+                        address: value,
+                    },
+                    _ => {
+                        return Err(Error::Internal(format!(
+                            "OneRegOneImm decode dispatch mismatch for opcode {op}"
+                        )));
+                    }
+                };
+
+                Ok((instruction, bytes.len()))
+            }
+
+            op if op == Opcode::LoadImmJump as u8
+                || op == Opcode::BranchEqImm as u8
+                || op == Opcode::BranchNeImm as u8
+                || op == Opcode::BranchLtUImm as u8
+                || op == Opcode::BranchLeUImm as u8
+                || op == Opcode::BranchGeUImm as u8
+                || op == Opcode::BranchGtUImm as u8
+                || op == Opcode::BranchLtSImm as u8
+                || op == Opcode::BranchLeSImm as u8
+                || op == Opcode::BranchGeSImm as u8
+                || op == Opcode::BranchGtSImm as u8 =>
+            {
+                ensure_min_len(bytes, 2, "OneRegOneImmOneOff")?;
+                let reg = bytes[1] & 0x0F;
+                let imm_len = (bytes[1] >> 4) as usize;
+                if imm_len > 4 {
+                    return Err(Error::Internal(format!(
+                        "OneRegOneImmOneOff immediate length must be <= 4, got {imm_len}"
+                    )));
+                }
+
+                let imm_end = 2 + imm_len;
+                ensure_min_len(bytes, imm_end + 4, "OneRegOneImmOneOff")?;
+                let value = decode_imm_signed(&bytes[2..imm_end], "OneRegOneImmOneOff immediate")?;
+                let offset = decode_offset_at(bytes, imm_end, "OneRegOneImmOneOff offset")?;
+
+                let instruction = match op {
+                    op if op == Opcode::LoadImmJump as u8 => {
+                        Self::LoadImmJump { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchEqImm as u8 => {
+                        Self::BranchEqImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchNeImm as u8 => {
+                        Self::BranchNeImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchLtUImm as u8 => {
+                        Self::BranchLtUImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchLeUImm as u8 => {
+                        Self::BranchLeUImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchGeUImm as u8 => {
+                        Self::BranchGeUImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchGtUImm as u8 => {
+                        Self::BranchGtUImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchLtSImm as u8 => {
+                        Self::BranchLtSImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchLeSImm as u8 => {
+                        Self::BranchLeSImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchGeSImm as u8 => {
+                        Self::BranchGeSImm { reg, value, offset }
+                    }
+                    op if op == Opcode::BranchGtSImm as u8 => {
+                        Self::BranchGtSImm { reg, value, offset }
+                    }
+                    _ => {
+                        return Err(Error::Internal(format!(
+                            "OneRegOneImmOneOff decode dispatch mismatch for opcode {op}"
+                        )));
+                    }
+                };
+
+                Ok((instruction, imm_end + 4))
+            }
+
+            op if op == Opcode::StoreImmU8 as u8
+                || op == Opcode::StoreImmU16 as u8
+                || op == Opcode::StoreImmU32 as u8
+                || op == Opcode::StoreImmU64 as u8 =>
+            {
+                ensure_min_len(bytes, 2, "TwoImm")?;
+                let imm1_len = (bytes[1] & 0x0F) as usize;
+                if imm1_len > 4 {
+                    return Err(Error::Internal(format!(
+                        "TwoImm first immediate length must be <= 4, got {imm1_len}"
+                    )));
+                }
+
+                let imm1_end = 2 + imm1_len;
+                ensure_min_len(bytes, imm1_end, "TwoImm")?;
+
+                let address = decode_imm_signed(&bytes[2..imm1_end], "TwoImm address")?;
+                let value = decode_imm_signed(&bytes[imm1_end..], "TwoImm value")?;
+
+                let instruction = match op {
+                    op if op == Opcode::StoreImmU8 as u8 => Self::StoreImmU8 { address, value },
+                    op if op == Opcode::StoreImmU16 as u8 => Self::StoreImmU16 { address, value },
+                    op if op == Opcode::StoreImmU32 as u8 => Self::StoreImmU32 { address, value },
+                    op if op == Opcode::StoreImmU64 as u8 => Self::StoreImmU64 { address, value },
+                    _ => {
+                        return Err(Error::Internal(format!(
+                            "TwoImm decode dispatch mismatch for opcode {op}"
+                        )));
+                    }
+                };
+
+                Ok((instruction, bytes.len()))
+            }
+
+            op if op == Opcode::StoreImmIndU8 as u8
+                || op == Opcode::StoreImmIndU16 as u8
+                || op == Opcode::StoreImmIndU32 as u8
+                || op == Opcode::StoreImmIndU64 as u8 =>
+            {
+                ensure_min_len(bytes, 2, "OneRegTwoImm")?;
+                let base = bytes[1] & 0x0F;
+                let imm1_len = (bytes[1] >> 4) as usize;
+                if imm1_len > 4 {
+                    return Err(Error::Internal(format!(
+                        "OneRegTwoImm first immediate length must be <= 4, got {imm1_len}"
+                    )));
+                }
+
+                let imm1_end = 2 + imm1_len;
+                ensure_min_len(bytes, imm1_end, "OneRegTwoImm")?;
+                let offset = decode_imm_signed(&bytes[2..imm1_end], "OneRegTwoImm offset")?;
+                let value = decode_imm_signed(&bytes[imm1_end..], "OneRegTwoImm value")?;
+
+                let instruction = match op {
+                    op if op == Opcode::StoreImmIndU8 as u8 => Self::StoreImmIndU8 {
+                        base,
+                        offset,
+                        value,
+                    },
+                    op if op == Opcode::StoreImmIndU16 as u8 => Self::StoreImmIndU16 {
+                        base,
+                        offset,
+                        value,
+                    },
+                    op if op == Opcode::StoreImmIndU32 as u8 => Self::StoreImmIndU32 {
+                        base,
+                        offset,
+                        value,
+                    },
+                    op if op == Opcode::StoreImmIndU64 as u8 => Self::StoreImmIndU64 {
+                        base,
+                        offset,
+                        value,
+                    },
+                    _ => {
+                        return Err(Error::Internal(format!(
+                            "OneRegTwoImm decode dispatch mismatch for opcode {op}"
+                        )));
+                    }
+                };
+
+                Ok((instruction, bytes.len()))
+            }
+
+            op if op == Opcode::MoveReg as u8
+                || op == Opcode::Sbrk as u8
+                || op == Opcode::CountSetBits64 as u8
+                || op == Opcode::CountSetBits32 as u8
+                || op == Opcode::LeadingZeroBits64 as u8
+                || op == Opcode::LeadingZeroBits32 as u8
+                || op == Opcode::TrailingZeroBits64 as u8
+                || op == Opcode::TrailingZeroBits32 as u8
+                || op == Opcode::SignExtend8 as u8
+                || op == Opcode::SignExtend16 as u8
+                || op == Opcode::ZeroExtend16 as u8
+                || op == Opcode::ReverseBytes as u8 =>
+            {
+                ensure_min_len(bytes, 2, "TwoReg")?;
+                let src = (bytes[1] >> 4) & 0x0F;
+                let dst = bytes[1] & 0x0F;
+
+                let instruction = match op {
+                    op if op == Opcode::MoveReg as u8 => Self::MoveReg { dst, src },
+                    op if op == Opcode::Sbrk as u8 => Self::Sbrk { dst, src },
+                    op if op == Opcode::CountSetBits64 as u8 => Self::CountSetBits64 { dst, src },
+                    op if op == Opcode::CountSetBits32 as u8 => Self::CountSetBits32 { dst, src },
+                    op if op == Opcode::LeadingZeroBits64 as u8 => {
+                        Self::LeadingZeroBits64 { dst, src }
+                    }
+                    op if op == Opcode::LeadingZeroBits32 as u8 => {
+                        Self::LeadingZeroBits32 { dst, src }
+                    }
+                    op if op == Opcode::TrailingZeroBits64 as u8 => {
+                        Self::TrailingZeroBits64 { dst, src }
+                    }
+                    op if op == Opcode::TrailingZeroBits32 as u8 => {
+                        Self::TrailingZeroBits32 { dst, src }
+                    }
+                    op if op == Opcode::SignExtend8 as u8 => Self::SignExtend8 { dst, src },
+                    op if op == Opcode::SignExtend16 as u8 => Self::SignExtend16 { dst, src },
+                    op if op == Opcode::ZeroExtend16 as u8 => Self::ZeroExtend16 { dst, src },
+                    op if op == Opcode::ReverseBytes as u8 => Self::ReverseBytes { dst, src },
+                    _ => {
+                        return Err(Error::Internal(format!(
+                            "TwoReg decode dispatch mismatch for opcode {op}"
+                        )));
+                    }
+                };
+
+                Ok((instruction, 2))
+            }
+
+            op if op == Opcode::AddImm32 as u8
+                || op == Opcode::AddImm64 as u8
+                || op == Opcode::AndImm as u8
+                || op == Opcode::XorImm as u8
+                || op == Opcode::OrImm as u8
+                || op == Opcode::MulImm32 as u8
+                || op == Opcode::MulImm64 as u8
+                || op == Opcode::SetLtUImm as u8
+                || op == Opcode::SetLtSImm as u8
+                || op == Opcode::ShloLImm32 as u8
+                || op == Opcode::ShloRImm32 as u8
+                || op == Opcode::SharRImm32 as u8
+                || op == Opcode::ShloLImm64 as u8
+                || op == Opcode::ShloRImm64 as u8
+                || op == Opcode::SharRImm64 as u8
+                || op == Opcode::NegAddImm32 as u8
+                || op == Opcode::NegAddImm64 as u8
+                || op == Opcode::SetGtUImm as u8
+                || op == Opcode::SetGtSImm as u8
+                || op == Opcode::CmovIzImm as u8
+                || op == Opcode::CmovNzImm as u8
+                || op == Opcode::LoadIndU8 as u8
+                || op == Opcode::LoadIndI8 as u8
+                || op == Opcode::LoadIndU16 as u8
+                || op == Opcode::LoadIndI16 as u8
+                || op == Opcode::LoadIndU32 as u8
+                || op == Opcode::LoadIndI32 as u8
+                || op == Opcode::LoadIndU64 as u8
+                || op == Opcode::StoreIndU8 as u8
+                || op == Opcode::StoreIndU16 as u8
+                || op == Opcode::StoreIndU32 as u8
+                || op == Opcode::StoreIndU64 as u8
+                || op == Opcode::ShloLImmAlt32 as u8
+                || op == Opcode::ShloRImmAlt32 as u8
+                || op == Opcode::SharRImmAlt32 as u8
+                || op == Opcode::ShloLImmAlt64 as u8
+                || op == Opcode::ShloRImmAlt64 as u8
+                || op == Opcode::SharRImmAlt64 as u8
+                || op == Opcode::RotRImm64 as u8
+                || op == Opcode::RotRImmAlt64 as u8
+                || op == Opcode::RotRImm32 as u8
+                || op == Opcode::RotRImmAlt32 as u8 =>
+            {
+                ensure_min_len(bytes, 2, "TwoRegOneImm")?;
+                let hi = (bytes[1] >> 4) & 0x0F;
+                let lo = bytes[1] & 0x0F;
+                let value = decode_imm_signed(&bytes[2..], "TwoRegOneImm immediate")?;
+
+                let instruction = match op {
+                    op if op == Opcode::AddImm32 as u8 => Self::AddImm32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::AddImm64 as u8 => Self::AddImm64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::AndImm as u8 => Self::AndImm {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::XorImm as u8 => Self::XorImm {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::OrImm as u8 => Self::OrImm {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::MulImm32 as u8 => Self::MulImm32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::MulImm64 as u8 => Self::MulImm64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::SetLtUImm as u8 => Self::SetLtUImm {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::SetLtSImm as u8 => Self::SetLtSImm {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::ShloLImm32 as u8 => Self::ShloLImm32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::ShloRImm32 as u8 => Self::ShloRImm32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::SharRImm32 as u8 => Self::SharRImm32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::ShloLImm64 as u8 => Self::ShloLImm64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::ShloRImm64 as u8 => Self::ShloRImm64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::SharRImm64 as u8 => Self::SharRImm64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::NegAddImm32 as u8 => Self::NegAddImm32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::NegAddImm64 as u8 => Self::NegAddImm64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::SetGtUImm as u8 => Self::SetGtUImm {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::SetGtSImm as u8 => Self::SetGtSImm {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::CmovIzImm as u8 => Self::CmovIzImm {
+                        dst: lo,
+                        cond: hi,
+                        value,
+                    },
+                    op if op == Opcode::CmovNzImm as u8 => Self::CmovNzImm {
+                        dst: lo,
+                        cond: hi,
+                        value,
+                    },
+                    op if op == Opcode::LoadIndU8 as u8 => Self::LoadIndU8 {
+                        dst: lo,
+                        base: hi,
+                        offset: value,
+                    },
+                    op if op == Opcode::LoadIndI8 as u8 => Self::LoadIndI8 {
+                        dst: lo,
+                        base: hi,
+                        offset: value,
+                    },
+                    op if op == Opcode::LoadIndU16 as u8 => Self::LoadIndU16 {
+                        dst: lo,
+                        base: hi,
+                        offset: value,
+                    },
+                    op if op == Opcode::LoadIndI16 as u8 => Self::LoadIndI16 {
+                        dst: lo,
+                        base: hi,
+                        offset: value,
+                    },
+                    op if op == Opcode::LoadIndU32 as u8 => Self::LoadIndU32 {
+                        dst: lo,
+                        base: hi,
+                        offset: value,
+                    },
+                    op if op == Opcode::LoadIndI32 as u8 => Self::LoadIndI32 {
+                        dst: lo,
+                        base: hi,
+                        offset: value,
+                    },
+                    op if op == Opcode::LoadIndU64 as u8 => Self::LoadIndU64 {
+                        dst: lo,
+                        base: hi,
+                        offset: value,
+                    },
+                    op if op == Opcode::StoreIndU8 as u8 => Self::StoreIndU8 {
+                        base: hi,
+                        src: lo,
+                        offset: value,
+                    },
+                    op if op == Opcode::StoreIndU16 as u8 => Self::StoreIndU16 {
+                        base: hi,
+                        src: lo,
+                        offset: value,
+                    },
+                    op if op == Opcode::StoreIndU32 as u8 => Self::StoreIndU32 {
+                        base: hi,
+                        src: lo,
+                        offset: value,
+                    },
+                    op if op == Opcode::StoreIndU64 as u8 => Self::StoreIndU64 {
+                        base: hi,
+                        src: lo,
+                        offset: value,
+                    },
+                    op if op == Opcode::ShloLImmAlt32 as u8 => Self::ShloLImmAlt32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::ShloRImmAlt32 as u8 => Self::ShloRImmAlt32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::SharRImmAlt32 as u8 => Self::SharRImmAlt32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::ShloLImmAlt64 as u8 => Self::ShloLImmAlt64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::ShloRImmAlt64 as u8 => Self::ShloRImmAlt64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::SharRImmAlt64 as u8 => Self::SharRImmAlt64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::RotRImm64 as u8 => Self::RotRImm64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::RotRImmAlt64 as u8 => Self::RotRImmAlt64 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::RotRImm32 as u8 => Self::RotRImm32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    op if op == Opcode::RotRImmAlt32 as u8 => Self::RotRImmAlt32 {
+                        dst: lo,
+                        src: hi,
+                        value,
+                    },
+                    _ => {
+                        return Err(Error::Internal(format!(
+                            "TwoRegOneImm decode dispatch mismatch for opcode {op}"
+                        )));
+                    }
+                };
+
+                Ok((instruction, bytes.len()))
+            }
+
+            op if op == Opcode::BranchEq as u8
+                || op == Opcode::BranchNe as u8
+                || op == Opcode::BranchLtU as u8
+                || op == Opcode::BranchLtS as u8
+                || op == Opcode::BranchGeU as u8
+                || op == Opcode::BranchGeS as u8 =>
+            {
+                ensure_min_len(bytes, 6, "TwoRegOneOff")?;
+                let reg1 = (bytes[1] >> 4) & 0x0F;
+                let reg2 = bytes[1] & 0x0F;
+                let offset = decode_offset_at(bytes, 2, "TwoRegOneOff offset")?;
+
+                let instruction = match op {
+                    op if op == Opcode::BranchEq as u8 => Self::BranchEq { reg1, reg2, offset },
+                    op if op == Opcode::BranchNe as u8 => Self::BranchNe { reg1, reg2, offset },
+                    op if op == Opcode::BranchLtU as u8 => Self::BranchLtU { reg1, reg2, offset },
+                    op if op == Opcode::BranchLtS as u8 => Self::BranchLtS { reg1, reg2, offset },
+                    op if op == Opcode::BranchGeU as u8 => Self::BranchGeU { reg1, reg2, offset },
+                    op if op == Opcode::BranchGeS as u8 => Self::BranchGeS { reg1, reg2, offset },
+                    _ => {
+                        return Err(Error::Internal(format!(
+                            "TwoRegOneOff decode dispatch mismatch for opcode {op}"
+                        )));
+                    }
+                };
+
+                Ok((instruction, 6))
+            }
+
+            op if op == Opcode::LoadImmJumpInd as u8 => {
+                ensure_min_len(bytes, 3, "TwoRegTwoImm")?;
+                let base = (bytes[1] >> 4) & 0x0F;
+                let dst = bytes[1] & 0x0F;
+                let imm1_len = (bytes[2] & 0x0F) as usize;
+                if imm1_len > 4 {
+                    return Err(Error::Internal(format!(
+                        "TwoRegTwoImm first immediate length must be <= 4, got {imm1_len}"
+                    )));
+                }
+
+                let imm1_end = 3 + imm1_len;
+                ensure_min_len(bytes, imm1_end, "TwoRegTwoImm")?;
+
+                let value = decode_imm_signed(&bytes[3..imm1_end], "TwoRegTwoImm value")?;
+                let offset = decode_imm_signed(&bytes[imm1_end..], "TwoRegTwoImm offset")?;
+
+                Ok((
+                    Self::LoadImmJumpInd {
+                        base,
+                        dst,
+                        value,
+                        offset,
+                    },
+                    bytes.len(),
+                ))
+            }
+
+            op if op == Opcode::Add32 as u8
+                || op == Opcode::Sub32 as u8
+                || op == Opcode::Mul32 as u8
+                || op == Opcode::DivU32 as u8
+                || op == Opcode::DivS32 as u8
+                || op == Opcode::RemU32 as u8
+                || op == Opcode::RemS32 as u8
+                || op == Opcode::ShloL32 as u8
+                || op == Opcode::ShloR32 as u8
+                || op == Opcode::SharR32 as u8
+                || op == Opcode::Add64 as u8
+                || op == Opcode::Sub64 as u8
+                || op == Opcode::Mul64 as u8
+                || op == Opcode::DivU64 as u8
+                || op == Opcode::DivS64 as u8
+                || op == Opcode::RemU64 as u8
+                || op == Opcode::RemS64 as u8
+                || op == Opcode::ShloL64 as u8
+                || op == Opcode::ShloR64 as u8
+                || op == Opcode::SharR64 as u8
+                || op == Opcode::SetLtU as u8
+                || op == Opcode::SetLtS as u8
+                || op == Opcode::CmovIz as u8
+                || op == Opcode::CmovNz as u8
+                || op == Opcode::And as u8
+                || op == Opcode::Xor as u8
+                || op == Opcode::Or as u8
+                || op == Opcode::MulUpperSS as u8
+                || op == Opcode::MulUpperUU as u8
+                || op == Opcode::MulUpperSU as u8
+                || op == Opcode::RotL64 as u8
+                || op == Opcode::RotL32 as u8
+                || op == Opcode::RotR64 as u8
+                || op == Opcode::RotR32 as u8
+                || op == Opcode::AndInv as u8
+                || op == Opcode::OrInv as u8
+                || op == Opcode::Xnor as u8
+                || op == Opcode::Max as u8
+                || op == Opcode::MaxU as u8
+                || op == Opcode::Min as u8
+                || op == Opcode::MinU as u8 =>
+            {
+                ensure_min_len(bytes, 3, "ThreeReg")?;
+                let src1 = bytes[1] & 0x0F;
+                let src2 = (bytes[1] >> 4) & 0x0F;
+                let dst = bytes[2] & 0x0F;
+
+                let instruction = match op {
+                    op if op == Opcode::Add32 as u8 => Self::Add32 { dst, src1, src2 },
+                    op if op == Opcode::Sub32 as u8 => Self::Sub32 { dst, src1, src2 },
+                    op if op == Opcode::Mul32 as u8 => Self::Mul32 { dst, src1, src2 },
+                    op if op == Opcode::DivU32 as u8 => Self::DivU32 { dst, src1, src2 },
+                    op if op == Opcode::DivS32 as u8 => Self::DivS32 { dst, src1, src2 },
+                    op if op == Opcode::RemU32 as u8 => Self::RemU32 { dst, src1, src2 },
+                    op if op == Opcode::RemS32 as u8 => Self::RemS32 { dst, src1, src2 },
+                    op if op == Opcode::ShloL32 as u8 => Self::ShloL32 { dst, src1, src2 },
+                    op if op == Opcode::ShloR32 as u8 => Self::ShloR32 { dst, src1, src2 },
+                    op if op == Opcode::SharR32 as u8 => Self::SharR32 { dst, src1, src2 },
+                    op if op == Opcode::Add64 as u8 => Self::Add64 { dst, src1, src2 },
+                    op if op == Opcode::Sub64 as u8 => Self::Sub64 { dst, src1, src2 },
+                    op if op == Opcode::Mul64 as u8 => Self::Mul64 { dst, src1, src2 },
+                    op if op == Opcode::DivU64 as u8 => Self::DivU64 { dst, src1, src2 },
+                    op if op == Opcode::DivS64 as u8 => Self::DivS64 { dst, src1, src2 },
+                    op if op == Opcode::RemU64 as u8 => Self::RemU64 { dst, src1, src2 },
+                    op if op == Opcode::RemS64 as u8 => Self::RemS64 { dst, src1, src2 },
+                    op if op == Opcode::ShloL64 as u8 => Self::ShloL64 { dst, src1, src2 },
+                    op if op == Opcode::ShloR64 as u8 => Self::ShloR64 { dst, src1, src2 },
+                    op if op == Opcode::SharR64 as u8 => Self::SharR64 { dst, src1, src2 },
+                    op if op == Opcode::SetLtU as u8 => Self::SetLtU { dst, src1, src2 },
+                    op if op == Opcode::SetLtS as u8 => Self::SetLtS { dst, src1, src2 },
+                    op if op == Opcode::CmovIz as u8 => Self::CmovIz {
+                        dst,
+                        src: src1,
+                        cond: src2,
+                    },
+                    op if op == Opcode::CmovNz as u8 => Self::CmovNz {
+                        dst,
+                        src: src1,
+                        cond: src2,
+                    },
+                    op if op == Opcode::And as u8 => Self::And { dst, src1, src2 },
+                    op if op == Opcode::Xor as u8 => Self::Xor { dst, src1, src2 },
+                    op if op == Opcode::Or as u8 => Self::Or { dst, src1, src2 },
+                    op if op == Opcode::MulUpperSS as u8 => Self::MulUpperSS { dst, src1, src2 },
+                    op if op == Opcode::MulUpperUU as u8 => Self::MulUpperUU { dst, src1, src2 },
+                    op if op == Opcode::MulUpperSU as u8 => Self::MulUpperSU { dst, src1, src2 },
+                    op if op == Opcode::RotL64 as u8 => Self::RotL64 { dst, src1, src2 },
+                    op if op == Opcode::RotL32 as u8 => Self::RotL32 { dst, src1, src2 },
+                    op if op == Opcode::RotR64 as u8 => Self::RotR64 { dst, src1, src2 },
+                    op if op == Opcode::RotR32 as u8 => Self::RotR32 { dst, src1, src2 },
+                    op if op == Opcode::AndInv as u8 => Self::AndInv { dst, src1, src2 },
+                    op if op == Opcode::OrInv as u8 => Self::OrInv { dst, src1, src2 },
+                    op if op == Opcode::Xnor as u8 => Self::Xnor { dst, src1, src2 },
+                    op if op == Opcode::Max as u8 => Self::Max { dst, src1, src2 },
+                    op if op == Opcode::MaxU as u8 => Self::MaxU { dst, src1, src2 },
+                    op if op == Opcode::Min as u8 => Self::Min { dst, src1, src2 },
+                    op if op == Opcode::MinU as u8 => Self::MinU { dst, src1, src2 },
+                    _ => {
+                        return Err(Error::Internal(format!(
+                            "ThreeReg decode dispatch mismatch for opcode {op}"
+                        )));
+                    }
+                };
+
+                Ok((instruction, 3))
+            }
+
+            _ => Ok((
+                Self::Unknown {
+                    opcode,
+                    raw_bytes: bytes.to_vec(),
+                },
+                bytes.len(),
+            )),
+        }
+    }
+
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         match self {
@@ -1635,9 +2401,764 @@ fn encode_imm(value: i32) -> Vec<u8> {
     bytes[..len].to_vec()
 }
 
+fn ensure_min_len(bytes: &[u8], min_len: usize, context: &str) -> Result<()> {
+    if bytes.len() < min_len {
+        return Err(Error::Internal(format!(
+            "{context}: expected at least {min_len} bytes, got {}",
+            bytes.len()
+        )));
+    }
+    Ok(())
+}
+
+fn decode_offset_at(bytes: &[u8], start: usize, context: &str) -> Result<i32> {
+    let end = start
+        .checked_add(4)
+        .ok_or_else(|| Error::Internal(format!("{context}: offset index overflow")))?;
+    ensure_min_len(bytes, end, context)?;
+    let mut raw = [0u8; 4];
+    raw.copy_from_slice(&bytes[start..end]);
+    Ok(i32::from_le_bytes(raw))
+}
+
+fn decode_imm_signed(bytes: &[u8], context: &str) -> Result<i32> {
+    if bytes.len() > 4 {
+        return Err(Error::Internal(format!(
+            "{context}: signed immediate must be 0-4 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    if bytes.is_empty() {
+        return Ok(0);
+    }
+
+    let fill = if bytes[bytes.len() - 1] & 0x80 != 0 {
+        0xFF
+    } else {
+        0x00
+    };
+    let mut raw = [fill; 4];
+    raw[..bytes.len()].copy_from_slice(bytes);
+    Ok(i32::from_le_bytes(raw))
+}
+
+fn decode_imm_unsigned(bytes: &[u8], context: &str) -> Result<u32> {
+    if bytes.len() > 4 {
+        return Err(Error::Internal(format!(
+            "{context}: unsigned immediate must be 0-4 bytes, got {}",
+            bytes.len()
+        )));
+    }
+
+    let mut raw = [0u8; 4];
+    raw[..bytes.len()].copy_from_slice(bytes);
+    Ok(u32::from_le_bytes(raw))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_decode_roundtrip(instr: &Instruction) {
+        let encoded = instr.encode();
+        let (decoded, consumed) = Instruction::decode(&encoded).expect("decode should succeed");
+        assert_eq!(
+            consumed,
+            encoded.len(),
+            "wrong consumed length for {instr:?}"
+        );
+        assert_eq!(&decoded, instr, "decode(encode(instr)) mismatch");
+    }
+
+    fn sample_instructions() -> Vec<Instruction> {
+        vec![
+            Instruction::Trap,
+            Instruction::Fallthrough,
+            Instruction::LoadImm64 {
+                reg: 12,
+                value: 0x1234_5678_9ABC_DEF0,
+            },
+            Instruction::LoadImm {
+                reg: 0,
+                value: -12_345,
+            },
+            Instruction::Add32 {
+                dst: 12,
+                src1: 0,
+                src2: 11,
+            },
+            Instruction::Sub32 {
+                dst: 3,
+                src1: 2,
+                src2: 1,
+            },
+            Instruction::Mul32 {
+                dst: 4,
+                src1: 5,
+                src2: 6,
+            },
+            Instruction::DivU32 {
+                dst: 7,
+                src1: 8,
+                src2: 9,
+            },
+            Instruction::DivS32 {
+                dst: 1,
+                src1: 10,
+                src2: 11,
+            },
+            Instruction::RemU32 {
+                dst: 2,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::RemS32 {
+                dst: 5,
+                src1: 6,
+                src2: 7,
+            },
+            Instruction::Add64 {
+                dst: 8,
+                src1: 9,
+                src2: 10,
+            },
+            Instruction::Sub64 {
+                dst: 11,
+                src1: 12,
+                src2: 0,
+            },
+            Instruction::Mul64 {
+                dst: 1,
+                src1: 2,
+                src2: 3,
+            },
+            Instruction::DivU64 {
+                dst: 4,
+                src1: 5,
+                src2: 6,
+            },
+            Instruction::DivS64 {
+                dst: 7,
+                src1: 8,
+                src2: 9,
+            },
+            Instruction::RemU64 {
+                dst: 10,
+                src1: 11,
+                src2: 12,
+            },
+            Instruction::RemS64 {
+                dst: 0,
+                src1: 1,
+                src2: 2,
+            },
+            Instruction::ShloL64 {
+                dst: 3,
+                src1: 4,
+                src2: 5,
+            },
+            Instruction::ShloR64 {
+                dst: 6,
+                src1: 7,
+                src2: 8,
+            },
+            Instruction::SharR64 {
+                dst: 9,
+                src1: 10,
+                src2: 11,
+            },
+            Instruction::AddImm32 {
+                dst: 12,
+                src: 0,
+                value: i32::MIN,
+            },
+            Instruction::AddImm64 {
+                dst: 1,
+                src: 2,
+                value: i32::MAX,
+            },
+            Instruction::AndImm {
+                dst: 3,
+                src: 4,
+                value: 0x7FFF,
+            },
+            Instruction::XorImm {
+                dst: 5,
+                src: 6,
+                value: -1,
+            },
+            Instruction::OrImm {
+                dst: 7,
+                src: 8,
+                value: 0,
+            },
+            Instruction::MulImm32 {
+                dst: 9,
+                src: 10,
+                value: 42,
+            },
+            Instruction::MulImm64 {
+                dst: 11,
+                src: 12,
+                value: -128,
+            },
+            Instruction::ShloLImm32 {
+                dst: 0,
+                src: 1,
+                value: 3,
+            },
+            Instruction::ShloRImm32 {
+                dst: 2,
+                src: 3,
+                value: 4,
+            },
+            Instruction::SharRImm32 {
+                dst: 4,
+                src: 5,
+                value: 5,
+            },
+            Instruction::ShloLImm64 {
+                dst: 6,
+                src: 7,
+                value: 6,
+            },
+            Instruction::ShloRImm64 {
+                dst: 8,
+                src: 9,
+                value: 7,
+            },
+            Instruction::SharRImm64 {
+                dst: 10,
+                src: 11,
+                value: 8,
+            },
+            Instruction::NegAddImm32 {
+                dst: 12,
+                src: 0,
+                value: -9,
+            },
+            Instruction::NegAddImm64 {
+                dst: 1,
+                src: 2,
+                value: 10,
+            },
+            Instruction::SetGtUImm {
+                dst: 3,
+                src: 4,
+                value: 11,
+            },
+            Instruction::SetGtSImm {
+                dst: 5,
+                src: 6,
+                value: -12,
+            },
+            Instruction::Jump { offset: -13 },
+            Instruction::LoadImmJump {
+                reg: 0,
+                value: 14,
+                offset: -15,
+            },
+            Instruction::JumpInd {
+                reg: 12,
+                offset: 16,
+            },
+            Instruction::LoadIndU32 {
+                dst: 1,
+                base: 2,
+                offset: -17,
+            },
+            Instruction::StoreIndU32 {
+                base: 3,
+                src: 4,
+                offset: 18,
+            },
+            Instruction::LoadIndU64 {
+                dst: 5,
+                base: 6,
+                offset: -19,
+            },
+            Instruction::StoreIndU64 {
+                base: 7,
+                src: 8,
+                offset: 20,
+            },
+            Instruction::BranchNeImm {
+                reg: 9,
+                value: -21,
+                offset: 22,
+            },
+            Instruction::BranchEqImm {
+                reg: 10,
+                value: 23,
+                offset: -24,
+            },
+            Instruction::BranchGeSImm {
+                reg: 11,
+                value: -25,
+                offset: 26,
+            },
+            Instruction::BranchLtUImm {
+                reg: 12,
+                value: 27,
+                offset: -28,
+            },
+            Instruction::BranchLeUImm {
+                reg: 0,
+                value: -29,
+                offset: 30,
+            },
+            Instruction::BranchGeUImm {
+                reg: 1,
+                value: 31,
+                offset: -32,
+            },
+            Instruction::BranchGtUImm {
+                reg: 2,
+                value: -33,
+                offset: 34,
+            },
+            Instruction::BranchLtSImm {
+                reg: 3,
+                value: 35,
+                offset: -36,
+            },
+            Instruction::BranchLeSImm {
+                reg: 4,
+                value: -37,
+                offset: 38,
+            },
+            Instruction::BranchGtSImm {
+                reg: 5,
+                value: 39,
+                offset: -40,
+            },
+            Instruction::MoveReg { dst: 6, src: 7 },
+            Instruction::BranchEq {
+                reg1: 8,
+                reg2: 9,
+                offset: -41,
+            },
+            Instruction::BranchNe {
+                reg1: 10,
+                reg2: 11,
+                offset: 42,
+            },
+            Instruction::BranchGeU {
+                reg1: 12,
+                reg2: 0,
+                offset: -43,
+            },
+            Instruction::BranchLtU {
+                reg1: 1,
+                reg2: 2,
+                offset: 44,
+            },
+            Instruction::BranchLtS {
+                reg1: 3,
+                reg2: 4,
+                offset: -45,
+            },
+            Instruction::BranchGeS {
+                reg1: 5,
+                reg2: 6,
+                offset: 46,
+            },
+            Instruction::SetLtU {
+                dst: 7,
+                src1: 8,
+                src2: 9,
+            },
+            Instruction::SetLtS {
+                dst: 10,
+                src1: 11,
+                src2: 12,
+            },
+            Instruction::CmovIz {
+                dst: 0,
+                src: 1,
+                cond: 2,
+            },
+            Instruction::CmovNz {
+                dst: 3,
+                src: 4,
+                cond: 5,
+            },
+            Instruction::And {
+                dst: 6,
+                src1: 7,
+                src2: 8,
+            },
+            Instruction::Xor {
+                dst: 9,
+                src1: 10,
+                src2: 11,
+            },
+            Instruction::Or {
+                dst: 12,
+                src1: 0,
+                src2: 1,
+            },
+            Instruction::SetLtUImm {
+                dst: 2,
+                src: 3,
+                value: -47,
+            },
+            Instruction::SetLtSImm {
+                dst: 4,
+                src: 5,
+                value: 48,
+            },
+            Instruction::ShloL32 {
+                dst: 6,
+                src1: 7,
+                src2: 8,
+            },
+            Instruction::ShloR32 {
+                dst: 9,
+                src1: 10,
+                src2: 11,
+            },
+            Instruction::SharR32 {
+                dst: 12,
+                src1: 0,
+                src2: 1,
+            },
+            Instruction::Sbrk { dst: 2, src: 3 },
+            Instruction::CountSetBits64 { dst: 4, src: 5 },
+            Instruction::CountSetBits32 { dst: 6, src: 7 },
+            Instruction::LeadingZeroBits64 { dst: 8, src: 9 },
+            Instruction::LeadingZeroBits32 { dst: 10, src: 11 },
+            Instruction::TrailingZeroBits64 { dst: 12, src: 0 },
+            Instruction::TrailingZeroBits32 { dst: 1, src: 2 },
+            Instruction::SignExtend8 { dst: 3, src: 4 },
+            Instruction::SignExtend16 { dst: 5, src: 6 },
+            Instruction::ZeroExtend16 { dst: 7, src: 8 },
+            Instruction::LoadIndU8 {
+                dst: 9,
+                base: 10,
+                offset: -49,
+            },
+            Instruction::LoadIndI8 {
+                dst: 11,
+                base: 12,
+                offset: 50,
+            },
+            Instruction::StoreIndU8 {
+                base: 0,
+                src: 1,
+                offset: -51,
+            },
+            Instruction::LoadIndU16 {
+                dst: 2,
+                base: 3,
+                offset: 52,
+            },
+            Instruction::LoadIndI16 {
+                dst: 4,
+                base: 5,
+                offset: -53,
+            },
+            Instruction::StoreIndU16 {
+                base: 6,
+                src: 7,
+                offset: 54,
+            },
+            Instruction::CmovIzImm {
+                dst: 8,
+                cond: 9,
+                value: -55,
+            },
+            Instruction::CmovNzImm {
+                dst: 10,
+                cond: 11,
+                value: 56,
+            },
+            Instruction::StoreImmU8 {
+                address: -57,
+                value: 58,
+            },
+            Instruction::StoreImmU16 {
+                address: 59,
+                value: -60,
+            },
+            Instruction::StoreImmU32 {
+                address: -61,
+                value: 62,
+            },
+            Instruction::StoreImmU64 {
+                address: 63,
+                value: -64,
+            },
+            Instruction::StoreImmIndU8 {
+                base: 12,
+                offset: -65,
+                value: 66,
+            },
+            Instruction::StoreImmIndU16 {
+                base: 0,
+                offset: 67,
+                value: -68,
+            },
+            Instruction::StoreImmIndU32 {
+                base: 1,
+                offset: -69,
+                value: 70,
+            },
+            Instruction::StoreImmIndU64 {
+                base: 2,
+                offset: 71,
+                value: -72,
+            },
+            Instruction::LoadU8 {
+                dst: 3,
+                address: -73,
+            },
+            Instruction::LoadI8 {
+                dst: 4,
+                address: 74,
+            },
+            Instruction::LoadU16 {
+                dst: 5,
+                address: -75,
+            },
+            Instruction::LoadI16 {
+                dst: 6,
+                address: 76,
+            },
+            Instruction::LoadU32 {
+                dst: 7,
+                address: -77,
+            },
+            Instruction::LoadI32 {
+                dst: 8,
+                address: 78,
+            },
+            Instruction::LoadU64 {
+                dst: 9,
+                address: -79,
+            },
+            Instruction::StoreU8 {
+                src: 10,
+                address: 80,
+            },
+            Instruction::StoreU16 {
+                src: 11,
+                address: -81,
+            },
+            Instruction::StoreU32 {
+                src: 12,
+                address: 82,
+            },
+            Instruction::StoreU64 {
+                src: 0,
+                address: -83,
+            },
+            Instruction::LoadIndI32 {
+                dst: 1,
+                base: 2,
+                offset: 84,
+            },
+            Instruction::ReverseBytes { dst: 3, src: 4 },
+            Instruction::ShloLImmAlt32 {
+                dst: 5,
+                src: 6,
+                value: -85,
+            },
+            Instruction::ShloRImmAlt32 {
+                dst: 7,
+                src: 8,
+                value: 86,
+            },
+            Instruction::SharRImmAlt32 {
+                dst: 9,
+                src: 10,
+                value: -87,
+            },
+            Instruction::ShloLImmAlt64 {
+                dst: 11,
+                src: 12,
+                value: 88,
+            },
+            Instruction::ShloRImmAlt64 {
+                dst: 0,
+                src: 1,
+                value: -89,
+            },
+            Instruction::SharRImmAlt64 {
+                dst: 2,
+                src: 3,
+                value: 90,
+            },
+            Instruction::RotRImm64 {
+                dst: 4,
+                src: 5,
+                value: -91,
+            },
+            Instruction::RotRImmAlt64 {
+                dst: 6,
+                src: 7,
+                value: 92,
+            },
+            Instruction::RotRImm32 {
+                dst: 8,
+                src: 9,
+                value: -93,
+            },
+            Instruction::RotRImmAlt32 {
+                dst: 10,
+                src: 11,
+                value: 94,
+            },
+            Instruction::LoadImmJumpInd {
+                base: 12,
+                dst: 0,
+                value: -95,
+                offset: 96,
+            },
+            Instruction::MulUpperSS {
+                dst: 1,
+                src1: 2,
+                src2: 3,
+            },
+            Instruction::MulUpperUU {
+                dst: 4,
+                src1: 5,
+                src2: 6,
+            },
+            Instruction::MulUpperSU {
+                dst: 7,
+                src1: 8,
+                src2: 9,
+            },
+            Instruction::RotL64 {
+                dst: 10,
+                src1: 11,
+                src2: 12,
+            },
+            Instruction::RotL32 {
+                dst: 0,
+                src1: 1,
+                src2: 2,
+            },
+            Instruction::RotR64 {
+                dst: 3,
+                src1: 4,
+                src2: 5,
+            },
+            Instruction::RotR32 {
+                dst: 6,
+                src1: 7,
+                src2: 8,
+            },
+            Instruction::AndInv {
+                dst: 9,
+                src1: 10,
+                src2: 11,
+            },
+            Instruction::OrInv {
+                dst: 12,
+                src1: 0,
+                src2: 1,
+            },
+            Instruction::Xnor {
+                dst: 2,
+                src1: 3,
+                src2: 4,
+            },
+            Instruction::Max {
+                dst: 5,
+                src1: 6,
+                src2: 7,
+            },
+            Instruction::MaxU {
+                dst: 8,
+                src1: 9,
+                src2: 10,
+            },
+            Instruction::Min {
+                dst: 11,
+                src1: 12,
+                src2: 0,
+            },
+            Instruction::MinU {
+                dst: 1,
+                src1: 2,
+                src2: 3,
+            },
+            Instruction::Ecalli { index: 0xDEAD_BEEF },
+            Instruction::Unknown {
+                opcode: 0xFE,
+                raw_bytes: vec![0xFE, 0xAA, 0x55],
+            },
+        ]
+    }
+
+    #[test]
+    fn test_decode_roundtrip_all_variants() {
+        for instr in sample_instructions() {
+            assert_decode_roundtrip(&instr);
+        }
+    }
+
+    #[test]
+    fn test_decode_roundtrip_immediate_edges() {
+        let edge_values = [
+            i32::MIN,
+            -8_388_608,
+            -32_768,
+            -128,
+            -1,
+            0,
+            1,
+            127,
+            32_767,
+            8_388_607,
+            i32::MAX,
+        ];
+
+        for &value in &edge_values {
+            assert_decode_roundtrip(&Instruction::LoadImm { reg: 0, value });
+            assert_decode_roundtrip(&Instruction::AddImm32 {
+                dst: 12,
+                src: 0,
+                value,
+            });
+            assert_decode_roundtrip(&Instruction::LoadU32 {
+                dst: 12,
+                address: value,
+            });
+            assert_decode_roundtrip(&Instruction::StoreImmU32 {
+                address: value,
+                value,
+            });
+            assert_decode_roundtrip(&Instruction::StoreImmIndU32 {
+                base: 12,
+                offset: value,
+                value,
+            });
+            assert_decode_roundtrip(&Instruction::LoadImmJump {
+                reg: 0,
+                value,
+                offset: value,
+            });
+            assert_decode_roundtrip(&Instruction::LoadImmJumpInd {
+                base: 12,
+                dst: 0,
+                value,
+                offset: value,
+            });
+        }
+
+        for index in [0u32, 1, 0xFF, 0x100, 0xFFFF, 0x1_0000, 0xFF_FFFF, u32::MAX] {
+            assert_decode_roundtrip(&Instruction::Ecalli { index });
+        }
+    }
+
+    #[test]
+    fn test_decode_rejects_empty_slice() {
+        let error = Instruction::decode(&[]).expect_err("empty input should fail");
+        assert!(matches!(error, Error::Internal(_)));
+    }
 
     #[test]
     fn test_three_reg_encoding() {
