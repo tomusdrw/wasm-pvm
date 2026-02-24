@@ -67,6 +67,7 @@ pub fn lower_function(
         constant_propagation_enabled: ctx.optimizations.constant_propagation,
         cross_block_cache_enabled: ctx.optimizations.cross_block_cache,
         register_allocation_enabled: ctx.optimizations.register_allocation,
+        fallthrough_jumps_enabled: ctx.optimizations.fallthrough_jumps,
     };
     let mut emitter = PvmEmitter::new(config, call_return_base);
 
@@ -109,9 +110,16 @@ pub fn lower_function(
         emitter.config.register_cache_enabled && emitter.config.cross_block_cache_enabled;
     let mut block_exit_cache: HashMap<BasicBlock<'_>, emitter::CacheSnapshot> = HashMap::new();
 
-    for bb in function.get_basic_blocks() {
+    let basic_blocks = function.get_basic_blocks();
+    for (block_idx, bb) in basic_blocks.iter().enumerate() {
+        let bb = *bb;
         let label = emitter.block_labels[&bb];
         let pred_info = emitter.block_single_pred.get(&bb).copied();
+
+        // Set next_block_label so emit_jump_to_label can skip jumps to the next block.
+        emitter.next_block_label = basic_blocks
+            .get(block_idx + 1)
+            .and_then(|next_bb| emitter.block_labels.get(next_bb).copied());
 
         let mut propagated = false;
         if use_cross_block_cache
@@ -154,6 +162,7 @@ pub fn lower_function(
             }
         }
     }
+    emitter.next_block_label = None;
 
     // Dead store elimination: remove SP-relative stores that are never loaded from.
     if ctx.optimizations.dead_store_elimination {

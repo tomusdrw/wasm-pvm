@@ -77,6 +77,9 @@ enum Commands {
 
         #[arg(long, help = "Disable dead function elimination")]
         no_dead_function_elim: bool,
+
+        #[arg(long, help = "Disable fallthrough jump elimination")]
+        no_fallthrough_jumps: bool,
     },
 }
 
@@ -104,6 +107,7 @@ fn main() -> Result<()> {
             no_cross_block_cache,
             no_register_alloc,
             no_dead_function_elim,
+            no_fallthrough_jumps,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -143,6 +147,7 @@ fn main() -> Result<()> {
                     cross_block_cache: !no_cross_block_cache,
                     register_allocation: !no_register_alloc,
                     dead_function_elimination: !no_dead_function_elim,
+                    fallthrough_jumps: !no_fallthrough_jumps,
                 },
             };
 

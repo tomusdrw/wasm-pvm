@@ -111,6 +111,9 @@ pub struct EmitterConfig {
 
     /// Whether register allocation (r5/r6 for long-lived values) is enabled.
     pub register_allocation_enabled: bool,
+
+    /// Whether fallthrough jump elimination is enabled.
+    pub fallthrough_jumps_enabled: bool,
 }
 
 /// PVM code emitter for a single function.
@@ -185,6 +188,11 @@ pub struct PvmEmitter<'ctx> {
     /// Allocated values are always write-through to stack slots, so a clobbered
     /// allocated register can be lazily reloaded from its slot on next use.
     alloc_reg_valid: [bool; 13],
+
+    /// Label of the next basic block in layout order.
+    /// When set, `emit_jump_to_label()` skips the Jump if the target matches,
+    /// letting execution fall through to the next block naturally.
+    pub next_block_label: Option<usize>,
 }
 
 /// Snapshot of the register cache state for cross-block propagation.
@@ -256,6 +264,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             has_calls: true, // conservative default
             regalloc: RegAllocResult::default(),
             alloc_reg_valid: [false; 13],
+            next_block_label: None,
         }
     }
 
@@ -339,6 +348,11 @@ impl<'ctx> PvmEmitter<'ctx> {
     }
 
     pub fn emit_jump_to_label(&mut self, label: usize) {
+        // If jumping to the next block in layout order, skip the Jump — execution
+        // will fall through naturally. define_label() emits a Fallthrough if needed.
+        if self.config.fallthrough_jumps_enabled && self.next_block_label == Some(label) {
+            return;
+        }
         let fixup_idx = self.instructions.len();
         self.fixups.push((fixup_idx, label));
         self.emit(Instruction::Jump { offset: 0 });

@@ -109,35 +109,35 @@ The compiler pipeline:
 - **Per-block register cache**: eliminates redundant loads when a value is reused shortly after being computed (~50% gas reduction)
 - **No `unsafe` code**: `deny(unsafe_code)` enforced at workspace level
 - **No floating point**: PVM lacks FP support; WASM floats are rejected at compile time
-- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--no-cross-block-cache`, `--no-register-alloc`
+- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--no-cross-block-cache`, `--no-register-alloc`, `--no-fallthrough-jumps`
 
 ### Benchmark: Optimizations Impact
 
-All PVM-level optimizations disabled vs enabled (default):
+All PVM-level optimizations enabled (default):
 
 | Benchmark | WASM size | JAM size | Gas Used |
 |-----------|----------|----------|----------|
-| add(5,7) | 66 B | 208 B | 39 |
-| fib(20) | 108 B | 268 B | 612 |
-| factorial(10) | 100 B | 245 B | 279 |
-| is_prime(25) | 160 B | 327 B | 82 |
-| AS fib(10) | 266 B | 786 B | 348 |
-| AS factorial(7) | 265 B | 796 B | 311 |
-| AS gcd(2017,200) | 260 B | 770 B | 212 |
-| AS decoder | 1.5 KB | 73.5 KB | 782 |
-| AS array | 1.4 KB | 72.7 KB | 687 |
-| anan-as PVM interpreter | 54.5 KB | 221.2 KB | - |
+| add(5,7) | 66 B | 201 B | 39 |
+| fib(20) | 108 B | 270 B | 612 |
+| factorial(10) | 100 B | 242 B | 269 |
+| is_prime(25) | 160 B | 329 B | 80 |
+| AS fib(10) | 266 B | 720 B | 337 |
+| AS factorial(7) | 265 B | 707 B | 283 |
+| AS gcd(2017,200) | 260 B | 699 B | 197 |
+| AS decoder | 1.5 KB | 73.1 KB | 753 |
+| AS array | 1.4 KB | 72.2 KB | 652 |
+| anan-as PVM interpreter | 54.5 KB | 214.4 KB | - |
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
 | Benchmark | JAM Size | Outer Gas | Direct Gas | Overhead |
 |-----------|----------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 1 B | 23,413 | - | - |
-| add(5,7) | 208 B | 1,190,590 | 39 | 30,528x |
-| AS fib(10) | 786 B | 1,786,299 | 348 | 5,132x |
-| JAM-SDK fib(10)\* | 25.4 KB | 6,856,481 | 42 | 163,249x |
-| Jambrains fib(10)\* | 61.1 KB | 6,728,752 | 1 | 6,728,752x |
-| JADE fib(10)\* | 67.3 KB | 18,671,683 | 504 | 37,046x |
+| TRAP (interpreter overhead) | 1 B | 22,730 | - | - |
+| add(5,7) | 201 B | 1,172,287 | 39 | 30,059x |
+| AS fib(10) | 720 B | 1,724,300 | 337 | 5,117x |
+| JAM-SDK fib(10)\* | 25.4 KB | 6,721,616 | 42 | 160,038x |
+| Jambrains fib(10)\* | 61.1 KB | 6,477,447 | 1 | 6,477,447x |
+| JADE fib(10)\* | 67.3 KB | 18,310,775 | 504 | 36,331x |
 
 \*JAM-SDK fib(10), Jambrains fib(10), and JADE fib(10) exit on unhandled host calls before the fibonacci computation runs. The gas cost reflects program parsing/loading only (26 KB, 61 KB, and 67 KB binaries respectively), not execution.
 
