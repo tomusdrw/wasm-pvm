@@ -112,6 +112,49 @@ fn emit_wasm_signed_overflow_trap(e: &mut PvmEmitter, lhs_reg: u8, rhs_reg: u8, 
     e.define_label(ok_label);
 }
 
+/// Build the immediate-form instruction for a commutative binary op (Add, Mul, And, Or, Xor).
+/// Returns `None` for non-commutative ops.
+fn commutative_imm_instruction(op: BinaryOp, is_32bit: bool, imm: i32) -> Option<Instruction> {
+    match (op, is_32bit) {
+        (BinaryOp::Add, true) => Some(Instruction::AddImm32 {
+            dst: TEMP_RESULT,
+            src: TEMP1,
+            value: imm,
+        }),
+        (BinaryOp::Add, false) => Some(Instruction::AddImm64 {
+            dst: TEMP_RESULT,
+            src: TEMP1,
+            value: imm,
+        }),
+        (BinaryOp::Mul, true) => Some(Instruction::MulImm32 {
+            dst: TEMP_RESULT,
+            src: TEMP1,
+            value: imm,
+        }),
+        (BinaryOp::Mul, false) => Some(Instruction::MulImm64 {
+            dst: TEMP_RESULT,
+            src: TEMP1,
+            value: imm,
+        }),
+        (BinaryOp::And, _) => Some(Instruction::AndImm {
+            dst: TEMP_RESULT,
+            src: TEMP1,
+            value: imm,
+        }),
+        (BinaryOp::Or, _) => Some(Instruction::OrImm {
+            dst: TEMP_RESULT,
+            src: TEMP1,
+            value: imm,
+        }),
+        (BinaryOp::Xor, _) => Some(Instruction::XorImm {
+            dst: TEMP_RESULT,
+            src: TEMP1,
+            value: imm,
+        }),
+        _ => None,
+    }
+}
+
 pub fn lower_binary_arith<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -128,16 +171,7 @@ pub fn lower_binary_arith<'ctx>(
     {
         let imm = rhs_const as i32;
         let folded = match (op, bits <= 32) {
-            (BinaryOp::Add, true) => Some(Instruction::AddImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Add, false) => Some(Instruction::AddImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
+            // Sub with constant RHS: `x - const` → `x + (-const)` (not commutative).
             (BinaryOp::Sub, true) if rhs_const != i64::from(i32::MIN) => {
                 Some(Instruction::AddImm32 {
                     dst: TEMP_RESULT,
@@ -152,31 +186,7 @@ pub fn lower_binary_arith<'ctx>(
                     value: -imm,
                 })
             }
-            (BinaryOp::And, _) => Some(Instruction::AndImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Or, _) => Some(Instruction::OrImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Xor, _) => Some(Instruction::XorImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Mul, true) => Some(Instruction::MulImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Mul, false) => Some(Instruction::MulImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
+            // Shift/rotate with constant RHS (not commutative).
             (BinaryOp::Shl, true) => Some(Instruction::ShloLImm32 {
                 dst: TEMP_RESULT,
                 src: TEMP1,
@@ -207,7 +217,8 @@ pub fn lower_binary_arith<'ctx>(
                 src: TEMP1,
                 value: imm,
             }),
-            _ => None, // Div/Rem: fall through (need div-by-zero trap).
+            // Commutative ops (Add, Mul, And, Or, Xor) and Div/Rem fallthrough.
+            _ => commutative_imm_instruction(op, bits <= 32, imm),
         };
         if let Some(instr) = folded {
             e.load_operand(lhs, TEMP1)?;
@@ -246,51 +257,9 @@ pub fn lower_binary_arith<'ctx>(
     // and --no-llvm-passes mode.
     if let Some(lhs_const) = try_get_constant(lhs)
         && i32::try_from(lhs_const).is_ok()
-        && matches!(
-            op,
-            BinaryOp::Add | BinaryOp::Mul | BinaryOp::And | BinaryOp::Or | BinaryOp::Xor
-        )
     {
         let imm = lhs_const as i32;
-        let folded = match (op, bits <= 32) {
-            (BinaryOp::Add, true) => Some(Instruction::AddImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Add, false) => Some(Instruction::AddImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Mul, true) => Some(Instruction::MulImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Mul, false) => Some(Instruction::MulImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::And, _) => Some(Instruction::AndImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Or, _) => Some(Instruction::OrImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            (BinaryOp::Xor, _) => Some(Instruction::XorImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
-                value: imm,
-            }),
-            _ => None,
-        };
-        if let Some(instr) = folded {
+        if let Some(instr) = commutative_imm_instruction(op, bits <= 32, imm) {
             e.load_operand(rhs, TEMP1)?;
             e.emit(instr);
             e.store_to_slot(slot, TEMP_RESULT);
