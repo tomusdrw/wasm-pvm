@@ -9,8 +9,440 @@
 use std::fmt::Write;
 
 use proptest::prelude::*;
-use wasm_pvm::Opcode;
 use wasm_pvm::test_harness::*;
+use wasm_pvm::{Instruction, Opcode};
+
+#[allow(clippy::too_many_lines)]
+fn instruction_roundtrip_strategy() -> impl Strategy<Value = Instruction> {
+    let reg = 0u8..13;
+
+    prop_oneof![
+        Just(Instruction::Trap),
+        Just(Instruction::Fallthrough),
+        (reg.clone(), any::<u64>()).prop_map(|(reg, value)| Instruction::LoadImm64 { reg, value }),
+        any::<i32>().prop_map(|offset| Instruction::Jump { offset }),
+        any::<u32>().prop_map(|index| Instruction::Ecalli { index }),
+        (reg.clone(), reg.clone(), any::<i32>(), any::<i32>()).prop_map(
+            |(base, dst, value, offset)| {
+                Instruction::LoadImmJumpInd {
+                    base,
+                    dst,
+                    value,
+                    offset,
+                }
+            }
+        ),
+        (0u8..41, reg.clone(), reg.clone(), reg.clone()).prop_map(|(kind, dst, src1, src2)| {
+            match kind {
+                0 => Instruction::Add32 { dst, src1, src2 },
+                1 => Instruction::Sub32 { dst, src1, src2 },
+                2 => Instruction::Mul32 { dst, src1, src2 },
+                3 => Instruction::DivU32 { dst, src1, src2 },
+                4 => Instruction::DivS32 { dst, src1, src2 },
+                5 => Instruction::RemU32 { dst, src1, src2 },
+                6 => Instruction::RemS32 { dst, src1, src2 },
+                7 => Instruction::ShloL32 { dst, src1, src2 },
+                8 => Instruction::ShloR32 { dst, src1, src2 },
+                9 => Instruction::SharR32 { dst, src1, src2 },
+                10 => Instruction::Add64 { dst, src1, src2 },
+                11 => Instruction::Sub64 { dst, src1, src2 },
+                12 => Instruction::Mul64 { dst, src1, src2 },
+                13 => Instruction::DivU64 { dst, src1, src2 },
+                14 => Instruction::DivS64 { dst, src1, src2 },
+                15 => Instruction::RemU64 { dst, src1, src2 },
+                16 => Instruction::RemS64 { dst, src1, src2 },
+                17 => Instruction::ShloL64 { dst, src1, src2 },
+                18 => Instruction::ShloR64 { dst, src1, src2 },
+                19 => Instruction::SharR64 { dst, src1, src2 },
+                20 => Instruction::SetLtU { dst, src1, src2 },
+                21 => Instruction::SetLtS { dst, src1, src2 },
+                22 => Instruction::CmovIz {
+                    dst,
+                    src: src1,
+                    cond: src2,
+                },
+                23 => Instruction::CmovNz {
+                    dst,
+                    src: src1,
+                    cond: src2,
+                },
+                24 => Instruction::And { dst, src1, src2 },
+                25 => Instruction::Xor { dst, src1, src2 },
+                26 => Instruction::Or { dst, src1, src2 },
+                27 => Instruction::MulUpperSS { dst, src1, src2 },
+                28 => Instruction::MulUpperUU { dst, src1, src2 },
+                29 => Instruction::MulUpperSU { dst, src1, src2 },
+                30 => Instruction::RotL64 { dst, src1, src2 },
+                31 => Instruction::RotL32 { dst, src1, src2 },
+                32 => Instruction::RotR64 { dst, src1, src2 },
+                33 => Instruction::RotR32 { dst, src1, src2 },
+                34 => Instruction::AndInv { dst, src1, src2 },
+                35 => Instruction::OrInv { dst, src1, src2 },
+                36 => Instruction::Xnor { dst, src1, src2 },
+                37 => Instruction::Max { dst, src1, src2 },
+                38 => Instruction::MaxU { dst, src1, src2 },
+                39 => Instruction::Min { dst, src1, src2 },
+                40 => Instruction::MinU { dst, src1, src2 },
+                _ => unreachable!("kind bounded to 0..41"),
+            }
+        }),
+        (0u8..12, reg.clone(), reg.clone()).prop_map(|(kind, dst, src)| match kind {
+            0 => Instruction::MoveReg { dst, src },
+            1 => Instruction::Sbrk { dst, src },
+            2 => Instruction::CountSetBits64 { dst, src },
+            3 => Instruction::CountSetBits32 { dst, src },
+            4 => Instruction::LeadingZeroBits64 { dst, src },
+            5 => Instruction::LeadingZeroBits32 { dst, src },
+            6 => Instruction::TrailingZeroBits64 { dst, src },
+            7 => Instruction::TrailingZeroBits32 { dst, src },
+            8 => Instruction::SignExtend8 { dst, src },
+            9 => Instruction::SignExtend16 { dst, src },
+            10 => Instruction::ZeroExtend16 { dst, src },
+            11 => Instruction::ReverseBytes { dst, src },
+            _ => unreachable!("kind bounded to 0..12"),
+        }),
+        (0u8..42, reg.clone(), reg.clone(), any::<i32>()).prop_map(|(kind, lo, hi, value)| {
+            match kind {
+                0 => Instruction::AddImm32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                1 => Instruction::AddImm64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                2 => Instruction::AndImm {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                3 => Instruction::XorImm {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                4 => Instruction::OrImm {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                5 => Instruction::MulImm32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                6 => Instruction::MulImm64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                7 => Instruction::SetLtUImm {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                8 => Instruction::SetLtSImm {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                9 => Instruction::ShloLImm32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                10 => Instruction::ShloRImm32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                11 => Instruction::SharRImm32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                12 => Instruction::ShloLImm64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                13 => Instruction::ShloRImm64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                14 => Instruction::SharRImm64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                15 => Instruction::NegAddImm32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                16 => Instruction::NegAddImm64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                17 => Instruction::SetGtUImm {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                18 => Instruction::SetGtSImm {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                19 => Instruction::CmovIzImm {
+                    dst: lo,
+                    cond: hi,
+                    value,
+                },
+                20 => Instruction::CmovNzImm {
+                    dst: lo,
+                    cond: hi,
+                    value,
+                },
+                21 => Instruction::LoadIndU8 {
+                    dst: lo,
+                    base: hi,
+                    offset: value,
+                },
+                22 => Instruction::LoadIndI8 {
+                    dst: lo,
+                    base: hi,
+                    offset: value,
+                },
+                23 => Instruction::LoadIndU16 {
+                    dst: lo,
+                    base: hi,
+                    offset: value,
+                },
+                24 => Instruction::LoadIndI16 {
+                    dst: lo,
+                    base: hi,
+                    offset: value,
+                },
+                25 => Instruction::LoadIndU32 {
+                    dst: lo,
+                    base: hi,
+                    offset: value,
+                },
+                26 => Instruction::LoadIndI32 {
+                    dst: lo,
+                    base: hi,
+                    offset: value,
+                },
+                27 => Instruction::LoadIndU64 {
+                    dst: lo,
+                    base: hi,
+                    offset: value,
+                },
+                28 => Instruction::StoreIndU8 {
+                    base: hi,
+                    src: lo,
+                    offset: value,
+                },
+                29 => Instruction::StoreIndU16 {
+                    base: hi,
+                    src: lo,
+                    offset: value,
+                },
+                30 => Instruction::StoreIndU32 {
+                    base: hi,
+                    src: lo,
+                    offset: value,
+                },
+                31 => Instruction::StoreIndU64 {
+                    base: hi,
+                    src: lo,
+                    offset: value,
+                },
+                32 => Instruction::ShloLImmAlt32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                33 => Instruction::ShloRImmAlt32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                34 => Instruction::SharRImmAlt32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                35 => Instruction::ShloLImmAlt64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                36 => Instruction::ShloRImmAlt64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                37 => Instruction::SharRImmAlt64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                38 => Instruction::RotRImm64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                39 => Instruction::RotRImmAlt64 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                40 => Instruction::RotRImm32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                41 => Instruction::RotRImmAlt32 {
+                    dst: lo,
+                    src: hi,
+                    value,
+                },
+                _ => unreachable!("kind bounded to 0..42"),
+            }
+        }),
+        (0u8..13, reg.clone(), any::<i32>()).prop_map(|(kind, reg, value)| match kind {
+            0 => Instruction::LoadImm { reg, value },
+            1 => Instruction::JumpInd { reg, offset: value },
+            2 => Instruction::LoadU8 {
+                dst: reg,
+                address: value,
+            },
+            3 => Instruction::LoadI8 {
+                dst: reg,
+                address: value,
+            },
+            4 => Instruction::LoadU16 {
+                dst: reg,
+                address: value,
+            },
+            5 => Instruction::LoadI16 {
+                dst: reg,
+                address: value,
+            },
+            6 => Instruction::LoadU32 {
+                dst: reg,
+                address: value,
+            },
+            7 => Instruction::LoadI32 {
+                dst: reg,
+                address: value,
+            },
+            8 => Instruction::LoadU64 {
+                dst: reg,
+                address: value,
+            },
+            9 => Instruction::StoreU8 {
+                src: reg,
+                address: value,
+            },
+            10 => Instruction::StoreU16 {
+                src: reg,
+                address: value,
+            },
+            11 => Instruction::StoreU32 {
+                src: reg,
+                address: value,
+            },
+            12 => Instruction::StoreU64 {
+                src: reg,
+                address: value,
+            },
+            _ => unreachable!("kind bounded to 0..13"),
+        }),
+        (0u8..11, reg.clone(), any::<i32>(), any::<i32>()).prop_map(
+            |(kind, reg, value, offset)| match kind {
+                0 => Instruction::LoadImmJump { reg, value, offset },
+                1 => Instruction::BranchEqImm { reg, value, offset },
+                2 => Instruction::BranchNeImm { reg, value, offset },
+                3 => Instruction::BranchLtUImm { reg, value, offset },
+                4 => Instruction::BranchLeUImm { reg, value, offset },
+                5 => Instruction::BranchGeUImm { reg, value, offset },
+                6 => Instruction::BranchGtUImm { reg, value, offset },
+                7 => Instruction::BranchLtSImm { reg, value, offset },
+                8 => Instruction::BranchLeSImm { reg, value, offset },
+                9 => Instruction::BranchGeSImm { reg, value, offset },
+                10 => Instruction::BranchGtSImm { reg, value, offset },
+                _ => unreachable!("kind bounded to 0..11"),
+            }
+        ),
+        (0u8..6, reg.clone(), reg.clone(), any::<i32>()).prop_map(|(kind, reg1, reg2, offset)| {
+            match kind {
+                0 => Instruction::BranchEq { reg1, reg2, offset },
+                1 => Instruction::BranchNe { reg1, reg2, offset },
+                2 => Instruction::BranchLtU { reg1, reg2, offset },
+                3 => Instruction::BranchLtS { reg1, reg2, offset },
+                4 => Instruction::BranchGeU { reg1, reg2, offset },
+                5 => Instruction::BranchGeS { reg1, reg2, offset },
+                _ => unreachable!("kind bounded to 0..6"),
+            }
+        }),
+        (0u8..4, reg.clone(), any::<i32>(), any::<i32>()).prop_map(
+            |(kind, base, offset, value)| match kind {
+                0 => Instruction::StoreImmIndU8 {
+                    base,
+                    offset,
+                    value,
+                },
+                1 => Instruction::StoreImmIndU16 {
+                    base,
+                    offset,
+                    value,
+                },
+                2 => Instruction::StoreImmIndU32 {
+                    base,
+                    offset,
+                    value,
+                },
+                3 => Instruction::StoreImmIndU64 {
+                    base,
+                    offset,
+                    value,
+                },
+                _ => unreachable!("kind bounded to 0..4"),
+            }
+        ),
+        (0u8..4, any::<i32>(), any::<i32>()).prop_map(|(kind, address, value)| match kind {
+            0 => Instruction::StoreImmU8 { address, value },
+            1 => Instruction::StoreImmU16 { address, value },
+            2 => Instruction::StoreImmU32 { address, value },
+            3 => Instruction::StoreImmU64 { address, value },
+            _ => unreachable!("kind bounded to 0..4"),
+        }),
+        (231u8..=255u8, prop::collection::vec(any::<u8>(), 0..4)).prop_map(|(opcode, mut tail)| {
+            let mut raw_bytes = vec![opcode];
+            raw_bytes.append(&mut tail);
+            Instruction::Unknown { opcode, raw_bytes }
+        }),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    #[test]
+    fn instruction_decode_encode_roundtrip(instr in instruction_roundtrip_strategy()) {
+        let encoded = instr.encode();
+        let (decoded, consumed) = Instruction::decode(&encoded).expect("decode should succeed");
+        prop_assert_eq!(consumed, encoded.len(), "consumed length mismatch");
+        prop_assert_eq!(decoded, instr, "decode(encode(instr)) mismatch");
+    }
+}
 
 // =============================================================================
 // Compilation Safety: valid WAT modules never panic during compilation

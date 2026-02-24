@@ -6,7 +6,7 @@
 
 | File | Lines | Role |
 |------|-------|------|
-| `instruction.rs` | ~700 | Instruction enum, encoding logic |
+| `instruction.rs` | ~700 | Instruction enum, encoding/decoding logic |
 | `opcode.rs` | ~130 | Opcode constants (~100 opcodes) |
 | `blob.rs` | 143 | Program blob format with jump table |
 | `peephole.rs` | ~290 | Post-codegen peephole optimizer (Fallthroughs, truncation NOPs, dead stores) |
@@ -44,6 +44,13 @@ pub enum Instruction {
 - `encode_imm(value)` - Variable-length signed immediate (0-4 bytes)
 - `encode_uimm(value)` - Variable-length unsigned immediate (0-4 bytes)
 - `encode_var_u32(value)` - LEB128-style variable int
+
+### Decoding Helpers
+
+- `Instruction::decode(bytes)` dispatches by opcode and returns `(instruction, consumed_bytes)`
+- `decode_imm_signed` / `decode_imm_unsigned` handle 0-4 byte immediate expansion
+- `decode_offset_at` reads fixed 4-byte branch/jump offsets
+- For formats where the trailing immediate has no explicit length (`OneImm`, `OneRegOneImm`, `TwoRegOneImm`, `TwoImm`, `OneRegTwoImm`, `TwoRegTwoImm`), decode consumes the remaining bytes as that immediate
 
 ### Terminating Instructions
 Instructions that end a basic block:
@@ -90,7 +97,7 @@ pub fn dest_reg(&self) -> Option<u8> {
 ## Testing
 
 Unit tests in same files under `#[cfg(test)]`:
-- `instruction.rs`: Tests encoding roundtrip
+- `instruction.rs`: Tests encoding and decode(encode) roundtrip coverage for all variants
 - `blob.rs`: Tests mask packing, varint encoding
 
 ## Gray Paper Reference

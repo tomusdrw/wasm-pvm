@@ -104,7 +104,7 @@ crates/
 │       │   ├── wasm_module.rs (WASM section parsing)
 │       │   └── memory_layout.rs (PVM memory address constants)
 │       ├── pvm/           # PVM instruction definitions
-│       │   ├── instruction.rs  # Instruction enum + encoding
+│       │   ├── instruction.rs  # Instruction enum + encode/decode helpers
 │       │   ├── opcode.rs       # Opcode constants
 │       │   ├── blob.rs         # Program blob format
 │       │   └── peephole.rs     # Post-codegen peephole optimizer
@@ -187,7 +187,7 @@ crates/
 | Add PVM lowering (calls) | `llvm_backend/calls.rs` | Direct/indirect calls, import stubs |
 | Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` | PVM + LLVM intrinsic lowering |
 | Modify emitter core | `llvm_backend/emitter.rs` | EmitterConfig (per-function config) + PvmEmitter (mutable state) |
-| Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encoding |
+| Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encode/decode wiring |
 | Modify register allocator | `llvm_backend/regalloc.rs` | Live range computation, linear scan, allocatable regs |
 | Modify peephole optimizer | `pvm/peephole.rs` | Add patterns, update fixup remapping |
 | Fix WASM parsing | `translate/wasm_module.rs` | `WasmModule::parse()` |
