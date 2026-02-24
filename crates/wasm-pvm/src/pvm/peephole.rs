@@ -194,16 +194,66 @@ fn is_32bit_sign_extending_producer(instr: &Instruction) -> bool {
 
 /// Returns true when `instr` writes a value that makes
 /// `(x << 32) >> 32` redundant for `reg`.
+///
+/// This must be restricted to producers that already have zeroed upper 32 bits.
 fn is_redundant_zext_source(instr: &Instruction, reg: u8) -> bool {
     if instr.dest_reg() != Some(reg) {
         return false;
     }
 
-    is_32bit_sign_extending_producer(instr)
-        || matches!(
-            instr,
-            Instruction::LoadIndU32 { .. } | Instruction::LoadU32 { .. }
-        )
+    matches!(
+        instr,
+        Instruction::LoadIndU32 { .. }
+            | Instruction::LoadU32 { .. }
+            | Instruction::ZeroExtend16 { .. }
+    ) || matches!(instr, Instruction::LoadImm { value, .. } if *value >= 0)
+}
+
+/// Walk backwards to find the source of `reg` at `load_idx`.
+///
+/// Allows unrelated in-between instructions and follows `MoveReg` chains,
+/// but does not cross label targets, terminators, or ecalli boundaries.
+fn has_redundant_zext_source(
+    instructions: &[Instruction],
+    offsets: &[usize],
+    label_offsets: &HashSet<usize>,
+    load_idx: usize,
+    reg: u8,
+) -> bool {
+    // If the sequence starts at a label target, the value may come from
+    // multiple predecessors; avoid cross-block reasoning in peephole.
+    if label_offsets.contains(&offsets[load_idx]) {
+        return false;
+    }
+
+    let mut tracked_reg = reg;
+    let mut idx = load_idx;
+
+    while idx > 0 {
+        idx -= 1;
+        let instr = &instructions[idx];
+
+        // Don't reason across block boundaries.
+        if label_offsets.contains(&offsets[idx]) {
+            return false;
+        }
+        if instr.is_terminating() || matches!(instr, Instruction::Ecalli { .. }) {
+            return false;
+        }
+
+        if instr.dest_reg() != Some(tracked_reg) {
+            continue;
+        }
+
+        match instr {
+            Instruction::MoveReg { dst, src } if *dst == tracked_reg => {
+                tracked_reg = *src;
+            }
+            _ => return is_redundant_zext_source(instr, tracked_reg),
+        }
+    }
+
+    false
 }
 
 /// Run peephole optimizations on a function's instruction stream.
@@ -296,6 +346,7 @@ pub fn optimize(
         // establishes the intended 32-bit value shape.
         if i > 0
             && i + 2 < len
+            && !label_offsets.contains(&offsets[i])
             && !label_offsets.contains(&offsets[i + 1])
             && !label_offsets.contains(&offsets[i + 2])
             && let Instruction::LoadImm {
@@ -317,7 +368,7 @@ pub fn optimize(
             && *shl_dst == *shl_src1
             && *shr_dst == *shl_dst
             && *shr_src1 == *shl_dst
-            && is_redundant_zext_source(&instructions[i - 1], *shl_dst)
+            && has_redundant_zext_source(instructions, &offsets, &label_offsets, i, *shl_dst)
         {
             keep[i + 1] = false;
             keep[i + 2] = false;
@@ -1216,12 +1267,12 @@ mod tests {
     }
 
     #[test]
-    fn removes_zext_shift_pair_after_add32_source() {
+    fn removes_zext_shift_pair_after_load_ind_u32_source() {
         let mut instrs = vec![
-            Instruction::Add32 {
+            Instruction::LoadIndU32 {
                 dst: 5,
-                src1: 3,
-                src2: 4,
+                base: 1,
+                offset: 16,
             },
             Instruction::LoadImm { reg: 2, value: 32 },
             Instruction::ShloL64 {
@@ -1240,7 +1291,8 @@ mod tests {
         let mut call_fixups = vec![];
         let mut indirect_call_fixups = vec![];
         // Non-empty labels disables DCE so this test exercises only peephole pattern matching.
-        let mut labels = vec![Some(0)];
+        // Use an unreachable label offset so it doesn't act as a block boundary.
+        let mut labels = vec![Some(usize::MAX)];
 
         optimize(
             &mut instrs,
@@ -1251,7 +1303,14 @@ mod tests {
         );
 
         assert_eq!(instrs.len(), 3);
-        assert!(matches!(instrs[0], Instruction::Add32 { dst: 5, .. }));
+        assert!(matches!(
+            instrs[0],
+            Instruction::LoadIndU32 {
+                dst: 5,
+                base: 1,
+                offset: 16
+            }
+        ));
         assert!(matches!(
             instrs[1],
             Instruction::LoadImm { reg: 2, value: 32 }
@@ -1263,23 +1322,73 @@ mod tests {
     }
 
     #[test]
-    fn keeps_zext_shift_pair_after_non_32bit_source() {
+    fn removes_zext_shift_pair_with_non_clobbering_gap_and_move() {
         let mut instrs = vec![
-            Instruction::Add64 {
-                dst: 5,
-                src1: 3,
-                src2: 4,
+            Instruction::LoadIndU32 {
+                dst: 4,
+                base: 1,
+                offset: 24,
             },
-            Instruction::LoadImm { reg: 2, value: 32 },
+            Instruction::LoadImm { reg: 9, value: 7 },
+            Instruction::MoveReg { dst: 2, src: 4 },
+            Instruction::LoadImm { reg: 3, value: 32 },
             Instruction::ShloL64 {
-                dst: 5,
-                src1: 5,
-                src2: 2,
+                dst: 2,
+                src1: 2,
+                src2: 3,
             },
             Instruction::ShloR64 {
-                dst: 5,
-                src1: 5,
-                src2: 2,
+                dst: 2,
+                src1: 2,
+                src2: 3,
+            },
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![];
+        // Disable DCE without introducing a reachable label boundary.
+        let mut labels = vec![Some(usize::MAX)];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        assert_eq!(instrs.len(), 4);
+        assert!(matches!(instrs[0], Instruction::LoadIndU32 { dst: 4, .. }));
+        assert!(matches!(
+            instrs[1],
+            Instruction::LoadImm { reg: 9, value: 7 }
+        ));
+        assert!(matches!(instrs[2], Instruction::MoveReg { dst: 2, src: 4 }));
+        assert!(matches!(
+            instrs[3],
+            Instruction::LoadImm { reg: 3, value: 32 }
+        ));
+    }
+
+    #[test]
+    fn keeps_zext_shift_pair_after_sign_extending_source_via_move() {
+        let mut instrs = vec![
+            Instruction::Add32 {
+                dst: 4,
+                src1: 3,
+                src2: 5,
+            },
+            Instruction::MoveReg { dst: 2, src: 4 },
+            Instruction::LoadImm { reg: 3, value: 32 },
+            Instruction::ShloL64 {
+                dst: 2,
+                src1: 2,
+                src2: 3,
+            },
+            Instruction::ShloR64 {
+                dst: 2,
+                src1: 2,
+                src2: 3,
             },
         ];
         let mut fixups = vec![];
@@ -1295,9 +1404,9 @@ mod tests {
             &mut labels,
         );
 
-        assert_eq!(instrs.len(), 4);
-        assert!(matches!(instrs[2], Instruction::ShloL64 { .. }));
-        assert!(matches!(instrs[3], Instruction::ShloR64 { .. }));
+        assert_eq!(instrs.len(), 5);
+        assert!(matches!(instrs[3], Instruction::ShloL64 { .. }));
+        assert!(matches!(instrs[4], Instruction::ShloR64 { .. }));
     }
 
     #[test]

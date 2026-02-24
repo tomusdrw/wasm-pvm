@@ -205,9 +205,12 @@ Accumulated knowledge from development. Update after every task.
 ### Peephole ZExt Shift-Pair Pattern
 
 - The backend emits i32 zero-extension as `LoadImm 32` + `ShloL64` + `ShloR64`
-- Peephole removes the `ShloL64+ShloR64` pair when it follows a compatible source producer:
-  - 32-bit sign-extending ALU producers (`Add32`, `Mul32`, `AddImm32`, etc.)
+- Peephole removes the `ShloL64+ShloR64` pair only when the source is already known zero-extended:
   - `LoadIndU32` / `LoadU32`
+  - `ZeroExtend16`
+  - non-negative `LoadImm`
+- Matcher can walk backward through non-clobbering instructions and `MoveReg` chains to find the defining source
+- It intentionally avoids crossing label targets, terminators, or `Ecalli` boundaries
 - Safety guard: do not remove the shift instructions if either shift is a label target
 - `LoadImm 32` is intentionally left in place by this pass; DCE may remove it in separate no-label flows
 

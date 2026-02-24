@@ -75,7 +75,7 @@ pub fn dest_reg(&self) -> Option<u8> {
 ### Peephole Notes
 - Dead-code elimination runs only when a function has no labels (single-block code). Multi-block
   functions skip DCE to avoid incorrect liveness across control flow.
-- ZExt shift-pair cleanup matches `LoadImm{32} + ShloL64 + ShloR64` and removes the shift pair for compatible 32-bit producers; it skips the transform when either shift is a label target.
+- ZExt shift-pair cleanup matches `LoadImm{32} + ShloL64 + ShloR64`, walks backward through non-clobbering instructions/`MoveReg`, and removes the shift pair only for known zero-extended sources (`Load{Ind}U32`, `ZeroExtend16`, non-negative `LoadImm`). It skips the transform when control-flow boundaries (labels/terminators/ecalli) are encountered.
 - DCE must track side-effects for all store variants: `StoreIndU8/U16/U32/U64`, `StoreImmIndU8/U16/U32/U64`, `StoreImmU8/U16/U32/U64`, `StoreU8/U16/U32/U64`
 - DCE must track memory loads (can-trap, track dst) for all load variants: `LoadIndU8/I8/U16/I16/U32/I32/U64`, `LoadU8/I8/U16/I16/U32/I32/U64`
 
