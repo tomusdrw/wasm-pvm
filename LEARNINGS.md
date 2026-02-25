@@ -264,7 +264,7 @@ Accumulated knowledge from development. Update after every task.
 
 ### Linear-Scan Register Allocation
 
-- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to available leaf callee-saved registers (r9-r12)
+- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to available callee-saved registers (r9-r12) beyond parameter count.
 - Operates on LLVM IR before PVM lowering; produces `ValKey` → physical register mapping
 - `load_operand` checks regalloc before slot lookup: uses `MoveReg` from allocated reg instead of `LoadIndU64` from stack
 - `store_to_slot` uses write-through: copies to allocated reg AND stores to stack; DSE removes the stack store if never loaded
@@ -272,6 +272,23 @@ Accumulated knowledge from development. Update after every task.
 - Clobbered allocated scratch regs (when present) are handled with lazy invalidation/reload instead of eager spill+reload
 - Values with ≤1 use are skipped (not worth a register)
 - Loop extension: back-edges detected by successor having lower block index; live ranges extended to cover the back-edge source
+- `linear_scan` must track active assignments separately from final assignments:
+  - naturally expired intervals should remain in the final `val_to_reg`/`slot_to_reg` maps (their earlier uses still benefit),
+  - evicted intervals must be removed from final mapping (whole-interval mapping is no longer valid after eviction).
+- Added unit-test coverage for both cases (non-overlapping reuse and eviction dropping).
+- Added targeted benchmark fixture `tests/fixtures/wat/regalloc-two-loops.jam.wat` and benchmark row `regalloc two loops(500)`.
+- Added regalloc instrumentation:
+  - `regalloc::run()` logs candidate/assignment stats at target `wasm_pvm::regalloc` (enable via `RUST_LOG=wasm_pvm::regalloc=debug`).
+  - `lower_function()` logs per-function summary including allocation usage counters (`alloc_load_hits`, `alloc_store_hits`).
+- Instrumentation root cause and fix:
+  - Root cause was `allocatable_regs=0` in non-leaf functions because only leaf functions exposed r9-r12 to regalloc.
+  - Fix: expose available r9-r12 registers in both leaf and non-leaf functions; invalidate allocated mappings after calls (call setup reuses r9-r12).
+  - Example (`regalloc-two-loops`): `allocatable_regs=2`, `allocated_values=4`, `alloc_load_hits=11`, `alloc_store_hits=8`.
+- Non-leaf stabilization:
+  - Reserve outgoing call-argument registers (r9.. by max call arity) from the non-leaf allocatable set.
+  - Reset allocated-register validity at label boundaries (`define_label` / `define_label_preserving_cache`) because this state is not path-sensitive and not snapshot/restored by cross-block cache propagation.
+  - Without boundary reset, large workloads (notably `anan-as-compiler.jam`) can miscompile under pvm-in-pvm despite direct tests passing.
+- Post-fix benchmark shape: consistent JAM size reductions from regalloc, but gas/time gains are workload-dependent and often near-noise on current microbenchmarks.
 
 ### RW Data Trimming
 

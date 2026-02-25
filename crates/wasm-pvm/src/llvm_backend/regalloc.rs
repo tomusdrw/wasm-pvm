@@ -8,8 +8,9 @@
 //   - `BASE_ALLOCATABLE_REGS` is currently empty: we intentionally avoid global
 //     allocation of r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) because several lowering
 //     paths reuse them as scratch registers.
-//   - r9-r12 (`abi::FIRST_LOCAL_REG`..+4) remain available in leaf functions only,
-//     for registers beyond the parameter count.
+//   - r9-r12 (`abi::FIRST_LOCAL_REG`..+4) are available beyond parameter count
+//     in both leaf and non-leaf functions. Non-leaf functions invalidate
+//     allocated callee regs after calls since call argument setup reuses r9-r12.
 //
 // The allocator operates on LLVM IR (before PVM lowering) and produces a
 // mapping from `ValKey` → physical register. The emitter then uses this mapping
@@ -35,8 +36,8 @@ use super::successors::collect_successors;
 /// Base registers available for allocation.
 ///
 /// We currently avoid allocating r5/r6 globally because they are reused as
-/// scratch registers by several lowering paths. Leaf-only callee-saved
-/// allocation (r9-r12, when available) remains enabled below.
+/// scratch registers by several lowering paths. Callee-saved allocation
+/// (r9-r12, when available) is configured below.
 const BASE_ALLOCATABLE_REGS: &[u8] = &[];
 
 /// A live interval for an SSA value.
@@ -61,12 +62,32 @@ pub struct RegAllocResult {
     pub slot_to_reg: HashMap<i32, u8>,
     /// Reverse: physical register → stack slot offset (for spill/reload).
     pub reg_to_slot: HashMap<u8, i32>,
+    /// Instrumentation stats for this function's allocation run.
+    pub stats: RegAllocStats,
+}
+
+/// Instrumentation counters for register allocation.
+#[derive(Debug, Clone, Default)]
+pub struct RegAllocStats {
+    /// Count of stack-slotted values seen by regalloc.
+    pub total_values: usize,
+    /// Number of candidate live intervals after filtering.
+    pub total_intervals: usize,
+    /// Whether a back-edge loop was detected.
+    pub has_loops: bool,
+    /// Number of physical registers made available to linear scan.
+    pub allocatable_regs: usize,
+    /// Maximum number of direct call arguments used by this function.
+    pub max_call_args: usize,
+    /// Number of values that received a final register assignment.
+    pub allocated_values: usize,
+    /// Why allocation was skipped, if applicable.
+    pub skipped_reason: Option<&'static str>,
 }
 
 /// Run register allocation for a function.
 ///
 /// `value_slots` maps `ValKey` → stack slot offset (from the pre-scan bump allocator).
-/// `is_leaf` indicates whether the function contains no call instructions.
 /// `num_params` is the number of function parameters (for determining available callee-saved regs).
 pub fn run(
     function: FunctionValue<'_>,
@@ -74,39 +95,117 @@ pub fn run(
     is_leaf: bool,
     num_params: usize,
 ) -> RegAllocResult {
+    let fn_name = function.get_name().to_string_lossy().to_string();
+    let mut stats = RegAllocStats {
+        total_values: value_slots.len(),
+        ..RegAllocStats::default()
+    };
+
     let blocks = function.get_basic_blocks();
     if blocks.is_empty() {
-        return RegAllocResult::default();
+        stats.skipped_reason = Some("no_blocks");
+        tracing::debug!(
+            target: "wasm_pvm::regalloc",
+            function = %fn_name,
+            is_leaf,
+            num_params,
+            total_values = stats.total_values,
+            skipped_reason = stats.skipped_reason,
+            "regalloc skipped"
+        );
+        return RegAllocResult {
+            stats,
+            ..RegAllocResult::default()
+        };
     }
 
     // Phase 1: Linearize instructions and compute block index ranges.
     let (instr_index, block_ranges) = linearize(&blocks);
+    let max_call_args = max_call_args(function);
+    stats.max_call_args = max_call_args;
 
     // Phase 2: Compute live intervals + detect loops.
     let (intervals, has_loops) =
         compute_live_intervals(&blocks, &instr_index, &block_ranges, value_slots);
+    stats.has_loops = has_loops;
+    stats.total_intervals = intervals.len();
 
     // Skip allocation for functions without loops — the per-block register cache
     // already handles within-block forwarding, and spill/reload around calls
     // would be a net cost.
-    if !has_loops || intervals.is_empty() {
-        return RegAllocResult::default();
+    if !has_loops {
+        stats.skipped_reason = Some("no_loops");
+        tracing::debug!(
+            target: "wasm_pvm::regalloc",
+            function = %fn_name,
+            is_leaf,
+            num_params,
+            total_values = stats.total_values,
+            total_intervals = stats.total_intervals,
+            has_loops = stats.has_loops,
+            skipped_reason = stats.skipped_reason,
+            "regalloc skipped"
+        );
+        return RegAllocResult {
+            stats,
+            ..RegAllocResult::default()
+        };
+    }
+    if intervals.is_empty() {
+        stats.skipped_reason = Some("no_candidate_intervals");
+        tracing::debug!(
+            target: "wasm_pvm::regalloc",
+            function = %fn_name,
+            is_leaf,
+            num_params,
+            total_values = stats.total_values,
+            total_intervals = stats.total_intervals,
+            has_loops = stats.has_loops,
+            skipped_reason = stats.skipped_reason,
+            "regalloc skipped"
+        );
+        return RegAllocResult {
+            stats,
+            ..RegAllocResult::default()
+        };
     }
 
     // Phase 3: Build the allocatable register set.
     let mut allocatable_regs: Vec<u8> = BASE_ALLOCATABLE_REGS.to_vec();
 
-    // For leaf functions, add unused callee-saved registers (r9-r12) beyond
-    // parameter count. These are saved/restored in prologue/epilogue anyway,
-    // so using them for allocation is free.
-    if is_leaf {
-        for i in num_params..crate::abi::MAX_LOCAL_REGS {
-            allocatable_regs.push(crate::abi::FIRST_LOCAL_REG + i as u8);
-        }
+    // Add callee-saved registers (r9-r12) beyond parameter count.
+    // For non-leaf functions, reserve outgoing argument registers (r9..)
+    // based on the function's max call arity, since call setup writes them.
+    let first_alloc_idx = if is_leaf {
+        num_params
+    } else {
+        num_params.max(max_call_args.min(crate::abi::MAX_LOCAL_REGS))
+    };
+    for i in first_alloc_idx..crate::abi::MAX_LOCAL_REGS {
+        allocatable_regs.push(crate::abi::FIRST_LOCAL_REG + i as u8);
     }
+    stats.allocatable_regs = allocatable_regs.len();
 
     // Phase 4: Linear scan allocation.
-    linear_scan(intervals, &allocatable_regs)
+    let mut result = linear_scan(intervals, &allocatable_regs);
+    stats.allocated_values = result.val_to_reg.len();
+    result.stats = stats;
+
+    tracing::debug!(
+        target: "wasm_pvm::regalloc",
+        function = %fn_name,
+        is_leaf,
+        num_params,
+        total_values = result.stats.total_values,
+        total_intervals = result.stats.total_intervals,
+        has_loops = result.stats.has_loops,
+        allocatable_regs = result.stats.allocatable_regs,
+        max_call_args = result.stats.max_call_args,
+        allocated_values = result.stats.allocated_values,
+        "regalloc completed"
+    );
+
+    result
 }
 
 /// Maps each LLVM instruction to a linearized index.
@@ -133,6 +232,23 @@ fn linearize<'ctx>(
     }
 
     (instr_index, block_ranges)
+}
+
+/// Returns the maximum direct call argument count used in this function.
+fn max_call_args(function: FunctionValue<'_>) -> usize {
+    let mut max_args = 0usize;
+    for bb in function.get_basic_blocks() {
+        for instr in bb.get_instructions() {
+            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
+                // LLVM call operands include the callee as the final operand.
+                let num_args = instr.get_num_operands().saturating_sub(1) as usize;
+                if num_args > max_args {
+                    max_args = num_args;
+                }
+            }
+        }
+    }
+    max_args
 }
 
 /// Compute live intervals for all SSA values (parameters and instruction results).
@@ -285,7 +401,11 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
     // Active intervals sorted by end point (using BTreeSet of (end, index)).
     let mut active: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut free_regs: Vec<u8> = allocatable_regs.to_vec();
-    let mut assigned: HashMap<usize, u8> = HashMap::new();
+    // Register assignment for currently active intervals.
+    let mut active_assigned: HashMap<usize, u8> = HashMap::new();
+    // Final register assignment for intervals that were allocated and never evicted.
+    // Naturally expired intervals stay here so their earlier uses can still benefit.
+    let mut final_assigned: HashMap<usize, u8> = HashMap::new();
 
     for (i, interval) in intervals.iter().enumerate() {
         // Expire old intervals.
@@ -296,31 +416,35 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
             .collect();
         for (end, idx) in expired {
             active.remove(&(end, idx));
-            if let Some(reg) = assigned.remove(&idx) {
+            if let Some(reg) = active_assigned.remove(&idx) {
                 free_regs.push(reg);
             }
         }
 
         if let Some(reg) = free_regs.pop() {
-            assigned.insert(i, reg);
+            active_assigned.insert(i, reg);
+            final_assigned.insert(i, reg);
             active.insert((interval.end, i));
         } else if let Some(&(furthest_end, furthest_idx)) = active.iter().next_back()
             && furthest_end > interval.end
         {
             // Evict the interval with the furthest end, give its register to us.
-            let reg = assigned
+            let reg = active_assigned
                 .remove(&furthest_idx)
                 .expect("active interval must have an assigned register");
             active.remove(&(furthest_end, furthest_idx));
+            // Evicted interval no longer has a stable whole-interval assignment.
+            final_assigned.remove(&furthest_idx);
 
-            assigned.insert(i, reg);
+            active_assigned.insert(i, reg);
+            final_assigned.insert(i, reg);
             active.insert((interval.end, i));
         }
         // else: no free register and current interval ends further — spill it.
     }
 
-    // Build result from assigned intervals (single pass).
-    for (&idx, &reg) in &assigned {
+    // Build result from all non-evicted assignments (single pass).
+    for (&idx, &reg) in &final_assigned {
         let interval = &intervals[idx];
         result.val_to_reg.insert(interval.val_key, reg);
         result.slot_to_reg.insert(interval.slot, reg);
@@ -328,4 +452,62 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linear_scan_keeps_non_overlapping_assignments() {
+        let intervals = vec![
+            LiveInterval {
+                val_key: ValKey(1),
+                slot: 8,
+                start: 0,
+                end: 1,
+                use_count: 3,
+            },
+            LiveInterval {
+                val_key: ValKey(2),
+                slot: 16,
+                start: 2,
+                end: 3,
+                use_count: 3,
+            },
+        ];
+
+        let result = linear_scan(intervals, &[9]);
+
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
+        assert_eq!(result.val_to_reg.get(&ValKey(2)), Some(&9));
+        assert_eq!(result.slot_to_reg.get(&8), Some(&9));
+        assert_eq!(result.slot_to_reg.get(&16), Some(&9));
+        assert!(result.reg_to_slot.contains_key(&9));
+    }
+
+    #[test]
+    fn linear_scan_drops_evicted_interval_assignment() {
+        let intervals = vec![
+            LiveInterval {
+                val_key: ValKey(1),
+                slot: 8,
+                start: 0,
+                end: 10,
+                use_count: 3,
+            },
+            LiveInterval {
+                val_key: ValKey(2),
+                slot: 16,
+                start: 1,
+                end: 4,
+                use_count: 3,
+            },
+        ];
+
+        let result = linear_scan(intervals, &[9]);
+
+        assert!(!result.val_to_reg.contains_key(&ValKey(1)));
+        assert_eq!(result.val_to_reg.get(&ValKey(2)), Some(&9));
+    }
 }

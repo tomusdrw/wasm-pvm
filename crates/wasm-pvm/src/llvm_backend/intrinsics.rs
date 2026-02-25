@@ -61,25 +61,25 @@ pub fn lower_pvm_intrinsic<'ctx>(
         "__pvm_memory_grow" => {
             e.spill_allocated_regs()?;
             let result = emit_pvm_memory_grow(e, instr, ctx);
-            e.reload_allocated_regs();
+            e.reload_allocated_regs_after_scratch_clobber();
             result
         }
         "__pvm_memory_fill" => {
             e.spill_allocated_regs()?;
             let result = emit_pvm_memory_fill(e, instr, ctx);
-            e.reload_allocated_regs();
+            e.reload_allocated_regs_after_scratch_clobber();
             result
         }
         "__pvm_memory_copy" => {
             e.spill_allocated_regs()?;
             let result = emit_pvm_memory_copy(e, instr, ctx);
-            e.reload_allocated_regs();
+            e.reload_allocated_regs_after_scratch_clobber();
             result
         }
         "__pvm_memory_init" => {
             e.spill_allocated_regs()?;
             let result = emit_pvm_memory_init(e, instr, ctx);
-            e.reload_allocated_regs();
+            e.reload_allocated_regs_after_scratch_clobber();
             result
         }
         "__pvm_data_drop" => emit_pvm_data_drop(e, instr, ctx),
@@ -457,7 +457,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
         e.store_to_slot(slot, TEMP_RESULT);
 
         // Reload register-allocated values after using SCRATCH1/SCRATCH2.
-        e.reload_allocated_regs();
+        e.reload_allocated_regs_after_scratch_clobber();
 
         return Ok(());
     }
