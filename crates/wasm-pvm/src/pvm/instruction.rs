@@ -1610,36 +1610,16 @@ impl Instruction {
                 encode_two_reg_one_imm(Opcode::SetGtSImm, *dst, *src, *value)
             }
             Self::LoadIndU32 { dst, base, offset } => {
-                let mut bytes = vec![
-                    Opcode::LoadIndU32 as u8,
-                    (*base & 0x0F) << 4 | (*dst & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::LoadIndU32, *dst, *base, *offset)
             }
             Self::StoreIndU32 { base, src, offset } => {
-                let mut bytes = vec![
-                    Opcode::StoreIndU32 as u8,
-                    (*base & 0x0F) << 4 | (*src & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::StoreIndU32, *src, *base, *offset)
             }
             Self::LoadIndU64 { dst, base, offset } => {
-                let mut bytes = vec![
-                    Opcode::LoadIndU64 as u8,
-                    (*base & 0x0F) << 4 | (*dst & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::LoadIndU64, *dst, *base, *offset)
             }
             Self::StoreIndU64 { base, src, offset } => {
-                let mut bytes = vec![
-                    Opcode::StoreIndU64 as u8,
-                    (*base & 0x0F) << 4 | (*src & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::StoreIndU64, *src, *base, *offset)
             }
             Self::BranchNeImm { reg, value, offset } => {
                 encode_one_reg_one_imm_one_off(Opcode::BranchNeImm, *reg, *value, *offset)
@@ -1724,56 +1704,28 @@ impl Instruction {
             Self::SignExtend16 { dst, src } => encode_two_reg(Opcode::SignExtend16, *dst, *src),
             Self::ZeroExtend16 { dst, src } => encode_two_reg(Opcode::ZeroExtend16, *dst, *src),
             Self::LoadIndU8 { dst, base, offset } => {
-                let mut bytes = vec![Opcode::LoadIndU8 as u8, (*base & 0x0F) << 4 | (*dst & 0x0F)];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::LoadIndU8, *dst, *base, *offset)
             }
             Self::LoadIndI8 { dst, base, offset } => {
-                let mut bytes = vec![Opcode::LoadIndI8 as u8, (*base & 0x0F) << 4 | (*dst & 0x0F)];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::LoadIndI8, *dst, *base, *offset)
             }
             Self::StoreIndU8 { base, src, offset } => {
-                let mut bytes = vec![
-                    Opcode::StoreIndU8 as u8,
-                    (*base & 0x0F) << 4 | (*src & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::StoreIndU8, *src, *base, *offset)
             }
             Self::LoadIndU16 { dst, base, offset } => {
-                let mut bytes = vec![
-                    Opcode::LoadIndU16 as u8,
-                    (*base & 0x0F) << 4 | (*dst & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::LoadIndU16, *dst, *base, *offset)
             }
             Self::LoadIndI16 { dst, base, offset } => {
-                let mut bytes = vec![
-                    Opcode::LoadIndI16 as u8,
-                    (*base & 0x0F) << 4 | (*dst & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::LoadIndI16, *dst, *base, *offset)
             }
             Self::StoreIndU16 { base, src, offset } => {
-                let mut bytes = vec![
-                    Opcode::StoreIndU16 as u8,
-                    (*base & 0x0F) << 4 | (*src & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::StoreIndU16, *src, *base, *offset)
             }
             Self::CmovIzImm { dst, cond, value } => {
-                let mut bytes = encode_two_reg(Opcode::CmovIzImm, *dst, *cond);
-                bytes.extend_from_slice(&encode_imm(*value));
-                bytes
+                encode_two_reg_one_imm(Opcode::CmovIzImm, *dst, *cond, *value)
             }
             Self::CmovNzImm { dst, cond, value } => {
-                let mut bytes = encode_two_reg(Opcode::CmovNzImm, *dst, *cond);
-                bytes.extend_from_slice(&encode_imm(*value));
-                bytes
+                encode_two_reg_one_imm(Opcode::CmovNzImm, *dst, *cond, *value)
             }
             Self::StoreImmU8 { address, value } => {
                 encode_two_imm(Opcode::StoreImmU8, *address, *value)
@@ -1838,12 +1790,7 @@ impl Instruction {
                 encode_one_reg_one_imm(Opcode::StoreU64, *src, *address)
             }
             Self::LoadIndI32 { dst, base, offset } => {
-                let mut bytes = vec![
-                    Opcode::LoadIndI32 as u8,
-                    (*base & 0x0F) << 4 | (*dst & 0x0F),
-                ];
-                bytes.extend_from_slice(&encode_imm(*offset));
-                bytes
+                encode_two_reg_one_imm(Opcode::LoadIndI32, *dst, *base, *offset)
             }
             Self::ReverseBytes { dst, src } => encode_two_reg(Opcode::ReverseBytes, *dst, *src),
             // Alternate shift immediates (TwoRegOneImm)
