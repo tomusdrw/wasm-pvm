@@ -18,7 +18,7 @@ function sub(a: i32, b: i32): i32 { return a - b; }
 function mul(a: i32, b: i32): i32 { return a * b; }
 
 export function main(args_ptr: i32, args_len: i32): void {
-  RESULT_HEAP = heap.alloc(1);
+  RESULT_HEAP = heap.alloc(4);
   let op: BinOp;
   let res = 0;
 
