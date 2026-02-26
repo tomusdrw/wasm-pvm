@@ -37,7 +37,7 @@ Accumulated knowledge from development. Update after every task.
 
 ### PVM Memory Layout Optimization
 
-- **Globals only occupy the bytes they actually need**: the compiler now tracks `globals_region_size = num_globals + 1 + num_passive_segments` and places the heap immediately after that region instead of reserving a full 64KB block. This keeps the RW data blob limited to real globals/passive-length fields plus active data segments.
+- **Globals only occupy the bytes they actually need**: the compiler now tracks `globals_region_size = (num_globals + 1 + num_passive_segments) * 4` bytes and places the heap immediately after that region instead of reserving a full 64KB block. This keeps the RW data blob limited to real globals/passive-length fields plus active data segments.
 - **Dynamic heap base calculation**: `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)` compares the spill area (`SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC`) with the globals region end (`GLOBAL_MEMORY_BASE + globals_region_size(...)`) before rounding up to the next 4KB (PVM page) boundary. This typically gives `0x33000` instead of the old `0x40000`, saving ~52KB per program.
 - **4KB alignment is sufficient**: The SPI spec only requires page-aligned (4KB) `rw_data` length. The 64KB WASM page size governs `memory.grow` granularity, not the base address. The anan-as interpreter uses `alignToPageSize(rwLength)` (4KB) not segment alignment for the heap zeros start.
 

@@ -283,7 +283,7 @@ PVM Address Space:
   0x00000 - 0x0FFFF   Reserved / guard (fault on access)
   0x10000 - 0x1FFFF   Read-only data (RO_DATA_BASE) — dispatch tables
   0x20000 - 0x2FFFF   Gap zone (unmapped, guard between RO and RW)
-  0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
+  0x30000 - 0x31FFF   Globals window (GLOBAL_MEMORY_BASE, 8KB cap; actual bytes used = globals_region_size(...))
   0x32000 - 0x320FF   Parameter overflow area (5th+ function arguments)
   0x32100+            Spilled locals (per-function metadata, typically unused)
   0x33000+             WASM linear memory (4KB-aligned, computed dynamically via `compute_wasm_memory_base`)

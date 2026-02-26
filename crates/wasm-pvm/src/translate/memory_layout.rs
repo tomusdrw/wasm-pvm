@@ -11,7 +11,7 @@
 //!   0x00000 - 0x0FFFF   Reserved (fault on access)
 //!   0x10000 - 0x1FFFF   Read-only data segment (RO_DATA_BASE)
 //!   0x20000 - 0x2FFFF   Gap zone (unmapped, guard between RO and RW)
-//!   0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
+//!   0x30000 - 0x31FFF   Globals window (GLOBAL_MEMORY_BASE, 8KB cap; actual = globals_region_size(...))
 //!   0x32000 - 0x320FF   Parameter overflow area (PARAM_OVERFLOW_BASE)
 //!   0x32100+            Spilled locals base (SPILLED_LOCALS_BASE)
 //!   0x33000+            WASM linear memory (4KB-aligned, computed dynamically)
@@ -85,11 +85,34 @@ pub fn compute_wasm_memory_base(
     ((spilled_end.max(globals_end) + 0xFFF) & !0xFFF) as i32
 }
 
+/// Maximum bytes available in the globals window before it would overlap
+/// with `PARAM_OVERFLOW_BASE`.
+pub const GLOBALS_WINDOW_SIZE: usize = (PARAM_OVERFLOW_BASE - GLOBAL_MEMORY_BASE) as usize;
+
 /// Bytes reserved for globals, the compiler-managed memory size global, and
 /// passive data segment lengths.
 #[must_use]
 pub fn globals_region_size(num_globals: usize, num_passive_segments: usize) -> usize {
     (num_globals + 1 + num_passive_segments) * 4
+}
+
+/// Check that the globals region fits within the reserved window
+/// (0x30000..0x32000). Returns `Err` if the computed size would overlap
+/// with `PARAM_OVERFLOW_BASE` / `SPILLED_LOCALS_BASE`.
+pub fn validate_globals_layout(
+    num_globals: usize,
+    num_passive_segments: usize,
+) -> Result<(), String> {
+    let size = globals_region_size(num_globals, num_passive_segments);
+    if size > GLOBALS_WINDOW_SIZE {
+        return Err(format!(
+            "globals region ({size} bytes for {num_globals} globals + 1 memory-size + \
+             {num_passive_segments} passive segments) exceeds the {GLOBALS_WINDOW_SIZE}-byte \
+             window (0x{:X}..0x{:X})",
+            GLOBAL_MEMORY_BASE, PARAM_OVERFLOW_BASE,
+        ));
+    }
+    Ok(())
 }
 
 /// Offset within `GLOBAL_MEMORY_BASE` for the compiler-managed memory size global.

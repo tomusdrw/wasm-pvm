@@ -358,6 +358,10 @@ impl<'a> WasmModule<'a> {
             .iter()
             .filter(|seg| seg.offset.is_none())
             .count();
+        // Validate that globals fit within the reserved window
+        memory_layout::validate_globals_layout(globals.len(), num_passive_segments)
+            .map_err(Error::Internal)?;
+
         // Compute WASM memory base
         let wasm_memory_base = memory_layout::compute_wasm_memory_base(
             functions.len(),

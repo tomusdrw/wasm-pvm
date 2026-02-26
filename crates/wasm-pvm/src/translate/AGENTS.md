@@ -33,7 +33,7 @@
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data |
-| `0x30000` | Globals storage (size = `globals_region_size(num_globals, num_passive_segments)`); the heap is aligned via `compute_wasm_memory_base()` and begins right after this region. |
+| `0x30000` | Globals window (8KB cap; actual bytes = `globals_region_size(num_globals, num_passive_segments)`). The heap starts at `compute_wasm_memory_base()`, which is the 4KB-aligned address after `max(globals_end, spills_end)`. |
 | `0x32000` | Parameter overflow area |
 | `0x32100+` | Spilled-locals base (spills are stack-based; base kept for layout/alignment) |
 | `0x33000+` | WASM linear memory (4KB-aligned, computed dynamically) |
