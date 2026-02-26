@@ -153,3 +153,110 @@ pub fn spilled_local_addr(func_idx: usize, local_offset: i32) -> i32 {
 pub fn global_addr(idx: u32) -> i32 {
     GLOBAL_MEMORY_BASE + (idx as i32) * 4
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wasm_memory_base_typical_program() {
+        // Few globals, no passive segments → base should be 0x33000 (4KB-aligned after 0x32100)
+        let base = compute_wasm_memory_base(10, 5, 0);
+        assert_eq!(base, 0x33000);
+    }
+
+    #[test]
+    fn wasm_memory_base_zero_funcs_zero_globals() {
+        let base = compute_wasm_memory_base(0, 0, 0);
+        // globals_end = 0x30000 + 4 (memory size slot), spilled_end = 0x32100
+        // max(0x30004, 0x32100) = 0x32100, aligned up = 0x33000
+        assert_eq!(base, 0x33000);
+    }
+
+    #[test]
+    fn wasm_memory_base_many_globals_pushes_base() {
+        // 2000 globals + 1 memory_size + 0 passive = 2001 * 4 = 8004 bytes
+        // globals_end = 0x30000 + 8004 = 0x31F44
+        // max(0x32100, 0x31F44) = 0x32100, aligned = 0x33000
+        let base = compute_wasm_memory_base(0, 2000, 0);
+        assert_eq!(base, 0x33000);
+
+        // 2048 globals → globals_end = 0x30000 + (2048+1)*4 = 0x30000 + 8196 = 0x32004
+        // max(0x32100, 0x32004) = 0x32100, aligned = 0x33000
+        let base = compute_wasm_memory_base(0, 2048, 0);
+        assert_eq!(base, 0x33000);
+    }
+
+    #[test]
+    fn wasm_memory_base_is_4kb_aligned() {
+        for globals in [0, 1, 100, 500, 1000] {
+            for passive in [0, 1, 5] {
+                let base = compute_wasm_memory_base(10, globals, passive);
+                assert_eq!(
+                    base & 0xFFF,
+                    0,
+                    "base 0x{base:X} not 4KB-aligned for {globals} globals, {passive} passive"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn globals_region_size_formula() {
+        assert_eq!(globals_region_size(0, 0), 4); // just memory_size slot
+        assert_eq!(globals_region_size(5, 0), 24); // 5 globals + 1 mem_size = 6 * 4
+        assert_eq!(globals_region_size(5, 3), 36); // (5 + 1 + 3) * 4
+    }
+
+    #[test]
+    fn validate_globals_layout_within_window() {
+        assert!(validate_globals_layout(100, 10).is_ok());
+    }
+
+    #[test]
+    fn validate_globals_layout_at_boundary() {
+        // GLOBALS_WINDOW_SIZE = 0x2000 = 8192 bytes, so max slots = 8192/4 = 2048
+        // (num_globals + 1 + num_passive) * 4 <= 8192
+        // num_globals + 1 + num_passive <= 2048
+        assert!(validate_globals_layout(2047, 0).is_ok()); // 2047 + 1 = 2048 slots = 8192 bytes
+        assert!(validate_globals_layout(2048, 0).is_err()); // 2048 + 1 = 2049 slots = 8196 bytes
+    }
+
+    #[test]
+    fn validate_globals_layout_overflow_message() {
+        let err = validate_globals_layout(2048, 0).unwrap_err();
+        assert!(
+            err.contains("exceeds"),
+            "error should mention exceeds: {err}"
+        );
+        assert!(err.contains("0x30000"), "error should mention base: {err}");
+        assert!(err.contains("0x32000"), "error should mention limit: {err}");
+    }
+
+    #[test]
+    fn global_addr_formula() {
+        assert_eq!(global_addr(0), 0x30000);
+        assert_eq!(global_addr(1), 0x30004);
+        assert_eq!(global_addr(10), 0x30028);
+    }
+
+    #[test]
+    fn memory_size_global_after_user_globals() {
+        assert_eq!(memory_size_global_offset(0), 0x30000);
+        assert_eq!(memory_size_global_offset(5), 0x30014);
+    }
+
+    #[test]
+    fn data_segment_length_after_memory_size() {
+        assert_eq!(data_segment_length_offset(5, 0), 0x30018); // mem_size + 4
+        assert_eq!(data_segment_length_offset(5, 1), 0x3001C); // + 4
+    }
+
+    #[test]
+    fn stack_limit_formula() {
+        assert_eq!(
+            stack_limit(DEFAULT_STACK_SIZE),
+            (0xFEFE_0000u32 - 64 * 1024) as i32
+        );
+    }
+}

@@ -120,24 +120,24 @@ All PVM-level optimizations enabled (default):
 | add(5,7) | 66 B | 201 B | 39 |
 | fib(20) | 108 B | 270 B | 612 |
 | factorial(10) | 100 B | 242 B | 269 |
-| is_prime(25) | 160 B | 329 B | 80 |
-| AS fib(10) | 266 B | 720 B | 337 |
-| AS factorial(7) | 265 B | 707 B | 283 |
-| AS gcd(2017,200) | 260 B | 699 B | 197 |
-| AS decoder | 1.5 KB | 73.1 KB | 753 |
-| AS array | 1.4 KB | 72.2 KB | 652 |
-| anan-as PVM interpreter | 54.5 KB | 214.4 KB | - |
+| is_prime(25) | 160 B | 327 B | 78 |
+| AS fib(10) | 266 B | 712 B | 325 |
+| AS factorial(7) | 265 B | 701 B | 282 |
+| AS gcd(2017,200) | 260 B | 691 B | 191 |
+| AS decoder | 1.5 KB | 21.1 KB | 751 |
+| AS array | 1.4 KB | 20.1 KB | 648 |
+| anan-as PVM interpreter | 54.5 KB | 161.5 KB | - |
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
 | Benchmark | JAM Size | Outer Gas | Direct Gas | Overhead |
 |-----------|----------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 1 B | 22,730 | - | - |
-| add(5,7) | 201 B | 1,172,287 | 39 | 30,059x |
-| AS fib(10) | 720 B | 1,724,300 | 337 | 5,117x |
-| JAM-SDK fib(10)\* | 25.4 KB | 6,721,616 | 42 | 160,038x |
-| Jambrains fib(10)\* | 61.1 KB | 6,477,447 | 1 | 6,477,447x |
-| JADE fib(10)\* | 67.3 KB | 18,310,775 | 504 | 36,331x |
+| TRAP (interpreter overhead) | 1 B | 22,463 | - | - |
+| add(5,7) | 201 B | 1,174,740 | 39 | 30,122x |
+| AS fib(10) | 712 B | 1,708,984 | 325 | 5,258x |
+| JAM-SDK fib(10)\* | 25.4 KB | 6,677,275 | 42 | 158,983x |
+| Jambrains fib(10)\* | 61.1 KB | 6,477,155 | 1 | 6,477,155x |
+| JADE fib(10)\* | 67.3 KB | 18,186,864 | 504 | 36,085x |
 
 \*JAM-SDK fib(10), Jambrains fib(10), and JADE fib(10) exit on unhandled host calls before the fibonacci computation runs. The gas cost reflects program parsing/loading only (26 KB, 61 KB, and 67 KB binaries respectively), not execution.
 
