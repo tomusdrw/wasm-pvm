@@ -447,8 +447,7 @@ fn calculate_heap_pages(
     // (16 PVM pages = 64KB) of headroom to account for rw_data trimming. This
     // doesn't increase JAM file size (heap_pages is just a 2-byte header field),
     // it only tells the runtime to pre-allocate more zero memory.
-    const HEAP_PAGE_HEADROOM: usize = 16; // 1 WASM page in PVM pages
-    let heap_pages = total_bytes.div_ceil(4096) + HEAP_PAGE_HEADROOM;
+    let heap_pages = total_bytes.div_ceil(4096) + 16; // +16 = 1 WASM page headroom
     let heap_pages = u16::try_from(heap_pages).map_err(|_| {
         Error::Internal(format!(
             "heap size {heap_pages} pages exceeds u16::MAX ({}) — module too large",

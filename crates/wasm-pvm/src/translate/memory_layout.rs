@@ -80,7 +80,7 @@ pub fn stack_limit(stack_size: u32) -> i32 {
 ///   controls how much memory grows per step, not where the base address must
 ///   sit.
 /// - Using 4KB alignment saves ~52KB per program (the old 64KB alignment
-///   wasted up to 60KB of padding between globals_end and the heap start).
+///   wasted up to 60KB of padding between `globals_end` and the heap start).
 #[must_use]
 pub fn compute_wasm_memory_base(
     num_local_funcs: usize,
