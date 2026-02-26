@@ -10,10 +10,10 @@
 //! PVM Address Space:
 //!   0x00000 - 0x0FFFF   Reserved (fault on access)
 //!   0x10000 - 0x1FFFF   Read-only data segment (RO_DATA_BASE)
-//!   0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
-//!   0x32000 - 0x320FF   Parameter overflow area (PARAM_OVERFLOW_BASE)
-//!   0x32100+            Spilled locals base (SPILLED_LOCALS_BASE)
-//!   0x40000+            WASM linear memory (64KB-aligned, computed dynamically)
+//!   0x2F000 - 0x2F0FF   Parameter overflow area (PARAM_OVERFLOW_BASE)
+//!   0x2F100+            Spilled locals base (SPILLED_LOCALS_BASE)
+//!   0x30000+            Globals storage (GLOBAL_MEMORY_BASE)
+//!   0x30000+            WASM linear memory base (aligned after globals)
 //!   ...
 //!   0xFEFE0000          Stack segment end (stack grows downward)
 //!   0xFFFF0000          Exit address (EXIT_ADDRESS)
@@ -26,16 +26,18 @@ pub const RO_DATA_BASE: i32 = 0x10000;
 /// Each global occupies 4 bytes at `GLOBAL_MEMORY_BASE + index * 4`.
 pub const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 
+/// Base address for the RW data image emitted in SPI programs.
+/// `rw_data[0]` is placed at this address (`PARAM_OVERFLOW_BASE`).
+pub const RW_DATA_BASE: i32 = PARAM_OVERFLOW_BASE;
+
 /// Temporary area for passing overflow parameters (5th+ args) during `call_indirect`.
 /// The caller writes here, and the callee's prologue copies to its spilled local addresses.
-/// Supports up to 8 overflow parameters (64 bytes).
-/// Reduced from 0x3FF00 to save space (allows 8KB for globals).
-pub const PARAM_OVERFLOW_BASE: i32 = 0x32000;
+/// Supports up to 8 overflow parameters (64 bytes). Placed just below the globals region.
+pub const PARAM_OVERFLOW_BASE: i32 = 0x2F000;
 
 /// Base address for spilled locals in memory.
-/// Layout: 0x30000+ globals, 0x32000 overflow, 0x32100+ spilled locals.
-/// User programs should use `heap.alloc()` (AS) or `memory.grow` (WASM) for dynamic allocation.
-pub const SPILLED_LOCALS_BASE: i32 = 0x32100;
+/// Spills begin immediately after the overflow area so the WASM heap stays 64KB-aligned.
+pub const SPILLED_LOCALS_BASE: i32 = 0x2F100;
 
 /// Bytes allocated per function for spilled locals.
 /// Set to 0 as modern compiler spills to stack (r1-relative).
@@ -62,17 +64,28 @@ pub fn stack_limit(stack_size: u32) -> i32 {
     (STACK_SEGMENT_END as u32).wrapping_sub(stack_size) as i32
 }
 
-/// Compute the base address for WASM linear memory in PVM address space.
-/// This must be placed after the spilled locals region to avoid overlap.
-/// WASM memory address 0 maps to this PVM address.
-/// All `i32.load`/`i32.store` operations add this offset to the WASM address.
+/// Compute the base address for WASM linear memory in the PVM address space.
+/// Globals, the compiler-managed memory size slot, and passive segment lengths
+/// are laid out starting at `GLOBAL_MEMORY_BASE`. The heap must begin after
+/// that region while also respecting the spill area alignment constraints.
 #[must_use]
-pub fn compute_wasm_memory_base(_num_local_funcs: usize) -> i32 {
-    // No per-function allocation (spills are on stack).
-    // Must be 64KB-aligned: the SPI format uses segment-aligned regions
-    // and the anan-as interpreter requires page-aligned WASM memory base
-    // for correct memory mapping in pvm-in-pvm execution.
-    (SPILLED_LOCALS_BASE + 0xFFFF) & !0xFFFF
+pub fn compute_wasm_memory_base(
+    num_local_funcs: usize,
+    num_globals: usize,
+    num_passive_segments: usize,
+) -> i32 {
+    let spilled_end =
+        SPILLED_LOCALS_BASE as usize + num_local_funcs * SPILLED_LOCALS_PER_FUNC as usize;
+    let globals_end =
+        GLOBAL_MEMORY_BASE as usize + globals_region_size(num_globals, num_passive_segments);
+    ((spilled_end.max(globals_end) + 0xFFFF) & !0xFFFF) as i32
+}
+
+/// Bytes reserved for globals, the compiler-managed memory size global, and
+/// passive data segment lengths.
+#[must_use]
+pub fn globals_region_size(num_globals: usize, num_passive_segments: usize) -> usize {
+    (num_globals + 1 + num_passive_segments) * 4
 }
 
 /// Offset within `GLOBAL_MEMORY_BASE` for the compiler-managed memory size global.

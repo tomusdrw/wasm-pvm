@@ -25,7 +25,7 @@
 ## Key Behaviors
 
 - `calculate_heap_pages()` uses WASM `initial_pages` (not max), with a minimum of 16 WASM pages for `(memory 0)`.
-- `compute_wasm_memory_base()` enforces 64KB alignment (currently `0x40000`).
+- `compute_wasm_memory_base()` compares `SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC` with `GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)`, then rounds the larger address up to the next 64KB boundary so the heap starts immediately after the larger of the spills or globals region.
 - `build_rw_data()` copies globals and active segments into a contiguous image, then trims trailing zero bytes before SPI encoding.
 
 ## Current Memory Layout
@@ -33,10 +33,9 @@
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data |
-| `0x30000` | Globals storage |
-| `0x32000` | Parameter overflow area |
-| `0x32100+` | Spilled-locals base (spills are stack-based; base kept for layout/alignment) |
-| `0x40000+` | WASM linear memory base (64KB-aligned) |
+| `0x2F000` | Parameter overflow area |
+| `0x2F100+` | Spilled-locals base (spills are stack-based; base kept for layout/alignment) |
+| `0x30000` | Globals storage (size = `globals_region_size(num_globals, num_passive_segments)`); the heap is aligned via `compute_wasm_memory_base()` and begins right after this region. |
 
 ## Anti-Patterns
 

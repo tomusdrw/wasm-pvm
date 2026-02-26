@@ -354,8 +354,16 @@ impl<'a> WasmModule<'a> {
             }
         }
 
+        let num_passive_segments = data_segments
+            .iter()
+            .filter(|seg| seg.offset.is_none())
+            .count();
         // Compute WASM memory base
-        let wasm_memory_base = memory_layout::compute_wasm_memory_base(functions.len());
+        let wasm_memory_base = memory_layout::compute_wasm_memory_base(
+            functions.len(),
+            globals.len(),
+            num_passive_segments,
+        );
 
         // Calculate heap and memory pages
         let (heap_pages, max_memory_pages) = calculate_heap_pages(
@@ -421,8 +429,9 @@ fn calculate_heap_pages(
     // needs at startup. Additional memory is allocated on demand via sbrk/memory.grow.
     // We enforce a minimum of MIN_INITIAL_WASM_PAGES (16 pages = 1MB) because many
     // programs (especially AssemblyScript with --runtime stub) access memory without
-    // calling memory.grow first, and the lowered wasm_memory_base (0x32100) means
-    // small initial_pages values produce too few heap_pages for real workloads.
+    // calling memory.grow first. wasm_memory_base is still 64KB-aligned, so small
+    // initial_pages values need the full MIN_INITIAL_WASM_PAGES to reach an address
+    // above the overflow/spill window.
     let initial_pages = memory_limits.initial_pages.max(MIN_INITIAL_WASM_PAGES);
     let wasm_memory_initial_end = wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
 

@@ -37,9 +37,9 @@ Accumulated knowledge from development. Update after every task.
 
 ### PVM Memory Layout Optimization
 
-- **Spilled Locals Region**: The original layout reserved a dedicated region (starting at 0x40000) for spilled locals, allocated per-function (512 bytes). This caused huge bloat (128KB gap filled with zeros) in the RW data section because modern compiler implementation spills locals to the PVM stack (r1-relative) instead.
-- **Fix**: Removed the pre-allocated spilled locals region. Moved `PARAM_OVERFLOW_BASE` to `0x32000` (allowing 8KB for globals) and `SPILLED_LOCALS_BASE` to `0x32100`. This reduced JAM file sizes for AssemblyScript programs by ~87% (e.g., 140KB → 18KB).
-- **64KB alignment requirement**: `wasm_memory_base` MUST be 64KB-aligned (e.g., `0x40000`). The SPI format uses 64KB segment-aligned regions, and the anan-as interpreter requires page-aligned WASM memory base for correct memory mapping in PVM-in-PVM execution. Unaligned values (e.g., `0x32100`) cause silent memory mapping failures in the inner interpreter. The base is computed as `(SPILLED_LOCALS_BASE + 0xFFFF) & !0xFFFF`.
+- **Globals only occupy the bytes they actually need**: the compiler now tracks `globals_region_size = num_globals + 1 + num_passive_segments` and places the heap immediately after that region instead of reserving a full 64KB block. This keeps the RW data blob limited to real globals/passive-length fields plus active data segments.
+- **Dynamic heap base calculation**: `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)` compares the spill area (`SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC`) with the globals region end (`GLOBAL_MEMORY_BASE + globals_region_size(...)`) before rounding up to the next 64KB boundary. The result is that the heap starts right after whichever region is larger, so AS fixtures no longer inherit a 64KB gap in `rw_data`.
+- **64KB alignment requirement**: The SPI format still demands a 64KB-aligned WASM heap (for PiP compatibility), so the function still rounds the computed max address up to the next 0x10000 boundary.
 
 ### Code Generation
 
@@ -290,9 +290,8 @@ Accumulated knowledge from development. Update after every task.
 
 ### Memory Layout Sensitivity (PVM-in-PVM)
 
-- A compact globals/overflow layout directly below `0x40000` can drastically shrink blob sizes, but breaks pvm-in-pvm interpreter compatibility.
-- Empirical result: direct/unit tests can pass while layer4/layer5 pvm-in-pvm suites fail with outer interpreter panic.
-- Conclusion: memory layout changes must always be validated with pvm-in-pvm tests, not just direct execution and layer1.
+- Moving the globals/overflow/spill region around directly affects the base address that the interpreter loads as the WASM heap, so every change still requires a full pvm-in-pvm validation. Direct/unit runs may look fine, but the outer interpreter can panic if the linear memory isn't page-aligned or overlaps reserved slots.
+- The new layout keeps overflow/spill below the globals window and keeps the heap starting at `0x30000`, which preserves compatibility while trimming the RW data blob size.
 
 ### Benchmark Comparison Parsing
 
