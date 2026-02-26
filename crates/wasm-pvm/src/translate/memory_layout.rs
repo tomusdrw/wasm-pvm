@@ -30,12 +30,12 @@ pub const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 /// Temporary area for passing overflow parameters (5th+ args) during `call_indirect`.
 /// The caller writes here, and the callee's prologue copies to its spilled local addresses.
 /// Supports up to 8 overflow parameters (64 bytes).
-/// Must be >= GLOBAL_MEMORY_BASE so it falls inside the SPI rw_data zone (0x30000+).
+/// Must be >= `GLOBAL_MEMORY_BASE` so it falls inside the SPI `rw_data` zone (0x30000+).
 pub const PARAM_OVERFLOW_BASE: i32 = 0x32000;
 
 /// Base address for spilled locals in memory.
 /// Layout: 0x30000+ globals, 0x32000 overflow, 0x32100+ spilled locals.
-/// Must be >= GLOBAL_MEMORY_BASE so it falls inside the SPI rw_data zone (0x30000+).
+/// Must be >= `GLOBAL_MEMORY_BASE` so it falls inside the SPI `rw_data` zone (0x30000+).
 pub const SPILLED_LOCALS_BASE: i32 = 0x32100;
 
 /// Bytes allocated per function for spilled locals.
