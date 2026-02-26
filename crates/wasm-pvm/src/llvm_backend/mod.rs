@@ -150,6 +150,7 @@ pub fn lower_function(
             // Snapshot before terminator, then invalidate temp registers that
             // the terminator's operand loads may overwrite (TEMP1/TEMP2 for
             // branch conditions, switch values, fused ICmp operands).
+            // CacheSnapshot now includes allocated-register slot ownership too.
             let mut snap = emitter.snapshot_cache();
             snap.invalidate_reg(TEMP1);
             snap.invalidate_reg(TEMP2);

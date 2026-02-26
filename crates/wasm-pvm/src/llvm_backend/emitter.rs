@@ -184,10 +184,6 @@ pub struct PvmEmitter<'ctx> {
     /// Register allocation results (empty if disabled).
     pub(crate) regalloc: RegAllocResult,
 
-    /// Whether each allocated register currently holds a valid SSA value.
-    /// Allocated values are always write-through to stack slots, so a clobbered
-    /// allocated register can be lazily reloaded from its slot on next use.
-    alloc_reg_valid: [bool; 13],
     /// Which stack slot is currently materialized in each allocated register.
     /// Multiple slots may map to the same physical register across disjoint
     /// intervals; this tracks runtime ownership so stale values are reloaded.
@@ -208,6 +204,7 @@ pub struct CacheSnapshot {
     pub slot_cache: HashMap<i32, u8>,
     pub reg_to_slot: [Option<i32>; 13],
     pub reg_to_const: [Option<u64>; 13],
+    pub alloc_reg_slot: [Option<i32>; 13],
 }
 
 /// Instrumentation counters describing how much allocated mappings are used by codegen.
@@ -233,6 +230,12 @@ impl CacheSnapshot {
             self.slot_cache.remove(&slot);
         }
         self.reg_to_const[reg as usize] = None;
+        self.invalidate_alloc_reg(reg);
+    }
+
+    /// Invalidate allocated-register slot ownership in this snapshot.
+    pub fn invalidate_alloc_reg(&mut self, reg: u8) {
+        self.alloc_reg_slot[reg as usize] = None;
     }
 }
 
@@ -285,7 +288,6 @@ impl<'ctx> PvmEmitter<'ctx> {
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
             has_calls: true, // conservative default
             regalloc: RegAllocResult::default(),
-            alloc_reg_valid: [false; 13],
             alloc_reg_slot: [None; 13],
             regalloc_usage: RegAllocUsageStats::default(),
             next_block_label: None,
@@ -589,15 +591,13 @@ impl<'ctx> PvmEmitter<'ctx> {
                     // register currently materializes a different slot, reload
                     // lazily from the canonical stack slot.
                     let reg_idx = alloc_reg as usize;
-                    if !self.alloc_reg_valid[reg_idx] || self.alloc_reg_slot[reg_idx] != Some(slot)
-                    {
+                    if self.alloc_reg_slot[reg_idx] != Some(slot) {
                         self.regalloc_usage.load_reloads += 1;
                         self.emit(Instruction::LoadIndU64 {
                             dst: alloc_reg,
                             base: STACK_PTR_REG,
                             offset: slot,
                         });
-                        self.alloc_reg_valid[reg_idx] = true;
                         self.alloc_reg_slot[reg_idx] = Some(slot);
                         self.cache_slot(slot, alloc_reg);
                     }
@@ -669,7 +669,6 @@ impl<'ctx> PvmEmitter<'ctx> {
         }
         if let Some(alloc_reg) = alloc_reg {
             let reg_idx = alloc_reg as usize;
-            self.alloc_reg_valid[reg_idx] = true;
             self.alloc_reg_slot[reg_idx] = Some(slot_offset);
         }
         self.emit(Instruction::StoreIndU64 {
@@ -712,7 +711,6 @@ impl<'ctx> PvmEmitter<'ctx> {
             .filter(|&r| pred(r))
             .collect();
         for reg in regs {
-            self.alloc_reg_valid[reg as usize] = false;
             self.invalidate_reg(reg);
         }
     }
@@ -762,7 +760,6 @@ impl<'ctx> PvmEmitter<'ctx> {
             self.slot_cache.remove(&slot);
         }
         if self.regalloc.reg_to_slot.contains_key(&reg) {
-            self.alloc_reg_valid[reg as usize] = false;
             self.alloc_reg_slot[reg as usize] = None;
         }
         self.reg_to_const[reg as usize] = None;
@@ -778,7 +775,6 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     fn clear_allocated_reg_state(&mut self) {
         for &reg in self.regalloc.reg_to_slot.keys() {
-            self.alloc_reg_valid[reg as usize] = false;
             self.alloc_reg_slot[reg as usize] = None;
         }
     }
@@ -789,6 +785,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             slot_cache: self.slot_cache.clone(),
             reg_to_slot: self.reg_to_slot,
             reg_to_const: self.reg_to_const,
+            alloc_reg_slot: self.alloc_reg_slot,
         }
     }
 
@@ -797,6 +794,7 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.slot_cache.clone_from(&snapshot.slot_cache);
         self.reg_to_slot = snapshot.reg_to_slot;
         self.reg_to_const = snapshot.reg_to_const;
+        self.alloc_reg_slot = snapshot.alloc_reg_slot;
     }
 
     /// Define a label without clearing the register cache.
@@ -810,9 +808,6 @@ impl<'ctx> PvmEmitter<'ctx> {
             self.emit(Instruction::Fallthrough);
         }
         self.labels[label] = Some(self.current_offset());
-        // Allocated register validity is not path-sensitive and is not
-        // captured in CacheSnapshot, so reset it at label boundaries.
-        self.clear_allocated_reg_state();
     }
 
     // ── Fixup resolution ──

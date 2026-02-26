@@ -39,6 +39,8 @@ use super::successors::collect_successors;
 /// scratch registers by several lowering paths. Callee-saved allocation
 /// (r9-r12, when available) is configured below.
 const BASE_ALLOCATABLE_REGS: &[u8] = &[];
+/// Minimum dynamic use count required before a value is considered for allocation.
+const MIN_USES_FOR_ALLOCATION: usize = 3;
 
 /// A live interval for an SSA value.
 #[derive(Debug, Clone)]
@@ -346,8 +348,24 @@ fn compute_live_intervals<'ctx>(
         let mut end = last_use.get(&vk).copied().unwrap_or(start);
         let uses = use_count.get(&vk).copied().unwrap_or(0);
 
-        // Skip values with zero or one use — not worth allocating a register.
-        if uses <= 1 {
+        // Skip low-use values — not worth allocating a register.
+        if uses < MIN_USES_FOR_ALLOCATION {
+            continue;
+        }
+
+        // Values defined inside loop bodies are typically updated every
+        // iteration. With write-through slots this tends to add move traffic
+        // without enough load savings, so we only allocate loop-carried values
+        // that originate before the loop.
+        let mut defined_in_loop = false;
+        for (&header_bb, &back_edge_end) in &loop_headers {
+            let (header_start, _) = block_ranges[&header_bb];
+            if start >= header_start && start <= back_edge_end {
+                defined_in_loop = true;
+                break;
+            }
+        }
+        if defined_in_loop {
             continue;
         }
 

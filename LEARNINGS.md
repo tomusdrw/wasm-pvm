@@ -288,6 +288,10 @@ Accumulated knowledge from development. Update after every task.
   - Reserve outgoing call-argument registers (r9.. by max call arity) from the non-leaf allocatable set.
   - Reset allocated-register validity at label boundaries (`define_label` / `define_label_preserving_cache`) because this state is not path-sensitive and not snapshot/restored by cross-block cache propagation.
   - Without boundary reset, large workloads (notably `anan-as-compiler.jam`) can miscompile under pvm-in-pvm despite direct tests passing.
+- Follow-up stabilization:
+  - `CacheSnapshot` now includes allocated-register slot ownership (`alloc_reg_slot`) so cross-block propagation restores both cache and allocation state consistently.
+  - `alloc_reg_valid` was removed; slot identity (`alloc_reg_slot == Some(slot)`) is sufficient to decide whether a lazy reload is needed.
+  - Conservative non-leaf filter currently helps avoid large regressions: skip values defined inside loop bodies and require at least 3 uses before considering allocation.
 - Post-fix benchmark shape: consistent JAM size reductions from regalloc, but gas/time gains are workload-dependent and often near-noise on current microbenchmarks.
 
 ### RW Data Trimming
