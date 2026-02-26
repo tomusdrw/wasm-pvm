@@ -292,6 +292,9 @@ Accumulated knowledge from development. Update after every task.
   - `CacheSnapshot` now includes allocated-register slot ownership (`alloc_reg_slot`) so cross-block propagation restores both cache and allocation state consistently.
   - `alloc_reg_valid` was removed; slot identity (`alloc_reg_slot == Some(slot)`) is sufficient to decide whether a lazy reload is needed.
   - Conservative non-leaf filter currently helps avoid large regressions: skip values defined inside loop bodies and require at least 3 uses before considering allocation.
+  - Additional non-leaf gates that reduced remaining regressions:
+    - Skip regalloc when fewer than 2 non-leaf allocatable callee registers are available (1-register allocation tended to thrash on AS decoder/array workloads).
+    - Skip very small non-leaf functions (`total_values < 24`) where move/reload overhead often dominates.
 - Post-fix benchmark shape: consistent JAM size reductions from regalloc, but gas/time gains are workload-dependent and often near-noise on current microbenchmarks.
 
 ### RW Data Trimming

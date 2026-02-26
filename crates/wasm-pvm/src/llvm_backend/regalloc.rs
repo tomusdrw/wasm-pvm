@@ -41,6 +41,8 @@ use super::successors::collect_successors;
 const BASE_ALLOCATABLE_REGS: &[u8] = &[];
 /// Minimum dynamic use count required before a value is considered for allocation.
 const MIN_USES_FOR_ALLOCATION: usize = 3;
+/// Non-leaf functions smaller than this are unlikely to amortize regalloc moves.
+const MIN_TOTAL_VALUES_NON_LEAF: usize = 24;
 
 /// A live interval for an SSA value.
 #[derive(Debug, Clone)]
@@ -187,6 +189,51 @@ pub fn run(
         allocatable_regs.push(crate::abi::FIRST_LOCAL_REG + i as u8);
     }
     stats.allocatable_regs = allocatable_regs.len();
+
+    // In non-leaf functions, a single allocatable register tends to thrash on
+    // large AS workloads and can regress gas. Keep allocation disabled unless
+    // we have at least two allocatable callee regs to work with.
+    if !is_leaf && allocatable_regs.len() < 2 {
+        stats.skipped_reason = Some("insufficient_nonleaf_regs");
+        tracing::debug!(
+            target: "wasm_pvm::regalloc",
+            function = %fn_name,
+            is_leaf,
+            num_params,
+            total_values = stats.total_values,
+            total_intervals = stats.total_intervals,
+            has_loops = stats.has_loops,
+            allocatable_regs = stats.allocatable_regs,
+            skipped_reason = stats.skipped_reason,
+            "regalloc skipped"
+        );
+        return RegAllocResult {
+            stats,
+            ..RegAllocResult::default()
+        };
+    }
+
+    // Very small non-leaf functions (few SSA values) usually don't benefit:
+    // extra move/reload traffic outweighs saved loads.
+    if !is_leaf && stats.total_values < MIN_TOTAL_VALUES_NON_LEAF {
+        stats.skipped_reason = Some("small_nonleaf_function");
+        tracing::debug!(
+            target: "wasm_pvm::regalloc",
+            function = %fn_name,
+            is_leaf,
+            num_params,
+            total_values = stats.total_values,
+            total_intervals = stats.total_intervals,
+            has_loops = stats.has_loops,
+            allocatable_regs = stats.allocatable_regs,
+            skipped_reason = stats.skipped_reason,
+            "regalloc skipped"
+        );
+        return RegAllocResult {
+            stats,
+            ..RegAllocResult::default()
+        };
+    }
 
     // Phase 4: Linear scan allocation.
     let mut result = linear_scan(intervals, &allocatable_regs);
