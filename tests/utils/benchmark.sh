@@ -443,7 +443,8 @@ compare_branches() {
   local current_branch="$2"
   local orig_branch
   orig_branch=$(git rev-parse --abbrev-ref HEAD)
-  trap 'git checkout "$orig_branch" --quiet 2>/dev/null || true' EXIT
+  # Expand orig_branch now; EXIT runs after function locals are out of scope.
+  trap "git checkout '$orig_branch' --quiet 2>/dev/null || true" EXIT
 
   local base_output current_output
 
@@ -481,11 +482,25 @@ current_text = sys.argv[4]
 
 def parse_table(text):
     rows = {}
+    mode = None
     for line in text.split('\n'):
-        if not line.startswith('|') or 'Benchmark' in line or '---' in line:
+        if line.startswith('| Benchmark | WASM Size | JAM Size | Gas Used |'):
+            mode = "direct"
+            continue
+        if line.startswith('| Benchmark | JAM Size | Outer Gas Used |'):
+            mode = "pip"
+            continue
+        if line.startswith('|---'):
+            continue
+        if not line.startswith('|'):
+            mode = None
             continue
         parts = [p.strip() for p in line.split('|')]
-        if len(parts) >= 6:
+        if mode == "direct" and len(parts) >= 7:
+            desc, size, gas = parts[1], parts[3], parts[4]
+            if desc and size:
+                rows[desc] = (size, gas)
+        elif mode == "pip" and len(parts) >= 6:
             desc, size, gas = parts[1], parts[2], parts[3]
             if desc and size:
                 rows[desc] = (size, gas)
@@ -506,7 +521,7 @@ def pct(before, after):
 
 print(f"## Comparison: {base_name} vs {current_name}")
 print()
-print("| Benchmark | Size (before) | Size (after) | Size Change | Gas (before) | Gas (after) | Gas Change |")
+print("| Benchmark | JAM Size (before) | JAM Size (after) | Size Change | Gas (before) | Gas (after) | Gas Change |")
 print("|-----------|--------------|-------------|-------------|-------------|------------|------------|")
 
 for desc in base:
