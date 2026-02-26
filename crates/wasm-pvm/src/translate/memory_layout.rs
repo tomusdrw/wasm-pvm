@@ -192,7 +192,11 @@ mod tests {
         for globals in [0, 1, 100, 500, 1000] {
             for passive in [0, 1, 5] {
                 let base = compute_wasm_memory_base(10, globals, passive);
-                assert_eq!(base & 0xFFF, 0, "base 0x{base:X} not 4KB-aligned for {globals} globals, {passive} passive");
+                assert_eq!(
+                    base & 0xFFF,
+                    0,
+                    "base 0x{base:X} not 4KB-aligned for {globals} globals, {passive} passive"
+                );
             }
         }
     }
@@ -221,7 +225,10 @@ mod tests {
     #[test]
     fn validate_globals_layout_overflow_message() {
         let err = validate_globals_layout(2048, 0).unwrap_err();
-        assert!(err.contains("exceeds"), "error should mention exceeds: {err}");
+        assert!(
+            err.contains("exceeds"),
+            "error should mention exceeds: {err}"
+        );
         assert!(err.contains("0x30000"), "error should mention base: {err}");
         assert!(err.contains("0x32000"), "error should mention limit: {err}");
     }
@@ -247,6 +254,9 @@ mod tests {
 
     #[test]
     fn stack_limit_formula() {
-        assert_eq!(stack_limit(DEFAULT_STACK_SIZE), (0xFEFE_0000u32 - 64 * 1024) as i32);
+        assert_eq!(
+            stack_limit(DEFAULT_STACK_SIZE),
+            (0xFEFE_0000u32 - 64 * 1024) as i32
+        );
     }
 }
