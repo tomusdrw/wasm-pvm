@@ -68,9 +68,19 @@ pub fn stack_limit(stack_size: u32) -> i32 {
 /// are laid out starting at `GLOBAL_MEMORY_BASE`. The heap must begin after
 /// that region while also respecting the spill area alignment constraints.
 ///
-/// The result is aligned to the PVM page size (4KB). The SPI spec only requires
-/// page-aligned `rw_data` length; the WASM page size (64KB) governs
-/// `memory.grow` granularity but not the base address.
+/// # Why 4KB alignment (not 64KB)
+///
+/// The result is aligned to the PVM page size (4KB = 0x1000). This is correct
+/// because:
+/// - The SPI spec requires page-aligned (4KB) `rw_data` lengths, not 64KB.
+/// - The anan-as interpreter (`vendor/anan-as/assembly/spi.ts`) uses
+///   `alignToPageSize(rwLength)` (4KB) for the heap zeros start, not
+///   `alignToSegmentSize` (64KB).
+/// - The WASM page size (64KB) governs `memory.grow` granularity only — it
+///   controls how much memory grows per step, not where the base address must
+///   sit.
+/// - Using 4KB alignment saves ~52KB per program (the old 64KB alignment
+///   wasted up to 60KB of padding between globals_end and the heap start).
 #[must_use]
 pub fn compute_wasm_memory_base(
     num_local_funcs: usize,
