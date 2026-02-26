@@ -107,7 +107,7 @@ Impact: ~50% gas reduction, ~15-40% code size reduction across benchmarks.
 | Parameter | Location |
 |-----------|----------|
 | 1st–4th | r9–r12 |
-| 5th+ | `PARAM_OVERFLOW_BASE` (`0x2F000 + (i-4)*8`) in global memory |
+| 5th+ | `PARAM_OVERFLOW_BASE` (`0x32000 + (i-4)*8`) in global memory |
 
 Return value: **r7** (single i64).
 
@@ -282,9 +282,11 @@ then r7/r8 are restored.
 PVM Address Space:
   0x00000 - 0x0FFFF   Reserved / guard (fault on access)
   0x10000 - 0x1FFFF   Read-only data (RO_DATA_BASE) — dispatch tables
-  0x2F000 - 0x2F0FF   Parameter overflow area (5th+ function arguments)
-  0x2F100+            Spilled locals (per-function metadata, typically unused)
-  0x30000+             Globals storage (size = `globals_region_size(num_globals, num_passive_segments)`) followed immediately by the WASM heap, which is aligned via `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)`
+  0x20000 - 0x2FFFF   Gap zone (unmapped, guard between RO and RW)
+  0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
+  0x32000 - 0x320FF   Parameter overflow area (5th+ function arguments)
+  0x32100+            Spilled locals (per-function metadata, typically unused)
+  0x40000+             WASM linear memory (64KB-aligned, computed dynamically via `compute_wasm_memory_base`)
   ...                  (unmapped gap until stack)
   0xFEFE0000           STACK_SEGMENT_END (initial SP)
   0xFEFF0000           Arguments segment (input data, read-only)
@@ -295,7 +297,7 @@ PVM Address Space:
 
 - Global address: `0x30000 + global_index * 4`
 - Memory size global: `0x30000 + num_globals * 4`
-- Spilled local: `0x2F100 + func_idx * SPILLED_LOCALS_PER_FUNC + local_offset`
+- Spilled local: `0x32100 + func_idx * SPILLED_LOCALS_PER_FUNC + local_offset`
 - WASM memory base: `align_up(max(SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC, GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)), 64KB)` — the heap now starts immediately after the globals/passive-length region that is actually used (still 64KB-aligned for PiP compatibility)
 - Stack limit: `0xFEFE0000 - stack_size`
 

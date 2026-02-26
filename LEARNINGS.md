@@ -291,7 +291,8 @@ Accumulated knowledge from development. Update after every task.
 ### Memory Layout Sensitivity (PVM-in-PVM)
 
 - Moving the globals/overflow/spill region around directly affects the base address that the interpreter loads as the WASM heap, so every change still requires a full pvm-in-pvm validation. Direct/unit runs may look fine, but the outer interpreter can panic if the linear memory isn't page-aligned or overlaps reserved slots.
-- The new layout keeps overflow/spill below the globals window and keeps the heap starting at `0x30000`, which preserves compatibility while trimming the RW data blob size.
+- **Critical**: `PARAM_OVERFLOW_BASE` and `SPILLED_LOCALS_BASE` must be >= `GLOBAL_MEMORY_BASE` (0x30000) because the SPI rw_data zone starts at 0x30000. The gap zone (0x20000-0x2FFFF) between ro_data and rw_data is unmapped. Placing constants in the gap zone causes PVM panics.
+- The layout keeps overflow/spill inside the rw_data zone (0x32000+) after the globals window, which preserves compatibility while trimming the RW data blob size.
 
 ### Benchmark Comparison Parsing
 

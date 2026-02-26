@@ -10,10 +10,11 @@
 //! PVM Address Space:
 //!   0x00000 - 0x0FFFF   Reserved (fault on access)
 //!   0x10000 - 0x1FFFF   Read-only data segment (RO_DATA_BASE)
-//!   0x2F000 - 0x2F0FF   Parameter overflow area (PARAM_OVERFLOW_BASE)
-//!   0x2F100+            Spilled locals base (SPILLED_LOCALS_BASE)
-//!   0x30000+            Globals storage (GLOBAL_MEMORY_BASE)
-//!   0x30000+            WASM linear memory base (aligned after globals)
+//!   0x20000 - 0x2FFFF   Gap zone (unmapped, guard between RO and RW)
+//!   0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
+//!   0x32000 - 0x320FF   Parameter overflow area (PARAM_OVERFLOW_BASE)
+//!   0x32100+            Spilled locals base (SPILLED_LOCALS_BASE)
+//!   0x40000+            WASM linear memory (64KB-aligned, computed dynamically)
 //!   ...
 //!   0xFEFE0000          Stack segment end (stack grows downward)
 //!   0xFFFF0000          Exit address (EXIT_ADDRESS)
@@ -26,18 +27,16 @@ pub const RO_DATA_BASE: i32 = 0x10000;
 /// Each global occupies 4 bytes at `GLOBAL_MEMORY_BASE + index * 4`.
 pub const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 
-/// Base address for the RW data image emitted in SPI programs.
-/// `rw_data[0]` is placed at this address (`PARAM_OVERFLOW_BASE`).
-pub const RW_DATA_BASE: i32 = PARAM_OVERFLOW_BASE;
-
 /// Temporary area for passing overflow parameters (5th+ args) during `call_indirect`.
 /// The caller writes here, and the callee's prologue copies to its spilled local addresses.
-/// Supports up to 8 overflow parameters (64 bytes). Placed just below the globals region.
-pub const PARAM_OVERFLOW_BASE: i32 = 0x2F000;
+/// Supports up to 8 overflow parameters (64 bytes).
+/// Must be >= GLOBAL_MEMORY_BASE so it falls inside the SPI rw_data zone (0x30000+).
+pub const PARAM_OVERFLOW_BASE: i32 = 0x32000;
 
 /// Base address for spilled locals in memory.
-/// Spills begin immediately after the overflow area so the WASM heap stays 64KB-aligned.
-pub const SPILLED_LOCALS_BASE: i32 = 0x2F100;
+/// Layout: 0x30000+ globals, 0x32000 overflow, 0x32100+ spilled locals.
+/// Must be >= GLOBAL_MEMORY_BASE so it falls inside the SPI rw_data zone (0x30000+).
+pub const SPILLED_LOCALS_BASE: i32 = 0x32100;
 
 /// Bytes allocated per function for spilled locals.
 /// Set to 0 as modern compiler spills to stack (r1-relative).

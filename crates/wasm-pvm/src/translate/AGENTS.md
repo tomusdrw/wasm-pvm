@@ -33,9 +33,9 @@
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data |
-| `0x2F000` | Parameter overflow area |
-| `0x2F100+` | Spilled-locals base (spills are stack-based; base kept for layout/alignment) |
 | `0x30000` | Globals storage (size = `globals_region_size(num_globals, num_passive_segments)`); the heap is aligned via `compute_wasm_memory_base()` and begins right after this region. |
+| `0x32000` | Parameter overflow area |
+| `0x32100+` | Spilled-locals base (spills are stack-based; base kept for layout/alignment) |
 
 ## Anti-Patterns
 
