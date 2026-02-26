@@ -105,11 +105,12 @@ pub fn validate_globals_layout(
 ) -> Result<(), String> {
     let size = globals_region_size(num_globals, num_passive_segments);
     if size > GLOBALS_WINDOW_SIZE {
+        let base = GLOBAL_MEMORY_BASE;
+        let limit = PARAM_OVERFLOW_BASE;
         return Err(format!(
             "globals region ({size} bytes for {num_globals} globals + 1 memory-size + \
              {num_passive_segments} passive segments) exceeds the {GLOBALS_WINDOW_SIZE}-byte \
-             window (0x{:X}..0x{:X})",
-            GLOBAL_MEMORY_BASE, PARAM_OVERFLOW_BASE,
+             window (0x{base:X}..0x{limit:X})"
         ));
     }
     Ok(())
