@@ -433,9 +433,8 @@ fn calculate_heap_pages(
     // needs at startup. Additional memory is allocated on demand via sbrk/memory.grow.
     // We enforce a minimum of MIN_INITIAL_WASM_PAGES (16 pages = 1MB) because many
     // programs (especially AssemblyScript with --runtime stub) access memory without
-    // calling memory.grow first. wasm_memory_base is still 64KB-aligned, so small
-    // initial_pages values need the full MIN_INITIAL_WASM_PAGES to reach an address
-    // above the overflow/spill window.
+    // calling memory.grow first. wasm_memory_base is 4KB-aligned (PVM page size);
+    // the 64KB WASM page size only governs memory.grow granularity, not the base address.
     let initial_pages = memory_limits.initial_pages.max(MIN_INITIAL_WASM_PAGES);
     let wasm_memory_initial_end = wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
 
