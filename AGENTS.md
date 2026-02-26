@@ -71,6 +71,7 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 - **`ARCHITECTURE.md`** — Update if ABI, calling conventions, or SPI format changed
 - **Subdirectory `AGENTS.md` files** (`crates/wasm-pvm/src/translate/AGENTS.md`, `crates/wasm-pvm/src/pvm/AGENTS.md`) — Update if the relevant module's internals changed
 - **`todo.md`** — Mark completed tasks as `[x]`, add new discovered tasks
+- **`README.md` benchmark tables** — If JAM sizes or gas usage changed (e.g. code generation, memory layout, or optimization changes), re-run `./tests/utils/benchmark.sh` and update the two benchmark tables in `README.md` (Optimizations Impact + PVM-in-PVM) with the latest numbers
 
 This is not optional. Stale documentation causes repeated mistakes and wasted investigation time.
 
