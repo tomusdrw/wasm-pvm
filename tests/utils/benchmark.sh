@@ -53,6 +53,7 @@ BENCHMARKS=(
   "as-gcd|00e10700c8000000|0|AS gcd(2017,200)|wasm:tests/build/wasm/gcd.wasm"
   "as-decoder-test|00000000|0|AS decoder|wasm:tests/build/wasm/decoder-test.wasm"
   "as-array-test|00000000|0|AS array|wasm:tests/build/wasm/array-test.wasm"
+  "regalloc-two-loops|f4010000|0|regalloc two loops(500)|wat:tests/fixtures/wat/regalloc-two-loops.jam.wat"
   "anan-as-compiler||0|anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
 )
 

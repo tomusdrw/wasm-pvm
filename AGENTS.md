@@ -78,6 +78,15 @@ This is not optional. Stale documentation causes repeated mistakes and wasted in
 
 **Every PR description MUST include benchmark results.** Run `./tests/utils/benchmark.sh --base main --current <branch>` and paste the comparison table into the PR body. The script produces both direct execution and PVM-in-PVM benchmark comparisons (JAM file size, gas usage, and execution time). PRs without benchmark results should not be merged.
 
+### Regalloc Debugging
+
+- Enable allocator logs with `RUST_LOG=wasm_pvm::regalloc=debug`.
+- `regalloc::run()` prints candidate/assignment stats (`total_values`, `total_intervals`, `has_loops`, `allocatable_regs`, `allocated_values`, `skipped_reason`).
+- `lower_function()` prints usage counters (`alloc_load_hits`, `alloc_load_reloads`, `alloc_load_moves`, `alloc_store_hits`, `alloc_store_moves`) plus `emitted_instructions`.
+- Quick triage:
+  - `allocatable_regs=0` or `skipped_reason` usually means no allocation will happen.
+  - Non-zero `allocated_values` with near-zero load/store hits usually indicates move/reload overhead dominates that function.
+
 ---
 
 ## Structure
@@ -97,7 +106,7 @@ crates/
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
 │       │   ├── calls.rs         # Direct/indirect calls, import stubs (~190 lines)
 │       │   ├── intrinsics.rs    # PVM + LLVM intrinsic lowering (~440 lines)
-│       │   └── regalloc.rs      # Linear-scan register allocator (leaf callee-saved regs) (~360 lines)
+│       │   └── regalloc.rs      # Linear-scan register allocator (callee-saved regs, loop-focused) (~360 lines)
 │       ├── translate/     # Compilation orchestration
 │       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
 │       │   ├── adapter_merge.rs (WAT adapter merge into WASM before compilation)
@@ -143,14 +152,14 @@ crates/
 
 ### Key Design Decisions
 - **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
-- **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first). A **linear-scan register allocator** (`regalloc.rs`) can assign long-lived values to available leaf callee-saved registers (r9-r12). Scratch registers r5/r6 are intentionally excluded from global allocation.
+- **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first). A **linear-scan register allocator** (`regalloc.rs`) can assign loop-spanning values to available callee-saved registers (r9-r12) beyond the parameter count in both leaf and non-leaf functions. In non-leaf functions, registers reserved for outgoing call arguments are excluded from allocation. Scratch registers r5/r6 are intentionally excluded from global allocation.
 - **Per-block register cache**: `PvmEmitter` tracks which stack slots are live in registers via `slot_cache`/`reg_to_slot`. Eliminates redundant `LoadIndU64` when a value is used shortly after being computed. Cache is cleared at block boundaries and after calls/ecalli. (~50% gas reduction, ~15-40% code size reduction)
 - **Cross-block register cache**: When a block has exactly one predecessor and no phi nodes, the predecessor's cache snapshot is propagated instead of clearing. The snapshot is taken before the terminator instruction with TEMP1/TEMP2 invalidated (since terminators load operands into those registers). Predecessor map is computed in `pre_scan_function` by scanning terminator successors.
 - **Trimmed RW data**: `build_rw_data()` trims trailing zero bytes before SPI encoding. Heap pages are zero-initialized, so omitted high-address zero tails are semantically equivalent and reduce blob size.
 - **heap_pages uses initial_pages**: SPI `heap_pages` reflects WASM `initial_pages` (not `max_pages`). Additional memory is allocated on demand via `sbrk`/`memory.grow`. Programs declaring `(memory 0)` get a minimum of 16 WASM pages (1MB).
 - **All values as i64**: PVM registers are 64-bit; simplifies translation
 - **LLVM backend**: inkwell (LLVM 18 bindings) is a required dependency
-- **Callee-save shrink wrapping**: For non-entry functions, only callee-saved registers (r9-r12) that are actually used are saved/restored in prologue/epilogue. A register is "used" if it receives a parameter or the function contains any call instruction. Frame header size is dynamic per-function: `8 (ra) + 8 * num_used_callee_regs`.
+- **Callee-save shrink wrapping**: For non-entry functions, only callee-saved registers (r9-r12) that are actually used are saved/restored in prologue/epilogue. A register is "used" if it receives a parameter, the function contains any call instruction, or register allocation assigns values to it. Frame header size is dynamic per-function: `8 (ra) + 8 * num_used_callee_regs`.
 - **Configurable optimizations**: All non-trivial optimizations (LLVM passes, peephole, register cache, ICmp+Branch fusion, shrink wrapping) can be disabled via `OptimizationFlags` / CLI `--no-*` flags. All are enabled by default.
 
 ---
@@ -228,7 +237,7 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `constant_propagation` | `--no-const-prop` | Skip redundant `LoadImm`/`LoadImm64` when register already holds the constant | `llvm_backend/emitter.rs:emit()` |
 | `inlining` | `--no-inline` | LLVM function inlining for small callees (CGSCC inline pass) | `llvm_frontend/function_builder.rs:run_optimization_passes()` |
 | `cross_block_cache` | `--no-cross-block-cache` | Propagate register cache across single-predecessor block boundaries | `llvm_backend/mod.rs:lower_function()` |
-| `register_allocation` | `--no-register-alloc` | Linear-scan register allocation (leaf callee-saved regs for long-lived values) | `llvm_backend/mod.rs:lower_function()` → `regalloc.rs` |
+| `register_allocation` | `--no-register-alloc` | Linear-scan register allocation (loop-focused, uses available callee-saved regs r9-r12, reserves outgoing call-arg regs in non-leaf funcs) | `llvm_backend/mod.rs:lower_function()` → `regalloc.rs` |
 | `dead_function_elimination` | `--no-dead-function-elim` | Remove unreachable functions from output | `translate/mod.rs:compile_via_llvm()` |
 | `fallthrough_jumps` | `--no-fallthrough-jumps` | Skip redundant Jump when target is next block in layout order | `llvm_backend/emitter.rs:emit_jump_to_label()` |
 
@@ -275,7 +284,7 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | r5-r6 | Scratch registers (`abi::SCRATCH1`/`SCRATCH2`). Used by memory intrinsics and lowering helpers; not globally allocated by the current linear-scan allocator. |
 | r7 | Return value from calls / SPI args pointer |
 | r8 | SPI args length |
-| r9-r12 | Local variables (first 4) / callee-saved. In leaf functions, unused ones may be assigned by linear-scan register allocation. |
+| r9-r12 | Local variables (first 4) / callee-saved. Unused regs beyond parameter count may be assigned by linear-scan register allocation in both leaf and non-leaf functions; non-leaf allocation reserves outgoing call-arg registers and call lowering invalidates allocated mappings after calls. |
 
 ---
 

@@ -109,7 +109,7 @@ pub struct EmitterConfig {
     /// Whether cross-block register cache propagation is enabled.
     pub cross_block_cache_enabled: bool,
 
-    /// Whether register allocation (r5/r6 for long-lived values) is enabled.
+    /// Whether register allocation (long-lived values in allocatable regs) is enabled.
     pub register_allocation_enabled: bool,
 
     /// Whether fallthrough jump elimination is enabled.
@@ -184,10 +184,13 @@ pub struct PvmEmitter<'ctx> {
     /// Register allocation results (empty if disabled).
     pub(crate) regalloc: RegAllocResult,
 
-    /// Whether each allocated register currently holds a valid SSA value.
-    /// Allocated values are always write-through to stack slots, so a clobbered
-    /// allocated register can be lazily reloaded from its slot on next use.
-    alloc_reg_valid: [bool; 13],
+    /// Which stack slot is currently materialized in each allocated register.
+    /// Multiple slots may map to the same physical register across disjoint
+    /// intervals; this tracks runtime ownership so stale values are reloaded.
+    alloc_reg_slot: [Option<i32>; 13],
+
+    /// Runtime usage counters for register-allocated mappings.
+    pub(crate) regalloc_usage: RegAllocUsageStats,
 
     /// Label of the next basic block in layout order.
     /// When set, `emit_jump_to_label()` skips the Jump if the target matches,
@@ -201,6 +204,22 @@ pub struct CacheSnapshot {
     pub slot_cache: HashMap<i32, u8>,
     pub reg_to_slot: [Option<i32>; 13],
     pub reg_to_const: [Option<u64>; 13],
+    pub alloc_reg_slot: [Option<i32>; 13],
+}
+
+/// Instrumentation counters describing how much allocated mappings are used by codegen.
+#[derive(Debug, Clone, Default)]
+pub struct RegAllocUsageStats {
+    /// `load_operand` looked up a value in `val_to_reg`.
+    pub load_hits: usize,
+    /// The allocated register had been invalidated and had to be reloaded from stack.
+    pub load_reloads: usize,
+    /// `load_operand` emitted `MoveReg` from allocated register to target temp register.
+    pub load_moves: usize,
+    /// `store_to_slot` wrote a value into an allocated destination register.
+    pub store_hits: usize,
+    /// `store_to_slot` needed a `MoveReg` to copy source into the allocated register.
+    pub store_moves: usize,
 }
 
 impl CacheSnapshot {
@@ -211,6 +230,12 @@ impl CacheSnapshot {
             self.slot_cache.remove(&slot);
         }
         self.reg_to_const[reg as usize] = None;
+        self.invalidate_alloc_reg(reg);
+    }
+
+    /// Invalidate allocated-register slot ownership in this snapshot.
+    pub fn invalidate_alloc_reg(&mut self, reg: u8) {
+        self.alloc_reg_slot[reg as usize] = None;
     }
 }
 
@@ -263,7 +288,8 @@ impl<'ctx> PvmEmitter<'ctx> {
             callee_save_offsets: [Some(8), Some(16), Some(24), Some(32)],
             has_calls: true, // conservative default
             regalloc: RegAllocResult::default(),
-            alloc_reg_valid: [false; 13],
+            alloc_reg_slot: [None; 13],
+            regalloc_usage: RegAllocUsageStats::default(),
             next_block_label: None,
         }
     }
@@ -557,22 +583,27 @@ impl<'ctx> PvmEmitter<'ctx> {
                     // Fallback for unsigned constants.
                     self.emit_const_to_reg(temp_reg, const_val);
                 } else if let Some(&alloc_reg) = self.regalloc.val_to_reg.get(&key) {
-                    // Value has an allocated register. If it was clobbered, reload
+                    self.regalloc_usage.load_hits += 1;
+                    let slot = self.get_slot(key).ok_or_else(|| {
+                        Error::Internal(format!("no slot for allocated int value {key:?}"))
+                    })?;
+                    // Value has an allocated register. If it was clobbered OR this
+                    // register currently materializes a different slot, reload
                     // lazily from the canonical stack slot.
-                    if !self.alloc_reg_valid[alloc_reg as usize] {
-                        let slot = self.get_slot(key).ok_or_else(|| {
-                            Error::Internal(format!("no slot for allocated int value {key:?}"))
-                        })?;
+                    let reg_idx = alloc_reg as usize;
+                    if self.alloc_reg_slot[reg_idx] != Some(slot) {
+                        self.regalloc_usage.load_reloads += 1;
                         self.emit(Instruction::LoadIndU64 {
                             dst: alloc_reg,
                             base: STACK_PTR_REG,
                             offset: slot,
                         });
-                        self.alloc_reg_valid[alloc_reg as usize] = true;
+                        self.alloc_reg_slot[reg_idx] = Some(slot);
                         self.cache_slot(slot, alloc_reg);
                     }
 
                     if alloc_reg != temp_reg {
+                        self.regalloc_usage.load_moves += 1;
                         self.emit(Instruction::MoveReg {
                             dst: temp_reg,
                             src: alloc_reg,
@@ -622,45 +653,41 @@ impl<'ctx> PvmEmitter<'ctx> {
     }
 
     pub fn store_to_slot(&mut self, slot_offset: i32, src_reg: u8) {
+        let alloc_reg = self.regalloc.slot_to_reg.get(&slot_offset).copied();
         // If this slot has an allocated register, copy the value into it.
         // The stack store is still emitted (write-through); DSE will remove it
         // if the slot is never loaded from stack.
-        if let Some(&alloc_reg) = self.regalloc.slot_to_reg.get(&slot_offset)
-            && src_reg != alloc_reg
-        {
-            self.emit(Instruction::MoveReg {
-                dst: alloc_reg,
-                src: src_reg,
-            });
-        }
-        if let Some(&alloc_reg) = self.regalloc.slot_to_reg.get(&slot_offset) {
-            self.alloc_reg_valid[alloc_reg as usize] = true;
+        if let Some(alloc_reg) = alloc_reg {
+            self.regalloc_usage.store_hits += 1;
+            if src_reg != alloc_reg {
+                self.regalloc_usage.store_moves += 1;
+                self.emit(Instruction::MoveReg {
+                    dst: alloc_reg,
+                    src: src_reg,
+                });
+            }
+            let reg_idx = alloc_reg as usize;
+            self.alloc_reg_slot[reg_idx] = Some(slot_offset);
         }
         self.emit(Instruction::StoreIndU64 {
             base: STACK_PTR_REG,
             src: src_reg,
             offset: slot_offset,
         });
-        if let Some(&alloc_reg) = self.regalloc.slot_to_reg.get(&slot_offset) {
-            self.cache_slot(slot_offset, alloc_reg);
-        } else {
-            self.cache_slot(slot_offset, src_reg);
-        }
+        self.cache_slot(slot_offset, alloc_reg.unwrap_or(src_reg));
     }
 
     // ── Register allocation spill/reload ──
 
     /// Spill scratch register-allocated values (r5/r6) to their stack slots.
-    /// Called before instructions that clobber r5/r6 (calls, memory intrinsics).
-    /// Callee-saved registers (r9-r12) are not spilled here because they are
-    /// preserved by the callee-save convention and only used in leaf functions.
+    /// Called before instructions that may clobber caller-saved registers.
     pub fn spill_allocated_regs(&mut self) -> Result<()> {
         // No-op: allocated values are already write-through in stack slots.
-        if !self
+        if self
             .regalloc
             .reg_to_slot
             .keys()
-            .all(|&r| r != crate::abi::SCRATCH1 && r != crate::abi::SCRATCH2)
+            .any(|&r| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
         {
             return Err(Error::Internal(
                 "r5/r6 allocation requires explicit spill handling".into(),
@@ -669,22 +696,38 @@ impl<'ctx> PvmEmitter<'ctx> {
         Ok(())
     }
 
-    /// Reload scratch register-allocated values (r5/r6) from their stack slots.
-    /// Called after instructions that clobber r5/r6 (calls, memory intrinsics).
-    pub fn reload_allocated_regs(&mut self) {
-        // Mark clobbered scratch allocated registers as invalid. They will be
-        // reloaded lazily from stack slots when used again.
+    fn invalidate_allocated_regs_where(&mut self, mut pred: impl FnMut(u8) -> bool) {
         let regs: Vec<u8> = self
             .regalloc
             .reg_to_slot
             .keys()
             .copied()
-            .filter(|&r| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
+            .filter(|&r| pred(r))
             .collect();
         for reg in regs {
-            self.alloc_reg_valid[reg as usize] = false;
             self.invalidate_reg(reg);
         }
+    }
+
+    /// Invalidate allocated registers clobbered by scratch-heavy helpers.
+    /// This is used after intrinsics that overwrite r5/r6.
+    pub fn reload_allocated_regs_after_scratch_clobber(&mut self) {
+        self.invalidate_allocated_regs_where(|r| {
+            r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2
+        });
+    }
+
+    /// Invalidate allocated registers clobbered by a function call.
+    ///
+    /// Call argument setup may overwrite local argument registers (r9+), so
+    /// allocated local-register mappings are invalidated after each call.
+    pub fn reload_allocated_regs_after_call(&mut self) {
+        self.invalidate_allocated_regs_where(|r| {
+            r == crate::abi::SCRATCH1
+                || r == crate::abi::SCRATCH2
+                || (r >= crate::abi::FIRST_LOCAL_REG
+                    && r < crate::abi::FIRST_LOCAL_REG + crate::abi::MAX_LOCAL_REGS as u8)
+        });
     }
 
     // ── Register cache ──
@@ -711,7 +754,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             self.slot_cache.remove(&slot);
         }
         if self.regalloc.reg_to_slot.contains_key(&reg) {
-            self.alloc_reg_valid[reg as usize] = false;
+            self.alloc_reg_slot[reg as usize] = None;
         }
         self.reg_to_const[reg as usize] = None;
     }
@@ -721,6 +764,13 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.slot_cache.clear();
         self.reg_to_slot = [None; 13];
         self.reg_to_const = [None; 13];
+        self.clear_allocated_reg_state();
+    }
+
+    fn clear_allocated_reg_state(&mut self) {
+        for &reg in self.regalloc.reg_to_slot.keys() {
+            self.alloc_reg_slot[reg as usize] = None;
+        }
     }
 
     /// Take a snapshot of the current register cache state.
@@ -729,6 +779,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             slot_cache: self.slot_cache.clone(),
             reg_to_slot: self.reg_to_slot,
             reg_to_const: self.reg_to_const,
+            alloc_reg_slot: self.alloc_reg_slot,
         }
     }
 
@@ -737,6 +788,7 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.slot_cache.clone_from(&snapshot.slot_cache);
         self.reg_to_slot = snapshot.reg_to_slot;
         self.reg_to_const = snapshot.reg_to_const;
+        self.alloc_reg_slot = snapshot.alloc_reg_slot;
     }
 
     /// Define a label without clearing the register cache.

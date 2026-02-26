@@ -264,7 +264,7 @@ Accumulated knowledge from development. Update after every task.
 
 ### Linear-Scan Register Allocation
 
-- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to available leaf callee-saved registers (r9-r12)
+- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to available callee-saved registers (r9-r12) beyond parameter count.
 - Operates on LLVM IR before PVM lowering; produces `ValKey` → physical register mapping
 - `load_operand` checks regalloc before slot lookup: uses `MoveReg` from allocated reg instead of `LoadIndU64` from stack
 - `store_to_slot` uses write-through: copies to allocated reg AND stores to stack; DSE removes the stack store if never loaded
@@ -272,6 +272,30 @@ Accumulated knowledge from development. Update after every task.
 - Clobbered allocated scratch regs (when present) are handled with lazy invalidation/reload instead of eager spill+reload
 - Values with ≤1 use are skipped (not worth a register)
 - Loop extension: back-edges detected by successor having lower block index; live ranges extended to cover the back-edge source
+- `linear_scan` must track active assignments separately from final assignments:
+  - naturally expired intervals should remain in the final `val_to_reg`/`slot_to_reg` maps (their earlier uses still benefit),
+  - evicted intervals must be removed from final mapping (whole-interval mapping is no longer valid after eviction).
+- Unit tests cover both interval outcomes (non-overlapping reuse and eviction dropping).
+- Targeted benchmark fixture: `tests/fixtures/wat/regalloc-two-loops.jam.wat` (`regalloc two loops(500)` row).
+- Regalloc instrumentation:
+  - `regalloc::run()` logs candidate/assignment stats at target `wasm_pvm::regalloc` (enable via `RUST_LOG=wasm_pvm::regalloc=debug`).
+  - `lower_function()` logs per-function summary including allocation usage counters (`alloc_load_hits`, `alloc_store_hits`).
+- Instrumentation root cause and fix:
+  - Root cause was `allocatable_regs=0` in non-leaf functions because only leaf functions exposed r9-r12 to regalloc.
+  - Fix: expose available r9-r12 registers in both leaf and non-leaf functions; reserve outgoing argument registers (`r9..r9+max_call_args-1`) from non-leaf allocation and invalidate local-register mappings after calls.
+  - Example (`regalloc-two-loops`): `allocatable_regs=2`, `allocated_values=4`, `alloc_load_hits=11`, `alloc_store_hits=8`.
+- Non-leaf stabilization:
+  - Reserve outgoing call-argument registers (r9.. by max call arity) from the non-leaf allocatable set.
+  - Initially, `alloc_reg_valid` was reset at label boundaries (`define_label` / `define_label_preserving_cache`) because that validity state was not path-sensitive and `CacheSnapshot` did not yet snapshot `alloc_reg_slot` during cross-block cache propagation.
+  - Without boundary reset, large workloads (notably `anan-as-compiler.jam`) can miscompile under pvm-in-pvm despite direct tests passing.
+- Follow-up stabilization:
+  - Corrective follow-up: `CacheSnapshot` now includes allocated-register slot ownership (`alloc_reg_slot`), which replaced the earlier label-boundary `alloc_reg_valid` reset approach by restoring allocation state path-sensitively across propagated edges.
+  - `alloc_reg_valid` was removed; slot identity (`alloc_reg_slot == Some(slot)`) is sufficient to decide whether a lazy reload is needed.
+  - Conservative non-leaf filter currently helps avoid large regressions: skip values defined inside loop bodies and require at least 3 uses before considering allocation.
+  - Additional non-leaf gates that reduced remaining regressions:
+    - Skip regalloc when fewer than 2 non-leaf allocatable callee registers are available (1-register allocation tended to thrash on AS decoder/array workloads).
+    - Skip very small non-leaf functions (`total_values < 24`) where move/reload overhead often dominates.
+- Post-fix benchmark shape: consistent JAM size reductions from regalloc, but gas/time gains are workload-dependent and often near-noise on current microbenchmarks.
 
 ### RW Data Trimming
 

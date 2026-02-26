@@ -150,6 +150,7 @@ pub fn lower_function(
             // Snapshot before terminator, then invalidate temp registers that
             // the terminator's operand loads may overwrite (TEMP1/TEMP2 for
             // branch conditions, switch values, fused ICmp operands).
+            // CacheSnapshot now includes allocated-register slot ownership too.
             let mut snap = emitter.snapshot_cache();
             snap.invalidate_reg(TEMP1);
             snap.invalidate_reg(TEMP2);
@@ -187,6 +188,31 @@ pub fn lower_function(
     }
 
     emitter.resolve_fixups()?;
+
+    if emitter.config.register_allocation_enabled {
+        let fn_name = function.get_name().to_string_lossy().to_string();
+        let stats = &emitter.regalloc.stats;
+        let usage = &emitter.regalloc_usage;
+        tracing::info!(
+            target: "wasm_pvm::regalloc",
+            function = %fn_name,
+            is_leaf = !emitter.has_calls,
+            params = function.count_params(),
+            total_values = stats.total_values,
+            total_intervals = stats.total_intervals,
+            has_loops = stats.has_loops,
+            allocatable_regs = stats.allocatable_regs,
+            allocated_values = stats.allocated_values,
+            skipped_reason = ?stats.skipped_reason,
+            alloc_load_hits = usage.load_hits,
+            alloc_load_reloads = usage.load_reloads,
+            alloc_load_moves = usage.load_moves,
+            alloc_store_hits = usage.store_hits,
+            alloc_store_moves = usage.store_moves,
+            emitted_instructions = emitter.instructions.len(),
+            "regalloc lowering summary"
+        );
+    }
 
     let num_call_returns = emitter.num_call_returns();
     Ok(LlvmFunctionTranslation {

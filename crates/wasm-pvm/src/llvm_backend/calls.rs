@@ -89,7 +89,7 @@ pub fn lower_wasm_call<'ctx>(
     e.clear_reg_cache();
 
     // Reload register-allocated values after the call.
-    e.reload_allocated_regs();
+    e.reload_allocated_regs_after_call();
 
     e.call_fixups.push(LlvmCallFixup {
         return_addr_instr: jump_instr, // same instruction for LoadImmJump
@@ -279,7 +279,7 @@ fn lower_host_call<'ctx>(
     e.clear_reg_cache();
 
     // Reload register-allocated values after ecalli.
-    e.reload_allocated_regs();
+    e.reload_allocated_regs_after_call();
 
     if has_return {
         let slot = result_slot(e, instr)?;
@@ -474,7 +474,7 @@ pub fn lower_pvm_call_indirect<'ctx>(
     e.clear_reg_cache();
 
     // Reload register-allocated values after the indirect call.
-    e.reload_allocated_regs();
+    e.reload_allocated_regs_after_call();
 
     e.indirect_call_fixups.push(LlvmIndirectCallFixup {
         return_addr_instr,
