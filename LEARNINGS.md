@@ -317,3 +317,11 @@ Accumulated knowledge from development. Update after every task.
 - A compact globals/overflow layout directly below `0x40000` can drastically shrink blob sizes, but breaks pvm-in-pvm interpreter compatibility.
 - Empirical result: direct/unit tests can pass while layer4/layer5 pvm-in-pvm suites fail with outer interpreter panic.
 - Conclusion: memory layout changes must always be validated with pvm-in-pvm tests, not just direct execution and layer1.
+
+### Benchmark Comparison Parsing
+
+- `tests/utils/benchmark.sh` emits two different result tables:
+  - Direct: `Benchmark | WASM Size | JAM Size | Gas Used | Time`
+  - PVM-in-PVM: `Benchmark | JAM Size | Outer Gas Used | Time`
+- Branch comparison must parse JAM size and gas from the correct columns per table header (direct rows use columns 3/4; PiP rows use 2/3).
+- With `set -u`, EXIT trap handlers must not depend on function-local variables at exit time; expand local values when installing the trap.
