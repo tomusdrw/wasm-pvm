@@ -286,7 +286,7 @@ PVM Address Space:
   0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
   0x32000 - 0x320FF   Parameter overflow area (5th+ function arguments)
   0x32100+            Spilled locals (per-function metadata, typically unused)
-  0x40000+             WASM linear memory (64KB-aligned, computed dynamically via `compute_wasm_memory_base`)
+  0x33000+             WASM linear memory (4KB-aligned, computed dynamically via `compute_wasm_memory_base`)
   ...                  (unmapped gap until stack)
   0xFEFE0000           STACK_SEGMENT_END (initial SP)
   0xFEFF0000           Arguments segment (input data, read-only)
@@ -298,7 +298,7 @@ PVM Address Space:
 - Global address: `0x30000 + global_index * 4`
 - Memory size global: `0x30000 + num_globals * 4`
 - Spilled local: `0x32100 + func_idx * SPILLED_LOCALS_PER_FUNC + local_offset`
-- WASM memory base: `align_up(max(SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC, GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)), 64KB)` — the heap now starts immediately after the globals/passive-length region that is actually used (still 64KB-aligned for PiP compatibility)
+- WASM memory base: `align_up(max(SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC, GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)), 4KB)` — the heap starts immediately after the globals/passive-length region, aligned to PVM page size (4KB). This is typically `0x33000` for programs with few globals.
 - Stack limit: `0xFEFE0000 - stack_size`
 
 ---

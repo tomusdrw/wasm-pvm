@@ -253,9 +253,10 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data (dispatch table, passive segments) |
-| `0x30000` | Globals storage (each global = 4 bytes). The heap base is computed via `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)`, which aligns the heap after the actual globals/passive-length region while still staying 64KB-aligned. |
+| `0x30000` | Globals storage (each global = 4 bytes). The heap base is computed via `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)`, which aligns the heap after the actual globals/passive-length region to the next 4KB (PVM page) boundary. |
 | `0x32000` | Parameter overflow area (5th+ args for call_indirect) |
 | `0x32100+` | Spilled locals base (per-function, usually empty because spills go on the stack) |
+| `0x33000+` | WASM linear memory (4KB-aligned, computed dynamically) |
 | `0xFEFE0000` | Stack segment end (stack grows downward) |
 | `0xFEFF0000` | Arguments (`args_ptr`) |
 | `0xFFFF0000` | EXIT address (HALT) |
