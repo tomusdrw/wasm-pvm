@@ -286,10 +286,10 @@ Accumulated knowledge from development. Update after every task.
   - Example (`regalloc-two-loops`): `allocatable_regs=2`, `allocated_values=4`, `alloc_load_hits=11`, `alloc_store_hits=8`.
 - Non-leaf stabilization:
   - Reserve outgoing call-argument registers (r9.. by max call arity) from the non-leaf allocatable set.
-  - Reset allocated-register validity at label boundaries (`define_label` / `define_label_preserving_cache`) because this state is not path-sensitive and not snapshot/restored by cross-block cache propagation.
+  - Initially, `alloc_reg_valid` was reset at label boundaries (`define_label` / `define_label_preserving_cache`) because that validity state was not path-sensitive and `CacheSnapshot` did not yet snapshot `alloc_reg_slot` during cross-block cache propagation.
   - Without boundary reset, large workloads (notably `anan-as-compiler.jam`) can miscompile under pvm-in-pvm despite direct tests passing.
 - Follow-up stabilization:
-  - `CacheSnapshot` now includes allocated-register slot ownership (`alloc_reg_slot`) so cross-block propagation restores both cache and allocation state consistently.
+  - Corrective follow-up: `CacheSnapshot` now includes allocated-register slot ownership (`alloc_reg_slot`), which replaced the earlier label-boundary `alloc_reg_valid` reset approach by restoring allocation state path-sensitively across propagated edges.
   - `alloc_reg_valid` was removed; slot identity (`alloc_reg_slot == Some(slot)`) is sufficient to decide whether a lazy reload is needed.
   - Conservative non-leaf filter currently helps avoid large regressions: skip values defined inside loop bodies and require at least 3 uses before considering allocation.
   - Additional non-leaf gates that reduced remaining regressions:
