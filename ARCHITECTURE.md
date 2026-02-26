@@ -107,7 +107,7 @@ Impact: ~50% gas reduction, ~15-40% code size reduction across benchmarks.
 | Parameter | Location |
 |-----------|----------|
 | 1st–4th | r9–r12 |
-| 5th+ | `PARAM_OVERFLOW_BASE` (`0x3FF00 + (i-4)*8`) in global memory |
+| 5th+ | `PARAM_OVERFLOW_BASE` (`0x32000 + (i-4)*8`) in global memory |
 
 Return value: **r7** (single i64).
 
@@ -282,13 +282,12 @@ then r7/r8 are restored.
 PVM Address Space:
   0x00000 - 0x0FFFF   Reserved / guard (fault on access)
   0x10000 - 0x1FFFF   Read-only data (RO_DATA_BASE) — dispatch tables
-  0x30000 - 0x300FF   WASM globals (4 bytes each)
-  0x30100 - 0x3FEFF   User heap (result storage)
-  0x3FF00 - 0x3FFFF   Parameter overflow area (5th+ function arguments)
-  0x40000 - 0x4FFFF+  Spilled locals (512 bytes per function)
-  0x50000+             WASM linear memory base (data sections placed here)
-  ...                  (unmapped gap)
-  stackStart           Stack (grows downward)
+  0x20000 - 0x2FFFF   Gap zone (unmapped, guard between RO and RW)
+  0x30000 - 0x31FFF   Globals window (GLOBAL_MEMORY_BASE, 8KB cap; actual bytes used = globals_region_size(...))
+  0x32000 - 0x320FF   Parameter overflow area (5th+ function arguments)
+  0x32100+            Spilled locals (per-function metadata, typically unused)
+  0x33000+             WASM linear memory (4KB-aligned, computed dynamically via `compute_wasm_memory_base`)
+  ...                  (unmapped gap until stack)
   0xFEFE0000           STACK_SEGMENT_END (initial SP)
   0xFEFF0000           Arguments segment (input data, read-only)
   0xFFFF0000           EXIT_ADDRESS (jump here → HALT)
@@ -298,8 +297,8 @@ PVM Address Space:
 
 - Global address: `0x30000 + global_index * 4`
 - Memory size global: `0x30000 + num_globals * 4`
-- Spilled local: `0x40000 + func_idx * 512 + (local_idx - 4) * 8`
-- WASM memory base: max(`0x50000`, align_up(`0x40000 + num_funcs * 512`, 64KB))
+- Spilled local: `0x32100 + func_idx * SPILLED_LOCALS_PER_FUNC + local_offset`
+- WASM memory base: `align_up(max(SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC, GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)), 4KB)` — the heap starts immediately after the globals/passive-length region, aligned to PVM page size (4KB). This is typically `0x33000` for programs with few globals.
 - Stack limit: `0xFEFE0000 - stack_size`
 
 ---

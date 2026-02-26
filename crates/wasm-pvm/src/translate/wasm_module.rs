@@ -354,8 +354,20 @@ impl<'a> WasmModule<'a> {
             }
         }
 
+        let num_passive_segments = data_segments
+            .iter()
+            .filter(|seg| seg.offset.is_none())
+            .count();
+        // Validate that globals fit within the reserved window
+        memory_layout::validate_globals_layout(globals.len(), num_passive_segments)
+            .map_err(Error::Internal)?;
+
         // Compute WASM memory base
-        let wasm_memory_base = memory_layout::compute_wasm_memory_base(functions.len());
+        let wasm_memory_base = memory_layout::compute_wasm_memory_base(
+            functions.len(),
+            globals.len(),
+            num_passive_segments,
+        );
 
         // Calculate heap and memory pages
         let (heap_pages, max_memory_pages) = calculate_heap_pages(
@@ -421,14 +433,21 @@ fn calculate_heap_pages(
     // needs at startup. Additional memory is allocated on demand via sbrk/memory.grow.
     // We enforce a minimum of MIN_INITIAL_WASM_PAGES (16 pages = 1MB) because many
     // programs (especially AssemblyScript with --runtime stub) access memory without
-    // calling memory.grow first, and the lowered wasm_memory_base (0x32100) means
-    // small initial_pages values produce too few heap_pages for real workloads.
+    // calling memory.grow first. wasm_memory_base is 4KB-aligned (PVM page size);
+    // the 64KB WASM page size only governs memory.grow granularity, not the base address.
     let initial_pages = memory_limits.initial_pages.max(MIN_INITIAL_WASM_PAGES);
     let wasm_memory_initial_end = wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
 
     let end = spilled_locals_end.max(wasm_memory_initial_end);
     let total_bytes = end - 0x30000;
-    let heap_pages = total_bytes.div_ceil(4096);
+    // SPI heap_pages represents zero-init pages allocated AFTER rw_data. Since
+    // build_rw_data() trims trailing zeros, the rw_data blob may not fully cover
+    // the gap from globals_end to wasm_memory_base. The zero pages must fill both
+    // the potentially-trimmed gap AND the full WASM heap. We add 1 WASM page
+    // (16 PVM pages = 64KB) of headroom to account for rw_data trimming. This
+    // doesn't increase JAM file size (heap_pages is just a 2-byte header field),
+    // it only tells the runtime to pre-allocate more zero memory.
+    let heap_pages = total_bytes.div_ceil(4096) + 16; // +16 = 1 WASM page headroom
     let heap_pages = u16::try_from(heap_pages).map_err(|_| {
         Error::Internal(format!(
             "heap size {heap_pages} pages exceeds u16::MAX ({}) — module too large",

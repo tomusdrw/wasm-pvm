@@ -37,9 +37,10 @@ Accumulated knowledge from development. Update after every task.
 
 ### PVM Memory Layout Optimization
 
-- **Spilled Locals Region**: The original layout reserved a dedicated region (starting at 0x40000) for spilled locals, allocated per-function (512 bytes). This caused huge bloat (128KB gap filled with zeros) in the RW data section because modern compiler implementation spills locals to the PVM stack (r1-relative) instead.
-- **Fix**: Removed the pre-allocated spilled locals region. Moved `PARAM_OVERFLOW_BASE` to `0x32000` (allowing 8KB for globals) and `SPILLED_LOCALS_BASE` to `0x32100`. This reduced JAM file sizes for AssemblyScript programs by ~87% (e.g., 140KB → 18KB).
-- **64KB alignment requirement**: `wasm_memory_base` MUST be 64KB-aligned (e.g., `0x40000`). The SPI format uses 64KB segment-aligned regions, and the anan-as interpreter requires page-aligned WASM memory base for correct memory mapping in PVM-in-PVM execution. Unaligned values (e.g., `0x32100`) cause silent memory mapping failures in the inner interpreter. The base is computed as `(SPILLED_LOCALS_BASE + 0xFFFF) & !0xFFFF`.
+- **Globals only occupy the bytes they actually need**: the compiler now tracks `globals_region_size = (num_globals + 1 + num_passive_segments) * 4` bytes and places the heap immediately after that region instead of reserving a full 64KB block. This keeps the RW data blob limited to real globals/passive-length fields plus active data segments.
+- **Dynamic heap base calculation**: `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)` compares the spill area (`SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC`) with the globals region end (`GLOBAL_MEMORY_BASE + globals_region_size(...)`) before rounding up to the next 4KB (PVM page) boundary. This typically gives `0x33000` instead of the old `0x40000`, saving ~52KB per program.
+- **4KB alignment is sufficient**: The SPI spec only requires page-aligned (4KB) `rw_data` length. The 64KB WASM page size governs `memory.grow` granularity, not the base address. The anan-as interpreter uses `alignToPageSize(rwLength)` (4KB) not segment alignment for the heap zeros start. Evidence: `vendor/anan-as/assembly/spi.ts` line 41: `heapZerosStart = heapStart + alignToPageSize(rwLength)`.
+- **heap_pages headroom for rw_data trimming**: SPI `heap_pages` means "zero pages after rw_data", but `build_rw_data()` trims trailing zeros. With the tighter 4KB alignment, both rw_data and heap_pages shrink, reducing total writable memory. A 16-page (64KB) headroom is added to `calculate_heap_pages()` to compensate. This doesn't affect JAM file size (heap_pages is a 2-byte header field), it only tells the runtime to allocate more zero pages. Without this headroom, PVM-in-PVM tests fail for programs at the memory edge (e.g. `as-tests-structs` inside the anan-as interpreter).
 
 ### Code Generation
 
@@ -314,9 +315,9 @@ Accumulated knowledge from development. Update after every task.
 
 ### Memory Layout Sensitivity (PVM-in-PVM)
 
-- A compact globals/overflow layout directly below `0x40000` can drastically shrink blob sizes, but breaks pvm-in-pvm interpreter compatibility.
-- Empirical result: direct/unit tests can pass while layer4/layer5 pvm-in-pvm suites fail with outer interpreter panic.
-- Conclusion: memory layout changes must always be validated with pvm-in-pvm tests, not just direct execution and layer1.
+- Moving the globals/overflow/spill region around directly affects the base address that the interpreter loads as the WASM heap, so every change still requires a full pvm-in-pvm validation. Direct/unit runs may look fine, but the outer interpreter can panic if the linear memory isn't page-aligned or overlaps reserved slots.
+- **Critical**: `PARAM_OVERFLOW_BASE` and `SPILLED_LOCALS_BASE` must be >= `GLOBAL_MEMORY_BASE` (0x30000) because the SPI rw_data zone starts at 0x30000. The gap zone (0x20000-0x2FFFF) between ro_data and rw_data is unmapped. Placing constants in the gap zone causes PVM panics.
+- The layout keeps overflow/spill inside the rw_data zone (0x32000+) after the globals window, which preserves compatibility while trimming the RW data blob size.
 
 ### Benchmark Comparison Parsing
 

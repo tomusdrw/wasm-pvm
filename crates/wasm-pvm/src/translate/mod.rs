@@ -478,7 +478,8 @@ pub(crate) fn build_rw_data(
     // Calculate the minimum size needed for globals
     // +1 for the compiler-managed memory size global, plus passive segment lengths
     let num_passive_segments = data_segment_length_addrs.len();
-    let globals_end = (global_init_values.len() + 1 + num_passive_segments) * 4;
+    let globals_end =
+        memory_layout::globals_region_size(global_init_values.len(), num_passive_segments);
 
     // Calculate the size needed for data segments
     let wasm_to_rw_offset = wasm_memory_base as u32 - 0x30000;
