@@ -494,16 +494,19 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
             && furthest_end > interval.end
         {
             // Evict the interval with the furthest end, give its register to us.
-            let reg = active_assigned
-                .remove(&furthest_idx)
-                .expect("active interval must have an assigned register");
-            active.remove(&(furthest_end, furthest_idx));
-            // Evicted interval no longer has a stable whole-interval assignment.
-            final_assigned.remove(&furthest_idx);
+            if let Some(reg) = active_assigned.remove(&furthest_idx) {
+                active.remove(&(furthest_end, furthest_idx));
+                // Evicted interval no longer has a stable whole-interval assignment.
+                final_assigned.remove(&furthest_idx);
 
-            active_assigned.insert(i, reg);
-            final_assigned.insert(i, reg);
-            active.insert((interval.end, i));
+                active_assigned.insert(i, reg);
+                final_assigned.insert(i, reg);
+                active.insert((interval.end, i));
+            } else {
+                // Keep allocation robust if active tracking gets out of sync.
+                active.remove(&(furthest_end, furthest_idx));
+                final_assigned.remove(&furthest_idx);
+            }
         }
         // else: no free register and current interval ends further — spill it.
     }

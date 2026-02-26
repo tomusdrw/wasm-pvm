@@ -275,14 +275,14 @@ Accumulated knowledge from development. Update after every task.
 - `linear_scan` must track active assignments separately from final assignments:
   - naturally expired intervals should remain in the final `val_to_reg`/`slot_to_reg` maps (their earlier uses still benefit),
   - evicted intervals must be removed from final mapping (whole-interval mapping is no longer valid after eviction).
-- Added unit-test coverage for both cases (non-overlapping reuse and eviction dropping).
-- Added targeted benchmark fixture `tests/fixtures/wat/regalloc-two-loops.jam.wat` and benchmark row `regalloc two loops(500)`.
-- Added regalloc instrumentation:
+- Unit tests cover both interval outcomes (non-overlapping reuse and eviction dropping).
+- Targeted benchmark fixture: `tests/fixtures/wat/regalloc-two-loops.jam.wat` (`regalloc two loops(500)` row).
+- Regalloc instrumentation:
   - `regalloc::run()` logs candidate/assignment stats at target `wasm_pvm::regalloc` (enable via `RUST_LOG=wasm_pvm::regalloc=debug`).
   - `lower_function()` logs per-function summary including allocation usage counters (`alloc_load_hits`, `alloc_store_hits`).
 - Instrumentation root cause and fix:
   - Root cause was `allocatable_regs=0` in non-leaf functions because only leaf functions exposed r9-r12 to regalloc.
-  - Fix: expose available r9-r12 registers in both leaf and non-leaf functions; invalidate allocated mappings after calls (call setup reuses r9-r12).
+  - Fix: expose available r9-r12 registers in both leaf and non-leaf functions; reserve outgoing argument registers (`r9..r9+max_call_args-1`) from non-leaf allocation and invalidate local-register mappings after calls.
   - Example (`regalloc-two-loops`): `allocatable_regs=2`, `allocated_values=4`, `alloc_load_hits=11`, `alloc_store_hits=8`.
 - Non-leaf stabilization:
   - Reserve outgoing call-argument registers (r9.. by max call arity) from the non-leaf allocatable set.

@@ -666,8 +666,6 @@ impl<'ctx> PvmEmitter<'ctx> {
                     src: src_reg,
                 });
             }
-        }
-        if let Some(alloc_reg) = alloc_reg {
             let reg_idx = alloc_reg as usize;
             self.alloc_reg_slot[reg_idx] = Some(slot_offset);
         }
@@ -676,11 +674,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             src: src_reg,
             offset: slot_offset,
         });
-        if let Some(alloc_reg) = alloc_reg {
-            self.cache_slot(slot_offset, alloc_reg);
-        } else {
-            self.cache_slot(slot_offset, src_reg);
-        }
+        self.cache_slot(slot_offset, alloc_reg.unwrap_or(src_reg));
     }
 
     // ── Register allocation spill/reload ──
@@ -689,11 +683,11 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Called before instructions that may clobber caller-saved registers.
     pub fn spill_allocated_regs(&mut self) -> Result<()> {
         // No-op: allocated values are already write-through in stack slots.
-        if !self
+        if self
             .regalloc
             .reg_to_slot
             .keys()
-            .all(|&r| r != crate::abi::SCRATCH1 && r != crate::abi::SCRATCH2)
+            .any(|&r| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
         {
             return Err(Error::Internal(
                 "r5/r6 allocation requires explicit spill handling".into(),
@@ -725,8 +719,8 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     /// Invalidate allocated registers clobbered by a function call.
     ///
-    /// Call argument setup reuses r9-r12, so allocated callee-saved registers
-    /// must be invalidated after each call in non-leaf functions.
+    /// Call argument setup may overwrite local argument registers (r9+), so
+    /// allocated local-register mappings are invalidated after each call.
     pub fn reload_allocated_regs_after_call(&mut self) {
         self.invalidate_allocated_regs_where(|r| {
             r == crate::abi::SCRATCH1

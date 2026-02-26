@@ -78,6 +78,15 @@ This is not optional. Stale documentation causes repeated mistakes and wasted in
 
 **Every PR description MUST include benchmark results.** Run `./tests/utils/benchmark.sh --base main --current <branch>` and paste the comparison table into the PR body. The script produces both direct execution and PVM-in-PVM benchmark comparisons (JAM file size, gas usage, and execution time). PRs without benchmark results should not be merged.
 
+### Regalloc Debugging
+
+- Enable allocator logs with `RUST_LOG=wasm_pvm::regalloc=debug`.
+- `regalloc::run()` prints candidate/assignment stats (`total_values`, `total_intervals`, `has_loops`, `allocatable_regs`, `allocated_values`, `skipped_reason`).
+- `lower_function()` prints usage counters (`alloc_load_hits`, `alloc_load_reloads`, `alloc_load_moves`, `alloc_store_hits`, `alloc_store_moves`) plus `emitted_instructions`.
+- Quick triage:
+  - `allocatable_regs=0` or `skipped_reason` usually means no allocation will happen.
+  - Non-zero `allocated_values` with near-zero load/store hits usually indicates move/reload overhead dominates that function.
+
 ---
 
 ## Structure
