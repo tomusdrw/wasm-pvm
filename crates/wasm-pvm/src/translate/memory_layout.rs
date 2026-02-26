@@ -14,7 +14,7 @@
 //!   0x30000 - 0x31FFF   Globals (GLOBAL_MEMORY_BASE, 8KB)
 //!   0x32000 - 0x320FF   Parameter overflow area (PARAM_OVERFLOW_BASE)
 //!   0x32100+            Spilled locals base (SPILLED_LOCALS_BASE)
-//!   0x40000+            WASM linear memory (64KB-aligned, computed dynamically)
+//!   0x33000+            WASM linear memory (4KB-aligned, computed dynamically)
 //!   ...
 //!   0xFEFE0000          Stack segment end (stack grows downward)
 //!   0xFFFF0000          Exit address (EXIT_ADDRESS)
@@ -67,6 +67,10 @@ pub fn stack_limit(stack_size: u32) -> i32 {
 /// Globals, the compiler-managed memory size slot, and passive segment lengths
 /// are laid out starting at `GLOBAL_MEMORY_BASE`. The heap must begin after
 /// that region while also respecting the spill area alignment constraints.
+///
+/// The result is aligned to the PVM page size (4KB). The SPI spec only requires
+/// page-aligned `rw_data` length; the WASM page size (64KB) governs
+/// `memory.grow` granularity but not the base address.
 #[must_use]
 pub fn compute_wasm_memory_base(
     num_local_funcs: usize,
@@ -77,7 +81,8 @@ pub fn compute_wasm_memory_base(
         SPILLED_LOCALS_BASE as usize + num_local_funcs * SPILLED_LOCALS_PER_FUNC as usize;
     let globals_end =
         GLOBAL_MEMORY_BASE as usize + globals_region_size(num_globals, num_passive_segments);
-    ((spilled_end.max(globals_end) + 0xFFFF) & !0xFFFF) as i32
+    // Align to PVM page size (4KB = 0x1000).
+    ((spilled_end.max(globals_end) + 0xFFF) & !0xFFF) as i32
 }
 
 /// Bytes reserved for globals, the compiler-managed memory size global, and
