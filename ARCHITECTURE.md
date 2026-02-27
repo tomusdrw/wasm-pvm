@@ -312,8 +312,8 @@ The stub AssemblyScript decoder/array fixtures demonstrate the phenomenon: each 
 | `rw_data` offset | Value | Meaning |
 |------------------|-------|---------|
 | `0x0C`/`0x10` | `0x01` | The compiler-managed memory-size global near the start of the globals window. |
-| `0x33304 - 0x30000 = 13,324` | `0x1C` | A data segment byte located at WASM linear offset 1,036 (PVM address `0x33304`). |
-| `13,336` | `0x01` | The second data segment byte at WASM offset 1,048 (`0x33318`). |
+| `0x33304 - 0x30000 = 0x3304 = 13,060` | `0x1C` | A data segment byte located at WASM linear offset 1,036 (PVM address `0x33304`). |
+| `0x33318 - 0x30000 = 0x3318 = 13,080` | `0x01` | The second data segment byte at WASM offset 1,048 (`0x33318`). |
 
 All other bytes in between are zero because `wasm_memory_base` is aligned to `0x33000` (the next 4 KB page above the globals/spill metadata), so every address between `0x30000` and `0x33318` must be present in the blob to keep data segment offsets correct. Trimming the zeros would shift those non-zero bytes down to `0x30000` and break every pointer/reference in the generated PVM code.
 
