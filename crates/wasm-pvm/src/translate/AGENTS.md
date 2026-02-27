@@ -27,6 +27,7 @@
 - `calculate_heap_pages()` uses WASM `initial_pages` (not max), with a minimum of 16 WASM pages for `(memory 0)`.
 - `compute_wasm_memory_base()` compares `SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC` with `GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)`, then rounds the larger address up to the next 4KB (PVM page) boundary. This typically gives `0x33000`.
 - `build_rw_data()` copies globals and active segments into a contiguous image, then trims trailing zero bytes before SPI encoding.
+- Call return addresses are pre-assigned as jump-table refs `((idx + 1) * 2)` at emission time; fixup resolution accepts direct (`LoadImmJump`) and indirect (`LoadImm` / `LoadImmJumpInd`) return-address carriers.
 
 ## Current Memory Layout
 

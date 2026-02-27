@@ -74,6 +74,8 @@ pub struct LlvmCallFixup {
 #[derive(Debug, Clone)]
 pub struct LlvmIndirectCallFixup {
     pub return_addr_instr: usize,
+    // Instruction index whose end offset is used as the call return PC.
+    // For `LoadImmJumpInd`, this is the same index as `return_addr_instr`.
     pub jump_ind_instr: usize,
 }
 

@@ -119,12 +119,17 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
-## LoadImmJumpInd (Opcode 180) — Not Yet Implemented
+## LoadImmJumpInd (Opcode 180) — Implemented
 
-- TwoRegTwoImm encoding: fuses `LoadImm + JumpInd` into one instruction
-- Semantics: `reg[dst] = sign_extend(value); jump to reg[base] + sign_extend(offset)`
-- **Blocker**: The fixup system computes byte offsets from instruction encodings, then patches values which changes variable-length encoding sizes. LoadImm64 has fixed 10-byte encoding, so patching its value doesn't change byte offsets. LoadImmJumpInd uses variable-length TwoImm encoding, creating a chicken-and-egg problem: the return address offset depends on the encoding size, which depends on the patched value.
-- **To implement**: Either (a) use a fixed-size encoding variant for fixup placeholders, or (b) rework fixup resolution to iterate to a fixed point after patching, or (c) pre-reserve maximum encoding size and pad with Fallthroughs.
+- TwoRegTwoImm encoding: fuses `LoadImm + JumpInd` into one instruction.
+- Semantics: `reg[dst] = sign_extend(value); jump to reg[base] + sign_extend(offset)`.
+- `call_indirect` now emits `LoadImmJumpInd { base: r8, dst: r0, value: preassigned_return_addr, offset: 0 }`.
+- Dispatch table address math for indirect calls can use `ShloLImm32(..., value=3)` instead of three `Add32` doublings (`idx*8`), reducing one hot-path sequence from 3 instructions to 1 with equivalent 32-bit wrap/sign-extension semantics.
+- Fixups remain stable by:
+  - pre-assigning return jump-table slots at emission time, and
+  - recording `return_addr_instr == jump_ind_instr` for this fused call instruction.
+- `return_addr_jump_table_idx()` accepts `LoadImmJump`, `LoadImm`, and `LoadImmJumpInd`, so mixed old/new patterns still resolve safely.
+- Important semantic pitfall: do **not** assume `base == dst` is safe for absolute jumps. Using `LoadImmJumpInd` for the main epilogue (`EXIT_ADDRESS`) caused global failures because jump target evaluation does not behave like a guaranteed "write dst first, then read base" in practice.
 
 ---
 
@@ -177,7 +182,7 @@ Accumulated knowledge from development. Update after every task.
 - **Problem with late patching**: `LoadImm` has variable encoding size (2 bytes for value 0, 3 bytes for value 2), so changing the value after branch fixups are resolved corrupts relative offsets
 - **Solution**: Pre-assign jump table indices at emission time by threading a `next_call_return_idx` counter through the compilation pipeline. This way `LoadImm` values are known during emission, ensuring correct `byte_offset` tracking for branch fixup resolution
 - For direct calls, `LoadImmJump` combines return address load + jump into one instruction, using the same pre-assigned index
-- For indirect calls (`call_indirect`), `LoadImm` + `JumpInd` is used since the jump target is in a register
+- For indirect calls (`call_indirect`), `LoadImmJumpInd` is used to combine return-address setup and the indirect jump
 - **Impact**: Saves 7 bytes per indirect call site (LoadImm vs LoadImm64). Direct calls save even more via LoadImmJump fusion.
 
 ### Why LoadImm64 was originally needed

@@ -1756,7 +1756,7 @@ fn test_multiple_functions() {
 // Indirect Call (call_indirect)
 // =============================================================================
 
-/// `call_indirect` should compile and use `JumpInd`.
+/// `call_indirect` should compile and use `LoadImmJumpInd`.
 #[test]
 fn test_call_indirect() {
     let wat = r#"
@@ -1785,10 +1785,10 @@ fn test_call_indirect() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // call_indirect should use JumpInd for the indirect dispatch
+    // call_indirect should use LoadImmJumpInd for combined return-address load + indirect jump.
     assert!(
-        has_opcode(&instructions, Opcode::JumpInd),
-        "call_indirect should produce JumpInd"
+        has_opcode(&instructions, Opcode::LoadImmJumpInd),
+        "call_indirect should produce LoadImmJumpInd"
     );
 }
 
