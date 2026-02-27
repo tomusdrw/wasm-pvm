@@ -164,7 +164,9 @@ fn commutative_imm_instruction(op: BinaryOp, is_32bit: bool, imm: i32) -> Option
 /// it will be lowered as a separate instruction anyway and its result will be
 /// available in the register cache, making fusion counterproductive.
 fn try_get_bitwise_not(val: BasicValueEnum<'_>) -> Option<BasicValueEnum<'_>> {
-    let int_val = val.into_int_value();
+    let BasicValueEnum::IntValue(int_val) = val else {
+        return None;
+    };
     let instr = int_val.as_instruction()?;
     if instr.get_opcode() != InstructionOpcode::Xor {
         return None;
@@ -369,7 +371,11 @@ pub fn lower_binary_arith<'ctx>(
                     src1: TEMP1,
                     src2: TEMP2,
                 }),
-                _ => unreachable!(),
+                _ => {
+                    return Err(crate::Error::Internal(
+                        "unexpected BinaryOp in fused bitwise".into(),
+                    ));
+                }
             }
             e.store_to_slot(slot, TEMP_RESULT);
             return Ok(());
@@ -883,8 +889,9 @@ pub fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>
 /// Check if an LLVM value is an inverted boolean condition.
 /// Returns the inner condition if the value is `xor(x, 1)` or `icmp eq x, 0`.
 fn try_get_inverted_condition(val: BasicValueEnum<'_>) -> Option<BasicValueEnum<'_>> {
-    use inkwell::values::Operand;
-    let int_val = val.into_int_value();
+    let BasicValueEnum::IntValue(int_val) = val else {
+        return None;
+    };
     let instr = int_val.as_instruction()?;
     match instr.get_opcode() {
         InstructionOpcode::Xor => {
@@ -952,9 +959,9 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
         });
     } else if let Some(inner_cond) = try_get_inverted_condition(cond) {
         // Inverted condition: select(!c, tv, fv) ≡ select(c, fv, tv)
-        // Use CmovIz: load true_val as default, overwrite with false_val when inner_cond==0
-        e.load_operand(true_val, TEMP_RESULT)?;
-        e.load_operand(false_val, TEMP2)?;
+        // Use CmovIz: load false_val as default, overwrite with true_val when inner_cond==0
+        e.load_operand(false_val, TEMP_RESULT)?;
+        e.load_operand(true_val, TEMP2)?;
         e.load_operand(inner_cond, TEMP1)?;
         e.emit(Instruction::CmovIz {
             dst: TEMP_RESULT,
