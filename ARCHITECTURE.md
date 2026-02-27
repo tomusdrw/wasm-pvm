@@ -301,6 +301,24 @@ PVM Address Space:
 - WASM memory base: `align_up(max(SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC, GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)), 4KB)` — the heap starts immediately after the globals/passive-length region, aligned to PVM page size (4KB). This is typically `0x33000` for programs with few globals.
 - Stack limit: `0xFEFE0000 - stack_size`
 
+### RW data layout
+
+SPI `rw_data` is defined as a contiguous dump of every byte from `GLOBAL_MEMORY_BASE` up to the last initialized byte of the WASM heap; the loader `memcpy`s this region at `0x30000`, so there is no sparse encoding or per-segment offsets inside the blob. That is why the zero stretch between the globals window and the first non-zero heap byte is encoded verbatim instead of being skipped.
+
+#### AS decoder/array example
+
+The stub AssemblyScript decoder/array fixtures demonstrate the phenomenon: each JAM blob has 13,337 bytes of `rw_data`, but only three bytes are non-zero.
+
+| `rw_data` offset | Value | Meaning |
+|------------------|-------|---------|
+| `0x0C`/`0x10` | `0x01` | The compiler-managed memory-size global near the start of the globals window. |
+| `0x33304 - 0x30000 = 0x3304 = 13,060` | `0x1C` | A data segment byte located at WASM linear offset 1,036 (PVM address `0x33304`). |
+| `0x33318 - 0x30000 = 0x3318 = 13,080` | `0x01` | The second data segment byte at WASM offset 1,048 (`0x33318`). |
+
+All other bytes in between are zero because `wasm_memory_base` is aligned to `0x33000` (the next 4 KB page above the globals/spill metadata), so every address between `0x30000` and `0x33318` must be present in the blob to keep data segment offsets correct. Trimming the zeros would shift those non-zero bytes down to `0x30000` and break every pointer/reference in the generated PVM code.
+
+To reduce JAM size without changing SPI you must either move globals/data segments to lower linear offsets, keep the heap base as close as possible to `GLOBAL_MEMORY_BASE`, or (future work) introduce a sparse RW descriptor that the loader can understand.
+
 ---
 
 ## SPI/JAM Program Format
