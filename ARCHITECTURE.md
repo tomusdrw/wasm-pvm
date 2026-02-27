@@ -307,7 +307,7 @@ SPI `rw_data` is defined as a contiguous dump of every byte from `GLOBAL_MEMORY_
 
 #### AS decoder/array example
 
-The stub AssemblyScript decoder/array fixtures demonstrate the phenomenon: each JAN blob has 13,337 bytes of `rw_data`, but only three bytes are non-zero.
+The stub AssemblyScript decoder/array fixtures demonstrate the phenomenon: each JAM blob has 13,337 bytes of `rw_data`, but only three bytes are non-zero.
 
 | `rw_data` offset | Value | Meaning |
 |------------------|-------|---------|
