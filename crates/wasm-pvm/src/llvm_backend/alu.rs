@@ -12,7 +12,9 @@
 )]
 
 use inkwell::IntPredicate;
-use inkwell::values::{AnyValue, AnyValueEnum, InstructionOpcode, InstructionValue};
+use inkwell::values::{
+    AnyValue, AnyValueEnum, BasicValueEnum, InstructionOpcode, InstructionValue, Operand,
+};
 
 use crate::Result;
 use crate::pvm::Instruction;
@@ -155,11 +157,86 @@ fn commutative_imm_instruction(op: BinaryOp, is_32bit: bool, imm: i32) -> Option
     }
 }
 
+/// Check if an LLVM operand is `xor(x, -1)` (bitwise NOT) with a single use.
+/// Returns the inner operand `x` if so.
+///
+/// Only matches single-use xor instructions: if the xor has multiple consumers,
+/// it will be lowered as a separate instruction anyway and its result will be
+/// available in the register cache, making fusion counterproductive.
+fn try_get_bitwise_not(val: BasicValueEnum<'_>) -> Option<BasicValueEnum<'_>> {
+    let BasicValueEnum::IntValue(int_val) = val else {
+        return None;
+    };
+    let instr = int_val.as_instruction()?;
+    if instr.get_opcode() != InstructionOpcode::Xor {
+        return None;
+    }
+    // Only fuse single-use xors. Multi-use xors are lowered separately and their
+    // result is register-cached, so loading through the cache is cheaper.
+    let first_use = instr.get_first_use()?;
+    if first_use.get_next_use().is_some() {
+        return None;
+    }
+    let op0 = instr.get_operand(0).and_then(Operand::value)?;
+    let op1 = instr.get_operand(1).and_then(Operand::value)?;
+    // Check if op1 is -1 (all ones)
+    if try_get_constant(op1) == Some(-1i64) {
+        return Some(op0);
+    }
+    // Also check if op0 is -1 (commutative)
+    if try_get_constant(op0) == Some(-1i64) {
+        return Some(op1);
+    }
+    None
+}
+
+/// Check if this xor instruction will be fused by its single consumer and should
+/// be skipped during normal lowering. Returns true for `xor(x, -1)` with exactly
+/// one use by an And/Or/Xor instruction.
+fn is_fusable_bitwise_not(instr: InstructionValue<'_>) -> bool {
+    let op0 = instr.get_operand(0).and_then(Operand::value);
+    let op1 = instr.get_operand(1).and_then(Operand::value);
+    let (Some(op0), Some(op1)) = (op0, op1) else {
+        return false;
+    };
+    if try_get_constant(op0) != Some(-1i64) && try_get_constant(op1) != Some(-1i64) {
+        return false;
+    }
+    let Some(first_use) = instr.get_first_use() else {
+        return false;
+    };
+    if first_use.get_next_use().is_some() {
+        return false;
+    }
+    // get_user() returns the result value (e.g. IntValue), not InstructionValue.
+    // Extract the instruction via as_instruction().
+    let user_instr = match first_use.get_user() {
+        AnyValueEnum::IntValue(iv) => iv.as_instruction(),
+        AnyValueEnum::InstructionValue(iv) => Some(iv),
+        _ => None,
+    };
+    if let Some(ui) = user_instr {
+        matches!(
+            ui.get_opcode(),
+            InstructionOpcode::And | InstructionOpcode::Or | InstructionOpcode::Xor
+        )
+    } else {
+        false
+    }
+}
+
 pub fn lower_binary_arith<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
     op: BinaryOp,
 ) -> Result<()> {
+    // Skip single-use bitwise NOT instructions whose sole consumer will fuse them.
+    // The consumer emits a fused AndInv/OrInv/Xnor that loads the inner operand
+    // directly, so emitting this xor would produce dead code.
+    if matches!(op, BinaryOp::Xor) && is_fusable_bitwise_not(instr) {
+        return Ok(());
+    }
+
     let lhs = get_operand(instr, 0)?;
     let rhs = get_operand(instr, 1)?;
     let slot = result_slot(e, instr)?;
@@ -262,6 +339,44 @@ pub fn lower_binary_arith<'ctx>(
         if let Some(instr) = commutative_imm_instruction(op, bits <= 32, imm) {
             e.load_operand(rhs, TEMP1)?;
             e.emit(instr);
+            e.store_to_slot(slot, TEMP_RESULT);
+            return Ok(());
+        }
+    }
+
+    // Try fused inverted bitwise: And/Or/Xor with a NOT operand → AndInv/OrInv/Xnor.
+    // Checks both operand positions (these ops are commutative or symmetric for Xnor).
+    if matches!(op, BinaryOp::And | BinaryOp::Or | BinaryOp::Xor) {
+        // (non_inverted, inverted_inner): one operand is plain, the other is NOT(inner)
+        let fused_pair = try_get_bitwise_not(rhs)
+            .map(|inner| (lhs, inner))
+            .or_else(|| try_get_bitwise_not(lhs).map(|inner| (rhs, inner)));
+
+        if let Some((plain, inv_inner)) = fused_pair {
+            e.load_operand(plain, TEMP1)?;
+            e.load_operand(inv_inner, TEMP2)?;
+            match op {
+                BinaryOp::And => e.emit(Instruction::AndInv {
+                    dst: TEMP_RESULT,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                }),
+                BinaryOp::Or => e.emit(Instruction::OrInv {
+                    dst: TEMP_RESULT,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                }),
+                BinaryOp::Xor => e.emit(Instruction::Xnor {
+                    dst: TEMP_RESULT,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                }),
+                _ => {
+                    return Err(crate::Error::Internal(
+                        "unexpected BinaryOp in fused bitwise".into(),
+                    ));
+                }
+            }
             e.store_to_slot(slot, TEMP_RESULT);
             return Ok(());
         }
@@ -771,6 +886,46 @@ pub fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>
     Ok(())
 }
 
+/// Check if an LLVM value is an inverted boolean condition.
+/// Returns the inner condition if the value is `xor(x, 1)` or `icmp eq x, 0`.
+fn try_get_inverted_condition(val: BasicValueEnum<'_>) -> Option<BasicValueEnum<'_>> {
+    let BasicValueEnum::IntValue(int_val) = val else {
+        return None;
+    };
+    let instr = int_val.as_instruction()?;
+    match instr.get_opcode() {
+        InstructionOpcode::Xor => {
+            let op0 = instr.get_operand(0).and_then(Operand::value)?;
+            let op1 = instr.get_operand(1).and_then(Operand::value)?;
+            // xor(x, 1) — boolean inversion
+            if try_get_constant(op1) == Some(1) {
+                return Some(op0);
+            }
+            if try_get_constant(op0) == Some(1) {
+                return Some(op1);
+            }
+            None
+        }
+        InstructionOpcode::ICmp => {
+            let pred = instr.get_icmp_predicate()?;
+            if pred == IntPredicate::EQ {
+                let op0 = instr.get_operand(0).and_then(Operand::value)?;
+                let op1 = instr.get_operand(1).and_then(Operand::value)?;
+                // icmp eq x, 0
+                if try_get_constant(op1) == Some(0) {
+                    return Some(op0);
+                }
+                // icmp eq 0, x
+                if try_get_constant(op0) == Some(0) {
+                    return Some(op1);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     // select i1 %cond, i64 %true_val, i64 %false_val
     let cond = get_operand(instr, 0)?;
@@ -801,6 +956,17 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
             dst: TEMP_RESULT,
             cond: TEMP1,
             value: fv as i32,
+        });
+    } else if let Some(inner_cond) = try_get_inverted_condition(cond) {
+        // Inverted condition: select(!c, tv, fv) ≡ select(c, fv, tv)
+        // Use CmovIz: load false_val as default, overwrite with true_val when inner_cond==0
+        e.load_operand(false_val, TEMP_RESULT)?;
+        e.load_operand(true_val, TEMP2)?;
+        e.load_operand(inner_cond, TEMP1)?;
+        e.emit(Instruction::CmovIz {
+            dst: TEMP_RESULT,
+            src: TEMP2,
+            cond: TEMP1,
         });
     } else {
         // Neither is a small constant: use register CmovNz

@@ -2042,10 +2042,10 @@ fn test_select_uses_cmov_nz() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // select should use CmovNz (branchless conditional move)
+    // select should use CmovNz or CmovIz (branchless conditional move)
     assert!(
-        has_opcode(&instructions, Opcode::CmovNz),
-        "select should produce CmovNz instruction.\nInstructions:\n{}",
+        has_opcode(&instructions, Opcode::CmovNz) || has_opcode(&instructions, Opcode::CmovIz),
+        "select should produce CmovNz or CmovIz instruction.\nInstructions:\n{}",
         instructions
             .iter()
             .map(|i| format!("  {i:?}"))
@@ -2399,5 +2399,135 @@ fn test_select_both_constants_emits_cmov_imm() {
     assert!(
         !has_opcode(&instructions, Opcode::CmovNz),
         "select with constant operands should NOT use register-based CmovNz"
+    );
+}
+
+// =============================================================================
+// Fused Inverted Bitwise (AndInv / OrInv / Xnor) — Issue #93
+// =============================================================================
+
+/// `i32.and(a, i32.xor(b, -1))` should emit `AndInv`.
+/// LLVM instcombine preserves the `and(a, xor(b, -1))` pattern (it's canonical BIC).
+#[test]
+fn test_and_inv() {
+    let wat = r#"
+        (module
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                i32.const -1
+                i32.xor
+                i32.and
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::AndInv),
+        "and(a, xor(b, -1)) should produce AndInv.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// `i32.or(a, i32.xor(b, -1))` should emit `OrInv`.
+/// LLVM instcombine preserves the `or(a, xor(b, -1))` pattern (it's canonical ORN).
+#[test]
+fn test_or_inv() {
+    let wat = r#"
+        (module
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                i32.const -1
+                i32.xor
+                i32.or
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(
+        has_opcode(&instructions, Opcode::OrInv),
+        "or(a, xor(b, -1)) should produce OrInv.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// `i32.xor(a, i32.xor(b, -1))` should emit `Xnor`.
+/// Note: LLVM instcombine may reassociate `xor(a, xor(b, -1))` to `xor(xor(a, b), -1)`,
+/// so the pattern might not survive. Test with all passes enabled — if LLVM reassociates,
+/// we still accept `XorImm` as valid output.
+#[test]
+fn test_xnor() {
+    let wat = r#"
+        (module
+            (func (export "main") (param i32 i32) (result i32)
+                local.get 0
+                local.get 1
+                i32.const -1
+                i32.xor
+                i32.xor
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // LLVM may reassociate xor(a, xor(b, -1)) → xor(xor(a,b), -1) which becomes XorImm.
+    // Either Xnor (fused) or XorImm (reassociated) is acceptable.
+    assert!(
+        has_opcode(&instructions, Opcode::Xnor) || has_opcode(&instructions, Opcode::XorImm),
+        "xor(a, xor(b, -1)) should produce Xnor or XorImm.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// `select` with an inverted condition (`i32.eqz`) should emit `CmovIz` register form.
+/// Note: LLVM may fold `select(icmp eq x, 0, tv, fv)` to `select(x, fv, tv)`, so we
+/// accept either CmovIz (if pattern detected) or CmovNz (if LLVM inverted it).
+#[test]
+fn test_cmov_iz_register() {
+    let wat = r#"
+        (module
+            (func (export "main") (param i32 i32 i32) (result i32)
+                local.get 1
+                local.get 2
+                local.get 0
+                i32.eqz
+                select
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // LLVM instcombine may invert the condition, so accept either CmovIz or CmovNz.
+    assert!(
+        has_opcode(&instructions, Opcode::CmovIz) || has_opcode(&instructions, Opcode::CmovNz),
+        "select with eqz condition should produce CmovIz or CmovNz.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }

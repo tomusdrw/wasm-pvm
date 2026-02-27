@@ -235,8 +235,8 @@ Accumulated knowledge from development. Update after every task.
 - `LoadU32 { dst, address }` replaces `LoadImm { reg, value: addr } + LoadIndU32 { dst, base: reg, offset: 0 }` for known-address loads (globals)
 - `StoreU32 { src, address }` similarly replaces the store pattern
 - OneRegOneImm encoding: `[opcode, reg & 0x0F, encode_imm(address)...]`
-- **PVM-in-PVM layout sensitivity**: Replacing multi-instruction sequences with single instructions changes bytecode layout (code size, jump offsets). The anan-as PVM interpreter has a pre-existing bug triggered by specific bytecode layouts. This means some LoadU32/StoreU32 optimizations can cause PVM-in-PVM test failures even though direct execution is correct. Empirically: LoadU32 for global loads is safe; StoreU32 for global stores, LoadU32 for memory_size, and StoreU32 for memory_grow can trigger failures. Test each change with full PVM-in-PVM suite (273 tests).
-- Current status: Only `LoadU32` for `lower_wasm_global_load` is enabled. Other absolute address optimizations are deferred pending anan-as interpreter fix.
+- **PVM-in-PVM layout sensitivity**: Replacing multi-instruction sequences with single instructions changes bytecode layout (code size, jump offsets). Test each significant code generation change with the full PVM-in-PVM suite.
+- `LoadU32` is used for `lower_wasm_global_load`. `StoreU32` is used for `lower_wasm_global_store`. Both absolute-address variants are now emitted everywhere applicable.
 
 ### LoadIndI32 (Sign-Extending Indirect Load)
 
@@ -302,6 +302,27 @@ Accumulated knowledge from development. Update after every task.
     - Skip regalloc when fewer than 2 non-leaf allocatable callee registers are available (1-register allocation tended to thrash on AS decoder/array workloads).
     - Skip very small non-leaf functions (`total_values < 24`) where move/reload overhead often dominates.
 - Post-fix benchmark shape: consistent JAM size reductions from regalloc, but gas/time gains are workload-dependent and often near-noise on current microbenchmarks.
+
+### Fused Inverted Bitwise (AndInv / OrInv / Xnor)
+
+- `and(a, xor(b, -1))` → `AndInv(a, b)` (bit clear): saves 1 instruction (eliminates separate Xor for NOT)
+- `or(a, xor(b, -1))` → `OrInv(a, b)` (or-not): same pattern
+- `xor(a, xor(b, -1))` → `Xnor(a, b)` (equivalence): note that LLVM instcombine may reassociate `xor(a, xor(b, -1))` to `xor(xor(a,b), -1)`, which makes Xnor fire less often in practice
+- Detection is commutative: checks both LHS and RHS for the NOT pattern
+- All three use ThreeReg encoding: `[opcode, (src2<<4)|src1, dst]`
+
+### CmovIz Register Form for Inverted Select
+
+- `select(!cond, true_val, false_val)` now uses `CmovIz` instead of computing the inversion + `CmovNz`
+- Detected patterns: `xor(cond, 1)` (boolean flip) and `icmp eq cond, 0` (i32.eqz)
+- Saves 2-3 instructions by avoiding the boolean inversion sequence
+- Note: LLVM instcombine often folds `select(icmp eq x, 0, tv, fv)` → `select(x, fv, tv)`, so the pattern fires mainly in edge cases or with specific IR shapes
+
+### Intentionally Not Emitted Opcodes
+
+- **MulUpperSS/UU/SU (213-215)**: No WASM operator produces 128-bit multiply upper halves
+- **Alt shift immediates (reversed)**: `dst = imm OP src` form — no WASM pattern generates this (LLVM canonicalizes register on LHS)
+- **Absolute address non-32-bit sizes**: All WASM globals use 4-byte (i32) slots; no need for U8/U16/U64 absolute address variants
 
 ### RW Data Trimming
 

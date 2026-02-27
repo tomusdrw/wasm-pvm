@@ -102,7 +102,7 @@ crates/
 │       ├── llvm_backend/  # LLVM IR → PVM bytecode
 │       │   ├── mod.rs           # Public API + main lowering dispatch
 │       │   ├── emitter.rs       # EmitterConfig + PvmEmitter struct + value management + register cache (~470 lines)
-│       │   ├── alu.rs           # Arithmetic, logic, comparisons, conversions (~760 lines)
+│       │   ├── alu.rs           # Arithmetic, logic, comparisons, conversions, fused bitwise (AndInv/OrInv/Xnor), CmovIz (~810 lines)
 │       │   ├── memory.rs        # Load/store, memory intrinsics, word-sized bulk ops (~920 lines)
 │       │   ├── control_flow.rs  # Branches, phi nodes, switch, return (~290 lines)
 │       │   ├── calls.rs         # Direct/indirect calls, import stubs (~190 lines)
@@ -192,7 +192,7 @@ crates/
 | Task | Location | Notes |
 |------|----------|-------|
 | Add WASM operator | `llvm_frontend/function_builder.rs` | Add to operator match |
-| Add PVM lowering (arithmetic) | `llvm_backend/alu.rs` | Binary ops, comparisons, conversions |
+| Add PVM lowering (arithmetic) | `llvm_backend/alu.rs` | Binary ops, comparisons, conversions, fused bitwise (AndInv/OrInv/Xnor), CmovIz |
 | Add PVM lowering (memory) | `llvm_backend/memory.rs` | Load/store, memory.size, memory.grow, bulk ops (word-sized) |
 | Add PVM lowering (control flow) | `llvm_backend/control_flow.rs` | Branches, phi, switch, return |
 | Add PVM lowering (calls) | `llvm_backend/calls.rs` | Direct/indirect calls, import stubs |
