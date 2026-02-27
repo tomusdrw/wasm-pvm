@@ -12,7 +12,9 @@
 )]
 
 use inkwell::IntPredicate;
-use inkwell::values::{AnyValue, AnyValueEnum, InstructionOpcode, InstructionValue};
+use inkwell::values::{
+    AnyValue, AnyValueEnum, BasicValueEnum, InstructionOpcode, InstructionValue, Operand,
+};
 
 use crate::Result;
 use crate::pvm::Instruction;
@@ -155,6 +157,27 @@ fn commutative_imm_instruction(op: BinaryOp, is_32bit: bool, imm: i32) -> Option
     }
 }
 
+/// Check if an LLVM operand is `xor(x, -1)` (bitwise NOT).
+/// Returns the inner operand `x` if so.
+fn try_get_bitwise_not<'ctx>(val: BasicValueEnum<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+    let int_val = val.into_int_value();
+    let instr = int_val.as_instruction()?;
+    if instr.get_opcode() != InstructionOpcode::Xor {
+        return None;
+    }
+    let op0 = instr.get_operand(0).and_then(Operand::value)?;
+    let op1 = instr.get_operand(1).and_then(Operand::value)?;
+    // Check if op1 is -1 (all ones)
+    if try_get_constant(op1) == Some(-1i64) {
+        return Some(op0);
+    }
+    // Also check if op0 is -1 (commutative)
+    if try_get_constant(op0) == Some(-1i64) {
+        return Some(op1);
+    }
+    None
+}
+
 pub fn lower_binary_arith<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -262,6 +285,40 @@ pub fn lower_binary_arith<'ctx>(
         if let Some(instr) = commutative_imm_instruction(op, bits <= 32, imm) {
             e.load_operand(rhs, TEMP1)?;
             e.emit(instr);
+            e.store_to_slot(slot, TEMP_RESULT);
+            return Ok(());
+        }
+    }
+
+    // Try fused inverted bitwise: And/Or/Xor with a NOT operand → AndInv/OrInv/Xnor.
+    // Checks both operand positions (these ops are commutative or symmetric for Xnor).
+    if matches!(op, BinaryOp::And | BinaryOp::Or | BinaryOp::Xor) {
+        // (non_inverted, inverted_inner): one operand is plain, the other is NOT(inner)
+        let fused_pair = try_get_bitwise_not(rhs)
+            .map(|inner| (lhs, inner))
+            .or_else(|| try_get_bitwise_not(lhs).map(|inner| (rhs, inner)));
+
+        if let Some((plain, inv_inner)) = fused_pair {
+            e.load_operand(plain, TEMP1)?;
+            e.load_operand(inv_inner, TEMP2)?;
+            match op {
+                BinaryOp::And => e.emit(Instruction::AndInv {
+                    dst: TEMP_RESULT,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                }),
+                BinaryOp::Or => e.emit(Instruction::OrInv {
+                    dst: TEMP_RESULT,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                }),
+                BinaryOp::Xor => e.emit(Instruction::Xnor {
+                    dst: TEMP_RESULT,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                }),
+                _ => unreachable!(),
+            }
             e.store_to_slot(slot, TEMP_RESULT);
             return Ok(());
         }
@@ -771,6 +828,45 @@ pub fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>
     Ok(())
 }
 
+/// Check if an LLVM value is an inverted boolean condition.
+/// Returns the inner condition if the value is `xor(x, 1)` or `icmp eq x, 0`.
+fn try_get_inverted_condition<'ctx>(val: BasicValueEnum<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+    use inkwell::values::Operand;
+    let int_val = val.into_int_value();
+    let instr = int_val.as_instruction()?;
+    match instr.get_opcode() {
+        InstructionOpcode::Xor => {
+            let op0 = instr.get_operand(0).and_then(Operand::value)?;
+            let op1 = instr.get_operand(1).and_then(Operand::value)?;
+            // xor(x, 1) — boolean inversion
+            if try_get_constant(op1) == Some(1) {
+                return Some(op0);
+            }
+            if try_get_constant(op0) == Some(1) {
+                return Some(op1);
+            }
+            None
+        }
+        InstructionOpcode::ICmp => {
+            let pred = instr.get_icmp_predicate()?;
+            if pred == IntPredicate::EQ {
+                let op0 = instr.get_operand(0).and_then(Operand::value)?;
+                let op1 = instr.get_operand(1).and_then(Operand::value)?;
+                // icmp eq x, 0
+                if try_get_constant(op1) == Some(0) {
+                    return Some(op0);
+                }
+                // icmp eq 0, x
+                if try_get_constant(op0) == Some(0) {
+                    return Some(op1);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     // select i1 %cond, i64 %true_val, i64 %false_val
     let cond = get_operand(instr, 0)?;
@@ -801,6 +897,17 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
             dst: TEMP_RESULT,
             cond: TEMP1,
             value: fv as i32,
+        });
+    } else if let Some(inner_cond) = try_get_inverted_condition(cond) {
+        // Inverted condition: select(!c, tv, fv) ≡ select(c, fv, tv)
+        // Use CmovIz: load true_val as default, overwrite with false_val when inner_cond==0
+        e.load_operand(true_val, TEMP_RESULT)?;
+        e.load_operand(false_val, TEMP2)?;
+        e.load_operand(inner_cond, TEMP1)?;
+        e.emit(Instruction::CmovIz {
+            dst: TEMP_RESULT,
+            src: TEMP2,
+            cond: TEMP1,
         });
     } else {
         // Neither is a small constant: use register CmovNz
