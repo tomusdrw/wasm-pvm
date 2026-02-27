@@ -2044,8 +2044,7 @@ fn test_select_uses_cmov_nz() {
 
     // select should use CmovNz or CmovIz (branchless conditional move)
     assert!(
-        has_opcode(&instructions, Opcode::CmovNz)
-            || has_opcode(&instructions, Opcode::CmovIz),
+        has_opcode(&instructions, Opcode::CmovNz) || has_opcode(&instructions, Opcode::CmovIz),
         "select should produce CmovNz or CmovIz instruction.\nInstructions:\n{}",
         instructions
             .iter()
@@ -2429,7 +2428,11 @@ fn test_and_inv() {
     assert!(
         has_opcode(&instructions, Opcode::AndInv),
         "and(a, xor(b, -1)) should produce AndInv.\nInstructions:\n{}",
-        instructions.iter().map(|i| format!("  {i:?}")).collect::<Vec<_>>().join("\n")
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
 
@@ -2455,7 +2458,11 @@ fn test_or_inv() {
     assert!(
         has_opcode(&instructions, Opcode::OrInv),
         "or(a, xor(b, -1)) should produce OrInv.\nInstructions:\n{}",
-        instructions.iter().map(|i| format!("  {i:?}")).collect::<Vec<_>>().join("\n")
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
 
@@ -2483,10 +2490,13 @@ fn test_xnor() {
     // LLVM may reassociate xor(a, xor(b, -1)) → xor(xor(a,b), -1) which becomes XorImm.
     // Either Xnor (fused) or XorImm (reassociated) is acceptable.
     assert!(
-        has_opcode(&instructions, Opcode::Xnor)
-            || has_opcode(&instructions, Opcode::XorImm),
+        has_opcode(&instructions, Opcode::Xnor) || has_opcode(&instructions, Opcode::XorImm),
         "xor(a, xor(b, -1)) should produce Xnor or XorImm.\nInstructions:\n{}",
-        instructions.iter().map(|i| format!("  {i:?}")).collect::<Vec<_>>().join("\n")
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
 
@@ -2512,9 +2522,12 @@ fn test_cmov_iz_register() {
 
     // LLVM instcombine may invert the condition, so accept either CmovIz or CmovNz.
     assert!(
-        has_opcode(&instructions, Opcode::CmovIz)
-            || has_opcode(&instructions, Opcode::CmovNz),
+        has_opcode(&instructions, Opcode::CmovIz) || has_opcode(&instructions, Opcode::CmovNz),
         "select with eqz condition should produce CmovIz or CmovNz.\nInstructions:\n{}",
-        instructions.iter().map(|i| format!("  {i:?}")).collect::<Vec<_>>().join("\n")
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
