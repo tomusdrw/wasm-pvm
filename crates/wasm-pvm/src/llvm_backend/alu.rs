@@ -159,7 +159,7 @@ fn commutative_imm_instruction(op: BinaryOp, is_32bit: bool, imm: i32) -> Option
 
 /// Check if an LLVM operand is `xor(x, -1)` (bitwise NOT).
 /// Returns the inner operand `x` if so.
-fn try_get_bitwise_not<'ctx>(val: BasicValueEnum<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+fn try_get_bitwise_not(val: BasicValueEnum<'_>) -> Option<BasicValueEnum<'_>> {
     let int_val = val.into_int_value();
     let instr = int_val.as_instruction()?;
     if instr.get_opcode() != InstructionOpcode::Xor {
@@ -830,7 +830,7 @@ pub fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>
 
 /// Check if an LLVM value is an inverted boolean condition.
 /// Returns the inner condition if the value is `xor(x, 1)` or `icmp eq x, 0`.
-fn try_get_inverted_condition<'ctx>(val: BasicValueEnum<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+fn try_get_inverted_condition(val: BasicValueEnum<'_>) -> Option<BasicValueEnum<'_>> {
     use inkwell::values::Operand;
     let int_val = val.into_int_value();
     let instr = int_val.as_instruction()?;
