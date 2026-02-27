@@ -303,7 +303,7 @@ PVM Address Space:
 
 ### RW data layout
 
-SPI `rw_data` is defined as a contiguous dump of every byte from `GLOBAL_MEMORY_BASE` up to the last initialized byte of the WASM heap; the loader memcpy`s this region at `0x30000`, so there is no sparse encoding or per-segment offsets inside the blob. That is why the zero stretch between the globals window and the first non-zero heap byte is encoded verbatim instead of being skipped.
+SPI `rw_data` is defined as a contiguous dump of every byte from `GLOBAL_MEMORY_BASE` up to the last initialized byte of the WASM heap; the loader `memcpy`s this region at `0x30000`, so there is no sparse encoding or per-segment offsets inside the blob. That is why the zero stretch between the globals window and the first non-zero heap byte is encoded verbatim instead of being skipped.
 
 #### AS decoder/array example
 
