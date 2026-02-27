@@ -203,13 +203,12 @@ Dispatch table entry (8 bytes each):
 The indirect call sequence:
 
 ```asm
- 1. Compute dispatch_addr = RO_DATA_BASE + table_index * 8
+ 1. Compute dispatch_addr = RO_DATA_BASE + (table_index << 3)
  2. Load type_idx from [dispatch_addr + 4]
  3. Compare type_idx with expected_type_idx
  4. Trap if mismatch (signature validation)
  5. Load jump_addr from [dispatch_addr + 0]
- 6. LoadImm64  r0, <return_jump_table_index>
- 7. JumpInd    jump_addr, 0
+ 6. LoadImmJumpInd  jump_addr, r0, <return_jump_table_index>, 0
 ```
 
 ---

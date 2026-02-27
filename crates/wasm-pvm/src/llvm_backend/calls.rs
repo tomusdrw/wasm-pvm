@@ -412,22 +412,11 @@ pub fn lower_pvm_call_indirect<'ctx>(
     });
 
     // Dispatch table lookup: each entry is 8 bytes (4-byte jump ref + 4-byte type index).
-    // Multiply table index by 8 (entry size) via 3 doublings: idx * 2 * 2 * 2
-    // table_addr = RO_DATA_BASE + table_idx * 8
-    e.emit(Instruction::Add32 {
+    // table_addr = RO_DATA_BASE + (table_idx << 3)
+    e.emit(Instruction::ShloLImm32 {
         dst: abi::ARGS_LEN_REG,
-        src1: abi::ARGS_LEN_REG,
-        src2: abi::ARGS_LEN_REG,
-    });
-    e.emit(Instruction::Add32 {
-        dst: abi::ARGS_LEN_REG,
-        src1: abi::ARGS_LEN_REG,
-        src2: abi::ARGS_LEN_REG,
-    });
-    e.emit(Instruction::Add32 {
-        dst: abi::ARGS_LEN_REG,
-        src1: abi::ARGS_LEN_REG,
-        src2: abi::ARGS_LEN_REG,
+        src: abi::ARGS_LEN_REG,
+        value: 3,
     });
     e.emit(Instruction::AddImm32 {
         dst: abi::ARGS_LEN_REG,
@@ -454,18 +443,15 @@ pub fn lower_pvm_call_indirect<'ctx>(
         offset: 0,
     });
 
-    // Emit indirect call: LoadImm for return address + JumpInd.
+    // Emit indirect call: LoadImmJumpInd combines return-address load + indirect jump.
     // The return address is a jump table address ((index+1)*2), pre-computed
     // so the encoding size is known at emission time (avoids fixup size instability).
     let return_addr_instr = e.instructions.len();
     let call_return_addr = e.alloc_call_return_addr();
-    e.emit(Instruction::LoadImm {
-        reg: abi::RETURN_ADDR_REG,
+    e.emit(Instruction::LoadImmJumpInd {
+        base: abi::ARGS_LEN_REG,
+        dst: abi::RETURN_ADDR_REG,
         value: call_return_addr,
-    });
-    let jump_ind_instr = e.instructions.len();
-    e.emit(Instruction::JumpInd {
-        reg: abi::ARGS_LEN_REG,
         offset: 0,
     });
 
@@ -478,7 +464,7 @@ pub fn lower_pvm_call_indirect<'ctx>(
 
     e.indirect_call_fixups.push(LlvmIndirectCallFixup {
         return_addr_instr,
-        jump_ind_instr,
+        jump_ind_instr: return_addr_instr,
     });
 
     // Derive has_return from the type signature (same approach as direct calls).

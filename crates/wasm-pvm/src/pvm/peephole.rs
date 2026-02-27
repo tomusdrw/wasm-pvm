@@ -241,7 +241,9 @@ pub fn optimize(
             match &instructions[i + 1] {
                 Instruction::Fallthrough
                 | Instruction::Jump { .. }
+                | Instruction::JumpInd { .. }
                 | Instruction::LoadImmJump { .. }
+                | Instruction::LoadImmJumpInd { .. }
                 | Instruction::Trap => {
                     keep[i] = false;
                 }
@@ -656,6 +658,43 @@ mod tests {
         // Call fixup remapped from index 1 to 0
         assert_eq!(call_fixups[0].return_addr_instr, 0);
         assert_eq!(call_fixups[0].jump_instr, 0);
+    }
+
+    #[test]
+    fn remove_fallthrough_before_load_imm_jump_ind() {
+        let mut instrs = vec![
+            Instruction::Fallthrough,
+            Instruction::LoadImmJumpInd {
+                base: 8,
+                dst: 0,
+                value: 2,
+                offset: 0,
+            },
+            Instruction::Fallthrough,
+        ];
+        let mut fixups = vec![];
+        let mut call_fixups = vec![];
+        let mut indirect_call_fixups = vec![LlvmIndirectCallFixup {
+            return_addr_instr: 1,
+            jump_ind_instr: 1,
+        }];
+        let mut labels = vec![];
+
+        optimize(
+            &mut instrs,
+            &mut fixups,
+            &mut call_fixups,
+            &mut indirect_call_fixups,
+            &mut labels,
+        );
+
+        // First Fallthrough removed (before LoadImmJumpInd), second kept.
+        assert_eq!(instrs.len(), 2);
+        assert!(matches!(instrs[0], Instruction::LoadImmJumpInd { .. }));
+        assert!(matches!(instrs[1], Instruction::Fallthrough));
+        // Indirect call fixup remapped from index 1 to 0.
+        assert_eq!(indirect_call_fixups[0].return_addr_instr, 0);
+        assert_eq!(indirect_call_fixups[0].jump_ind_instr, 0);
     }
 
     #[test]

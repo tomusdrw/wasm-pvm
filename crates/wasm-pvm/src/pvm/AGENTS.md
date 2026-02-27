@@ -41,6 +41,7 @@ pub enum Instruction {
 - `encode_one_reg_one_imm_one_off(opcode, reg, imm, offset)` - Branch-immediate ops
 - `encode_one_reg_two_imm(opcode, base, offset, value)` - Store immediate indirect
 - `encode_two_reg_one_off(opcode, reg1, reg2, offset)` - Branch-register ops
+- `encode_two_reg_two_imm(opcode, reg1, reg2, imm1, imm2)` - Compound indirect jump (`LoadImmJumpInd`)
 - `encode_imm(value)` - Variable-length signed immediate (0-4 bytes)
 - `encode_uimm(value)` - Variable-length unsigned immediate (0-4 bytes)
 - `encode_var_u32(value)` - LEB128-style variable int
@@ -58,7 +59,7 @@ Instructions that end a basic block:
 ```rust
 pub fn is_terminating(&self) -> bool {
     matches!(self,
-        Trap | Fallthrough | Jump {..} | LoadImmJump {..} | JumpInd {..} |
+        Trap | Fallthrough | Jump {..} | LoadImmJump {..} | JumpInd {..} | LoadImmJumpInd {..} |
         BranchNeImm {..} | BranchEqImm {..} | ...)
 }
 ```
