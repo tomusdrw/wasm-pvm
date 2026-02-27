@@ -157,12 +157,22 @@ fn commutative_imm_instruction(op: BinaryOp, is_32bit: bool, imm: i32) -> Option
     }
 }
 
-/// Check if an LLVM operand is `xor(x, -1)` (bitwise NOT).
+/// Check if an LLVM operand is `xor(x, -1)` (bitwise NOT) with a single use.
 /// Returns the inner operand `x` if so.
+///
+/// Only matches single-use xor instructions: if the xor has multiple consumers,
+/// it will be lowered as a separate instruction anyway and its result will be
+/// available in the register cache, making fusion counterproductive.
 fn try_get_bitwise_not(val: BasicValueEnum<'_>) -> Option<BasicValueEnum<'_>> {
     let int_val = val.into_int_value();
     let instr = int_val.as_instruction()?;
     if instr.get_opcode() != InstructionOpcode::Xor {
+        return None;
+    }
+    // Only fuse single-use xors. Multi-use xors are lowered separately and their
+    // result is register-cached, so loading through the cache is cheaper.
+    let first_use = instr.get_first_use()?;
+    if first_use.get_next_use().is_some() {
         return None;
     }
     let op0 = instr.get_operand(0).and_then(Operand::value)?;
@@ -178,11 +188,53 @@ fn try_get_bitwise_not(val: BasicValueEnum<'_>) -> Option<BasicValueEnum<'_>> {
     None
 }
 
+/// Check if this xor instruction will be fused by its single consumer and should
+/// be skipped during normal lowering. Returns true for `xor(x, -1)` with exactly
+/// one use by an And/Or/Xor instruction.
+fn is_fusable_bitwise_not(instr: InstructionValue<'_>) -> bool {
+    let op0 = instr.get_operand(0).and_then(Operand::value);
+    let op1 = instr.get_operand(1).and_then(Operand::value);
+    let (Some(op0), Some(op1)) = (op0, op1) else {
+        return false;
+    };
+    if try_get_constant(op0) != Some(-1i64) && try_get_constant(op1) != Some(-1i64) {
+        return false;
+    }
+    let Some(first_use) = instr.get_first_use() else {
+        return false;
+    };
+    if first_use.get_next_use().is_some() {
+        return false;
+    }
+    // get_user() returns the result value (e.g. IntValue), not InstructionValue.
+    // Extract the instruction via as_instruction().
+    let user_instr = match first_use.get_user() {
+        AnyValueEnum::IntValue(iv) => iv.as_instruction(),
+        AnyValueEnum::InstructionValue(iv) => Some(iv),
+        _ => None,
+    };
+    if let Some(ui) = user_instr {
+        matches!(
+            ui.get_opcode(),
+            InstructionOpcode::And | InstructionOpcode::Or | InstructionOpcode::Xor
+        )
+    } else {
+        false
+    }
+}
+
 pub fn lower_binary_arith<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
     op: BinaryOp,
 ) -> Result<()> {
+    // Skip single-use bitwise NOT instructions whose sole consumer will fuse them.
+    // The consumer emits a fused AndInv/OrInv/Xnor that loads the inner operand
+    // directly, so emitting this xor would produce dead code.
+    if matches!(op, BinaryOp::Xor) && is_fusable_bitwise_not(instr) {
+        return Ok(());
+    }
+
     let lhs = get_operand(instr, 0)?;
     let rhs = get_operand(instr, 1)?;
     let slot = result_slot(e, instr)?;
