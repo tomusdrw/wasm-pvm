@@ -460,11 +460,55 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         &ctx.data_segment_lengths,
     );
 
+    let heap_pages = calculate_heap_pages(
+        rw_data_section.len(),
+        module.wasm_memory_base,
+        module.memory_limits.initial_pages,
+        module.functions.len(),
+    )?;
+
     Ok(SpiProgram::new(blob)
-        .with_heap_pages(module.heap_pages)
+        .with_heap_pages(heap_pages)
         .with_ro_data(ro_data)
         .with_rw_data(rw_data_section)
         .with_metadata(options.metadata.clone()))
+}
+
+/// Calculate the number of 4KB PVM heap pages needed after `rw_data`.
+///
+/// `heap_pages` tells the runtime how many zero-initialized writable pages to allocate
+/// immediately after the `rw_data` blob. This covers the initial WASM linear memory,
+/// globals, and spilled locals that aren't already covered by `rw_data`.
+///
+/// By computing this **after** `build_rw_data()`, we use the actual (trimmed) `rw_data`
+/// length instead of guessing with headroom.
+fn calculate_heap_pages(
+    rw_data_len: usize,
+    wasm_memory_base: i32,
+    initial_pages: u32,
+    num_functions: usize,
+) -> Result<u16> {
+    use wasm_module::MIN_INITIAL_WASM_PAGES;
+
+    let initial_pages = initial_pages.max(MIN_INITIAL_WASM_PAGES);
+    let wasm_memory_initial_end =
+        wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
+
+    let spilled_locals_end = memory_layout::SPILLED_LOCALS_BASE as usize
+        + num_functions * memory_layout::SPILLED_LOCALS_PER_FUNC as usize;
+
+    let end = spilled_locals_end.max(wasm_memory_initial_end);
+    let total_bytes = end - memory_layout::GLOBAL_MEMORY_BASE as usize;
+    let rw_pages = rw_data_len.div_ceil(4096);
+    let total_pages = total_bytes.div_ceil(4096);
+    let heap_pages = total_pages.saturating_sub(rw_pages);
+
+    u16::try_from(heap_pages).map_err(|_| {
+        Error::Internal(format!(
+            "heap size {heap_pages} pages exceeds u16::MAX ({}) — module too large",
+            u16::MAX
+        ))
+    })
 }
 
 /// Build the `rw_data` section from WASM data segments and global initializers.
@@ -706,5 +750,43 @@ mod tests {
         let rw = build_rw_data(&[], &[], 0, 0x30000, &addrs, &lengths);
 
         assert_eq!(rw, vec![0, 0, 0, 0, 7]);
+    }
+
+    // ── calculate_heap_pages tests ──
+
+    #[test]
+    fn heap_pages_with_empty_rw_data_equals_total_pages() {
+        // wasm_memory_base = 0x33000 (typical), initial_pages = 0 (clamped to 16)
+        // end = 0x33000 + 16*64*1024 = 0x33000 + 0x100000 = 0x133000
+        // total_bytes = 0x133000 - 0x30000 = 0x103000 = 1060864
+        // total_pages = ceil(1060864 / 4096) = 259
+        // rw_pages = 0, heap_pages = 259
+        let pages = super::calculate_heap_pages(0, 0x33000, 0, 10).unwrap();
+        assert_eq!(pages, 259);
+    }
+
+    #[test]
+    fn heap_pages_reduced_by_rw_data_pages() {
+        // Same scenario but with 8192 bytes of rw_data (2 pages)
+        let pages_no_rw = super::calculate_heap_pages(0, 0x33000, 0, 10).unwrap();
+        let pages_with_rw = super::calculate_heap_pages(8192, 0x33000, 0, 10).unwrap();
+        assert_eq!(pages_no_rw - pages_with_rw, 2);
+    }
+
+    #[test]
+    fn heap_pages_saturates_at_zero_for_large_rw_data() {
+        // rw_data that covers more than total_pages should not underflow
+        let pages = super::calculate_heap_pages(2 * 1024 * 1024, 0x33000, 0, 10).unwrap();
+        assert_eq!(pages, 0);
+    }
+
+    #[test]
+    fn heap_pages_respects_initial_pages() {
+        // initial_pages = 32 (larger than MIN_INITIAL_WASM_PAGES=16)
+        // end = 0x33000 + 32*64*1024 = 0x33000 + 0x200000 = 0x233000
+        // total_bytes = 0x233000 - 0x30000 = 0x203000
+        // total_pages = ceil(0x203000 / 4096) = 515
+        let pages = super::calculate_heap_pages(0, 0x33000, 32, 10).unwrap();
+        assert_eq!(pages, 515);
     }
 }

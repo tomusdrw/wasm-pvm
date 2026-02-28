@@ -26,7 +26,7 @@ impl Default for MemoryLimits {
 
 /// Minimum WASM pages (64KB each) to pre-allocate for programs declaring (memory 0).
 /// 16 pages = 1MB, sufficient for `AssemblyScript` programs compiled with --runtime stub.
-const MIN_INITIAL_WASM_PAGES: u32 = 16;
+pub(crate) const MIN_INITIAL_WASM_PAGES: u32 = 16;
 
 /// Represents a data segment parsed from WASM.
 pub struct DataSegment {
@@ -85,8 +85,6 @@ pub struct WasmModule<'a> {
     pub function_table: Vec<u32>,
     /// Base address of WASM linear memory in PVM address space.
     pub wasm_memory_base: i32,
-    /// Number of 4KB PVM heap pages needed.
-    pub heap_pages: u16,
     /// Maximum WASM memory pages available for memory.grow.
     pub max_memory_pages: u32,
 }
@@ -369,13 +367,9 @@ impl<'a> WasmModule<'a> {
             num_passive_segments,
         );
 
-        // Calculate heap and memory pages
-        let (heap_pages, max_memory_pages) = calculate_heap_pages(
-            functions.len(),
-            &data_segments,
-            &memory_limits,
-            wasm_memory_base,
-        )?;
+        // max_memory_pages is the runtime limit for memory.grow (hardcoded in PVM code).
+        let default_max_pages: u32 = if data_segments.is_empty() { 256 } else { 1024 };
+        let max_memory_pages = memory_limits.max_pages.unwrap_or(default_max_pages);
 
         Ok(WasmModule {
             functions,
@@ -400,61 +394,9 @@ impl<'a> WasmModule<'a> {
             type_signatures,
             function_table,
             wasm_memory_base,
-            heap_pages,
             max_memory_pages,
         })
     }
-}
-
-/// Calculate heap pages needed and the maximum memory pages available.
-/// Returns (`heap_pages`, `max_memory_pages`).
-///
-/// `heap_pages` determines how many zero-initialized writable pages are pre-allocated
-/// in the SPI output. This covers the initial WASM linear memory, globals, and spilled
-/// locals. Programs that need more memory at runtime can grow via `memory.grow` / `sbrk`,
-/// which allocates pages on demand up to `max_memory_pages`.
-fn calculate_heap_pages(
-    num_functions: usize,
-    data_segments: &[DataSegment],
-    memory_limits: &MemoryLimits,
-    wasm_memory_base: i32,
-) -> Result<(u16, u32)> {
-    let spilled_locals_end = memory_layout::SPILLED_LOCALS_BASE as usize
-        + num_functions * memory_layout::SPILLED_LOCALS_PER_FUNC as usize;
-
-    // max_memory_pages is the runtime limit for memory.grow (hardcoded in PVM code).
-    let default_max_pages: u32 = if data_segments.is_empty() { 256 } else { 1024 };
-    let max_memory_pages = match memory_limits.max_pages {
-        Some(declared_max) => declared_max,
-        None => default_max_pages,
-    };
-
-    // heap_pages uses initial_pages (not max) — only pre-allocate what the program
-    // needs at startup. Additional memory is allocated on demand via sbrk/memory.grow.
-    // We enforce a minimum of MIN_INITIAL_WASM_PAGES (16 pages = 1MB) because many
-    // programs (especially AssemblyScript with --runtime stub) access memory without
-    // calling memory.grow first. wasm_memory_base is 4KB-aligned (PVM page size);
-    // the 64KB WASM page size only governs memory.grow granularity, not the base address.
-    let initial_pages = memory_limits.initial_pages.max(MIN_INITIAL_WASM_PAGES);
-    let wasm_memory_initial_end = wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
-
-    let end = spilled_locals_end.max(wasm_memory_initial_end);
-    let total_bytes = end - 0x30000;
-    // SPI heap_pages represents zero-init pages allocated AFTER rw_data. Since
-    // build_rw_data() trims trailing zeros, the rw_data blob may not fully cover
-    // the gap from globals_end to wasm_memory_base. The zero pages must fill both
-    // the potentially-trimmed gap AND the full WASM heap. We add 1 WASM page
-    // (16 PVM pages = 64KB) of headroom to account for rw_data trimming. This
-    // doesn't increase JAM file size (heap_pages is just a 2-byte header field),
-    // it only tells the runtime to pre-allocate more zero memory.
-    let heap_pages = total_bytes.div_ceil(4096) + 16; // +16 = 1 WASM page headroom
-    let heap_pages = u16::try_from(heap_pages).map_err(|_| {
-        Error::Internal(format!(
-            "heap size {heap_pages} pages exceeds u16::MAX ({}) — module too large",
-            u16::MAX
-        ))
-    })?;
-    Ok((heap_pages, max_memory_pages))
 }
 
 fn eval_const_i32(expr: &wasmparser::ConstExpr) -> Result<i32> {
