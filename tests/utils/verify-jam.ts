@@ -161,10 +161,12 @@ function readVarU32(data: Buffer, offset: number): { value: number; bytesRead: n
     const value = ((firstByte - 0x80) << 8) | data[offset + 1];
     return { value, bytesRead: 2 };
   } else if (firstByte < 0xe0) {
-    const value = ((firstByte - 0xc0) << 16) | (data[offset + 1] << 8) | data[offset + 2];
+    // Remaining bytes are little-endian
+    const value = ((firstByte - 0xc0) << 16) | data[offset + 1] | (data[offset + 2] << 8);
     return { value, bytesRead: 3 };
   } else {
-    const value = ((firstByte - 0xe0) << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3];
+    // Remaining bytes are little-endian
+    const value = ((firstByte - 0xe0) << 24) | data[offset + 1] | (data[offset + 2] << 8) | (data[offset + 3] << 16);
     return { value, bytesRead: 4 };
   }
 }

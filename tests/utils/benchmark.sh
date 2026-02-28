@@ -84,6 +84,47 @@ PVM_IN_PVM_BENCHMARKS=(
   "EXT:tests/fixtures/external/jade-fib.jam|0100000002000000030000000000000000000000|5|PiP JADE fib(10)"
 )
 
+# Extract raw PVM code size (instruction bytes only) from a JAM file.
+# Strips metadata prefix, SPI header, RO/RW data, jump table, and mask.
+jam_code_size() {
+  local jam_file="$1"
+  if [ ! -f "$jam_file" ]; then
+    echo "-"
+    return
+  fi
+  python3 -c "
+import sys
+
+data = open(sys.argv[1], 'rb').read()
+if len(data) < 15:
+    print('-')
+    sys.exit(0)
+off = 0
+
+# PVM varint: first byte determines length, remaining bytes are little-endian
+def read_varint(d, o):
+    b = d[o]
+    if b < 0x80: return b, 1
+    elif b < 0xc0: return ((b-0x80)<<8)|d[o+1], 2
+    elif b < 0xe0: return ((b-0xc0)<<16)|d[o+1]|(d[o+2]<<8), 3
+    else: return ((b-0xe0)<<24)|d[o+1]|(d[o+2]<<8)|(d[o+3]<<16), 4
+
+try:
+    meta_len, n = read_varint(data, off)
+    off += n + meta_len
+    ro_len = data[off]|(data[off+1]<<8)|(data[off+2]<<16); off += 3
+    rw_len = data[off]|(data[off+1]<<8)|(data[off+2]<<16)
+    off += 3 + 2 + 3
+    off += ro_len + rw_len + 4
+    jt_len, n = read_varint(data, off); off += n
+    off += 1
+    code_len, _ = read_varint(data, off)
+    print(code_len)
+except (IndexError, ValueError):
+    print('-')
+" "$jam_file"
+}
+
 # Get WASM size from a source spec ("wat:<path>" or "wasm:<path>")
 wasm_size() {
   local spec="$1"
@@ -178,7 +219,7 @@ benchmark_one() {
   local args="$2"
   local pc="$3"
   local desc="$4"
-  local size gas_used time_ms
+  local size code_size gas_used time_ms
 
   if [ ! -f "$jam_file" ]; then
     echo "SKIP|$desc|missing"
@@ -186,10 +227,11 @@ benchmark_one() {
   fi
 
   size=$(wc -c < "$jam_file" | tr -d ' ')
+  code_size=$(jam_code_size "$jam_file")
 
   if [ -z "$args" ]; then
     # Size-only benchmark (e.g. large compiler)
-    echo "OK|$desc|$size|-|-"
+    echo "OK|$desc|$size|$code_size|-|-"
     return
   fi
 
@@ -231,7 +273,7 @@ benchmark_one() {
     gas_used="error"
   fi
 
-  echo "OK|$desc|$size|$gas_used|${time_ms}ms"
+  echo "OK|$desc|$size|$code_size|$gas_used|${time_ms}ms"
 }
 
 # Build binary args file for pvm-in-pvm execution.
@@ -283,7 +325,7 @@ benchmark_pvm_in_pvm() {
   local args="$2"
   local pc="$3"
   local desc="$4"
-  local size gas_used time_ms
+  local size code_size gas_used time_ms
 
   if [ ! -f "$jam_file" ]; then
     echo "SKIP|$desc|missing"
@@ -296,6 +338,7 @@ benchmark_pvm_in_pvm() {
   fi
 
   size=$(wc -c < "$jam_file" | tr -d ' ')
+  code_size=$(jam_code_size "$jam_file")
 
   # Build args binary file (trap ensures cleanup even on early exit)
   local tmp_args
@@ -345,15 +388,15 @@ benchmark_pvm_in_pvm() {
     gas_used="error"
   fi
 
-  echo "OK|$desc|$size|$gas_used|${time_ms}ms"
+  echo "OK|$desc|$size|$code_size|$gas_used|${time_ms}ms"
 }
 
 run_benchmarks() {
   local label="$1"
   echo "## $label"
   echo ""
-  echo "| Benchmark | WASM Size | JAM Size | Gas Used | Time (median of 3) |"
-  echo "|-----------|-----------|----------|----------|-------------------|"
+  echo "| Benchmark | WASM Size | JAM Size | Code Size | Gas Used | Time (median of 3) |"
+  echo "|-----------|-----------|----------|-----------|----------|-------------------|"
 
   for entry in "${BENCHMARKS[@]}"; do
     IFS='|' read -r basename args pc desc wasm_src <<< "$entry"
@@ -370,11 +413,11 @@ run_benchmarks() {
     local result
     result=$(benchmark_one "$jam_file" "$args" "$pc" "$desc")
 
-    IFS='|' read -r status rdesc size gas time <<< "$result"
+    IFS='|' read -r status rdesc size code_size gas time <<< "$result"
     if [ "$status" = "OK" ]; then
-      printf "| %-20s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "$size" "$gas" "$time"
+      printf "| %-20s | %10s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "$size" "$code_size" "$gas" "$time"
     else
-      printf "| %-20s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "SKIP" "-" "-"
+      printf "| %-20s | %10s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "SKIP" "-" "-" "-"
     fi
   done
   echo ""
@@ -383,17 +426,33 @@ run_benchmarks() {
   if [ -f "$COMPILER_JAM" ]; then
     echo "### PVM-in-PVM"
     echo ""
-    echo "| Benchmark | JAM Size | Outer Gas Used | Time (median of 3) |"
-    echo "|-----------|----------|----------------|-------------------|"
+    echo "| Benchmark | JAM Size | Code Size | Outer Gas Used | Time (median of 3) |"
+    echo "|-----------|----------|-----------|----------------|-------------------|"
 
     for entry in "${PVM_IN_PVM_BENCHMARKS[@]}"; do
       IFS='|' read -r basename args pc desc <<< "$entry"
       pc="${pc:-0}"
       local jam_file cleanup_jam=false
       if [ "$basename" = "TRAP" ]; then
-        # Synthetic 1-byte TRAP program (opcode 0x00)
+        # Minimal valid SPI blob with just a TRAP instruction in the code section.
+        # Format: metadata(varint 0) + SPI header(11 bytes) + code_blob_len(u32) + PVM blob
+        # PVM blob: jump_table_len(varint 0) + item_bytes(0) + code_len(varint 1) + code(0x00) + mask(0x01)
         jam_file=$(mktemp "${TMPDIR:-/tmp}/pvm-bench-trap-XXXXXX")
-        printf '\x00' > "$jam_file"
+        python3 -c "
+import sys, struct
+out = bytearray()
+out.append(0)           # metadata_len = 0 (varint)
+out.extend(b'\x00\x00\x00')  # ro_data_len = 0 (u24 LE)
+out.extend(b'\x00\x00\x00')  # rw_data_len = 0 (u24 LE)
+out.extend(b'\x00\x00')      # heap_pages = 0 (u16 LE)
+out.extend(b'\x00\x00\x00')  # stack_size = 0 (u24 LE)
+# no RO/RW data
+# PVM blob: jt_len(0) + item_bytes(0) + code_len(1) + code(TRAP=0x00) + mask(0x01)
+blob = bytearray([0, 0, 1, 0x00, 0x01])
+out.extend(struct.pack('<I', len(blob)))  # code_blob_len
+out.extend(blob)
+sys.stdout.buffer.write(out)
+" > "$jam_file"
         cleanup_jam=true
       elif [[ "$basename" == EXT:* ]]; then
         # External JAM file (path relative to PROJECT_ROOT)
@@ -408,11 +467,11 @@ run_benchmarks() {
         rm -f "$jam_file"
       fi
 
-      IFS='|' read -r status rdesc size gas time <<< "$result"
+      IFS='|' read -r status rdesc size code_size gas time <<< "$result"
       if [ "$status" = "OK" ]; then
-        printf "| %-20s | %10s | %14s | %10s |\n" "$rdesc" "$size" "$gas" "$time"
+        printf "| %-20s | %10s | %10s | %14s | %10s |\n" "$rdesc" "$size" "$code_size" "$gas" "$time"
       else
-        printf "| %-20s | %10s | %14s | %10s |\n" "$rdesc" "SKIP" "-" "-"
+        printf "| %-20s | %10s | %10s | %14s | %10s |\n" "$rdesc" "SKIP" "-" "-" "-"
       fi
     done
     echo ""
@@ -485,10 +544,10 @@ def parse_table(text):
     rows = {}
     mode = None
     for line in text.split('\n'):
-        if line.startswith('| Benchmark | WASM Size | JAM Size | Gas Used |'):
+        if line.startswith('| Benchmark | WASM Size | JAM Size | Code Size | Gas Used |'):
             mode = "direct"
             continue
-        if line.startswith('| Benchmark | JAM Size | Outer Gas Used |'):
+        if line.startswith('| Benchmark | JAM Size | Code Size | Outer Gas Used |'):
             mode = "pip"
             continue
         if line.startswith('|---'):
@@ -497,14 +556,14 @@ def parse_table(text):
             mode = None
             continue
         parts = [p.strip() for p in line.split('|')]
-        if mode == "direct" and len(parts) >= 7:
-            desc, size, gas = parts[1], parts[3], parts[4]
+        if mode == "direct" and len(parts) >= 8:
+            desc, size, code_size, gas = parts[1], parts[3], parts[4], parts[5]
             if desc and size:
-                rows[desc] = (size, gas)
-        elif mode == "pip" and len(parts) >= 6:
-            desc, size, gas = parts[1], parts[2], parts[3]
+                rows[desc] = (size, code_size, gas)
+        elif mode == "pip" and len(parts) >= 7:
+            desc, size, code_size, gas = parts[1], parts[2], parts[3], parts[4]
             if desc and size:
-                rows[desc] = (size, gas)
+                rows[desc] = (size, code_size, gas)
     return rows
 
 base = parse_table(base_text)
@@ -522,15 +581,16 @@ def pct(before, after):
 
 print(f"## Comparison: {base_name} vs {current_name}")
 print()
-print("| Benchmark | JAM Size (before) | JAM Size (after) | Size Change | Gas (before) | Gas (after) | Gas Change |")
-print("|-----------|--------------|-------------|-------------|-------------|------------|------------|")
+print("| Benchmark | JAM Size (before) | JAM Size (after) | Size Change | Code (before) | Code (after) | Code Change | Gas (before) | Gas (after) | Gas Change |")
+print("|-----------|--------------|-------------|-------------|--------------|-------------|-------------|-------------|------------|------------|")
 
 for desc in base:
-    bs, bg = base[desc]
-    cs, cg = current.get(desc, ("?", "?"))
+    bs, bcs, bg = base[desc]
+    cs, ccs, cg = current.get(desc, ("?", "?", "?"))
     sc = pct(bs, cs)
+    cc = pct(bcs, ccs)
     gc = pct(bg, cg)
-    print(f"| {desc:<20s} | {bs:>12s} | {cs:>12s} | {sc:>14s} | {bg:>10s} | {cg:>10s} | {gc:>14s} |")
+    print(f"| {desc:<20s} | {bs:>12s} | {cs:>12s} | {sc:>14s} | {bcs:>12s} | {ccs:>12s} | {cc:>14s} | {bg:>10s} | {cg:>10s} | {gc:>14s} |")
 print()
 PYEOF
 }
