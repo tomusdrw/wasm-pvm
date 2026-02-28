@@ -381,7 +381,10 @@ impl<'a> WasmModule<'a> {
         } else {
             DEFAULT_MAX_PAGES_WITH_DATA
         };
-        let max_memory_pages = memory_limits.max_pages.unwrap_or(default_max_pages);
+        let max_memory_pages = memory_limits
+            .max_pages
+            .unwrap_or(default_max_pages)
+            .max(memory_limits.initial_pages);
 
         Ok(WasmModule {
             functions,
