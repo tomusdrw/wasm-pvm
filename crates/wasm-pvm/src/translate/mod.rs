@@ -491,8 +491,7 @@ fn calculate_heap_pages(
     use wasm_module::MIN_INITIAL_WASM_PAGES;
 
     let initial_pages = initial_pages.max(MIN_INITIAL_WASM_PAGES);
-    let wasm_memory_initial_end =
-        wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
+    let wasm_memory_initial_end = wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
 
     let spilled_locals_end = memory_layout::SPILLED_LOCALS_BASE as usize
         + num_functions * memory_layout::SPILLED_LOCALS_PER_FUNC as usize;
