@@ -482,6 +482,12 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
 ///
 /// By computing this **after** `build_rw_data()`, we use the actual (trimmed) `rw_data`
 /// length instead of guessing with headroom.
+///
+/// We add 1 extra page beyond the exact initial memory requirement. This ensures that
+/// the first `memory.grow` / sbrk allocation has a pre-allocated page available at the
+/// boundary of the initial WASM memory. Without it, PVM-in-PVM execution fails because
+/// the inner interpreter's page-fault handling at the exact heap boundary doesn't
+/// correctly propagate through the outer PVM.
 fn calculate_heap_pages(
     rw_data_len: usize,
     wasm_memory_base: i32,
@@ -500,7 +506,7 @@ fn calculate_heap_pages(
     let total_bytes = end - memory_layout::GLOBAL_MEMORY_BASE as usize;
     let rw_pages = rw_data_len.div_ceil(4096);
     let total_pages = total_bytes.div_ceil(4096);
-    let heap_pages = total_pages.saturating_sub(rw_pages);
+    let heap_pages = total_pages.saturating_sub(rw_pages) + 1;
 
     u16::try_from(heap_pages).map_err(|_| {
         Error::Internal(format!(
@@ -754,14 +760,14 @@ mod tests {
     // ── calculate_heap_pages tests ──
 
     #[test]
-    fn heap_pages_with_empty_rw_data_equals_total_pages() {
+    fn heap_pages_with_empty_rw_data_equals_total_pages_plus_one() {
         // wasm_memory_base = 0x33000 (typical), initial_pages = 0 (clamped to 16)
         // end = 0x33000 + 16*64*1024 = 0x33000 + 0x100000 = 0x133000
         // total_bytes = 0x133000 - 0x30000 = 0x103000 = 1060864
         // total_pages = ceil(1060864 / 4096) = 259
-        // rw_pages = 0, heap_pages = 259
+        // rw_pages = 0, heap_pages = 259 + 1 = 260
         let pages = super::calculate_heap_pages(0, 0x33000, 0, 10).unwrap();
-        assert_eq!(pages, 259);
+        assert_eq!(pages, 260);
     }
 
     #[test]
@@ -773,10 +779,10 @@ mod tests {
     }
 
     #[test]
-    fn heap_pages_saturates_at_zero_for_large_rw_data() {
-        // rw_data that covers more than total_pages should not underflow
+    fn heap_pages_saturates_at_one_for_large_rw_data() {
+        // rw_data that covers more than total_pages still gets +1 headroom
         let pages = super::calculate_heap_pages(2 * 1024 * 1024, 0x33000, 0, 10).unwrap();
-        assert_eq!(pages, 0);
+        assert_eq!(pages, 1);
     }
 
     #[test]
@@ -785,7 +791,8 @@ mod tests {
         // end = 0x33000 + 32*64*1024 = 0x33000 + 0x200000 = 0x233000
         // total_bytes = 0x233000 - 0x30000 = 0x203000
         // total_pages = ceil(0x203000 / 4096) = 515
+        // heap_pages = 515 + 1 = 516
         let pages = super::calculate_heap_pages(0, 0x33000, 32, 10).unwrap();
-        assert_eq!(pages, 515);
+        assert_eq!(pages, 516);
     }
 }
