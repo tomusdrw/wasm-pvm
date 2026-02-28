@@ -28,6 +28,14 @@ impl Default for MemoryLimits {
 /// 16 pages = 1MB, sufficient for `AssemblyScript` programs compiled with --runtime stub.
 pub(crate) const MIN_INITIAL_WASM_PAGES: u32 = 16;
 
+/// Default `memory.grow` ceiling for modules without data segments.
+/// 256 WASM pages = 16 MB — enough for simple programs that allocate dynamically.
+const DEFAULT_MAX_PAGES_NO_DATA: u32 = 256;
+
+/// Default `memory.grow` ceiling for modules with data segments.
+/// 1024 WASM pages = 64 MB — larger to accommodate initial data plus runtime growth.
+const DEFAULT_MAX_PAGES_WITH_DATA: u32 = 1024;
+
 /// Represents a data segment parsed from WASM.
 pub struct DataSegment {
     /// Offset in WASM linear memory (active only). None for passive segments.
@@ -368,7 +376,11 @@ impl<'a> WasmModule<'a> {
         );
 
         // max_memory_pages is the runtime limit for memory.grow (hardcoded in PVM code).
-        let default_max_pages: u32 = if data_segments.is_empty() { 256 } else { 1024 };
+        let default_max_pages = if data_segments.is_empty() {
+            DEFAULT_MAX_PAGES_NO_DATA
+        } else {
+            DEFAULT_MAX_PAGES_WITH_DATA
+        };
         let max_memory_pages = memory_limits.max_pages.unwrap_or(default_max_pages);
 
         Ok(WasmModule {
