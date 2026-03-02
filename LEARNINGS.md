@@ -352,3 +352,27 @@ Accumulated knowledge from development. Update after every task.
   - PVM-in-PVM: `Benchmark | JAM Size | Outer Gas Used | Time`
 - Branch comparison must parse JAM size and gas from the correct columns per table header (direct rows use columns 3/4; PiP rows use 2/3).
 - With `set -u`, EXIT trap handlers must not depend on function-local variables at exit time; expand local values when installing the trap.
+
+### Peephole Immediate Chain Fusion (2026-03)
+
+- **LoadImm + AddImm fusion**: `LoadImm r1, A; AddImm r1, r1, B` → `LoadImm r1, A+B`
+  - Saves 1 instruction when loading a value then adjusting it
+  - Only applies when combined result fits in i32
+- **Chained AddImm fusion**: `AddImm r1, r1, A; AddImm r1, r1, B` → `AddImm r1, r1, A+B`
+  - Collapses sequences of incremental adjustments
+  - Common in address calculations and loop induction variables
+- **MoveReg self-elimination**: `MoveReg r1, r1` → removed entirely (no-op)
+  - Can appear after register allocation or phi lowering
+- Implementation in `peephole.rs::optimize_immediate_chains()`
+
+### Comparison Code Size Optimizations (2026-03)
+
+- **NE comparison**: `Xor + LoadImm(0) + SetLtU` → `Xor + SetGtUImm(0)`
+  - Original: 3 instructions to compute `(a ^ b) != 0`
+  - Optimized: 2 instructions using `SetGtUImm` to check if xor result > 0
+  - Saves 1 instruction per inequality comparison
+- **i1→i64 sign-extension**: `LoadImm(0) + Sub64` → `NegAddImm64(0)`
+  - Original: 2 instructions to compute `0 - val` (negate boolean to 0/-1)
+  - Optimized: 1 instruction using `NegAddImm64` which computes `val = imm - src`
+  - `NegAddImm64(dst, src, 0)` = `dst = 0 - src` = `-src`
+  - Saves 1 instruction per boolean sign-extension

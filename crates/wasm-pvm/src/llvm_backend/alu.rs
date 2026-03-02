@@ -670,20 +670,16 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
             });
         }
         IntPredicate::NE => {
-            // xor, then check nonzero: loadimm 0 → SCRATCH1, setltu(SCRATCH1, result)
+            // xor, then check nonzero: (a ^ b) > 0
             e.emit(Instruction::Xor {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
             });
-            e.emit(Instruction::LoadImm {
-                reg: SCRATCH1,
-                value: 0,
-            });
-            e.emit(Instruction::SetLtU {
+            e.emit(Instruction::SetGtUImm {
                 dst: TEMP_RESULT,
-                src1: SCRATCH1,
-                src2: TEMP_RESULT,
+                src: TEMP_RESULT,
+                value: 0,
             });
         }
         IntPredicate::ULT => {
@@ -814,15 +810,11 @@ pub fn lower_sext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
 
     if from_bits == 1 {
         // i1 → i64: 0→0, 1→-1 (all ones).
-        // negate: 0 - val
-        e.emit(Instruction::LoadImm {
-            reg: TEMP2,
-            value: 0,
-        });
-        e.emit(Instruction::Sub64 {
+        // negate: 0 - val using NegAddImm64
+        e.emit(Instruction::NegAddImm64 {
             dst: TEMP1,
-            src1: TEMP2,
-            src2: TEMP1,
+            src: TEMP1,
+            value: 0,
         });
     } else if from_bits == 8 {
         e.emit(Instruction::SignExtend8 {

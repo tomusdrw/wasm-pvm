@@ -265,6 +265,9 @@ pub fn optimize(
         }
     }
 
+    // 4. New: Fuse LoadImm + AddImm chains and chained AddImm operations.
+    optimize_immediate_chains(instructions, &mut keep);
+
     compact_instructions(
         instructions,
         &keep,
@@ -273,6 +276,111 @@ pub fn optimize(
         indirect_call_fixups,
         labels,
     );
+}
+
+/// Fuse LoadImm + AddImm chains and chained AddImm operations.
+///
+/// Pattern 1: `LoadImm r1, A; AddImm r1, r1, B` → `LoadImm r1, A+B`
+/// Pattern 2: `AddImm r1, r1, A; AddImm r1, r1, B` → `AddImm r1, r1, A+B`
+/// Pattern 3: `MoveReg r1, r1` → remove (no-op self-move)
+fn optimize_immediate_chains(instructions: &mut [Instruction], keep: &mut [bool]) {
+    let len = instructions.len();
+    if len < 2 {
+        return;
+    }
+
+    // First pass: identify which instructions can be fused/removed
+    // We track which LoadImm instructions have been patched so we don't double-patch
+    let mut patched_loadimm = vec![false; len];
+
+    for i in 0..len.saturating_sub(1) {
+        if !keep[i] {
+            continue;
+        }
+
+        // Pattern 3: MoveReg r1, r1 (self-move) - always remove
+        if let Instruction::MoveReg { dst, src } = instructions[i] {
+            if dst == src {
+                keep[i] = false;
+                continue;
+            }
+        }
+
+        // Pattern 1: LoadImm followed by AddImm32/64 to same register
+        if let Instruction::LoadImm {
+            reg: load_reg,
+            value: load_val,
+        } = instructions[i]
+            && i + 1 < len
+            && keep[i + 1]
+            && !patched_loadimm[i]
+        {
+            let can_fuse = match &instructions[i + 1] {
+                Instruction::AddImm32 {
+                    dst,
+                    src,
+                    value: add_val,
+                } if *dst == load_reg && *src == load_reg => load_val
+                    .checked_add(*add_val)
+                    .filter(|&v| i32::try_from(v).is_ok()),
+                Instruction::AddImm64 {
+                    dst,
+                    src,
+                    value: add_val,
+                } if *dst == load_reg && *src == load_reg => load_val
+                    .checked_add(*add_val)
+                    .filter(|&v| i32::try_from(v).is_ok()),
+                _ => None,
+            };
+
+            if let Some(combined) = can_fuse {
+                // Mark the AddImm for removal and patch the LoadImm
+                keep[i + 1] = false;
+                instructions[i] = Instruction::LoadImm {
+                    reg: load_reg,
+                    value: combined,
+                };
+                patched_loadimm[i] = true;
+            }
+        }
+
+        // Pattern 2: Chained AddImm to same register
+        let add_info = match &instructions[i] {
+            Instruction::AddImm32 { dst, src, value } if *dst == *src => Some((*dst, *value)),
+            Instruction::AddImm64 { dst, src, value } if *dst == *src => Some((*dst, *value)),
+            _ => None,
+        };
+
+        if let Some((dst, val1)) = add_info
+            && i + 1 < len
+            && keep[i + 1]
+        {
+            let can_fuse = match &instructions[i + 1] {
+                Instruction::AddImm32 {
+                    dst: dst2,
+                    src: src2,
+                    value: val2,
+                } if *dst2 == dst && *src2 == dst => val1.checked_add(*val2),
+                Instruction::AddImm64 {
+                    dst: dst2,
+                    src: src2,
+                    value: val2,
+                } if *dst2 == dst && *src2 == dst => val1.checked_add(*val2),
+                _ => None,
+            };
+
+            if let Some(combined) = can_fuse {
+                // Mark the second AddImm for removal and patch the first
+                keep[i + 1] = false;
+                // Patch first instruction with combined value
+                match &mut instructions[i] {
+                    Instruction::AddImm32 { value, .. } => *value = combined,
+                    Instruction::AddImm64 { value, .. } => *value = combined,
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
 }
 
 /// Optimize address calculations by fusing `AddImm` into `LoadInd`/`StoreInd` offsets.
