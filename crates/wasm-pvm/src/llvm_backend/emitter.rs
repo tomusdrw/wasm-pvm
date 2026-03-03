@@ -1020,11 +1020,17 @@ pub fn pre_scan_function<'ctx>(
     function: FunctionValue<'ctx>,
     is_main: bool,
 ) {
-    // Detect calls to determine if this is a leaf function.
+    // Detect real calls to determine if this is a leaf function.
+    // PVM intrinsics (__pvm_load_*, __pvm_store_*, etc.) and LLVM intrinsics
+    // (llvm.*) are NOT real function calls — they don't use the calling
+    // convention and don't clobber callee-saved registers (r9-r12).
+    // Only wasm_func_* and __pvm_call_indirect are real calls.
     let mut has_calls = false;
     for bb in function.get_basic_blocks() {
         for instr in bb.get_instructions() {
-            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
+            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call
+                && is_real_call(instr)
+            {
                 has_calls = true;
                 break;
             }
@@ -1153,6 +1159,33 @@ fn instruction_produces_value(instr: InstructionValue<'_>) -> bool {
             | InstructionOpcode::Load
             | InstructionOpcode::Call
     )
+}
+
+/// Check whether an LLVM Call instruction is a "real" function call that uses the
+/// calling convention and may clobber callee-saved registers (r9-r12).
+///
+/// PVM intrinsics (`__pvm_load_*`, `__pvm_store_*`, `__pvm_memory_*`, etc.) and
+/// LLVM intrinsics (`llvm.*`) are lowered inline — they only use temp/scratch
+/// registers and never clobber callee-saved registers.
+///
+/// Real calls: `wasm_func_*` (direct) and `__pvm_call_indirect` (indirect).
+fn is_real_call(instr: InstructionValue<'_>) -> bool {
+    let call_site: std::result::Result<inkwell::values::CallSiteValue, _> = instr.try_into();
+    let Ok(call_site) = call_site else {
+        return true; // Conservative: treat as call if we can't classify.
+    };
+    let Some(fn_val) = call_site.get_called_fn_value() else {
+        return true; // Indirect call without known callee.
+    };
+    let name = fn_val.get_name().to_string_lossy();
+    // PVM intrinsics and LLVM intrinsics are NOT real calls.
+    if name.starts_with("__pvm_") && name != "__pvm_call_indirect" {
+        return false;
+    }
+    if name.starts_with("llvm.") {
+        return false;
+    }
+    true
 }
 
 // Re-export scratch registers for other modules
