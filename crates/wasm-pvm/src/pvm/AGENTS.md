@@ -9,7 +9,7 @@
 | `instruction.rs` | ~700 | Instruction enum, encoding/decoding logic |
 | `opcode.rs` | ~130 | Opcode constants (~100 opcodes) |
 | `blob.rs` | 143 | Program blob format with jump table |
-| `peephole.rs` | ~290 | Post-codegen peephole optimizer (Fallthroughs, truncation NOPs, dead stores) |
+| `peephole.rs` | ~400 | Post-codegen peephole optimizer (Fallthroughs, truncation NOPs, dead stores, immediate chain fusion, self-move elimination) |
 
 ## Key Patterns
 
@@ -78,6 +78,7 @@ pub fn dest_reg(&self) -> Option<u8> {
   functions skip DCE to avoid incorrect liveness across control flow.
 - DCE must track side-effects for all store variants: `StoreIndU8/U16/U32/U64`, `StoreImmIndU8/U16/U32/U64`, `StoreImmU8/U16/U32/U64`, `StoreU8/U16/U32/U64`
 - DCE must track memory loads (can-trap, track dst) for all load variants: `LoadIndU8/I8/U16/I16/U32/I32/U64`, `LoadU8/I8/U16/I16/U32/I32/U64`
+- Address-folding for `AddImm*` chains is width-aware: `AddImm32` relations only fold into later `AddImm32`, and `AddImm64` relations only fold into later `AddImm64` (no cross-width fusion).
 
 
 ## Where to Look

@@ -120,7 +120,7 @@ All PVM-level optimizations enabled (default):
 | add(5,7) | 66 B | 201 B | 130 B | 39 |
 | fib(20) | 108 B | 270 B | 186 B | 612 |
 | factorial(10) | 100 B | 242 B | 161 B | 269 |
-| is_prime(25) | 160 B | 327 B | 238 B | 78 |
+| is_prime(25) | 160 B | 324 B | 235 B | 77 |
 | AS fib(10) | 266 B | 712 B | 576 B | 325 |
 | AS factorial(7) | 265 B | 701 B | 566 B | 282 |
 | AS gcd(2017,200) | 260 B | 691 B | 562 B | 191 |

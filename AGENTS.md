@@ -163,6 +163,7 @@ crates/
 - **LLVM backend**: inkwell (LLVM 18 bindings) is a required dependency
 - **Callee-save shrink wrapping**: For non-entry functions, only callee-saved registers (r9-r12) that are actually used are saved/restored in prologue/epilogue. A register is "used" if it receives a parameter, the function contains any call instruction, or register allocation assigns values to it. Frame header size is dynamic per-function: `8 (ra) + 8 * num_used_callee_regs`.
 - **Configurable optimizations**: All non-trivial optimizations (LLVM passes, peephole, register cache, ICmp+Branch fusion, shrink wrapping) can be disabled via `OptimizationFlags` / CLI `--no-*` flags. All are enabled by default.
+- **Peephole immediate chain fusion**: `LoadImm + AddImm` and chained `AddImm` sequences are fused into single instructions. Self-moves (`MoveReg r, r`) are eliminated. This reduces code size for address calculations and loop induction variables.
 
 ---
 
