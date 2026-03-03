@@ -108,7 +108,27 @@ pub fn lower_function(
     // Phase 3: Lower each basic block.
     let use_cross_block_cache =
         emitter.config.register_cache_enabled && emitter.config.cross_block_cache_enabled;
+    let has_regalloc = !emitter.regalloc.val_to_reg.is_empty();
+    let is_leaf = !emitter.has_calls;
     let mut block_exit_cache: HashMap<BasicBlock<'_>, emitter::CacheSnapshot> = HashMap::new();
+
+    // For non-leaf functions with regalloc, build predecessor map for alloc_reg_slot
+    // intersection at multi-predecessor forward merge points.
+    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = if has_regalloc && !is_leaf {
+        let mut map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = HashMap::new();
+        for bb in function.get_basic_blocks() {
+            if let Some(term) = bb.get_terminator() {
+                let successors = successors::collect_successors(term);
+                let unique_succs: std::collections::HashSet<_> = successors.into_iter().collect();
+                for succ in unique_succs {
+                    map.entry(succ).or_default().push(bb);
+                }
+            }
+        }
+        map
+    } else {
+        HashMap::new()
+    };
 
     let basic_blocks = function.get_basic_blocks();
     for (block_idx, bb) in basic_blocks.iter().enumerate() {
@@ -133,7 +153,31 @@ pub fn lower_function(
         }
 
         if !propagated {
-            emitter.define_label(label);
+            if has_regalloc && is_leaf {
+                // Leaf function: allocated registers are never clobbered by calls,
+                // so alloc_reg_slot is always accurate. Preserve it.
+                emitter.define_label_preserving_alloc(label);
+            } else if has_regalloc && !is_leaf {
+                // Non-leaf function: use predecessor intersection for forward
+                // merge points where ALL predecessors have been processed.
+                emitter.define_label(label);
+                if let Some(preds) = pred_map.get(&bb) {
+                    let all_processed = preds.iter().all(|p| block_exit_cache.contains_key(p));
+                    if all_processed && !preds.is_empty() {
+                        // Start with first predecessor's alloc_reg_slot.
+                        let first_snap = &block_exit_cache[&preds[0]];
+                        emitter.set_alloc_reg_slot_from(&first_snap.alloc_reg_slot);
+                        // Intersect with remaining predecessors.
+                        for pred in &preds[1..] {
+                            let snap = &block_exit_cache[pred];
+                            emitter.intersect_alloc_reg_slot(&snap.alloc_reg_slot);
+                        }
+                    }
+                    // If any predecessor is unprocessed (back-edge), keep cleared state.
+                }
+            } else {
+                emitter.define_label(label);
+            }
         }
 
         // Process instructions, saving cache snapshot before the terminator.

@@ -12,40 +12,52 @@ qualify for single-predecessor cross-block cache propagation. This means loop he
 (which have 2+ predecessors: preheader + back-edge) always start cold, requiring a
 reload on first use of each allocated value per loop iteration.
 
-## Approach
+## Attempt 1: Blanket alloc_reg_slot persistence (FAILED)
 
-**Key insight**: Allocated registers use write-through — every `store_to_slot` writes to
-both the physical register AND the stack slot. This means the allocated register always
-holds the same value as the stack slot (unless the register was clobbered by a call).
-Call clobbers are already handled by `reload_allocated_regs_after_call()`.
+**Change**: Remove `clear_allocated_reg_state()` from `clear_reg_cache()` so
+`alloc_reg_slot` is never cleared at block boundaries.
 
-**Proposed change**: Stop clearing `alloc_reg_slot` at block boundaries. Only clear it
-when something actually clobbers the register (calls, explicit invalidation). The general
-register cache (`slot_cache`, `reg_to_slot`, `reg_to_const`) stays conservative.
+**Result**: Layers 1-3 (422 tests) pass. PVM-in-PVM fails on `as-decoder-subarray-test`
+(2 failures). Direct execution of the same tests passes.
 
-**Safety argument**: Since writes to allocated slots always go through `store_to_slot`
-(which updates both the register and the stack), and clobbers are tracked by
-`invalidate_reg`/`reload_allocated_regs_after_call`, the register always holds the correct
-value unless explicitly invalidated. The lazy reload in `load_operand` is a safety net.
+**Root cause analysis**: Multi-predecessor blocks (merge points) are unsafe because
+different predecessors may leave allocated registers in different states:
+- Block B has a call → r9 is clobbered at runtime, `alloc_reg_slot[r9] = None`
+- Block C has no call → `alloc_reg_slot[r9] = Some(S)` at compile time
+- Block D (successor of both B and C) inherits C's state (last processed)
+- At runtime via B: r9 holds garbage but compile-time state says `Some(S)` → skip reload
+
+The write-through argument only holds when NO instruction clobbers the register between
+the last write-through and the block entry. Calls clobber r9-r12.
+
+## Approach 2: Leaf-function-only + predecessor intersection
+
+**Key insight**: In leaf functions (no calls), allocated registers (r9-r12) are ONLY
+written by `store_to_slot` (write-through) and `load_operand` (reload). Both correctly
+update `alloc_reg_slot`. So `alloc_reg_slot` is ALWAYS accurate in leaf functions.
+
+**For non-leaf functions**: Use predecessor exit snapshot intersection. At multi-predecessor
+blocks, only keep `alloc_reg_slot` entries where ALL processed predecessors agree. For
+back-edges (unprocessed predecessors), be conservative.
+
+**Implementation plan**:
+1. For leaf functions: keep alloc_reg_slot across all block boundaries
+2. For non-leaf functions with single predecessor: already propagated via cross-block cache
+3. For non-leaf functions with multiple predecessors (all processed): intersect
+4. For non-leaf functions with loop headers (back-edge = unprocessed): clear
 
 ## Log
 
-### Step 1: Add targeted tests for cross-block regalloc
+### Step 1: Add targeted tests (DONE)
+- `regalloc-nested-loops.jam.wat` — nested loops with multiple carried values
+- `regalloc-loop-with-call.jam.wat` — loop calling a function (non-leaf)
+- Both pass on baseline, commit e0bfda7
 
-Before touching the optimization, add WAT fixtures and integration tests that
-exercise cross-block allocated register behavior. These will serve as regression
-tests regardless of the optimization outcome.
+### Step 2: Blanket alloc_reg_slot persistence (FAILED)
+- Layers 1-3: 422 pass
+- PVM-in-PVM: 2 failures in `as-decoder-subarray-test`
+- Root cause: multi-predecessor blocks with inconsistent predecessor states
 
-### Step 2: Implement alloc_reg_slot persistence
-
-Modify `clear_reg_cache()` to NOT clear `alloc_reg_slot`. Only calls and explicit
-invalidation should clear allocated register state.
-
-### Step 3: Validate against full test suite
-
-Run cargo test, integration tests, and pvm-in-pvm tests.
-
-### Step 4: Benchmark and iterate
-
-Compare gas usage with/without the optimization on targeted fixtures and the
-standard benchmark set.
+### Step 3: Implement leaf-function-only propagation
+- Safe because leaf functions have no calls → no register clobbers
+- Also implement predecessor intersection for forward merge points in non-leaf functions
