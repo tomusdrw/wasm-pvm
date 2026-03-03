@@ -367,10 +367,10 @@ Accumulated knowledge from development. Update after every task.
 
 ### Comparison Code Size Optimizations (2026-03)
 
-- **NE comparison**: `Xor + LoadImm(0) + SetLtU` → `Xor + SetGtUImm(0)`
-  - Original: 3 instructions to compute `(a ^ b) != 0`
-  - Optimized: 2 instructions using `SetGtUImm` to check if xor result > 0
-  - Saves 1 instruction per inequality comparison
+- **NE comparison optimization was reverted for correctness in PVM-in-PVM**:
+  `Xor + SetGtUImm(0)` looked equivalent to `Xor + LoadImm(0) + SetLtU`, but it regressed
+  `as-decoder-subarray-test` in layer5 (inner run returned empty `Result: [0x]`).
+  Keep the conservative `LoadImm(0) + SetLtU` lowering for `icmp ne`.
 - **i1→i64 sign-extension**: `LoadImm(0) + Sub64` → `NegAddImm64(0)`
   - Original: 2 instructions to compute `0 - val` (negate boolean to 0/-1)
   - Optimized: 1 instruction using `NegAddImm64` which computes `val = imm - src`

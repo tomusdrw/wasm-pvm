@@ -670,16 +670,20 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
             });
         }
         IntPredicate::NE => {
-            // xor, then check nonzero: (a ^ b) > 0
+            // xor, then check nonzero: loadimm 0 -> SCRATCH1, setltu(SCRATCH1, result)
             e.emit(Instruction::Xor {
                 dst: TEMP_RESULT,
                 src1: TEMP1,
                 src2: TEMP2,
             });
-            e.emit(Instruction::SetGtUImm {
-                dst: TEMP_RESULT,
-                src: TEMP_RESULT,
+            e.emit(Instruction::LoadImm {
+                reg: SCRATCH1,
                 value: 0,
+            });
+            e.emit(Instruction::SetLtU {
+                dst: TEMP_RESULT,
+                src1: SCRATCH1,
+                src2: TEMP_RESULT,
             });
         }
         IntPredicate::ULT => {
