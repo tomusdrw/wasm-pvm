@@ -339,8 +339,12 @@ fn compute_live_intervals<'ctx>(
 
     let has_loops = !loop_headers.is_empty();
 
+    // Track which values are phi nodes at loop headers.
+    let mut loop_header_phis: std::collections::HashSet<ValKey> = std::collections::HashSet::new();
+
     // Walk all instructions to find defs and uses.
     for &bb in blocks {
+        let is_loop_header = loop_headers.contains_key(&bb);
         for instr in bb.get_instructions() {
             let instr_key = val_key_instr(instr);
             let instr_idx = instr_index[&instr_key];
@@ -348,6 +352,13 @@ fn compute_live_intervals<'ctx>(
             // This instruction defines instr_key (if it produces a value).
             if value_slots.contains_key(&instr_key) {
                 def_point.entry(instr_key).or_insert(instr_idx);
+            }
+
+            // Track phi nodes at loop headers — these are loop-carried variables
+            // and should be eligible for register allocation even though they're
+            // technically "defined inside the loop".
+            if is_loop_header && instr.get_opcode() == InstructionOpcode::Phi {
+                loop_header_phis.insert(instr_key);
             }
 
             // Check all operands for uses.
@@ -404,16 +415,24 @@ fn compute_live_intervals<'ctx>(
         // iteration. With write-through slots this tends to add move traffic
         // without enough load savings, so we only allocate loop-carried values
         // that originate before the loop.
-        let mut defined_in_loop = false;
-        for (&header_bb, &back_edge_end) in &loop_headers {
-            let (header_start, _) = block_ranges[&header_bb];
-            if start >= header_start && start <= back_edge_end {
-                defined_in_loop = true;
-                break;
+        //
+        // Exception: phi nodes at loop headers ARE loop-carried variables.
+        // They're "defined" at the header but represent values flowing from
+        // the preheader (initial) and back-edge (updated). Their slot is
+        // written once per iteration via phi copies and read multiple times
+        // in the loop body — a net positive for register allocation.
+        if !loop_header_phis.contains(&vk) {
+            let mut defined_in_loop = false;
+            for (&header_bb, &back_edge_end) in &loop_headers {
+                let (header_start, _) = block_ranges[&header_bb];
+                if start >= header_start && start <= back_edge_end {
+                    defined_in_loop = true;
+                    break;
+                }
             }
-        }
-        if defined_in_loop {
-            continue;
+            if defined_in_loop {
+                continue;
+            }
         }
 
         // Loop extension: if this value is live at a loop header and the loop's
