@@ -208,6 +208,11 @@ Accumulated knowledge from development. Update after every task.
 - The peephole is still valuable for `--no-llvm-passes` mode and as defense-in-depth
 - **Known limitation**: the pattern only matches directly adjacent instructions; a `StoreIndU64` between producer and truncation breaks the match
 
+### Peephole AddImm Width Safety
+
+- `optimize_address_calculation()` must not fold address relations across `AddImm32`/`AddImm64` width boundaries.
+- Track `AddImm` relation width alongside `(base, offset)` and only fold when widths match (`32→32`, `64→64`), while still allowing width-agnostic `MoveReg` alias folding.
+
 ---
 
 ## Cross-Block Register Cache

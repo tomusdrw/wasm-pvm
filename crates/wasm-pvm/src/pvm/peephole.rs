@@ -394,9 +394,24 @@ pub fn optimize_address_calculation(
     instructions: &mut [Instruction],
     labels: &mut [Option<usize>],
 ) {
-    // Map register -> (base_register, offset)
-    // entry[R] = Some((Base, Off)) means value of R is (value of Base) + Off.
-    let mut state = [None; 13];
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum AddImmWidth {
+        W32,
+        W64,
+    }
+
+    #[derive(Clone, Copy)]
+    struct TrackedAddress {
+        base: u8,
+        offset: i32,
+        // Width of the AddImm that produced this relation. `None` means plain
+        // alias/copy tracking (e.g., MoveReg), which is safe for both widths.
+        width: Option<AddImmWidth>,
+    }
+
+    // Map register -> tracked address relation.
+    // entry[R] = Some({base, offset, ..}) means value of R is (value of base) + offset.
+    let mut state: [Option<TrackedAddress>; 13] = [None; 13];
 
     // Compute pre-pass byte offsets (one per instruction) and build a reverse map
     // (byte_offset → instruction index). We need this to remap labels after the pass,
@@ -442,26 +457,36 @@ pub fn optimize_address_calculation(
             | Instruction::StoreIndU16 { base, offset, .. }
             | Instruction::StoreIndU32 { base, offset, .. }
             | Instruction::StoreIndU64 { base, offset, .. } => {
-                if let Some((tracked_base, tracked_off)) = state[*base as usize]
-                    && let Some(new_off) = offset.checked_add(tracked_off)
+                if let Some(tracked) = state[*base as usize]
+                    && let Some(new_off) = offset.checked_add(tracked.offset)
                 {
-                    *base = tracked_base;
+                    *base = tracked.base;
                     *offset = new_off;
                 }
             }
             Instruction::JumpInd { reg, offset, .. } => {
-                if let Some((tracked_base, tracked_off)) = state[*reg as usize]
-                    && let Some(new_off) = offset.checked_add(tracked_off)
+                if let Some(tracked) = state[*reg as usize]
+                    && let Some(new_off) = offset.checked_add(tracked.offset)
                 {
-                    *reg = tracked_base;
+                    *reg = tracked.base;
                     *offset = new_off;
                 }
             }
-            Instruction::AddImm32 { src, value, .. } | Instruction::AddImm64 { src, value, .. } => {
-                if let Some((tracked_base, tracked_off)) = state[*src as usize]
-                    && let Some(new_val) = value.checked_add(tracked_off)
+            Instruction::AddImm32 { src, value, .. } => {
+                if let Some(tracked) = state[*src as usize]
+                    && matches!(tracked.width, None | Some(AddImmWidth::W32))
+                    && let Some(new_val) = value.checked_add(tracked.offset)
                 {
-                    *src = tracked_base;
+                    *src = tracked.base;
+                    *value = new_val;
+                }
+            }
+            Instruction::AddImm64 { src, value, .. } => {
+                if let Some(tracked) = state[*src as usize]
+                    && matches!(tracked.width, None | Some(AddImmWidth::W64))
+                    && let Some(new_val) = value.checked_add(tracked.offset)
+                {
+                    *src = tracked.base;
                     *value = new_val;
                 }
             }
@@ -474,7 +499,7 @@ pub fn optimize_address_calculation(
         // Invalidate any state that depends on the overwritten register.
         if let Some(dst) = dest {
             for s in &mut state {
-                if matches!(s, Some((base, _)) if *base == dst) {
+                if matches!(s, Some(TrackedAddress { base, .. }) if *base == dst) {
                     *s = None;
                 }
             }
@@ -486,11 +511,14 @@ pub fn optimize_address_calculation(
                 if dst == src {
                     state[*dst as usize] = None;
                 } else {
-                    state[*dst as usize] = state[*src as usize].or(Some((*src, 0)));
+                    state[*dst as usize] = state[*src as usize].or(Some(TrackedAddress {
+                        base: *src,
+                        offset: 0,
+                        width: None,
+                    }));
                 }
             }
-            Instruction::AddImm32 { dst, src, value }
-            | Instruction::AddImm64 { dst, src, value } => {
+            Instruction::AddImm32 { dst, src, value } => {
                 if dst == src {
                     // In-place update (A = A + imm).
                     // Original value of A is lost, so we cannot track A as an alias of (A + imm).
@@ -501,7 +529,22 @@ pub fn optimize_address_calculation(
                     // Else dst = (src, value).
                     // Note: src/value might have been optimized in step 1 (folding constant).
                     // If so, src is already Base.
-                    state[*dst as usize] = Some((*src, *value));
+                    state[*dst as usize] = Some(TrackedAddress {
+                        base: *src,
+                        offset: *value,
+                        width: Some(AddImmWidth::W32),
+                    });
+                }
+            }
+            Instruction::AddImm64 { dst, src, value } => {
+                if dst == src {
+                    state[*dst as usize] = None;
+                } else {
+                    state[*dst as usize] = Some(TrackedAddress {
+                        base: *src,
+                        offset: *value,
+                        width: Some(AddImmWidth::W64),
+                    });
                 }
             }
             _ => {
@@ -907,6 +950,90 @@ mod tests {
         assert_eq!(instrs.len(), 2);
         // Label should now point to byte offset 1 (start of LoadImm after one Fallthrough)
         assert_eq!(labels[0], Some(1));
+    }
+
+    #[test]
+    fn address_fold_does_not_mix_addimm32_into_addimm64() {
+        let mut instrs = vec![
+            Instruction::AddImm32 {
+                dst: 2,
+                src: 1,
+                value: 4,
+            },
+            Instruction::AddImm64 {
+                dst: 3,
+                src: 2,
+                value: 8,
+            },
+        ];
+        let mut labels = vec![];
+
+        optimize_address_calculation(&mut instrs, &mut labels);
+
+        assert!(matches!(
+            instrs[1],
+            Instruction::AddImm64 {
+                dst: 3,
+                src: 2,
+                value: 8
+            }
+        ));
+    }
+
+    #[test]
+    fn address_fold_does_not_mix_addimm64_into_addimm32() {
+        let mut instrs = vec![
+            Instruction::AddImm64 {
+                dst: 2,
+                src: 1,
+                value: 4,
+            },
+            Instruction::AddImm32 {
+                dst: 3,
+                src: 2,
+                value: 8,
+            },
+        ];
+        let mut labels = vec![];
+
+        optimize_address_calculation(&mut instrs, &mut labels);
+
+        assert!(matches!(
+            instrs[1],
+            Instruction::AddImm32 {
+                dst: 3,
+                src: 2,
+                value: 8
+            }
+        ));
+    }
+
+    #[test]
+    fn address_fold_keeps_same_width_addimm_fusion() {
+        let mut instrs = vec![
+            Instruction::AddImm64 {
+                dst: 2,
+                src: 1,
+                value: 4,
+            },
+            Instruction::AddImm64 {
+                dst: 3,
+                src: 2,
+                value: 8,
+            },
+        ];
+        let mut labels = vec![];
+
+        optimize_address_calculation(&mut instrs, &mut labels);
+
+        assert!(matches!(
+            instrs[1],
+            Instruction::AddImm64 {
+                dst: 3,
+                src: 1,
+                value: 12
+            }
+        ));
     }
 
     // ── Dead store elimination tests ──
