@@ -778,8 +778,8 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     /// Clear the entire register cache (at block boundaries).
     ///
-    /// Clears the general cache (slot_cache, reg_to_slot, reg_to_const) and
-    /// allocated register state (alloc_reg_slot).
+    /// Clears the general cache (`slot_cache`, `reg_to_slot`, `reg_to_const`) and
+    /// allocated register state (`alloc_reg_slot`).
     pub fn clear_reg_cache(&mut self) {
         self.slot_cache.clear();
         self.reg_to_slot = [None; 13];
@@ -805,10 +805,10 @@ impl<'ctx> PvmEmitter<'ctx> {
         }
     }
 
-    /// Set allocated register state from a snapshot's alloc_reg_slot.
+    /// Set allocated register state from a snapshot's `alloc_reg_slot`.
     /// Only sets entries where the snapshot has Some — does not clear others.
     pub fn set_alloc_reg_slot_from(&mut self, alloc_reg_slot: &[Option<i32>; 13]) {
-        for (&reg, _) in &self.regalloc.reg_to_slot {
+        for &reg in self.regalloc.reg_to_slot.keys() {
             self.alloc_reg_slot[reg as usize] = alloc_reg_slot[reg as usize];
         }
     }
@@ -816,7 +816,7 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Intersect allocated register state with a snapshot.
     /// Only keeps entries where both the current state and the snapshot agree.
     pub fn intersect_alloc_reg_slot(&mut self, other: &[Option<i32>; 13]) {
-        for (&reg, _) in &self.regalloc.reg_to_slot {
+        for &reg in self.regalloc.reg_to_slot.keys() {
             let idx = reg as usize;
             if self.alloc_reg_slot[idx] != other[idx] {
                 self.alloc_reg_slot[idx] = None;
