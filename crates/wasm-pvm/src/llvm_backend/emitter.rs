@@ -1028,8 +1028,7 @@ pub fn pre_scan_function<'ctx>(
     let mut has_calls = false;
     for bb in function.get_basic_blocks() {
         for instr in bb.get_instructions() {
-            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call
-                && is_real_call(instr)
+            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call && is_real_call(instr)
             {
                 has_calls = true;
                 break;
