@@ -278,7 +278,7 @@ pub fn optimize(
     );
 }
 
-/// Fuse LoadImm + AddImm chains and chained AddImm operations.
+/// Fuse `LoadImm` + `AddImm` chains and chained `AddImm` operations.
 ///
 /// Pattern 1: `LoadImm r1, A; AddImm r1, r1, B` → `LoadImm r1, A+B`
 /// Pattern 2: `AddImm r1, r1, A; AddImm r1, r1, B` → `AddImm r1, r1, A+B`
@@ -299,11 +299,11 @@ fn optimize_immediate_chains(instructions: &mut [Instruction], keep: &mut [bool]
         }
 
         // Pattern 3: MoveReg r1, r1 (self-move) - always remove
-        if let Instruction::MoveReg { dst, src } = instructions[i] {
-            if dst == src {
-                keep[i] = false;
-                continue;
-            }
+        if let Instruction::MoveReg { dst, src } = instructions[i]
+            && dst == src
+        {
+            keep[i] = false;
+            continue;
         }
 
         // Pattern 1: LoadImm followed by AddImm32/64 to same register
@@ -320,16 +320,12 @@ fn optimize_immediate_chains(instructions: &mut [Instruction], keep: &mut [bool]
                     dst,
                     src,
                     value: add_val,
-                } if *dst == load_reg && *src == load_reg => load_val
-                    .checked_add(*add_val)
-                    .filter(|&v| i32::try_from(v).is_ok()),
-                Instruction::AddImm64 {
+                }
+                | Instruction::AddImm64 {
                     dst,
                     src,
                     value: add_val,
-                } if *dst == load_reg && *src == load_reg => load_val
-                    .checked_add(*add_val)
-                    .filter(|&v| i32::try_from(v).is_ok()),
+                } if *dst == load_reg && *src == load_reg => load_val.checked_add(*add_val),
                 _ => None,
             };
 
@@ -374,8 +370,9 @@ fn optimize_immediate_chains(instructions: &mut [Instruction], keep: &mut [bool]
                 keep[i + 1] = false;
                 // Patch first instruction with combined value
                 match &mut instructions[i] {
-                    Instruction::AddImm32 { value, .. } => *value = combined,
-                    Instruction::AddImm64 { value, .. } => *value = combined,
+                    Instruction::AddImm32 { value, .. } | Instruction::AddImm64 { value, .. } => {
+                        *value = combined;
+                    }
                     _ => unreachable!(),
                 }
             }
