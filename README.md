@@ -105,7 +105,7 @@ The compiler pipeline:
 
 ### Key Design Decisions
 
-- **Stack-slot approach**: every SSA value gets a dedicated 8-byte memory offset from SP, with a **linear-scan register allocator** that assigns long-lived values to r5/r6 to eliminate redundant memory traffic across block boundaries and loops
+- **Stack-slot approach with register allocation**: every SSA value gets a dedicated 8-byte memory offset from SP. A **linear-scan register allocator** assigns high-use values to available callee-saved registers r9-r12 when not used for this function's incoming parameters (and reserves r9+ needed for outgoing call arguments in non-leaf functions) to eliminate redundant memory traffic across block boundaries and loops
 - **Per-block register cache**: eliminates redundant loads when a value is reused shortly after being computed (~50% gas reduction)
 - **No `unsafe` code**: `deny(unsafe_code)` enforced at workspace level
 - **No floating point**: PVM lacks FP support; WASM floats are rejected at compile time

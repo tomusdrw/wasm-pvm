@@ -69,16 +69,25 @@ regions never overlap regardless of frame size. However, a callee's frame alloca
 must not reach into the caller's spill area — this is protected by the stack overflow
 check which ensures `SP - frame_size >= stack_limit`.
 
-### Stack-Slot Approach
+### Stack-Slot Approach with Register Allocation
 
-Every LLVM SSA value gets a dedicated 8-byte stack slot (no register allocation).
-The typical instruction sequence is:
+Every LLVM SSA value gets a dedicated 8-byte stack slot. The baseline instruction
+sequence is:
 
 1. Load operands from stack slots into temp registers (t0, t1)
 2. Execute ALU operation, result in t2
 3. Store t2 back to the result's stack slot
 
-This is a correctness-first design; a proper register allocator is future work.
+A **linear-scan register allocator** (`regalloc.rs`) improves on this when a function
+contains loop back-edges; loop-free functions skip allocation entirely. Candidate
+intervals are built from use-def live-interval analysis and filtered by a minimum-use
+threshold (`MIN_USES_FOR_ALLOCATION`, currently 3), rather than requiring per-value
+"loop-spanning" as the eligibility rule. The allocator assigns eligible values to
+available callee-saved registers (r9-r12 when not used for this function's incoming
+parameters). In non-leaf functions, r9+ needed for outgoing call arguments are reserved
+from allocation. Call-site clobber handling/reloads are performed by the emitter after
+calls, not by explicit call-site invalidation logic inside regalloc itself. Combined
+with the register cache, this eliminates most redundant memory traffic.
 
 ### Per-Block Register Cache (Store-Load Forwarding)
 
@@ -386,7 +395,7 @@ where storing one phi value would overwrite a source needed by another phi.
 
 | Decision | Rationale |
 |----------|-----------|
-| Stack-slot for every SSA value | Correctness-first; no register allocator needed. Per-block register cache mitigates the cost |
+| Stack-slot for every SSA value | Correctness-first baseline; linear-scan register allocator (for loop-containing functions) assigns high-use values to available callee-saved regs (r9-r12 when not used for this function's incoming parameters), and per-block register cache eliminates most remaining redundant loads |
 | Spill area below SP | Frame grows up from SP, spill area grows down — no overlap |
 | Global `PARAM_OVERFLOW_BASE` | Avoids stack frame complexity for overflow params |
 | Jump-table indices as return addresses | Required by PVM's `JUMP_IND` semantics |
