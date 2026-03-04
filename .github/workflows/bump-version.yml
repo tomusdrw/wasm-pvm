@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   bump:
@@ -41,16 +42,26 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Commit and tag
+      - name: Create branch and commit
         run: |
+          git checkout -b "bump-version/v$SAFE_VERSION"
           git add Cargo.toml Cargo.lock
           git commit -m "Bump version to $SAFE_VERSION"
-          git tag "v$SAFE_VERSION"
 
-      - name: Push commit and tag
-        run: git push origin HEAD "v$SAFE_VERSION"
+      - name: Push branch
+        run: git push origin "bump-version/v$SAFE_VERSION"
 
-      - name: Create draft release
-        run: gh release create "v$SAFE_VERSION" --draft --generate-notes --title "v$SAFE_VERSION"
+      - name: Create Pull Request
+        run: |
+          gh pr create \
+            --title "Bump version to $SAFE_VERSION" \
+            --body "Automated version bump to $SAFE_VERSION." \
+            --base main \
+            --head "bump-version/v$SAFE_VERSION"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge
+        run: gh pr merge --auto --squash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
