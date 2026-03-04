@@ -1051,3 +1051,81 @@ fn test_direct_calls_use_load_imm_jump() {
         );
     }
 }
+
+/// A function that only uses memory (i32.load/i32.store) should be classified as
+/// leaf because PVM memory intrinsics (__pvm_load_*, __pvm_store_*) are lowered
+/// inline and don't use the calling convention.
+///
+/// Regression test for the `is_real_call()` fix: before this fix, ALL functions
+/// with memory access were classified as non-leaf because `__pvm_load_i32` etc.
+/// are LLVM Call instructions.
+#[test]
+fn test_memory_only_function_is_leaf() {
+    use wasm_pvm::test_harness::compile_wat_with_options;
+    use wasm_pvm::{CompileOptions, OptimizationFlags};
+
+    // Module with: $memfunc (loads+stores memory, no calls) and $caller (calls $memfunc).
+    // With inlining disabled, $memfunc should be leaf (no RA save) and $caller should be
+    // non-leaf (saves RA).
+    let program = compile_wat_with_options(
+        r#"
+        (module
+            (memory 1)
+            (func $memfunc (param i32) (result i32)
+                ;; Load from memory, add 1, store back, return value
+                local.get 0
+                i32.load
+                i32.const 1
+                i32.add
+                local.get 0
+                local.get 0
+                i32.load
+                i32.const 1
+                i32.add
+                i32.store
+                ;; Return the loaded+1 value (still on stack from first load+add)
+            )
+            (func $caller (result i32)
+                i32.const 0
+                call $memfunc
+            )
+            (func (export "main") (result i32)
+                call $caller
+            )
+        )
+        "#,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                inlining: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // Count RA saves: StoreIndU64 { base: 1, src: 0, offset: 0 }
+    // $memfunc (leaf with memory only) should NOT save RA.
+    // $caller (non-leaf, calls $memfunc) SHOULD save RA.
+    // $main (entry function) does NOT save RA (entry functions never return).
+    // Total expected: 1 ($caller only), NOT 2 or 3.
+    let ra_save_count = instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i,
+                Instruction::StoreIndU64 {
+                    base: 1,
+                    src: 0,
+                    offset: 0
+                }
+            )
+        })
+        .count();
+
+    assert_eq!(
+        ra_save_count, 1,
+        "Memory-only function should be leaf (no RA save). Expected 1 RA save ($caller only), got {ra_save_count}"
+    );
+}
