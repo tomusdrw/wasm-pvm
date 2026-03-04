@@ -330,6 +330,21 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.clear_reg_cache();
     }
 
+    /// Define a label, clearing the general cache but preserving allocated register state.
+    ///
+    /// Used for leaf functions where allocated registers are never clobbered.
+    pub fn define_label_preserving_alloc(&mut self, label: usize) {
+        if self
+            .instructions
+            .last()
+            .is_some_and(|last| !last.is_terminating())
+        {
+            self.emit(Instruction::Fallthrough);
+        }
+        self.labels[label] = Some(self.current_offset());
+        self.clear_reg_cache_preserving_alloc();
+    }
+
     pub fn current_offset(&self) -> usize {
         self.byte_offset
     }
@@ -761,7 +776,10 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.reg_to_const[reg as usize] = None;
     }
 
-    /// Clear the entire register cache (at block boundaries and after calls).
+    /// Clear the entire register cache (at block boundaries).
+    ///
+    /// Clears the general cache (`slot_cache`, `reg_to_slot`, `reg_to_const`) and
+    /// allocated register state (`alloc_reg_slot`).
     pub fn clear_reg_cache(&mut self) {
         self.slot_cache.clear();
         self.reg_to_slot = [None; 13];
@@ -769,9 +787,40 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.clear_allocated_reg_state();
     }
 
+    /// Clear the general register cache but preserve allocated register state.
+    ///
+    /// Used at block boundaries in leaf functions where allocated registers
+    /// (r9-r12) are never clobbered by calls, so write-through semantics
+    /// guarantee they always hold their assigned slot values.
+    pub fn clear_reg_cache_preserving_alloc(&mut self) {
+        self.slot_cache.clear();
+        self.reg_to_slot = [None; 13];
+        self.reg_to_const = [None; 13];
+        // alloc_reg_slot intentionally NOT cleared.
+    }
+
     fn clear_allocated_reg_state(&mut self) {
         for &reg in self.regalloc.reg_to_slot.keys() {
             self.alloc_reg_slot[reg as usize] = None;
+        }
+    }
+
+    /// Set allocated register state from a snapshot's `alloc_reg_slot`.
+    /// Only sets entries where the snapshot has Some — does not clear others.
+    pub fn set_alloc_reg_slot_from(&mut self, alloc_reg_slot: &[Option<i32>; 13]) {
+        for &reg in self.regalloc.reg_to_slot.keys() {
+            self.alloc_reg_slot[reg as usize] = alloc_reg_slot[reg as usize];
+        }
+    }
+
+    /// Intersect allocated register state with a snapshot.
+    /// Only keeps entries where both the current state and the snapshot agree.
+    pub fn intersect_alloc_reg_slot(&mut self, other: &[Option<i32>; 13]) {
+        for &reg in self.regalloc.reg_to_slot.keys() {
+            let idx = reg as usize;
+            if self.alloc_reg_slot[idx] != other[idx] {
+                self.alloc_reg_slot[idx] = None;
+            }
         }
     }
 
@@ -971,11 +1020,16 @@ pub fn pre_scan_function<'ctx>(
     function: FunctionValue<'ctx>,
     is_main: bool,
 ) {
-    // Detect calls to determine if this is a leaf function.
+    // Detect real calls to determine if this is a leaf function.
+    // PVM intrinsics (__pvm_load_*, __pvm_store_*, etc.) and LLVM intrinsics
+    // (llvm.*) are NOT real function calls — they don't use the calling
+    // convention and don't clobber callee-saved registers (r9-r12).
+    // Only wasm_func_* and __pvm_call_indirect are real calls.
     let mut has_calls = false;
     for bb in function.get_basic_blocks() {
         for instr in bb.get_instructions() {
-            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
+            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call && is_real_call(instr)
+            {
                 has_calls = true;
                 break;
             }
@@ -1104,6 +1158,33 @@ fn instruction_produces_value(instr: InstructionValue<'_>) -> bool {
             | InstructionOpcode::Load
             | InstructionOpcode::Call
     )
+}
+
+/// Check whether an LLVM Call instruction is a "real" function call that uses the
+/// calling convention and may clobber callee-saved registers (r9-r12).
+///
+/// PVM intrinsics (`__pvm_load_*`, `__pvm_store_*`, `__pvm_memory_*`, etc.) and
+/// LLVM intrinsics (`llvm.*`) are lowered inline — they only use temp/scratch
+/// registers and never clobber callee-saved registers.
+///
+/// Real calls: `wasm_func_*` (direct) and `__pvm_call_indirect` (indirect).
+fn is_real_call(instr: InstructionValue<'_>) -> bool {
+    let call_site: std::result::Result<inkwell::values::CallSiteValue, _> = instr.try_into();
+    let Ok(call_site) = call_site else {
+        return true; // Conservative: treat as call if we can't classify.
+    };
+    let Some(fn_val) = call_site.get_called_fn_value() else {
+        return true; // Indirect call without known callee.
+    };
+    let name = fn_val.get_name().to_string_lossy();
+    // PVM intrinsics and LLVM intrinsics are NOT real calls.
+    if name.starts_with("__pvm_") && name != "__pvm_call_indirect" {
+        return false;
+    }
+    if name.starts_with("llvm.") {
+        return false;
+    }
+    true
 }
 
 // Re-export scratch registers for other modules

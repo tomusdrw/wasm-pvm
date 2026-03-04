@@ -307,6 +307,9 @@ Accumulated knowledge from development. Update after every task.
     - Skip regalloc when fewer than 2 non-leaf allocatable callee registers are available (1-register allocation tended to thrash on AS decoder/array workloads).
     - Skip very small non-leaf functions (`total_values < 24`) where move/reload overhead often dominates.
 - Post-fix benchmark shape: consistent JAM size reductions from regalloc, but gas/time gains are workload-dependent and often near-noise on current microbenchmarks.
+- **Leaf detection fix**: PVM intrinsics (`__pvm_load_i32`, `__pvm_store_i32`, etc.) are LLVM `Call` instructions but are NOT real function calls — they're lowered inline using temp registers only. The `is_real_call()` function in `emitter.rs` distinguishes real calls (`wasm_func_*`, `__pvm_call_indirect`) from intrinsics (`__pvm_*`, `llvm.*`). Before this fix, ALL functions with memory access were classified as non-leaf, causing unnecessary callee-save prologue/epilogue overhead.
+- **Cross-block alloc_reg_slot propagation**: In leaf functions (no real calls), `alloc_reg_slot` is preserved across all block boundaries because allocated registers are never clobbered. In non-leaf functions with multi-predecessor blocks, predecessor exit snapshots are intersected — only entries where ALL processed predecessors agree are kept. Back-edges (unprocessed predecessors) are treated conservatively.
+- **Phi node allocation is a gas regression in PVM**: Allocating phi nodes at loop headers adds +1 MoveReg per iteration per phi (write-through to allocated reg) with 0 gas savings (MoveReg replaces LoadIndU64, both cost 1 gas). Net: +1 gas per iteration per allocated phi. Only beneficial when loads are cheaper than stores, when allocated regs can be used directly by instructions (avoiding MoveReg to temps), or when code size matters more than gas.
 
 ### Fused Inverted Bitwise (AndInv / OrInv / Xnor)
 
