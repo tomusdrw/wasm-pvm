@@ -126,7 +126,8 @@ All PVM-level optimizations enabled (default):
 | AS gcd(2017,200) | 260 B | 691 B | 562 B | 191 |
 | AS decoder | 1.5 KB | 20.8 KB | 6.8 KB | 721 |
 | AS array | 1.4 KB | 19.9 KB | 6.0 KB | 624 |
-| anan-as PVM interpreter | 58.3 KB | 178.4 KB | 126.3 KB | - |
+| aslan-fib accumulate | 7.2 KB | 33.0 KB | 14.0 KB | 14,185 |
+| anan-as PVM interpreter | 58.3 KB | 178.6 KB | 126.4 KB | - |
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
@@ -138,8 +139,9 @@ PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost
 | JAM-SDK fib(10)\* | 25.4 KB | 16.2 KB | 6,625,690 | 42 | 157,754x |
 | Jambrains fib(10)\* | 61.1 KB | - | 6,351,146 | 1 | 6,351,146x |
 | JADE fib(10)\* | 67.3 KB | 45.7 KB | 18,053,067 | 504 | 35,820x |
+| aslan-fib accumulate\* | 33.0 KB | 14.0 KB | 10,356,631 | 14,185 | 730x |
 
-\*JAM-SDK fib(10), Jambrains fib(10), and JADE fib(10) exit on unhandled host calls before the fibonacci computation runs. The gas cost reflects program parsing/loading only (26 KB, 61 KB, and 67 KB binaries respectively), not execution.
+\*JAM-SDK fib(10), Jambrains fib(10), JADE fib(10), and aslan-fib accumulate exit on unhandled host calls (ecalli). The gas cost reflects program parsing/loading plus partial execution up to the first unhandled ecalli.
 
 ## Memory layout summary
 

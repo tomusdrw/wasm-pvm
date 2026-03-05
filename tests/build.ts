@@ -94,9 +94,16 @@ function collectBuildTargets(): {
   const watFiles = fs.readdirSync(WAT_DIR).filter((f) => f.endsWith(".jam.wat"));
   for (const watFile of watFiles) {
     const outputName = watFile.replace(/\.jam\.wat$/, "");
+    // Check for a matching adapter WAT file and/or import map file.
+    const adapterFile = path.join(IMPORTS_DIR, `${outputName}.adapter.wat`);
+    const adapterPath = fs.existsSync(adapterFile) ? adapterFile : undefined;
+    const importsFile = path.join(IMPORTS_DIR, `${outputName}.imports`);
+    const importsPath = fs.existsSync(importsFile) ? importsFile : undefined;
     jamTargets.push({
       inputPath: path.join(WAT_DIR, watFile),
       outputName,
+      importsPath,
+      adapterPath,
     });
   }
 
