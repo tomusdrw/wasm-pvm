@@ -7,10 +7,7 @@
  */
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Create a Uint8Array with known values
   const arr = new Uint8Array(5);
@@ -27,6 +24,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   const value: i32 = sub[0];
 
   store<i32>(RESULT_HEAP, value);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }

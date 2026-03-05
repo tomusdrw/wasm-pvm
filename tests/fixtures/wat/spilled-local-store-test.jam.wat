@@ -27,7 +27,7 @@
     (i32.const 3)
   )
 
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     ;; 2 params + 15 additional locals = 17 total (same as nextSteps)
     (local $step i32)       ;; local 2
     (local $obj_ptr i32)    ;; local 3
@@ -75,8 +75,7 @@
         i32.store offset=16
         ;; Output
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -88,8 +87,7 @@
         (drop (call_indirect (type $exe_type) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
         ;; Read spilled local
         (i32.store (i32.const 0) (local.get $l7))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -121,8 +119,7 @@
         i32.store offset=16
         ;; Output
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -131,8 +128,7 @@
     (if (i32.eq (local.get $step) (i32.const 3))
       (then
         (i32.store (i32.const 0) (call_indirect (type $exe_type) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -155,15 +151,13 @@
         i32.store offset=16
         ;; Output
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
 
     ;; Default: return 0
     (i32.store (i32.const 0) (i32.const 0))
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

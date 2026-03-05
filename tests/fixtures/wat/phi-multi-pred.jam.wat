@@ -11,7 +11,7 @@
   ;; Otherwise:        a=1000, b=2000
   ;; Then swap a,b swap_count times.
   ;; Output: value of a after swaps
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $sel i32)
     (local $swaps i32)
     (local $a i32)
@@ -61,7 +61,6 @@
 
     ;; Store result
     (i32.store (i32.const 0) (local.get $a))
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

@@ -2,16 +2,12 @@
 // SetLtUImm is generated for: ==, <=, >= comparisons
 let RESULT_HEAP: usize = 0;
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-function writeResult(val: i32): void {
+function writeResult(val: i32): i64 {
   store<i32>(RESULT_HEAP, val);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   RESULT_HEAP = heap.alloc(256);
   // Load as u32 for unsigned comparison tests
   const a = load<u32>(args_ptr);
@@ -49,5 +45,5 @@ export function main(args_ptr: i32, args_len: i32): void {
 
   // Combined comparison test
   // result bits: 0=equal, 1=ule, 2=uge, 3=sle, 4=sge
-  writeResult(result);
+  return writeResult(result);
 }

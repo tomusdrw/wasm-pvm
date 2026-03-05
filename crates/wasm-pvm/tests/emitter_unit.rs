@@ -1129,3 +1129,74 @@ fn test_memory_only_function_is_leaf() {
         "Memory-only function should be leaf (no RA save). Expected 1 RA save ($caller only), got {ra_save_count}"
     );
 }
+
+// ── Entry Return Convention (packed i64) ──
+
+/// Entry function returning packed i64 emits ShloR64 + AddImm32 + Add64
+/// to unpack pointer and length into r7/r8.
+#[test]
+fn test_entry_return_packed_i64() {
+    let program = compile_wat(
+        r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32) (result i64)
+                (i64.const 17179869184)
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // The entry epilogue should unpack the packed i64 in order:
+    // 1. ShloR64 { dst: TEMP2(3), src1: TEMP1(2), src2: TEMP2(3) }  — extract length
+    // 2. AddImm32 { dst: r7, src: TEMP1(2), value: wasm_memory_base } — compute start addr
+    // 3. Add64   { dst: r8, src1: r7, src2: TEMP2(3) }               — compute end addr
+    assert_has_pattern(
+        &instructions,
+        &[
+            InstructionPattern::ShloR64 {
+                dst: Pat::Exact(3),
+                src1: Pat::Exact(2),
+                src2: Pat::Exact(3),
+            },
+            InstructionPattern::AddImm32 {
+                dst: Pat::Exact(7),
+                src: Pat::Exact(2),
+                value: Pat::Any,
+            },
+            InstructionPattern::Add64 {
+                dst: Pat::Exact(8),
+                src1: Pat::Exact(7),
+                src2: Pat::Exact(3),
+            },
+        ],
+    );
+}
+
+/// Entry function returning void does NOT emit the unpacking sequence.
+#[test]
+fn test_entry_return_void_no_unpack() {
+    let program = compile_wat(
+        r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32)
+                (nop)
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // No ShloR64 should be emitted for a void entry function
+    let has_shift = instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ShloR64 { .. }));
+    assert!(
+        !has_shift,
+        "Void entry function should not emit ShloR64 (packed return unpacking)"
+    );
+}

@@ -4,6 +4,19 @@ Accumulated knowledge from development. Update after every task.
 
 ---
 
+## Entry Function ABI — Unified Packed i64 Convention
+
+All entry functions (both WAT and AssemblyScript) must use `main(args_ptr: i32, args_len: i32) -> i64`.
+The i64 return value packs a WASM pointer and length: `(ptr as u64) | ((len as u64) << 32)`.
+The PVM epilogue unpacks: `r7 = (ret & 0xFFFFFFFF) + wasm_memory_base`, `r8 = r7 + (ret >> 32)`.
+
+Common constant: ptr=0, len=4 → `i64.const 17179869184` (= `4 << 32`).
+
+Previous conventions (globals-based, multi-value `(result i32 i32)`, simple scalar) were removed.
+AssemblyScript uses a `writeResult(val: i32): i64` helper that stores the value and returns `packResult(ptr, len)`.
+
+---
+
 ## LLVM New Pass Manager (inkwell 0.8.0 / LLVM 18)
 
 ### Pass Pipeline Syntax

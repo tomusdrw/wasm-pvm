@@ -15,7 +15,7 @@
   ;;   iter 2: a=3+2=5, b=3*2=6
   ;;   iter 3: a=5+6=11, b=5*2=10
   ;;   iter 4: a=11+10=21, b=11*2=22
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $a i32)
     (local $b i32)
     (local $n i32)
@@ -47,7 +47,6 @@
 
     ;; Store result
     (i32.store (i32.const 0) (local.get $a))
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

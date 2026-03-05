@@ -2,7 +2,7 @@
   (memory 1)
   
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     ;; Write sum of two u32 args to WASM memory address 0
     ;; (Compiler translates this to PVM address 0x50000)
     (i32.store
@@ -13,7 +13,6 @@
       )
     )
     
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

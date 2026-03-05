@@ -183,44 +183,8 @@ pub fn lower_return<'ctx>(
     is_main: bool,
 ) -> Result<()> {
     if is_main {
-        if let Some((ptr_global, len_global)) = e.config.result_globals {
-            // Globals convention: load result_ptr and result_len from WASM globals.
-            // JAM SPI result convention: r7 = start address, r8 = end address.
-            let wasm_memory_base = e.config.wasm_memory_base;
-            let ptr_addr = abi::global_addr(ptr_global);
-            e.emit(Instruction::LoadImm {
-                reg: TEMP1,
-                value: ptr_addr,
-            });
-            e.emit(Instruction::LoadIndU32 {
-                dst: TEMP1,
-                base: TEMP1,
-                offset: 0,
-            });
-            let len_addr = abi::global_addr(len_global);
-            e.emit(Instruction::LoadImm {
-                reg: TEMP2,
-                value: len_addr,
-            });
-            e.emit(Instruction::LoadIndU32 {
-                dst: TEMP2,
-                base: TEMP2,
-                offset: 0,
-            });
-            // r7 = wasm_ptr + wasm_memory_base (start PVM address)
-            e.emit(Instruction::AddImm32 {
-                dst: abi::ARGS_PTR_REG,
-                src: TEMP1,
-                value: wasm_memory_base,
-            });
-            // r8 = r7 + len (end PVM address)
-            e.emit(Instruction::Add64 {
-                dst: abi::ARGS_LEN_REG,
-                src1: abi::ARGS_PTR_REG,
-                src2: TEMP2,
-            });
-        } else if e.config.entry_returns_ptr_len && instr.get_num_operands() > 0 {
-            // Packed (ptr, len) convention: return value is packed i64.
+        if instr.get_num_operands() > 0 {
+            // Unified entry convention: return value is a packed i64.
             // Lower 32 bits = WASM ptr, upper 32 bits = len.
             // JAM SPI result convention: r7 = start address, r8 = end address.
             let ret_val = get_operand(instr, 0)?;
@@ -249,10 +213,6 @@ pub fn lower_return<'ctx>(
                 src1: abi::ARGS_PTR_REG,
                 src2: TEMP2,
             });
-        } else if instr.get_num_operands() > 0 {
-            // Entry function returns a value → r7.
-            let ret_val = get_operand(instr, 0)?;
-            e.load_operand(ret_val, abi::RETURN_VALUE_REG)?;
         }
     } else {
         // Normal function: ret void | ret i64 %val → r7.

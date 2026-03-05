@@ -10,8 +10,6 @@ let BUF_A: u32 = 0;
 let BUF_B: u32 = 0;
 let OUTPUT_BASE: u32 = 0;
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
 
 @inline
 function idx(x: i32, y: i32): u32 {
@@ -92,7 +90,7 @@ function step_once(src: u32, dst: u32): void {
   }
 }
 
-function encode_result(src: u32): void {
+function encode_result(src: u32): i64 {
   store<u32>(OUTPUT_BASE, WIDTH as u32);
   store<u32>(OUTPUT_BASE + 4, HEIGHT as u32);
 
@@ -101,11 +99,11 @@ function encode_result(src: u32): void {
     store<u8>(OUTPUT_BASE + 8 + i as u32, v);
   }
 
-  result_ptr = OUTPUT_BASE as i32;
-  result_len = 8 + CELL_COUNT;
+  const len = 8 + CELL_COUNT;
+  return (OUTPUT_BASE as i64) | ((len as i64) << 32);
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   // Allocate working buffers: 2 cell buffers + output (width + height + cells)
   const alloc_size = CELL_COUNT * 2 + 8 + CELL_COUNT;
   const base = heap.alloc(alloc_size) as u32;
@@ -127,5 +125,5 @@ export function main(args_ptr: i32, args_len: i32): void {
     next = tmp;
   }
 
-  encode_result(current);
+  return encode_result(current);
 }

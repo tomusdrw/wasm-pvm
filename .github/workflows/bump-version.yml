@@ -32,7 +32,11 @@ jobs:
           echo "SAFE_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Update workspace version in Cargo.toml
-        run: sed -i "s/^version = \".*\"/version = \"$SAFE_VERSION\"/" Cargo.toml
+        run: |
+          # Update workspace.package version
+          sed -i "s/^version = \".*\"/version = \"$SAFE_VERSION\"/" Cargo.toml
+          # Update wasm-pvm dependency version to match
+          sed -i "s/\(wasm-pvm = { path = \"crates\/wasm-pvm\", version = \)\"[^\"]*\"/\1\"$SAFE_VERSION\"/" Cargo.toml
 
       - name: Regenerate Cargo.lock
         run: cargo generate-lockfile
@@ -58,10 +62,5 @@ jobs:
             --body "Automated version bump to $SAFE_VERSION." \
             --base main \
             --head "bump-version/v$SAFE_VERSION"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Enable auto-merge
-        run: gh pr merge --auto --squash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

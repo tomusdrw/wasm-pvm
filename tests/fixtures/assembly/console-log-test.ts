@@ -3,15 +3,12 @@
 // so that the WASM pointer argument is converted to a PVM address.
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-export function main(_args_ptr: i32, _args_len: i32): void {
+export function main(_args_ptr: i32, _args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Store result first — the PVM runner may halt at the ecalli.
   store<i32>(RESULT_HEAP, 42);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
 
   console.log("Hello from PVM!");
+
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }

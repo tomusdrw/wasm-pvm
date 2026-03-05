@@ -443,13 +443,7 @@ const WASM_AS_GET_PATTERN_WAT: &str = r#"
         local.get $arr
     )
 
-    ;; Globals for result
-    (global $result_ptr (mut i32) (i32.const 0))
-    (global $result_len (mut i32) (i32.const 0))
-    (export "result_ptr" (global $result_ptr))
-    (export "result_len" (global $result_len))
-
-    (func (export "main") (param $args_ptr i32) (param $args_len i32)
+    (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
         (local $step i32)
         (local $arr i32)
 
@@ -510,11 +504,8 @@ const WASM_AS_GET_PATTERN_WAT: &str = r#"
         ;; Store result
         i32.store
 
-        ;; Set result globals
-        i32.const 0x300
-        global.set $result_ptr
-        i32.const 4
-        global.set $result_len
+        ;; Return packed i64: ptr=0x300 (low 32), len=4 (high 32)
+        i64.const 17179869568  ;; (4 << 32) | 0x300
     )
 )
 "#;

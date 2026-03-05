@@ -77,14 +77,6 @@ pub struct WasmModule<'a> {
     pub secondary_entry_local_idx: Option<usize>,
     /// Local function index of the start function (None if import or absent).
     pub start_func_local_idx: Option<usize>,
-    /// Whether the main entry function returns (i32, i32) for (ptr, len) convention.
-    pub main_returns_ptr_len: bool,
-    /// Whether the secondary entry function returns (i32, i32) for (ptr, len) convention.
-    pub secondary_returns_ptr_len: bool,
-    /// Global index for `result_ptr` (legacy entry convention, None if using ptr/len returns).
-    pub result_ptr_global: Option<u32>,
-    /// Global index for `result_len` (legacy entry convention, None if using ptr/len returns).
-    pub result_len_global: Option<u32>,
     /// (`num_params`, `has_return`) for each function (imports first, then locals).
     pub function_signatures: Vec<(usize, bool)>,
     /// (`num_params`, `num_results`) for each type.
@@ -109,7 +101,6 @@ impl<'a> WasmModule<'a> {
         let mut func_types: Vec<wasmparser::FuncType> = Vec::new();
         let mut function_type_indices = Vec::new();
         let mut globals: Vec<GlobalType> = Vec::new();
-        let mut global_names: Vec<Option<String>> = Vec::new();
         let mut global_init_values: Vec<i32> = Vec::new();
         let mut main_func_idx: Option<u32> = None;
         let mut secondary_entry_func_idx: Option<u32> = None;
@@ -155,7 +146,6 @@ impl<'a> WasmModule<'a> {
                     for global in reader {
                         let g = global?;
                         globals.push(g.ty);
-                        global_names.push(None);
                         let init_value = eval_const_i32(&g.init_expr)?;
                         global_init_values.push(init_value);
                     }
@@ -209,47 +199,36 @@ impl<'a> WasmModule<'a> {
                 Payload::ExportSection(reader) => {
                     for export in reader {
                         let export = export?;
-                        match export.kind {
-                            wasmparser::ExternalKind::Func => {
-                                exported_wasm_func_indices.push(export.index);
-                                let is_imported = export.index < num_imported_funcs;
-                                let is_main_name =
-                                    matches!(export.name, "main" | "refine" | "refine_ext");
-                                let is_secondary_name = matches!(
-                                    export.name,
-                                    "main2" | "accumulate" | "accumulate_ext"
-                                );
-                                if is_imported && (is_main_name || is_secondary_name) {
-                                    return Err(Error::Internal(format!(
-                                        "Entry export '{}' refers to imported function index {}",
-                                        export.name, export.index
-                                    )));
-                                }
-                                match export.name {
-                                    "main" => {
-                                        main_func_idx = Some(export.index);
-                                    }
-                                    "refine" | "refine_ext" if main_func_idx.is_none() => {
-                                        main_func_idx = Some(export.index);
-                                    }
-                                    "main2" => {
-                                        secondary_entry_func_idx = Some(export.index);
-                                    }
-                                    "accumulate" | "accumulate_ext"
-                                        if secondary_entry_func_idx.is_none() =>
-                                    {
-                                        secondary_entry_func_idx = Some(export.index);
-                                    }
-                                    _ => {}
-                                }
+                        if export.kind == wasmparser::ExternalKind::Func {
+                            exported_wasm_func_indices.push(export.index);
+                            let is_imported = export.index < num_imported_funcs;
+                            let is_main_name =
+                                matches!(export.name, "main" | "refine" | "refine_ext");
+                            let is_secondary_name =
+                                matches!(export.name, "main2" | "accumulate" | "accumulate_ext");
+                            if is_imported && (is_main_name || is_secondary_name) {
+                                return Err(Error::Internal(format!(
+                                    "Entry export '{}' refers to imported function index {}",
+                                    export.name, export.index
+                                )));
                             }
-                            wasmparser::ExternalKind::Global => {
-                                let idx = export.index as usize;
-                                if idx < global_names.len() {
-                                    global_names[idx] = Some(export.name.to_string());
+                            match export.name {
+                                "main" => {
+                                    main_func_idx = Some(export.index);
                                 }
+                                "refine" | "refine_ext" if main_func_idx.is_none() => {
+                                    main_func_idx = Some(export.index);
+                                }
+                                "main2" => {
+                                    secondary_entry_func_idx = Some(export.index);
+                                }
+                                "accumulate" | "accumulate_ext"
+                                    if secondary_entry_func_idx.is_none() =>
+                                {
+                                    secondary_entry_func_idx = Some(export.index);
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
                 }
@@ -295,43 +274,6 @@ impl<'a> WasmModule<'a> {
             0
         };
 
-        // Detect result_ptr / result_len globals (legacy entry convention)
-        let mut result_ptr_global = None;
-        let mut result_len_global = None;
-
-        for (i, name) in global_names.iter().enumerate() {
-            if let Some(n) = name {
-                if n == "result_ptr" || n == "$result_ptr" {
-                    result_ptr_global = Some(i as u32);
-                } else if n == "result_len" || n == "$result_len" {
-                    result_len_global = Some(i as u32);
-                }
-            }
-        }
-
-        if result_ptr_global.is_none()
-            && result_len_global.is_none()
-            && globals.len() >= 2
-            && globals[0].mutable
-            && globals[1].mutable
-        {
-            result_ptr_global = Some(0);
-            result_len_global = Some(1);
-        }
-
-        // Detect if entry functions return (i32, i32) for the new entry point convention
-        let func_returns_ptr_len = |local_idx: usize| -> bool {
-            function_type_indices
-                .get(local_idx)
-                .and_then(|&type_idx| func_types.get(type_idx as usize))
-                .is_some_and(|ft| {
-                    ft.results().len() == 2
-                        && ft.results()[0] == wasmparser::ValType::I32
-                        && ft.results()[1] == wasmparser::ValType::I32
-                })
-        };
-        let main_returns_ptr_len = func_returns_ptr_len(main_func_local_idx);
-
         // Resolve secondary entry from global to local function index
         let has_secondary_entry = secondary_entry_func_idx.is_some();
         let secondary_entry_local_idx = secondary_entry_func_idx.and_then(|idx| {
@@ -344,9 +286,6 @@ impl<'a> WasmModule<'a> {
                     None
                 })
         });
-        let secondary_returns_ptr_len =
-            secondary_entry_local_idx.is_some_and(&func_returns_ptr_len);
-
         // Resolve start function from global to local function index
         let start_func_local_idx = start_func_idx.and_then(|idx| {
             idx.checked_sub(num_imported_funcs)
@@ -430,10 +369,6 @@ impl<'a> WasmModule<'a> {
             has_secondary_entry,
             secondary_entry_local_idx,
             start_func_local_idx,
-            main_returns_ptr_len,
-            secondary_returns_ptr_len,
-            result_ptr_global,
-            result_len_global,
             function_signatures,
             type_signatures,
             function_table,

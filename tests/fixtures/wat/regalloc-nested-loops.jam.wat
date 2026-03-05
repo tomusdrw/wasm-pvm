@@ -6,7 +6,7 @@
   ;;
   ;; Computes: sum = 0; for i in 0..n: for j in 0..n: sum += (i * n + j)
   ;; For n=4: sum = 0+1+2+3 + 4+5+6+7 + 8+9+10+11 + 12+13+14+15 = 120
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $n i32)
     (local $i i32)
     (local $j i32)
@@ -73,7 +73,6 @@
     ;; Write result
     (i32.store (i32.const 0) (local.get $sum))
 
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

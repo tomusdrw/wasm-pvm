@@ -137,7 +137,7 @@ export async function runWasmNative(
     const mainFn = instance.exports.main as (
       ptr: number,
       len: number,
-    ) => number | number[];
+    ) => bigint | number;
     if (!mainFn) {
       return { value: null, trapped: true, error: "No 'main' export found" };
     }
@@ -153,14 +153,25 @@ export async function runWasmNative(
     // Call main(args_ptr, args_len)
     const result = mainFn(ARGS_OFFSET, argsBytes.length);
 
-    // Multi-value return: result is [result_ptr, result_len]
-    let resultPtr: number;
-    let resultLen: number;
+    // Unified convention: result is a packed i64 (BigInt).
+    // Lower 32 bits = result pointer, upper 32 bits = result length.
+    if (typeof result === "bigint") {
+      const resultPtr = Number(result & 0xFFFFFFFFn);
+      const resultLen = Number((result >> 32n) & 0xFFFFFFFFn);
 
-    if (Array.isArray(result)) {
-      [resultPtr, resultLen] = result;
+      if (resultLen === 0) {
+        return { value: 0, trapped: false };
+      }
+
+      // Read result from linear memory (re-acquire view in case memory grew)
+      const resultView = new Uint8Array(mem.buffer);
+      const resultBytes = resultView.slice(resultPtr, resultPtr + resultLen);
+
+      // Parse as little-endian u32 (same as runJam's parseExitValue)
+      const value = parseLittleEndianU32(resultBytes);
+      return { value, trapped: false };
     } else if (typeof result === "number") {
-      // Single-value return (shouldn't happen with our fixtures, but handle it)
+      // Legacy: single i32 return (shouldn't happen with updated fixtures)
       return { value: result, trapped: false };
     } else {
       return {
@@ -169,14 +180,6 @@ export async function runWasmNative(
         error: `Unexpected return type: ${typeof result}`,
       };
     }
-
-    // Read result from linear memory (re-acquire view in case memory grew)
-    const resultView = new Uint8Array(mem.buffer);
-    const resultBytes = resultView.slice(resultPtr, resultPtr + resultLen);
-
-    // Parse as little-endian u32 (same as runJam's parseExitValue)
-    const value = parseLittleEndianU32(resultBytes);
-    return { value, trapped: false };
   } catch (err: any) {
     const msg = err?.message ?? String(err);
     // All errors during WASM execution are treated as traps

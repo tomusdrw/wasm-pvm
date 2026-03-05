@@ -1,6 +1,6 @@
 (module
   (memory 1)
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $step i32)
     (local $old_pages i32)
     (local $new_pages i32)
@@ -11,8 +11,7 @@
     (if (i32.eqz (local.get $step))
       (then
         (i32.store (i32.const 0) (memory.size))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -21,8 +20,7 @@
     (if (i32.eq (local.get $step) (i32.const 1))
       (then
         (i32.store (i32.const 0) (memory.grow (i32.const 1)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -39,8 +37,7 @@
             (local.get $new_pages)
           )
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -54,8 +51,7 @@
         (i32.store (i32.const 65536) (i32.const 42))
         ;; Read it back
         (i32.store (i32.const 0) (i32.load (i32.const 65536)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -67,13 +63,11 @@
         ;; Store 99 at offset 131072 (start of 3rd page)
         (i32.store (i32.const 131072) (i32.const 99))
         (i32.store (i32.const 0) (i32.load (i32.const 131072)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
 
-    (i32.const 0)  ;; default result_ptr
-    (i32.const 0)  ;; default result_len
+    (i64.const 0)  ;; ptr=0, len=0
   )
 )

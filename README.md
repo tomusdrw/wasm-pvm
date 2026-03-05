@@ -39,14 +39,13 @@ Create a simple WAT program that adds two numbers:
 ;; add.wat
 (module
   (memory 1)
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     ;; Read two i32 args, add them, write result to memory
     (i32.store (i32.const 0)
       (i32.add
         (i32.load (local.get $args_ptr))
         (i32.load (i32.add (local.get $args_ptr) (i32.const 4)))))
-    (i32.const 0)   ;; result pointer
-    (i32.const 4))) ;; result length
+    (i64.const 17179869184)))  ;; packed ptr=0, len=4
 ```
 
 Compile it to a JAM blob and run it:
@@ -70,10 +69,7 @@ You can also write programs in AssemblyScript:
 
 ```typescript
 // fibonacci.ts
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const buf = heap.alloc(256);
   let n = load<i32>(args_ptr);
   let a: i32 = 0;
@@ -86,8 +82,7 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(buf, a);
-  result_ptr = buf as i32;
-  result_len = 4;
+  return (buf as i64) | ((4 as i64) << 32);  // packed ptr + len
 }
 ```
 
@@ -96,6 +91,8 @@ Compile via the AssemblyScript compiler to WASM, then use `wasm-pvm-cli` to prod
 ## How It Works
 
 The compiler pipeline:
+
+Entry functions use a unified ABI: `main(args_ptr: i32, args_len: i32) -> i64`, where the return value packs the result pointer in the lower 32 bits and the result length in the upper 32 bits. The compiler unpacks this into PVM's SPI convention (`r7` = start address, `r8` = end address).
 
 1. **Adapter merge** (optional) — merges a WAT adapter module into the WASM binary, replacing matching imports with adapter function bodies
 2. **WASM → LLVM IR** — translates WASM opcodes to LLVM IR using [inkwell](https://github.com/TheDan64/inkwell) (LLVM 18 bindings), with PVM-specific intrinsics for memory operations
@@ -117,29 +114,29 @@ All PVM-level optimizations enabled (default):
 
 | Benchmark | WASM size | JAM size | Code size | Gas Used |
 |-----------|----------|----------|-----------|----------|
-| add(5,7) | 66 B | 201 B | 130 B | 39 |
-| fib(20) | 108 B | 270 B | 186 B | 612 |
-| factorial(10) | 100 B | 242 B | 161 B | 269 |
-| is_prime(25) | 160 B | 328 B | 239 B | 80 |
-| AS fib(10) | 266 B | 712 B | 576 B | 325 |
-| AS factorial(7) | 265 B | 701 B | 566 B | 282 |
-| AS gcd(2017,200) | 260 B | 691 B | 562 B | 191 |
+| add(5,7) | 68 B | 201 B | 130 B | 39 |
+| fib(20) | 110 B | 270 B | 186 B | 612 |
+| factorial(10) | 102 B | 242 B | 161 B | 269 |
+| is_prime(25) | 162 B | 328 B | 239 B | 80 |
+| AS fib(10) | 234 B | 708 B | 572 B | 324 |
+| AS factorial(7) | 233 B | 697 B | 562 B | 281 |
+| AS gcd(2017,200) | 228 B | 686 B | 558 B | 190 |
 | AS decoder | 1.5 KB | 20.8 KB | 6.8 KB | 721 |
-| AS array | 1.4 KB | 19.9 KB | 6.0 KB | 624 |
-| aslan-fib accumulate | 7.2 KB | 33.0 KB | 14.0 KB | 14,185 |
-| anan-as PVM interpreter | 58.3 KB | 178.6 KB | 126.4 KB | - |
+| AS array | 1.4 KB | 19.9 KB | 6.0 KB | 623 |
+| aslan-fib accumulate | 7.8 KB | 37.1 KB | 17.6 KB | 15,968 |
+| anan-as PVM interpreter | 57.7 KB | 180.2 KB | 127.8 KB | - |
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
 | Benchmark | JAM Size | Code Size | Outer Gas | Direct Gas | Overhead |
 |-----------|----------|-----------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 21 B | 1 B | 35,535 | - | - |
-| add(5,7) | 201 B | 130 B | 1,110,715 | 39 | 28,480x |
-| AS fib(10) | 712 B | 576 B | 1,658,057 | 325 | 5,101x |
-| JAM-SDK fib(10)\* | 25.4 KB | 16.2 KB | 6,625,690 | 42 | 157,754x |
-| Jambrains fib(10)\* | 61.1 KB | - | 6,351,146 | 1 | 6,351,146x |
-| JADE fib(10)\* | 67.3 KB | 45.7 KB | 18,053,067 | 504 | 35,820x |
-| aslan-fib accumulate\* | 33.0 KB | 14.0 KB | 10,356,631 | 14,185 | 730x |
+| TRAP (interpreter overhead) | 21 B | 1 B | 80,577 | - | - |
+| add(5,7) | 201 B | 130 B | 1,238,302 | 39 | 31,751x |
+| AS fib(10) | 708 B | 572 B | 1,753,546 | 324 | 5,412x |
+| JAM-SDK fib(10)\* | 25.4 KB | 16.2 KB | 7,230,603 | 42 | 172,157x |
+| Jambrains fib(10)\* | 61.1 KB | - | 6,373,683 | 1 | 6,373,683x |
+| JADE fib(10)\* | 67.3 KB | 45.7 KB | 19,555,955 | 504 | 38,801x |
+| aslan-fib accumulate\* | 37.1 KB | 17.6 KB | 10,511,413 | 15,968 | 658x |
 
 \*JAM-SDK fib(10), Jambrains fib(10), JADE fib(10), and aslan-fib accumulate exit on unhandled host calls (ecalli). The gas cost reflects program parsing/loading plus partial execution up to the first unhandled ecalli.
 

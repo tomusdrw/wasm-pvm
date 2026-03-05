@@ -2,11 +2,7 @@
 // This test reads the first 8 bytes of args and echoes them back, plus some diagnostics
 
 
-// Export mutable globals for result pointer and length
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Output format:
   // [0-3]: args_ptr value (what we received)
@@ -48,6 +44,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   store<u32>(RESULT_HEAP + offset, (args_ptr + 4) as u32);
   offset += 4;
   
-  result_ptr = RESULT_HEAP as i32;
-  result_len = offset as i32;
+  return (RESULT_HEAP as i64) | ((offset as i64) << 32);
 }

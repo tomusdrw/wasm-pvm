@@ -36,7 +36,7 @@
     (i32.const 0)
   )
 
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     ;; 17 locals total
     (local $step i32)       ;; local 2
     (local $obj_ptr i32)    ;; local 3
@@ -116,8 +116,7 @@
 
         ;; Output
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -163,8 +162,7 @@
         )
 
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -208,8 +206,7 @@
         )
 
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -260,15 +257,13 @@
         )
 
         (i32.store (i32.const 0) (i32.load offset=16 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
 
     ;; Default
     (i32.store (i32.const 0) (i32.const 0))
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

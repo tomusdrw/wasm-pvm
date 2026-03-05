@@ -11,7 +11,7 @@
   ;; Input: four i32 values: a, b, c, n (iteration count)
   ;; After n rotations: if n%3==0 -> (a,b,c), n%3==1 -> (b,c,a), n%3==2 -> (c,a,b)
   ;; Output: single i32 (value of a after n rotations)
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $a i32)
     (local $b i32)
     (local $c i32)
@@ -45,7 +45,6 @@
 
     ;; Store result (a after n rotations)
     (i32.store (i32.const 0) (local.get $a))
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

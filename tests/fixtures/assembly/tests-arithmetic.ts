@@ -1,18 +1,13 @@
 // Memory addresses (hardcoded per PVM spec)
 let RESULT_HEAP: usize = 0;
 
-// Globals required by SPI interface
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-// Helper to write result
-function writeResult(val: i32): void {
+// Helper to write result and return packed i64
+function writeResult(val: i32): i64 {
   store<i32>(RESULT_HEAP, val);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   RESULT_HEAP = heap.alloc(256);
   const a = load<i32>(args_ptr);
   const b = load<i32>(args_ptr + 4);
@@ -29,5 +24,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   res = res << 1; // 50
   res = res >> 1; // 25
 
-  writeResult(res);
+  return writeResult(res);
 }

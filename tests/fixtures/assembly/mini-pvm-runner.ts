@@ -3,17 +3,14 @@
 
 const RESULT_BUFFER: u32 = 0x100;
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
 
 // Status codes
 const STATUS_OK: u8 = 0;
 const STATUS_PANIC: u8 = 1;
 
-function writeStatus(status: u8): void {
+function writeStatus(status: u8): i64 {
   store<u8>(RESULT_BUFFER, status);
-  result_ptr = RESULT_BUFFER;
-  result_len = 1;
+  return (RESULT_BUFFER as i64) | ((1 as i64) << 32);
 }
 
 function writeDiagnostics(offset: u32, msg_code: u32, val1: u32, val2: u32, val3: u32): u32 {
@@ -24,7 +21,7 @@ function writeDiagnostics(offset: u32, msg_code: u32, val1: u32, val2: u32, val3
   return offset + 16;
 }
 
-export function main(argsPtr: i32, argsLen: i32): void {
+export function main(argsPtr: i32, argsLen: i32): i64 {
   // Input format from index-compiler.ts:
   // 8 (gas) + 4 (pc) + 4 (spi-program-len) + 4 (inner-args-len) + ? (spi-program) + ? (inner-args)
   
@@ -35,9 +32,7 @@ export function main(argsPtr: i32, argsLen: i32): void {
   
   if (argsLen < 20) {
     out_offset = writeDiagnostics(out_offset, 0xDEAD0001, argsLen as u32, 20, 0);
-    result_ptr = RESULT_BUFFER;
-    result_len = out_offset as i32;
-    return;
+    return (RESULT_BUFFER as i64) | ((out_offset as i64) << 32);
   }
   
   let read_offset: u32 = 0;
@@ -67,9 +62,7 @@ export function main(argsPtr: i32, argsLen: i32): void {
   const expectedLen = read_offset + programLen + innerArgsLen;
   if (argsLen as u32 != expectedLen) {
     out_offset = writeDiagnostics(out_offset, 0xDEAD0002, argsLen as u32, expectedLen, read_offset);
-    result_ptr = RESULT_BUFFER;
-    result_len = out_offset as i32;
-    return;
+    return (RESULT_BUFFER as i64) | ((out_offset as i64) << 32);
   }
   
   // Copy program bytes to array (like index-compiler)
@@ -103,6 +96,5 @@ export function main(argsPtr: i32, argsLen: i32): void {
   // Success marker
   out_offset = writeDiagnostics(out_offset, 0xAAAAAAAA, 0, 0, 0);
   
-  result_ptr = RESULT_BUFFER;
-  result_len = out_offset as i32;
+  return (RESULT_BUFFER as i64) | ((out_offset as i64) << 32);
 }

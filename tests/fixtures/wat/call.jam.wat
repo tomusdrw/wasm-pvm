@@ -9,7 +9,7 @@
   )
 
   ;; Main entry point: reads one u32, doubles it via call
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $result i32)
 
     ;; result = double(input)
@@ -23,7 +23,6 @@
     (i32.store (i32.const 0) (local.get $result))
 
     ;; Set output pointer and length
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

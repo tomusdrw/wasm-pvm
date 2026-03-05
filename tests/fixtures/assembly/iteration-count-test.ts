@@ -3,9 +3,6 @@
  */
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
 function createArray(len: i32): u8[] {
   const r = new Array<u8>(len);
   for (let i: i32 = 0; i < len; i++) {
@@ -14,7 +11,7 @@ function createArray(len: i32): u8[] {
   return r;
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Use args to control number of iterations in loop 1
   // args[0] = step (0-4 for different tests)
@@ -106,6 +103,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }

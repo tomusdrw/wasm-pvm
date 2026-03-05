@@ -5,8 +5,6 @@
 
 const DATA_HEAP: u32 = 0x30200;
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
 
 // This function MUST have two runtime arguments that can't be constant-folded.
 // It loads from base+index, which prevents optimization.
@@ -22,7 +20,7 @@ function addWithMem(a: i32, b: i32): i32 {
   return load<i32>(DATA_HEAP + 100) + load<i32>(DATA_HEAP + 104);
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Initialize data: DATA_HEAP[0]=10, DATA_HEAP[1]=20, DATA_HEAP[2]=30
   store<u8>(DATA_HEAP, 10);
@@ -68,6 +66,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }
