@@ -2,20 +2,20 @@
  (type $0 (func (param i32) (result i32)))
  (type $1 (func (param i32 i32) (result i32)))
  (type $2 (func (param i32)))
- (type $3 (func))
- (type $4 (func (param i32 i32 i32 i32)))
- (type $5 (func (param i32 i32 i32)))
- (type $6 (func (param i32) (result i64)))
- (type $7 (func (param i32 i32 i32 i32 i32) (result i32)))
- (type $8 (func (param i32 i32)))
- (type $9 (func (param i64) (result i32)))
+ (type $3 (func (param i32 i32 i32)))
+ (type $4 (func (param i64) (result i32)))
+ (type $5 (func))
+ (type $6 (func (param i32 i32 i32 i32)))
+ (type $7 (func (param i32) (result i64)))
+ (type $8 (func (param i32 i32 i32 i32 i32) (result i32)))
+ (type $9 (func (param i32 i32)))
  (import "env" "abort" (func $~lib/builtins/abort (param i32 i32 i32 i32)))
  (import "env" "console.log" (func $~lib/bindings/dom/console.log (param i32)))
  (import "imports" "log" (func $assembly/sdk/imports/log (param i32 i32 i32 i32 i32) (result i32)))
  (global $~lib/rt/stub/offset (mut i32) (i32.const 0))
  (global $assembly/sdk/service/logger (mut i32) (i32.const 0))
  (global $~argumentsLength (mut i32) (i32.const 0))
- (global $~lib/rt/__rtti_base i32 (i32.const 4832))
+ (global $~lib/rt/__rtti_base i32 (i32.const 4848))
  (memory $0 1)
  (data $0 (i32.const 1036) "\1c")
  (data $0.1 (i32.const 1048) "\02\00\00\00\02\00\00\000")
@@ -67,39 +67,40 @@
  (data $24.1 (i32.const 3704) "\02\00\00\00$\00\00\00~\00l\00i\00b\00/\00t\00y\00p\00e\00d\00a\00r\00r\00a\00y\00.\00t\00s")
  (data $25 (i32.const 3756) ",")
  (data $25.1 (i32.const 3768) "\02\00\00\00\1a\00\00\00~\00l\00i\00b\00/\00a\00r\00r\00a\00y\00.\00t\00s")
- (data $26 (i32.const 3804) "<")
- (data $26.1 (i32.const 3816) "\02\00\00\00&\00\00\00~\00l\00i\00b\00/\00a\00r\00r\00a\00y\00b\00u\00f\00f\00e\00r\00.\00t\00s")
- (data $27 (i32.const 3868) "\\")
- (data $27.1 (i32.const 3880) "\02\00\00\00@\00\00\00I\00n\00v\00a\00l\00i\00d\00 \00l\00e\00n\00g\00t\00h\00 \00o\00f\00 \00b\00y\00t\00e\00s\003\002\00 \00(\00g\00o\00t\00:\00 ")
- (data $28 (i32.const 3964) "\1c")
- (data $28.1 (i32.const 3976) "\02\00\00\00\02\00\00\00)")
- (data $29 (i32.const 3996) "\1c\00\00\00\03\00\00\00\00\00\00\00\t\00\00\00\0c\00\00\000\0f\00\00\00\00\00\00\90\0f")
- (data $30 (i32.const 4028) "<")
- (data $30.1 (i32.const 4040) "\02\00\00\00,\00\00\00a\00s\00s\00e\00m\00b\00l\00y\00/\00c\00o\00r\00e\00/\00b\00y\00t\00e\00s\00.\00t\00s")
- (data $31 (i32.const 4092) "<")
- (data $31.1 (i32.const 4104) "\02\00\00\00&\00\00\00I\00n\00v\00a\00l\00i\00d\00 \00A\00B\00I\00 \00p\00a\00y\00l\00o\00a\00d")
- (data $32 (i32.const 4156) "<")
- (data $32.1 (i32.const 4168) "\02\00\00\00*\00\00\00a\00s\00s\00e\00m\00b\00l\00y\00/\00s\00d\00k\00/\00i\00n\00d\00e\00x\00.\00t\00s")
- (data $33 (i32.const 4220) "L")
- (data $33.1 (i32.const 4232) "\02\00\00\004\00\00\00F\00i\00b\00o\00n\00a\00c\00c\00i\00 \00S\00e\00r\00v\00i\00c\00e\00 \00R\00e\00f\00i\00n\00e\00,\00 ")
- (data $34 (i32.const 4300) "<")
- (data $34.1 (i32.const 4312) "\02\00\00\00$\00\00\00U\00n\00p\00a\00i\00r\00e\00d\00 \00s\00u\00r\00r\00o\00g\00a\00t\00e")
- (data $35 (i32.const 4364) ",")
- (data $35.1 (i32.const 4376) "\02\00\00\00\1c\00\00\00~\00l\00i\00b\00/\00s\00t\00r\00i\00n\00g\00.\00t\00s")
- (data $36 (i32.const 4412) "L")
- (data $36.1 (i32.const 4424) "\02\00\00\00<\00\00\00F\00i\00b\00o\00n\00a\00c\00c\00i\00 \00S\00e\00r\00v\00i\00c\00e\00 \00A\00c\00c\00u\00m\00u\00l\00a\00t\00e\00,\00 ")
- (data $37 (i32.const 4492) "\1c")
- (data $37.1 (i32.const 4504) "\02\00\00\00\04\00\00\00 \00@")
- (data $38 (i32.const 4524) ",\00\00\00\03\00\00\00\00\00\00\00\t\00\00\00\10\00\00\00P\11\00\00\00\00\00\00\a0\11")
- (data $39 (i32.const 4572) ",")
- (data $39.1 (i32.const 4584) "\02\00\00\00\14\00\00\00f\00i\00b\00o\00n\00a\00c\00c\00i\00(")
- (data $40 (i32.const 4620) "\1c")
- (data $40.1 (i32.const 4632) "\02\00\00\00\08\00\00\00)\00 \00=\00 ")
- (data $41 (i32.const 4652) ",\00\00\00\03\00\00\00\00\00\00\00\t\00\00\00\10\00\00\00\f0\11\00\00\00\00\00\00 \12")
- (data $42 (i32.const 4700) "|")
- (data $42.1 (i32.const 4712) "\02\00\00\00^\00\00\00U\00n\00e\00x\00p\00e\00c\00t\00e\00d\00 \00\'\00n\00u\00l\00l\00\'\00 \00(\00n\00o\00t\00 \00a\00s\00s\00i\00g\00n\00e\00d\00 \00o\00r\00 \00f\00a\00i\00l\00e\00d\00 \00c\00a\00s\00t\00)")
- (data $43 (i32.const 4832) "\r\00\00\00 \00\00\00 \00\00\00 \00\00\00\00\00\00\00B\00\00\00\00\00\00\00A")
- (data $43.1 (i32.const 4872) "\04A")
+ (data $26 (i32.const 3804) "L")
+ (data $26.1 (i32.const 3816) "\02\00\00\006\00\00\00A\00B\00I\00 \00v\00a\00l\00u\00e\00 \00e\00x\00c\00e\00e\00d\00s\00 \00u\001\006\00 \00r\00a\00n\00g\00e")
+ (data $27 (i32.const 3884) "<")
+ (data $27.1 (i32.const 3896) "\02\00\00\00*\00\00\00a\00s\00s\00e\00m\00b\00l\00y\00/\00s\00d\00k\00/\00i\00n\00d\00e\00x\00.\00t\00s")
+ (data $28 (i32.const 3948) "L")
+ (data $28.1 (i32.const 3960) "\02\00\00\006\00\00\00A\00B\00I\00 \00v\00a\00l\00u\00e\00 \00e\00x\00c\00e\00e\00d\00s\00 \00u\003\002\00 \00r\00a\00n\00g\00e")
+ (data $29 (i32.const 4028) "<")
+ (data $29.1 (i32.const 4040) "\02\00\00\00&\00\00\00~\00l\00i\00b\00/\00a\00r\00r\00a\00y\00b\00u\00f\00f\00e\00r\00.\00t\00s")
+ (data $30 (i32.const 4092) "<")
+ (data $30.1 (i32.const 4104) "\02\00\00\00&\00\00\00I\00n\00v\00a\00l\00i\00d\00 \00A\00B\00I\00 \00p\00a\00y\00l\00o\00a\00d")
+ (data $31 (i32.const 4156) "L")
+ (data $31.1 (i32.const 4168) "\02\00\00\004\00\00\00F\00i\00b\00o\00n\00a\00c\00c\00i\00 \00S\00e\00r\00v\00i\00c\00e\00 \00R\00e\00f\00i\00n\00e\00,\00 ")
+ (data $32 (i32.const 4236) "<")
+ (data $32.1 (i32.const 4248) "\02\00\00\00$\00\00\00U\00n\00p\00a\00i\00r\00e\00d\00 \00s\00u\00r\00r\00o\00g\00a\00t\00e")
+ (data $33 (i32.const 4300) ",")
+ (data $33.1 (i32.const 4312) "\02\00\00\00\1c\00\00\00~\00l\00i\00b\00/\00s\00t\00r\00i\00n\00g\00.\00t\00s")
+ (data $34 (i32.const 4348) "\1c")
+ (data $34.1 (i32.const 4360) "\02\00\00\00\02\00\00\00,")
+ (data $35 (i32.const 4380) ",")
+ (data $35.1 (i32.const 4392) "\02\00\00\00\1c\00\00\00i\00n\00i\00t\00i\00a\00l\00 \00d\00a\00t\00a\00:\00 ")
+ (data $36 (i32.const 4428) "L")
+ (data $36.1 (i32.const 4440) "\02\00\00\00<\00\00\00F\00i\00b\00o\00n\00a\00c\00c\00i\00 \00S\00e\00r\00v\00i\00c\00e\00 \00A\00c\00c\00u\00m\00u\00l\00a\00t\00e\00,\00 ")
+ (data $37 (i32.const 4508) "\1c")
+ (data $37.1 (i32.const 4520) "\02\00\00\00\04\00\00\00 \00@")
+ (data $38 (i32.const 4540) ",\00\00\00\03\00\00\00\00\00\00\00\t\00\00\00\10\00\00\00`\11\00\00\00\00\00\00\b0\11")
+ (data $39 (i32.const 4588) ",")
+ (data $39.1 (i32.const 4600) "\02\00\00\00\14\00\00\00f\00i\00b\00o\00n\00a\00c\00c\00i\00(")
+ (data $40 (i32.const 4636) "\1c")
+ (data $40.1 (i32.const 4648) "\02\00\00\00\08\00\00\00)\00 \00=\00 ")
+ (data $41 (i32.const 4668) ",\00\00\00\03\00\00\00\00\00\00\00\t\00\00\00\10\00\00\00\00\12\00\00\00\00\00\000\12")
+ (data $42 (i32.const 4716) "|")
+ (data $42.1 (i32.const 4728) "\02\00\00\00^\00\00\00U\00n\00e\00x\00p\00e\00c\00t\00e\00d\00 \00\'\00n\00u\00l\00l\00\'\00 \00(\00n\00o\00t\00 \00a\00s\00s\00i\00g\00n\00e\00d\00 \00o\00r\00 \00f\00a\00i\00l\00e\00d\00 \00c\00a\00s\00t\00)")
+ (data $43 (i32.const 4848) "\r\00\00\00 \00\00\00 \00\00\00 \00\00\00\00\00\00\00B\00\00\00\00\00\00\00A")
+ (data $43.1 (i32.const 4888) "\04A")
  (export "refine_ext" (func $assembly/sdk/index/refine_ext))
  (export "accumulate_ext" (func $assembly/sdk/index/accumulate_ext))
  (export "__new" (func $~lib/rt/stub/__new))
@@ -142,7 +143,6 @@
    unreachable
   end
   global.get $~lib/rt/stub/offset
-  local.set $3
   global.get $~lib/rt/stub/offset
   i32.const 4
   i32.add
@@ -198,7 +198,6 @@
   end
   local.get $5
   global.set $~lib/rt/stub/offset
-  local.get $3
   local.get $4
   i32.store
   local.get $2
@@ -468,94 +467,6 @@
   call $~lib/util/number/utoa32_dec_lut
   local.get $1
  )
- (func $~lib/util/number/itoa32 (param $0 i32) (result i32)
-  (local $1 i32)
-  (local $2 i32)
-  (local $3 i32)
-  local.get $0
-  i32.eqz
-  if
-   i32.const 1056
-   return
-  end
-  i32.const 0
-  local.get $0
-  i32.sub
-  local.get $0
-  local.get $0
-  i32.const 31
-  i32.shr_u
-  i32.const 1
-  i32.shl
-  local.tee $0
-  select
-  local.tee $3
-  i32.const 100000
-  i32.lt_u
-  if (result i32)
-   local.get $3
-   i32.const 100
-   i32.lt_u
-   if (result i32)
-    local.get $3
-    i32.const 10
-    i32.ge_u
-    i32.const 1
-    i32.add
-   else
-    local.get $3
-    i32.const 10000
-    i32.ge_u
-    i32.const 3
-    i32.add
-    local.get $3
-    i32.const 1000
-    i32.ge_u
-    i32.add
-   end
-  else
-   local.get $3
-   i32.const 10000000
-   i32.lt_u
-   if (result i32)
-    local.get $3
-    i32.const 1000000
-    i32.ge_u
-    i32.const 6
-    i32.add
-   else
-    local.get $3
-    i32.const 1000000000
-    i32.ge_u
-    i32.const 8
-    i32.add
-    local.get $3
-    i32.const 100000000
-    i32.ge_u
-    i32.add
-   end
-  end
-  local.tee $2
-  i32.const 1
-  i32.shl
-  local.get $0
-  i32.add
-  i32.const 2
-  call $~lib/rt/stub/__new
-  local.tee $1
-  local.get $0
-  i32.add
-  local.get $3
-  local.get $2
-  call $~lib/util/number/utoa32_dec_lut
-  local.get $0
-  if
-   local.get $1
-   i32.const 45
-   i32.store16
-  end
-  local.get $1
- )
  (func $~lib/staticarray/StaticArray<~lib/string/String>#join (param $0 i32) (result i32)
   (local $1 i32)
   (local $2 i32)
@@ -723,7 +634,10 @@
  (func $assembly/core/codec/Decoder#moveOffset (param $0 i32) (param $1 i32) (result i32)
   (local $2 i32)
   (local $3 i32)
-  block $__inlined_func$assembly/core/codec/Decoder#hasBytes$162 (result i32)
+  (local $4 i32)
+  (local $5 i32)
+  (local $6 i32)
+  block $__inlined_func$assembly/core/codec/Decoder#hasBytes$171 (result i32)
    local.get $0
    i32.load offset=8
    i32.load offset=8
@@ -735,17 +649,98 @@
    if
     local.get $1
     call $~lib/util/number/utoa32
-    local.set $3
+    local.set $4
     local.get $0
     i32.load offset=8
     i32.load offset=8
     local.get $0
     i32.load offset=12
     i32.sub
-    call $~lib/util/number/itoa32
+    local.tee $2
+    if (result i32)
+     i32.const 0
+     local.get $2
+     i32.sub
+     local.get $2
+     local.get $2
+     i32.const 31
+     i32.shr_u
+     i32.const 1
+     i32.shl
+     local.tee $2
+     select
+     local.tee $6
+     i32.const 100000
+     i32.lt_u
+     if (result i32)
+      local.get $6
+      i32.const 100
+      i32.lt_u
+      if (result i32)
+       local.get $6
+       i32.const 10
+       i32.ge_u
+       i32.const 1
+       i32.add
+      else
+       local.get $6
+       i32.const 10000
+       i32.ge_u
+       i32.const 3
+       i32.add
+       local.get $6
+       i32.const 1000
+       i32.ge_u
+       i32.add
+      end
+     else
+      local.get $6
+      i32.const 10000000
+      i32.lt_u
+      if (result i32)
+       local.get $6
+       i32.const 1000000
+       i32.ge_u
+       i32.const 6
+       i32.add
+      else
+       local.get $6
+       i32.const 1000000000
+       i32.ge_u
+       i32.const 8
+       i32.add
+       local.get $6
+       i32.const 100000000
+       i32.ge_u
+       i32.add
+      end
+     end
+     local.tee $5
+     i32.const 1
+     i32.shl
+     local.get $2
+     i32.add
+     i32.const 2
+     call $~lib/rt/stub/__new
+     local.tee $3
+     local.get $2
+     i32.add
+     local.get $6
+     local.get $5
+     call $~lib/util/number/utoa32_dec_lut
+     local.get $2
+     if
+      local.get $3
+      i32.const 45
+      i32.store16
+     end
+     local.get $3
+    else
+     i32.const 1056
+    end
     local.set $2
     i32.const 1828
-    local.get $3
+    local.get $4
     i32.store
     i32.const 1836
     local.get $2
@@ -754,7 +749,7 @@
     call $~lib/staticarray/StaticArray<~lib/string/String>#join
     call $~lib/bindings/dom/console.log
     i32.const 0
-    br $__inlined_func$assembly/core/codec/Decoder#hasBytes$162
+    br $__inlined_func$assembly/core/codec/Decoder#hasBytes$171
    end
    i32.const 1
   end
@@ -953,6 +948,21 @@
   end
   local.get $3
  )
+ (func $assembly/sdk/index/strictU32 (param $0 i64) (result i32)
+  local.get $0
+  i64.const 4294967295
+  i64.gt_u
+  if
+   i32.const 3968
+   i32.const 3904
+   i32.const 21
+   i32.const 5
+   call $~lib/builtins/abort
+   unreachable
+  end
+  local.get $0
+  i32.wrap_i64
+ )
  (func $~lib/typedarray/Uint8Array#constructor (param $0 i32) (result i32)
   (local $1 i32)
   (local $2 i32)
@@ -981,7 +991,7 @@
   i32.gt_u
   if
    i32.const 1488
-   i32.const 3824
+   i32.const 4048
    i32.const 19
    i32.const 57
    call $~lib/builtins/abort
@@ -1136,12 +1146,52 @@
   end
   if
    i32.const 4112
-   i32.const 4176
+   i32.const 3904
    i32.const 8
    i32.const 5
    call $~lib/builtins/abort
    unreachable
   end
+ )
+ (func $~lib/string/String#concat (param $0 i32) (param $1 i32) (result i32)
+  (local $2 i32)
+  (local $3 i32)
+  (local $4 i32)
+  local.get $0
+  i32.const 20
+  i32.sub
+  i32.load offset=16
+  i32.const -2
+  i32.and
+  local.tee $2
+  local.get $1
+  i32.const 20
+  i32.sub
+  i32.load offset=16
+  i32.const -2
+  i32.and
+  local.tee $3
+  i32.add
+  local.tee $4
+  i32.eqz
+  if
+   i32.const 3616
+   return
+  end
+  local.get $4
+  i32.const 2
+  call $~lib/rt/stub/__new
+  local.tee $4
+  local.get $0
+  local.get $2
+  memory.copy
+  local.get $2
+  local.get $4
+  i32.add
+  local.get $1
+  local.get $3
+  memory.copy
+  local.get $4
  )
  (func $~lib/string/String.UTF8.encode@varargs (param $0 i32) (result i32)
   (local $1 i32)
@@ -1413,10 +1463,8 @@
  (func $assembly/sdk/logger/Logger#log (param $0 i32) (param $1 i32)
   local.get $0
   i32.load
-  local.set $0
   i32.const 1
   global.set $~argumentsLength
-  local.get $0
   call $~lib/string/String.UTF8.encode@varargs
   local.set $0
   i32.const 1
@@ -1444,115 +1492,107 @@
   (local $3 i32)
   (local $4 i32)
   (local $5 i32)
-  (local $6 i32)
-  (local $7 i32)
   local.get $0
   call $assembly/core/codec/Decoder#constructor
-  local.tee $0
+  local.tee $4
   call $assembly/core/codec/Decoder#varU64
+  i64.const 65535
+  i64.gt_u
+  if
+   i32.const 3824
+   i32.const 3904
+   i32.const 14
+   i32.const 5
+   call $~lib/builtins/abort
+   unreachable
+  end
+  local.get $4
+  call $assembly/core/codec/Decoder#varU64
+  call $assembly/sdk/index/strictU32
   drop
-  local.get $0
+  local.get $4
   call $assembly/core/codec/Decoder#varU64
-  drop
-  local.get $0
-  call $assembly/core/codec/Decoder#varU64
-  i32.wrap_i64
-  local.set $3
-  local.get $0
+  call $assembly/sdk/index/strictU32
+  local.set $5
+  local.get $4
   call $assembly/core/codec/Decoder#varU64
   local.tee $1
   i64.const 4294967295
   i64.gt_u
   if
-   local.get $0
+   local.get $4
    i32.const 1
    i32.store8 offset=4
   end
-  local.get $0
+  local.get $4
   local.get $1
   i32.wrap_i64
   call $assembly/core/codec/Decoder#bytesFixLen
-  local.set $2
-  local.get $0
+  local.get $4
   i32.const 32
   call $assembly/core/codec/Decoder#bytesFixLen
   i32.load
-  local.set $4
+  local.set $2
   i32.const 4
   i32.const 11
   call $~lib/rt/stub/__new
-  local.set $5
-  local.get $4
-  i32.load offset=8
-  local.tee $6
-  i32.const 32
-  i32.ne
-  if
-   i32.const 4020
-   local.get $6
-   call $~lib/util/number/itoa32
-   i32.store
-   i32.const 4016
-   call $~lib/staticarray/StaticArray<~lib/string/String>#join
-   i32.const 4048
-   i32.const 70
-   i32.const 7
-   call $~lib/builtins/abort
-   unreachable
-  end
-  local.get $5
+  local.tee $3
   if (result i32)
-   local.get $5
+   local.get $3
   else
    i32.const 4
    i32.const 10
    call $~lib/rt/stub/__new
   end
-  local.get $4
+  local.get $2
   i32.store
-  local.get $0
+  local.get $4
   call $assembly/sdk/index/ensureDecodeOk
   global.get $assembly/sdk/service/logger
-  local.set $4
-  local.get $3
-  call $~lib/util/number/utoa32
-  local.set $5
-  i32.const 3616
-  local.set $0
-  i32.const 4236
-  i32.load
-  i32.const -2
-  i32.and
-  local.tee $6
+  i32.const 4176
   local.get $5
-  i32.const 20
-  i32.sub
-  i32.load offset=16
-  i32.const -2
-  i32.and
-  local.tee $7
-  i32.add
-  local.tee $3
-  if
-   local.get $3
-   i32.const 2
-   call $~lib/rt/stub/__new
-   local.tee $0
-   i32.const 4240
-   local.get $6
-   memory.copy
-   local.get $0
-   local.get $6
-   i32.add
-   local.get $5
-   local.get $7
-   memory.copy
-  end
-  local.get $4
-  local.get $0
+  call $~lib/util/number/utoa32
+  call $~lib/string/String#concat
   call $assembly/sdk/logger/Logger#log
-  local.get $2
   i32.load
+ )
+ (func $~lib/util/number/itoa_buffered<u8> (param $0 i32) (param $1 i32) (result i32)
+  (local $2 i32)
+  local.get $1
+  i32.const 255
+  i32.and
+  local.tee $2
+  i32.const 10
+  i32.lt_u
+  if
+   local.get $0
+   local.get $2
+   i32.const 48
+   i32.or
+   i32.store16
+   i32.const 1
+   return
+  end
+  local.get $1
+  i32.const 255
+  i32.and
+  local.set $1
+  i32.const 3
+  local.get $1
+  i32.const 10
+  i32.ge_u
+  i32.const 1
+  i32.add
+  local.get $1
+  i32.const 100
+  i32.ge_u
+  select
+  local.set $2
+  local.get $0
+  local.get $1
+  local.get $2
+  call $~lib/util/number/utoa32_dec_lut
+  local.get $2
  )
  (func $~lib/util/number/utoa64 (param $0 i64) (result i32)
   (local $1 i32)
@@ -1770,141 +1810,402 @@
   end
   local.get $2
  )
+ (func $~lib/typedarray/Uint8Array#__set (param $0 i32) (param $1 i32) (param $2 i32)
+  local.get $1
+  local.get $0
+  i32.load offset=8
+  i32.ge_u
+  if
+   i32.const 3648
+   i32.const 3712
+   i32.const 178
+   i32.const 45
+   call $~lib/builtins/abort
+   unreachable
+  end
+  local.get $0
+  i32.load offset=4
+  local.get $1
+  i32.add
+  local.get $2
+  i32.store8
+ )
  (func $assembly/sdk/index/accumulate_ext (param $0 i32) (result i32)
   (local $1 i64)
   (local $2 i64)
   (local $3 i64)
-  (local $4 i64)
-  (local $5 i32)
-  (local $6 i32)
+  (local $4 i32)
+  (local $5 i64)
+  (local $6 i64)
+  (local $7 i32)
+  (local $8 i32)
+  (local $9 i32)
+  (local $10 i32)
+  (local $11 i32)
+  (local $12 i32)
+  i32.const 1
+  global.set $~argumentsLength
+  local.get $0
+  i32.load offset=8
+  local.tee $8
+  i32.const 0
+  local.get $8
+  i32.const 0
+  i32.le_s
+  select
+  local.set $9
+  local.get $8
+  local.get $9
+  i32.sub
+  local.tee $8
+  i32.const 0
+  local.get $8
+  i32.const 0
+  i32.gt_s
+  select
+  local.tee $8
+  call $~lib/typedarray/Uint8Array#constructor
+  local.tee $10
+  i32.load offset=4
+  local.get $9
+  local.get $0
+  i32.load offset=4
+  i32.add
+  local.get $8
+  memory.copy
+  i32.const 4400
+  block $__inlined_func$~lib/util/string/joinIntegerArray<u8>$5 (result i32)
+   local.get $10
+   i32.load offset=4
+   local.set $8
+   i32.const 3616
+   local.get $10
+   i32.load offset=8
+   i32.const 1
+   i32.sub
+   local.tee $9
+   i32.const 0
+   i32.lt_s
+   br_if $__inlined_func$~lib/util/string/joinIntegerArray<u8>$5
+   drop
+   local.get $9
+   i32.eqz
+   if
+    local.get $8
+    i32.load8_u
+    call $~lib/util/number/utoa32
+    br $__inlined_func$~lib/util/string/joinIntegerArray<u8>$5
+   end
+   i32.const 4364
+   i32.load
+   i32.const 1
+   i32.shr_u
+   local.tee $10
+   i32.const 10
+   i32.add
+   local.get $9
+   i32.mul
+   i32.const 10
+   i32.add
+   local.tee $11
+   i32.const 1
+   i32.shl
+   i32.const 2
+   call $~lib/rt/stub/__new
+   local.set $12
+   loop $for-loop|0
+    local.get $7
+    local.get $9
+    i32.lt_s
+    if
+     local.get $12
+     local.get $4
+     i32.const 1
+     i32.shl
+     i32.add
+     local.get $7
+     local.get $8
+     i32.add
+     i32.load8_u
+     call $~lib/util/number/itoa_buffered<u8>
+     local.get $4
+     i32.add
+     local.set $4
+     local.get $10
+     if
+      local.get $12
+      local.get $4
+      i32.const 1
+      i32.shl
+      i32.add
+      i32.const 4368
+      local.get $10
+      i32.const 1
+      i32.shl
+      memory.copy
+      local.get $4
+      local.get $10
+      i32.add
+      local.set $4
+     end
+     local.get $7
+     i32.const 1
+     i32.add
+     local.set $7
+     br $for-loop|0
+    end
+   end
+   local.get $12
+   local.get $4
+   i32.const 1
+   i32.shl
+   i32.add
+   local.get $8
+   local.get $9
+   i32.add
+   i32.load8_u
+   call $~lib/util/number/itoa_buffered<u8>
+   local.get $4
+   i32.add
+   local.tee $4
+   local.get $11
+   i32.lt_s
+   if
+    block $__inlined_func$~lib/string/String#substring$84 (result i32)
+     local.get $4
+     i32.const 0
+     local.get $4
+     i32.const 0
+     i32.gt_s
+     select
+     local.tee $4
+     local.get $12
+     i32.const 20
+     i32.sub
+     i32.load offset=16
+     i32.const 1
+     i32.shr_u
+     local.tee $7
+     local.get $4
+     local.get $7
+     i32.lt_s
+     select
+     local.tee $4
+     i32.const 0
+     local.get $4
+     i32.const 0
+     i32.le_s
+     select
+     i32.const 1
+     i32.shl
+     local.set $8
+     i32.const 3616
+     local.get $4
+     i32.const 0
+     local.get $4
+     i32.const 0
+     i32.ge_s
+     select
+     i32.const 1
+     i32.shl
+     local.tee $4
+     local.get $8
+     i32.sub
+     local.tee $9
+     i32.eqz
+     br_if $__inlined_func$~lib/string/String#substring$84
+     drop
+     local.get $12
+     local.get $8
+     i32.eqz
+     local.get $4
+     local.get $7
+     i32.const 1
+     i32.shl
+     i32.eq
+     i32.and
+     br_if $__inlined_func$~lib/string/String#substring$84
+     drop
+     local.get $9
+     i32.const 2
+     call $~lib/rt/stub/__new
+     local.tee $4
+     local.get $8
+     local.get $12
+     i32.add
+     local.get $9
+     memory.copy
+     local.get $4
+    end
+    br $__inlined_func$~lib/util/string/joinIntegerArray<u8>$5
+   end
+   local.get $12
+  end
+  call $~lib/string/String#concat
+  call $~lib/bindings/dom/console.log
   local.get $0
   call $assembly/core/codec/Decoder#constructor
-  local.tee $5
+  local.tee $0
   call $assembly/core/codec/Decoder#varU64
-  i32.wrap_i64
-  local.set $0
-  local.get $5
+  call $assembly/sdk/index/strictU32
+  local.get $0
   call $assembly/core/codec/Decoder#varU64
-  i32.wrap_i64
-  local.set $6
-  local.get $5
+  call $assembly/sdk/index/strictU32
+  local.get $0
   call $assembly/core/codec/Decoder#varU64
-  drop
-  local.get $5
+  call $assembly/sdk/index/strictU32
+  local.set $8
+  local.get $0
   call $assembly/sdk/index/ensureDecodeOk
   global.get $assembly/sdk/service/logger
-  local.set $5
-  local.get $6
-  call $~lib/util/number/utoa32
-  local.set $6
-  local.get $0
-  call $~lib/util/number/utoa32
   local.set $0
-  i32.const 4548
-  local.get $6
+  call $~lib/util/number/utoa32
+  local.set $7
+  call $~lib/util/number/utoa32
+  local.set $4
+  i32.const 4564
+  local.get $7
   i32.store
-  i32.const 4556
+  i32.const 4572
+  local.get $4
+  i32.store
   local.get $0
-  i32.store
-  local.get $5
-  i32.const 4544
+  i32.const 4560
   call $~lib/staticarray/StaticArray<~lib/string/String>#join
   call $assembly/sdk/logger/Logger#log
-  i64.const 1
-  local.set $1
-  loop $for-loop|0
-   local.get $4
-   i64.const 10
-   i64.lt_u
-   if
-    local.get $1
-    local.get $3
-    i64.add
-    local.set $2
-    local.get $1
-    local.set $3
-    local.get $2
-    local.set $1
-    local.get $4
-    i64.const 1
-    i64.add
-    local.set $4
-    br $for-loop|0
+  local.get $8
+  i64.extend_i32_u
+  i64.const 10
+  local.get $8
+  select
+  local.tee $6
+  i64.const 0
+  i64.ne
+  if
+   i64.const 1
+   local.set $1
+   loop $for-loop|00
+    local.get $5
+    local.get $6
+    i64.lt_u
+    if
+     local.get $1
+     local.get $3
+     i64.add
+     local.get $1
+     local.set $3
+     local.set $1
+     local.get $5
+     i64.const 1
+     i64.add
+     local.set $5
+     br $for-loop|00
+    end
    end
   end
   global.get $assembly/sdk/service/logger
-  local.set $0
-  i64.const 10
+  local.get $6
   call $~lib/util/number/utoa64
-  local.set $5
+  local.set $4
   local.get $3
   call $~lib/util/number/utoa64
-  local.set $6
-  i32.const 4676
-  local.get $5
+  local.set $7
+  i32.const 4692
+  local.get $4
   i32.store
-  i32.const 4684
-  local.get $6
+  i32.const 4700
+  local.get $7
   i32.store
-  local.get $0
-  i32.const 4672
+  i32.const 4688
   call $~lib/staticarray/StaticArray<~lib/string/String>#join
   call $assembly/sdk/logger/Logger#log
+  i32.const 32
+  call $~lib/typedarray/Uint8Array#constructor
+  local.set $4
+  i32.const 0
+  local.set $0
+  loop $for-loop|001
+   local.get $0
+   i32.const 8
+   i32.lt_s
+   if
+    local.get $4
+    local.get $0
+    local.get $3
+    local.get $0
+    i32.const 3
+    i32.shl
+    i64.extend_i32_s
+    i64.shr_u
+    i64.const 255
+    i64.and
+    i32.wrap_i64
+    call $~lib/typedarray/Uint8Array#__set
+    local.get $0
+    i32.const 1
+    i32.add
+    local.set $0
+    br $for-loop|001
+   end
+  end
+  i32.const 4
+  i32.const 11
+  call $~lib/rt/stub/__new
+  local.tee $0
+  i32.eqz
+  if
+   i32.const 4
+   i32.const 10
+   call $~lib/rt/stub/__new
+   local.set $0
+  end
+  local.get $0
+  local.get $4
+  i32.store
   i32.const 8
   i32.const 12
   call $~lib/rt/stub/__new
-  local.tee $5
-  i32.const 0
+  local.tee $4
+  i32.const 1
   i32.store8
-  local.get $5
-  i32.const 0
+  local.get $4
+  local.get $0
   i32.store offset=4
-  block $__inlined_func$assembly/sdk/index/encodeOptionalCodeHash$170
-   local.get $5
+  block $__inlined_func$assembly/sdk/index/encodeOptionalCodeHash$162
+   local.get $4
    i32.load8_u
    i32.eqz
    if
     i32.const 1
     call $~lib/typedarray/Uint8Array#constructor
     local.set $0
-    br $__inlined_func$assembly/sdk/index/encodeOptionalCodeHash$170
+    br $__inlined_func$assembly/sdk/index/encodeOptionalCodeHash$162
    end
    i32.const 33
    call $~lib/typedarray/Uint8Array#constructor
    local.tee $0
-   i32.load offset=8
-   i32.eqz
-   if
-    i32.const 3648
-    i32.const 3712
-    i32.const 178
-    i32.const 45
-    call $~lib/builtins/abort
-    unreachable
-   end
-   local.get $0
-   i32.load offset=4
+   i32.const 0
    i32.const 1
-   i32.store8
-   local.get $5
+   call $~lib/typedarray/Uint8Array#__set
+   local.get $4
    i32.load offset=4
-   local.tee $5
+   local.tee $4
    i32.eqz
    if
-    i32.const 4720
-    i32.const 4176
-    i32.const 19
+    i32.const 4736
+    i32.const 3904
+    i32.const 33
     i32.const 11
     call $~lib/builtins/abort
     unreachable
    end
    local.get $0
    i32.load offset=8
-   local.get $5
+   local.get $4
    i32.load
-   local.tee $5
+   local.tee $4
    i32.load offset=8
-   local.tee $6
+   local.tee $7
    i32.const 1
    i32.add
    i32.lt_s
@@ -1920,9 +2221,9 @@
    i32.load offset=4
    i32.const 1
    i32.add
-   local.get $5
+   local.get $4
    i32.load offset=4
-   local.get $6
+   local.get $7
    memory.copy
   end
   local.get $0
@@ -1990,7 +2291,7 @@
    i32.load16_u
    drop
   end
-  i32.const 4892
+  i32.const 4908
   global.set $~lib/rt/stub/offset
   i32.const 4
   i32.const 5
