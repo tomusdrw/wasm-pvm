@@ -152,6 +152,7 @@ crates/
 - Memory: addresses < 2^16 panic
 
 ### Key Design Decisions
+- **Unified entry ABI**: All entry functions must use `main(args_ptr: i32, args_len: i32) -> i64`. The i64 return packs a WASM pointer (lower 32 bits) and result length (upper 32 bits). The PVM epilogue unpacks to `r7 = ptr + wasm_memory_base`, `r8 = r7 + len`. WAT files use `(i64.const 17179869184)` for the common ptr=0, len=4 case. AS files use a `writeResult` helper returning `(ptr as i64) | ((len as i64) << 32)`.
 - **PVM-specific intrinsics** for memory ops (`@__pvm_load_i32`, `@__pvm_store_i32`, etc.) — avoids `unsafe` GEP/inttoptr
 - **Stack-slot approach**: every SSA value gets a dedicated memory offset from SP (correctness-first). A **linear-scan register allocator** (`regalloc.rs`) can assign loop-spanning values to available callee-saved registers (r9-r12) beyond the parameter count in both leaf and non-leaf functions. In non-leaf functions, registers reserved for outgoing call arguments are excluded from allocation. Scratch registers r5/r6 are intentionally excluded from global allocation.
 - **Per-block register cache**: `PvmEmitter` tracks which stack slots are live in registers via `slot_cache`/`reg_to_slot`. Eliminates redundant `LoadIndU64` when a value is used shortly after being computed. Cache is cleared at block boundaries and after calls/ecalli. (~50% gas reduction, ~15-40% code size reduction)

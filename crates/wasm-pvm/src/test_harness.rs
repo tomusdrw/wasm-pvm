@@ -12,10 +12,13 @@
 //! fn test_simple_add() {
 //!     let wasm = wat_to_wasm(r#"
 //!         (module
-//!             (func (export "main") (param i32 i32) (result i32)
-//!                 local.get 0
-//!                 local.get 1
-//!                 i32.add
+//!             (memory 1)
+//!             (func (export "main") (param i32 i32) (result i64)
+//!                 ;; Store sum at address 0
+//!                 (i32.store (i32.const 0)
+//!                     (i32.add (local.get 0) (local.get 1)))
+//!                 ;; Return packed ptr=0, len=4
+//!                 (i64.const 17179869184)
 //!             )
 //!         )
 //!     "#).expect("Failed to parse WAT");
@@ -26,8 +29,6 @@
 //!
 //!     // Assert on generated instructions
 //!     assert_has_pattern(instructions, &[
-//!         InstructionPattern::LoadImm { reg: Pat::Any, value: Pat::Any },
-//!         InstructionPattern::LoadImm { reg: Pat::Any, value: Pat::Any },
 //!         InstructionPattern::Add32 { dst: Pat::Any, src1: Pat::Any, src2: Pat::Any },
 //!     ]);
 //! }

@@ -1129,3 +1129,73 @@ fn test_memory_only_function_is_leaf() {
         "Memory-only function should be leaf (no RA save). Expected 1 RA save ($caller only), got {ra_save_count}"
     );
 }
+
+// ── Entry Return Convention (packed i64) ──
+
+/// Entry function returning packed i64 emits ShloR64 + AddImm32 + Add64
+/// to unpack pointer and length into r7/r8.
+#[test]
+fn test_entry_return_packed_i64() {
+    let program = compile_wat(
+        r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32) (result i64)
+                (i64.const 17179869184)
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // The entry epilogue should unpack the i64:
+    // ShloR64 to extract length (upper 32 bits)
+    // AddImm32 to compute r7 = (lower 32 bits) + wasm_memory_base
+    // Add64 to compute r8 = r7 + length
+    assert_has_pattern(
+        &instructions,
+        &[InstructionPattern::ShloR64 {
+            dst: Pat::Any,
+            src1: Pat::Any,
+            src2: Pat::Any,
+        }],
+    );
+    assert_has_pattern(
+        &instructions,
+        &[InstructionPattern::Add64 {
+            dst: Pat::Any,
+            src1: Pat::Any,
+            src2: Pat::Any,
+        }],
+    );
+}
+
+/// Entry function returning void does NOT emit the unpacking sequence.
+#[test]
+fn test_entry_return_void_no_unpack() {
+    let program = compile_wat(
+        r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32 i32)
+                (nop)
+            )
+        )
+        "#,
+    )
+    .expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // No ShloR64 should be emitted for a void entry function
+    let has_shift = instructions.iter().any(|i| {
+        matches!(
+            i,
+            Instruction::ShloR64 { .. }
+        )
+    });
+    assert!(
+        !has_shift,
+        "Void entry function should not emit ShloR64 (packed return unpacking)"
+    );
+}
