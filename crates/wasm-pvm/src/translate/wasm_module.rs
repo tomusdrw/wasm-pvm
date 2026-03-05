@@ -199,42 +199,36 @@ impl<'a> WasmModule<'a> {
                 Payload::ExportSection(reader) => {
                     for export in reader {
                         let export = export?;
-                        match export.kind {
-                            wasmparser::ExternalKind::Func => {
-                                exported_wasm_func_indices.push(export.index);
-                                let is_imported = export.index < num_imported_funcs;
-                                let is_main_name =
-                                    matches!(export.name, "main" | "refine" | "refine_ext");
-                                let is_secondary_name = matches!(
-                                    export.name,
-                                    "main2" | "accumulate" | "accumulate_ext"
-                                );
-                                if is_imported && (is_main_name || is_secondary_name) {
-                                    return Err(Error::Internal(format!(
-                                        "Entry export '{}' refers to imported function index {}",
-                                        export.name, export.index
-                                    )));
-                                }
-                                match export.name {
-                                    "main" => {
-                                        main_func_idx = Some(export.index);
-                                    }
-                                    "refine" | "refine_ext" if main_func_idx.is_none() => {
-                                        main_func_idx = Some(export.index);
-                                    }
-                                    "main2" => {
-                                        secondary_entry_func_idx = Some(export.index);
-                                    }
-                                    "accumulate" | "accumulate_ext"
-                                        if secondary_entry_func_idx.is_none() =>
-                                    {
-                                        secondary_entry_func_idx = Some(export.index);
-                                    }
-                                    _ => {}
-                                }
+                        if export.kind == wasmparser::ExternalKind::Func {
+                            exported_wasm_func_indices.push(export.index);
+                            let is_imported = export.index < num_imported_funcs;
+                            let is_main_name =
+                                matches!(export.name, "main" | "refine" | "refine_ext");
+                            let is_secondary_name =
+                                matches!(export.name, "main2" | "accumulate" | "accumulate_ext");
+                            if is_imported && (is_main_name || is_secondary_name) {
+                                return Err(Error::Internal(format!(
+                                    "Entry export '{}' refers to imported function index {}",
+                                    export.name, export.index
+                                )));
                             }
-                            wasmparser::ExternalKind::Global => {}
-                            _ => {}
+                            match export.name {
+                                "main" => {
+                                    main_func_idx = Some(export.index);
+                                }
+                                "refine" | "refine_ext" if main_func_idx.is_none() => {
+                                    main_func_idx = Some(export.index);
+                                }
+                                "main2" => {
+                                    secondary_entry_func_idx = Some(export.index);
+                                }
+                                "accumulate" | "accumulate_ext"
+                                    if secondary_entry_func_idx.is_none() =>
+                                {
+                                    secondary_entry_func_idx = Some(export.index);
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
