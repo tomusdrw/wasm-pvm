@@ -280,7 +280,6 @@ impl<'a> WasmModule<'a> {
             0
         };
 
-
         // Resolve secondary entry from global to local function index
         let has_secondary_entry = secondary_entry_func_idx.is_some();
         let secondary_entry_local_idx = secondary_entry_func_idx.and_then(|idx| {

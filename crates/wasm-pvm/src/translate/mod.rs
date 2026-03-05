@@ -287,7 +287,6 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         let is_secondary = module.secondary_entry_local_idx == Some(local_func_idx);
         let is_entry = is_main || is_secondary;
 
-
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
         function_offsets[local_func_idx] = func_start_offset;
 

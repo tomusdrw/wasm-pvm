@@ -260,12 +260,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
             let global_idx = wasm_module.num_imported_funcs as usize + local_idx;
             let func_value = self.functions[global_idx];
             let (num_params, has_return) = wasm_module.function_signatures[global_idx];
-            self.translate_function(
-                func_body,
-                func_value,
-                num_params,
-                has_return,
-            )?;
+            self.translate_function(func_body, func_value, num_params, has_return)?;
         }
 
         if run_llvm_passes {
