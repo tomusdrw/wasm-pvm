@@ -1149,25 +1149,29 @@ fn test_entry_return_packed_i64() {
     .expect("compile");
     let instructions = extract_instructions(&program);
 
-    // The entry epilogue should unpack the i64:
-    // ShloR64 to extract length (upper 32 bits)
-    // AddImm32 to compute r7 = (lower 32 bits) + wasm_memory_base
-    // Add64 to compute r8 = r7 + length
+    // The entry epilogue should unpack the packed i64 in order:
+    // 1. ShloR64 { dst: TEMP2(3), src1: TEMP1(2), src2: TEMP2(3) }  — extract length
+    // 2. AddImm32 { dst: r7, src: TEMP1(2), value: wasm_memory_base } — compute start addr
+    // 3. Add64   { dst: r8, src1: r7, src2: TEMP2(3) }               — compute end addr
     assert_has_pattern(
         &instructions,
-        &[InstructionPattern::ShloR64 {
-            dst: Pat::Any,
-            src1: Pat::Any,
-            src2: Pat::Any,
-        }],
-    );
-    assert_has_pattern(
-        &instructions,
-        &[InstructionPattern::Add64 {
-            dst: Pat::Any,
-            src1: Pat::Any,
-            src2: Pat::Any,
-        }],
+        &[
+            InstructionPattern::ShloR64 {
+                dst: Pat::Exact(3),
+                src1: Pat::Exact(2),
+                src2: Pat::Exact(3),
+            },
+            InstructionPattern::AddImm32 {
+                dst: Pat::Exact(7),
+                src: Pat::Exact(2),
+                value: Pat::Any,
+            },
+            InstructionPattern::Add64 {
+                dst: Pat::Exact(8),
+                src1: Pat::Exact(7),
+                src2: Pat::Exact(3),
+            },
+        ],
     );
 }
 

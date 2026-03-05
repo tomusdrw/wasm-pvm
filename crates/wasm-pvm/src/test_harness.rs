@@ -13,10 +13,13 @@
 //!     let wasm = wat_to_wasm(r#"
 //!         (module
 //!             (memory 1)
-//!             (func (export "main") (param i32 i32) (result i64)
-//!                 ;; Store sum at address 0
+//!             (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+//!                 ;; Load two i32 operands from args memory
+//!                 ;; Store their sum at address 0
 //!                 (i32.store (i32.const 0)
-//!                     (i32.add (local.get 0) (local.get 1)))
+//!                     (i32.add
+//!                         (i32.load (local.get $args_ptr))
+//!                         (i32.load (i32.add (local.get $args_ptr) (i32.const 4)))))
 //!                 ;; Return packed ptr=0, len=4
 //!                 (i64.const 17179869184)
 //!             )

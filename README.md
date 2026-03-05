@@ -39,14 +39,13 @@ Create a simple WAT program that adds two numbers:
 ;; add.wat
 (module
   (memory 1)
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     ;; Read two i32 args, add them, write result to memory
     (i32.store (i32.const 0)
       (i32.add
         (i32.load (local.get $args_ptr))
         (i32.load (i32.add (local.get $args_ptr) (i32.const 4)))))
-    (i32.const 0)   ;; result pointer
-    (i32.const 4))) ;; result length
+    (i64.const 17179869184)))  ;; packed ptr=0, len=4
 ```
 
 Compile it to a JAM blob and run it:
@@ -70,10 +69,7 @@ You can also write programs in AssemblyScript:
 
 ```typescript
 // fibonacci.ts
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const buf = heap.alloc(256);
   let n = load<i32>(args_ptr);
   let a: i32 = 0;
@@ -86,8 +82,7 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(buf, a);
-  result_ptr = buf as i32;
-  result_len = 4;
+  return (buf as i64) | ((4 as i64) << 32);  // packed ptr + len
 }
 ```
 
