@@ -92,6 +92,8 @@ Compile via the AssemblyScript compiler to WASM, then use `wasm-pvm-cli` to prod
 
 The compiler pipeline:
 
+Entry functions use a unified ABI: `main(args_ptr: i32, args_len: i32) -> i64`, where the return value packs the result pointer in the lower 32 bits and the result length in the upper 32 bits. The compiler unpacks this into PVM's SPI convention (`r7` = start address, `r8` = end address).
+
 1. **Adapter merge** (optional) — merges a WAT adapter module into the WASM binary, replacing matching imports with adapter function bodies
 2. **WASM → LLVM IR** — translates WASM opcodes to LLVM IR using [inkwell](https://github.com/TheDan64/inkwell) (LLVM 18 bindings), with PVM-specific intrinsics for memory operations
 3. **LLVM optimization passes** — `mem2reg` (SSA promotion), `instcombine`, `simplifycfg`, `gvn`, `dce`, and optional function inlining
