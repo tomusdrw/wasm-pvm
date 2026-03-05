@@ -1188,12 +1188,9 @@ fn test_entry_return_void_no_unpack() {
     let instructions = extract_instructions(&program);
 
     // No ShloR64 should be emitted for a void entry function
-    let has_shift = instructions.iter().any(|i| {
-        matches!(
-            i,
-            Instruction::ShloR64 { .. }
-        )
-    });
+    let has_shift = instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ShloR64 { .. }));
     assert!(
         !has_shift,
         "Void entry function should not emit ShloR64 (packed return unpacking)"
