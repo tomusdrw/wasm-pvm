@@ -11,9 +11,6 @@
  */
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
 // Masks for varU32 length detection (from codec.ts)
 const MASKS: u8[] = [0xff, 0xfe, 0xfc, 0xf8, 0xf0, 0xe0, 0xc0, 0x80];
 
@@ -48,7 +45,7 @@ function decodeVarU32(data: Uint8Array): u32 {
   return number;
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Create a Uint8Array from args
   const data = new Uint8Array(args_len);
@@ -73,6 +70,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   const sum = val1 + val2 + val3;
 
   store<i32>(RESULT_HEAP, sum);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }

@@ -2,14 +2,9 @@
 let RESULT_HEAP: usize = 0;
 let NODE_HEAP: usize = 0;
 
-// Globals
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-function writeResult(val: i32): void {
+function writeResult(val: i32): i64 {
   store<i32>(RESULT_HEAP, val);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }
 
 // Node structure: [value: i32, next: i32] (8 bytes)
@@ -29,7 +24,7 @@ function sumList(head: i32): i32 {
   return val + sumList(next);
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   RESULT_HEAP = heap.alloc(256);
   NODE_HEAP = heap.alloc(32); // 3 nodes * 8 bytes each = 24 bytes
   // Create list: 10 -> 20 -> 30 -> null
@@ -40,5 +35,5 @@ export function main(args_ptr: i32, args_len: i32): void {
 
   const sum = sumList(NODE_HEAP); // 60
 
-  writeResult(sum);
+  return writeResult(sum);
 }

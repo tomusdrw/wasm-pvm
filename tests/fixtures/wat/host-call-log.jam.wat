@@ -6,7 +6,7 @@
   (data (i32.const 0) "test-log")
   ;; "Hello from PVM!" at offset 8 (15 bytes)
   (data (i32.const 8) "Hello from PVM!")
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     ;; ecalli 100 = log host call
     ;; r7 = level (3 = INFO)
     ;; r8 = target_ptr (PVM address of "test-log")
@@ -22,5 +22,4 @@
       (i64.const 15))
     ;; Return result: store 42 at offset 24, return (ptr=24, len=4)
     (i32.store (i32.const 24) (i32.const 42))
-    (i32.const 24)
-    (i32.const 4)))
+    (i64.const 17179869208)))

@@ -9,7 +9,7 @@
   ;;
   ;; Register budget: 2 params + 2 locals = 4 (r9-r12)
   ;; Reuse $args_ptr as $a, $args_len as $b after loading args
-  (func (export "main") (param $a i32) (param $b i32) (result i32 i32)
+  (func (export "main") (param $a i32) (param $b i32) (result i64)
     (local $temp i32)
     (local $rem i32)
     
@@ -48,7 +48,6 @@
     ;; Store result (a) at 0
     (i32.store (i32.const 0) (local.get $a))
     
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

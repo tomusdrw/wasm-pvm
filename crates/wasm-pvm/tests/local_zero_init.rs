@@ -14,10 +14,6 @@ fn test_wasm_local_zero_init() {
     let wat = r#"
         (module
             (memory 1)
-            (global $result_ptr (mut i32) (i32.const 0))
-            (global $result_len (mut i32) (i32.const 0))
-            (export "result_ptr" (global $result_ptr))
-            (export "result_len" (global $result_len))
 
             (func $sum_to_n (param $n i32) (result i32)
                 (local $i i32)      ;; NOT explicitly initialized - relies on zero-init
@@ -46,17 +42,15 @@ fn test_wasm_local_zero_init() {
                 local.get $sum
             )
 
-            (func (export "main") (param $args_ptr i32) (param $args_len i32)
+            (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
                 ;; Calculate sum(0..10) = 0+1+2+3+4+5+6+7+8+9 = 45
-                i32.const 0x50100  ;; Result address
+                i32.const 0
                 i32.const 10
                 call $sum_to_n
                 i32.store
 
-                i32.const 0x50100
-                global.set $result_ptr
-                i32.const 4
-                global.set $result_len
+                ;; Return packed i64: ptr=0 (low 32), len=4 (high 32)
+                i64.const 17179869184  ;; (4 << 32) | 0
             )
         )
     "#;

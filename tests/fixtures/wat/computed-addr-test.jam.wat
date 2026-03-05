@@ -6,7 +6,7 @@
   (memory 1)
   
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $test_case i32)
     (local $base i32)
     (local $addr i32)
@@ -52,7 +52,6 @@
     ;; Store result at WASM address 0x200 (-> PVM address 0x50200)
     (i32.store (i32.const 0x200) (local.get $val))
     ;; result_ptr is WASM address - epilogue adds WASM_MEMORY_BASE
-    (i32.const 0x200)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869696)  ;; ptr=0x200, len=4
   )
 )

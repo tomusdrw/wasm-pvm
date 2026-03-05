@@ -8,9 +8,6 @@
  */
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
 // Simulates lowerBytes - creates an Array<u8> with values 0..len-1
 function createArray(len: i32): u8[] {
   const r = new Array<u8>(len);
@@ -25,7 +22,7 @@ function getValue(arr: u8[], idx: i32): u8 {
   return arr[idx];
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   const step: i32 = args_len > 0 ? load<u8>(args_ptr) : 0;
 
@@ -145,6 +142,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }

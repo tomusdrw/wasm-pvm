@@ -121,7 +121,7 @@
     )
   )
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $buf_a i32)
     (local $buf_b i32)
     (local $size i32)
@@ -190,7 +190,6 @@
           (i32.shl (i32.load8_u (i32.add (local.get $buf_b) (i32.const 14))) (i32.const 16))
           (i32.shl (i32.load8_u (i32.add (local.get $buf_b) (i32.const 15))) (i32.const 24)))))
     
-    (i32.const 0x30300)  ;; result_ptr
-    (i32.const 24)  ;; result_len
+    (i64.const 103079412480)  ;; ptr=0x30300, len=24
   )
 )

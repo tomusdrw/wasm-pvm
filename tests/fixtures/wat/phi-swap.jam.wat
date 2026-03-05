@@ -10,7 +10,7 @@
   ;; Input: two i32 values (a, b) followed by an i32 iteration count n
   ;; After n swaps: if n is even, result = a; if n is odd, result = b.
   ;; Output: single i32 (value of a after n swaps)
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $a i32)
     (local $b i32)
     (local $n i32)
@@ -39,7 +39,6 @@
 
     ;; Store result (a after n swaps)
     (i32.store (i32.const 0) (local.get $a))
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

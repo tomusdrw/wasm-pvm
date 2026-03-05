@@ -23,7 +23,7 @@
     (i32.const 99)
   )
 
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $step i32)
     (local $val i32)
     (local $func_idx i32)
@@ -36,8 +36,7 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 5) (i32.const 0))
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -48,8 +47,7 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 5) (i32.const 1))
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -60,8 +58,7 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 7) (i32.const 2))
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -72,8 +69,7 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 0) (i32.const 3))
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -87,8 +83,7 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (local.get $val) (i32.const 2))
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -110,8 +105,7 @@
           )
         )
         (i32.store (i32.const 0) (local.get $val))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -125,13 +119,11 @@
         (i32.store (i32.const 0)
           (call_indirect (type $unary) (i32.const 100) (local.get $func_idx))
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
 
-    (i32.const 0)  ;; default result_ptr
-    (i32.const 0)  ;; default result_len
+    (i64.const 0)  ;; ptr=0, len=0
   )
 )

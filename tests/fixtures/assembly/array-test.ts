@@ -2,10 +2,7 @@
 // This simulates what index-compiler.ts does
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   let out_offset: u32 = 0;
   
@@ -85,6 +82,5 @@ export function main(args_ptr: i32, args_len: i32): void {
     }
   }
   
-  result_ptr = RESULT_HEAP as i32;
-  result_len = out_offset as i32;
+  return (RESULT_HEAP as i64) | ((out_offset as i64) << 32);
 }

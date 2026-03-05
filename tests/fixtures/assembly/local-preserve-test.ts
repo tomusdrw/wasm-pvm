@@ -6,9 +6,6 @@
  */
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
 // A simple function that just returns its input
 // This will use r9-r10 for its locals, potentially clobbering caller's r9-r10
 function identity(x: i32): i32 {
@@ -21,7 +18,7 @@ function useFourLocals(a: i32, b: i32, c: i32, d: i32): i32 {
   return a + b + c + d;
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   const step: i32 = args_len > 0 ? load<u8>(args_ptr) : 0;
 
@@ -111,6 +108,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   }
 
   store<i32>(RESULT_HEAP, result);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }

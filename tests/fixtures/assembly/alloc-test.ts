@@ -1,12 +1,7 @@
-// Globals at indices 0,1 are result_ptr, result_len
 
 
-// Export mutable globals for result pointer and length
-// These get stored at 0x30000 + idx*4 by wasm-pvm compiler
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Test more complex allocations that might trigger AS runtime issues
   const objects = new Array<Foo>(5);  // Array of objects
@@ -45,8 +40,7 @@ export function main(args_ptr: i32, args_len: i32): void {
   // Return result
   store<i32>(RESULT_HEAP, total);
 
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }
 
 class Foo {

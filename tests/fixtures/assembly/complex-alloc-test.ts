@@ -9,9 +9,6 @@
  */
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
 // Simulate the Decoder class structure
 class Decoder {
   constructor(
@@ -71,7 +68,7 @@ function lowerBytes(data: Uint8Array): u8[] {
   return r;
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Step 1: Create a Uint8Array from args (like liftBytes)
   const inputData = new Uint8Array(args_len);
@@ -138,6 +135,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   // Total: 45 + 190 + 45 + 15 + 795 = 1090
 
   store<i32>(RESULT_HEAP, sum);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }

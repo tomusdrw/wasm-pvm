@@ -85,14 +85,6 @@ pub struct LlvmIndirectCallFixup {
 /// Separating them from mutable state makes it clear what's fixed vs what changes.
 #[allow(clippy::struct_excessive_bools)]
 pub struct EmitterConfig {
-    /// For entry functions: (`result_ptr_global`, `result_len_global`) indices.
-    /// When set, the epilogue loads these globals into r7/r8 before exiting.
-    pub result_globals: Option<(u32, u32)>,
-
-    /// When true, the entry function's return value is a packed i64:
-    /// lower 32 bits = ptr (WASM address), upper 32 bits = len.
-    pub entry_returns_ptr_len: bool,
-
     /// WASM memory base address (for converting WASM addresses to PVM addresses).
     pub wasm_memory_base: i32,
 

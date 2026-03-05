@@ -44,22 +44,14 @@ use abi::{TEMP1, TEMP2};
 use emitter::{PvmEmitter, pre_scan_function};
 
 /// Lower a single LLVM function to PVM bytecode.
-///
-/// `result_globals`: For entry functions using the legacy globals convention,
-/// pass `Some((ptr_global_idx, len_global_idx))` so the epilogue loads them
-/// into r7/r8 before exiting.
 pub fn lower_function(
     function: FunctionValue<'_>,
     ctx: &LoweringContext,
     is_main: bool,
     _func_idx: usize,
-    result_globals: Option<(u32, u32)>,
-    entry_returns_ptr_len: bool,
     call_return_base: usize,
 ) -> Result<LlvmFunctionTranslation> {
     let config = EmitterConfig {
-        result_globals,
-        entry_returns_ptr_len,
         wasm_memory_base: ctx.wasm_memory_base,
         register_cache_enabled: ctx.optimizations.register_cache,
         icmp_fusion_enabled: ctx.optimizations.icmp_branch_fusion,

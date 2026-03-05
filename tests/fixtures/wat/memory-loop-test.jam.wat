@@ -5,7 +5,7 @@
   (memory 1)
   
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $y i32)
     (local $x i32)
     (local $src i32)
@@ -79,7 +79,6 @@
     
     ;; Expected: 128 ones (checkerboard pattern has 128 1s in 16x16)
     (i32.store (i32.const 0x30300) (local.get $sum))
-    (i32.const 0x30300)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17180066560)  ;; ptr=0x30300, len=4
   )
 )

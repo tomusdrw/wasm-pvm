@@ -266,15 +266,14 @@ calling convention.
 4. **Adjusts args_ptr**: `r7 = r7 - wasm_memory_base` (convert PVM address to WASM address)
 5. Stores r7 and r8 to parameter slots
 
-**Entry return** — three conventions are supported:
+**Entry return** — unified packed i64 convention:
 
-| Convention | r7 (out) | r8 (out) | When used |
-|------------|----------|----------|-----------|
-| Globals | `global[ptr_idx] + wasm_memory_base` | `r7 + global[len_idx]` | Legacy AS convention |
-| Packed (ptr, len) | `(ret & 0xFFFFFFFF) + wasm_memory_base` | `r7 + (ret >> 32)` | Multi-value return |
-| Simple | return value directly | unchanged | Raw i32/i64 return |
+The entry function must return a single `i64` value encoding a pointer and length:
+- Lower 32 bits = WASM pointer to result data
+- Upper 32 bits = result length in bytes
+- PVM output: `r7 = (ret & 0xFFFFFFFF) + wasm_memory_base`, `r8 = r7 + (ret >> 32)`
 
-All three end by jumping to `EXIT_ADDRESS` (`0xFFFF0000`).
+All entry functions end by jumping to `EXIT_ADDRESS` (`0xFFFF0000`).
 
 ### Start Function
 

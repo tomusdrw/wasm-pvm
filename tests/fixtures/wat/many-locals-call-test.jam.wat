@@ -18,7 +18,7 @@
   ;; - Calls a function via call_indirect
   ;; - Uses the result to update a memory field
   ;; - Loops multiple times
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $step i32)
     (local $obj_ptr i32)       ;; pointer to our "struct" in memory
     (local $pc i32)            ;; "PC" field (what we track)
@@ -73,8 +73,7 @@
           (i32.add (local.get $pc) (i32.add (i32.const 1) (local.get $result)))
         )
         (i32.store (i32.const 0) (i32.load offset=4 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -107,8 +106,7 @@
             (i32.load offset=8 (local.get $obj_ptr))
           )
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -133,8 +131,7 @@
           (i32.add (local.get $temp11)
                    (local.get $temp12))))))))))))
         )
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
@@ -160,13 +157,11 @@
           )
         )
         (i32.store (i32.const 0) (i32.load offset=4 (local.get $obj_ptr)))
-        (i32.const 0)  ;; result_ptr
-        (i32.const 4)  ;; result_len
+        (i64.const 17179869184)  ;; ptr=0, len=4
         (return)
       )
     )
 
-    (i32.const 0)  ;; default result_ptr
-    (i32.const 0)  ;; default result_len
+    (i64.const 0)  ;; ptr=0, len=0
   )
 )

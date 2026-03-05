@@ -17,7 +17,7 @@
     )
   )
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $result i32)
     
     ;; Read the recursion depth from args
@@ -26,7 +26,6 @@
     )
     
     (i32.store (i32.const 0) (local.get $result))
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

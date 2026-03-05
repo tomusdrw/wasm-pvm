@@ -2,14 +2,9 @@
 let RESULT_HEAP: usize = 0;
 let STRUCT_HEAP: usize = 0;
 
-// Globals
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-function writeResult(val: i32): void {
+function writeResult(val: i32): i64 {
   store<i32>(RESULT_HEAP, val);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }
 
 // Emulate a struct:
@@ -37,7 +32,7 @@ function dotProduct(ptr1: i32, ptr2: i32): i32 {
   return x1 * x2 + y1 * y2 + z1 * z2;
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   RESULT_HEAP = heap.alloc(256);
   STRUCT_HEAP = heap.alloc(32); // 2 structs * 12 bytes each
   const p1 = STRUCT_HEAP;
@@ -49,5 +44,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   // Dot product: 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
   const dp = dotProduct(p1, p2);
 
-  writeResult(dp);
+  return writeResult(dp);
 }

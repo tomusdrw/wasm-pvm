@@ -287,23 +287,6 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         let is_secondary = module.secondary_entry_local_idx == Some(local_func_idx);
         let is_entry = is_main || is_secondary;
 
-        let entry_returns_ptr_len = if is_main {
-            module.main_returns_ptr_len
-        } else if is_secondary {
-            module.secondary_returns_ptr_len
-        } else {
-            false
-        };
-
-        // Determine result globals for entry functions.
-        let result_globals = if is_entry && !entry_returns_ptr_len {
-            match (module.result_ptr_global, module.result_len_global) {
-                (Some(ptr), Some(len)) => Some((ptr, len)),
-                _ => None,
-            }
-        } else {
-            None
-        };
 
         let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
         function_offsets[local_func_idx] = func_start_offset;
@@ -369,8 +352,6 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
             &ctx,
             is_entry,
             global_func_idx,
-            result_globals,
-            entry_returns_ptr_len,
             next_call_return_idx,
         )?;
         next_call_return_idx += translation.num_call_returns;

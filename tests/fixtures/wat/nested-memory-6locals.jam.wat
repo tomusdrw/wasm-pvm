@@ -4,7 +4,7 @@
   (memory 1)
   
   
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $y i32)       ;; local 2 -> r11
     (local $x i32)       ;; local 3 -> r12
     (local $sum i32)     ;; local 4 -> spilled
@@ -78,7 +78,6 @@
     
     ;; Expected: 8 ones in 4x4 checkerboard
     (i32.store (i32.const 0x30200) (local.get $sum))
-    (i32.const 0x30200)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17180066304)  ;; ptr=0x30200, len=4
   )
 )

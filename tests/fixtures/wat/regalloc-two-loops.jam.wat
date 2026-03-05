@@ -6,7 +6,7 @@
   ;; - each loop carries multiple long-lived values,
   ;; - values from loop #1 are dead before loop #2 starts.
   ;; This is intended to exercise non-overlapping live ranges.
-  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i32 i32)
+  (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $n i32)
 
     ;; Loop 1 state
@@ -99,7 +99,6 @@
         (i32.add (local.get $e) (local.get $f))
         (i32.add (local.get $g) (local.get $h))))
 
-    (i32.const 0)
-    (i32.const 4)
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

@@ -2,17 +2,12 @@
 let RESULT_HEAP: usize = 0;
 let DATA_HEAP: usize = 0;
 
-// Globals
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-function writeResult(val: i32): void {
+function writeResult(val: i32): i64 {
   store<i32>(RESULT_HEAP, val);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }
 
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   RESULT_HEAP = heap.alloc(256);
   DATA_HEAP = heap.alloc(16);
   // Store 8-bit values
@@ -37,5 +32,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   // Verify (sum of bytes)
   let sum: i32 = b0 + b1 + b2 + b3; // 170 + 255 + 204 + 221 = 850
 
-  writeResult(sum);
+  return writeResult(sum);
 }

@@ -4,7 +4,7 @@
   
   ;; Check if a number is prime
   ;; Register budget: 2 params + 2 locals = 4 (r9-r12)
-  (func (export "main") (param $n i32) (param $i i32) (result i32 i32)
+  (func (export "main") (param $n i32) (param $i i32) (result i64)
     (local $result i32)
     (local $temp i32)
     
@@ -57,7 +57,6 @@
     ;; Store result at 0
     (i32.store (i32.const 0) (local.get $result))
     
-    (i32.const 0)  ;; result_ptr
-    (i32.const 4)  ;; result_len
+    (i64.const 17179869184)  ;; ptr=0, len=4
   )
 )

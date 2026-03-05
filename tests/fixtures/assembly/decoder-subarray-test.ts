@@ -9,10 +9,7 @@
  */
 
 
-export let result_ptr: i32 = 0;
-export let result_len: i32 = 0;
-
-export function main(args_ptr: i32, args_len: i32): void {
+export function main(args_ptr: i32, args_len: i32): i64 {
   const RESULT_HEAP = heap.alloc(256);
   // Create a Uint8Array from args (like liftBytes does)
   const data = new Uint8Array(args_len);
@@ -42,6 +39,5 @@ export function main(args_ptr: i32, args_len: i32): void {
   const sum = val1 + val2 + val3;
 
   store<i32>(RESULT_HEAP, sum);
-  result_ptr = RESULT_HEAP as i32;
-  result_len = 4;
+  return (RESULT_HEAP as i64) | ((4 as i64) << 32);
 }
