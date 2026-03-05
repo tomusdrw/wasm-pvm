@@ -91,6 +91,8 @@ pub struct WasmModule<'a> {
     pub type_signatures: Vec<(usize, usize)>,
     /// Function table for indirect calls (`u32::MAX` = invalid entry).
     pub function_table: Vec<u32>,
+    /// WASM global indices of all exported functions.
+    pub exported_wasm_func_indices: Vec<u32>,
     /// Base address of WASM linear memory in PVM address space.
     pub wasm_memory_base: i32,
     /// Maximum WASM memory pages available for memory.grow.
@@ -112,6 +114,7 @@ impl<'a> WasmModule<'a> {
         let mut main_func_idx: Option<u32> = None;
         let mut secondary_entry_func_idx: Option<u32> = None;
         let mut start_func_idx: Option<u32> = None;
+        let mut exported_wasm_func_indices: Vec<u32> = Vec::new();
         let mut tables: Vec<wasmparser::TableType> = Vec::new();
         let mut table_elements: Vec<(u32, u32, Vec<u32>)> = Vec::new();
         let mut data_segments: Vec<DataSegment> = Vec::new();
@@ -208,10 +211,36 @@ impl<'a> WasmModule<'a> {
                         let export = export?;
                         match export.kind {
                             wasmparser::ExternalKind::Func => {
-                                if export.name == "main" {
-                                    main_func_idx = Some(export.index);
-                                } else if export.name == "main2" {
-                                    secondary_entry_func_idx = Some(export.index);
+                                exported_wasm_func_indices.push(export.index);
+                                let is_imported = export.index < num_imported_funcs;
+                                let is_main_name =
+                                    matches!(export.name, "main" | "refine" | "refine_ext");
+                                let is_secondary_name = matches!(
+                                    export.name,
+                                    "main2" | "accumulate" | "accumulate_ext"
+                                );
+                                if is_imported && (is_main_name || is_secondary_name) {
+                                    return Err(Error::Internal(format!(
+                                        "Entry export '{}' refers to imported function index {}",
+                                        export.name, export.index
+                                    )));
+                                }
+                                match export.name {
+                                    "main" => {
+                                        main_func_idx = Some(export.index);
+                                    }
+                                    "refine" | "refine_ext" if main_func_idx.is_none() => {
+                                        main_func_idx = Some(export.index);
+                                    }
+                                    "main2" => {
+                                        secondary_entry_func_idx = Some(export.index);
+                                    }
+                                    "accumulate" | "accumulate_ext"
+                                        if secondary_entry_func_idx.is_none() =>
+                                    {
+                                        secondary_entry_func_idx = Some(export.index);
+                                    }
+                                    _ => {}
                                 }
                             }
                             wasmparser::ExternalKind::Global => {
@@ -408,6 +437,7 @@ impl<'a> WasmModule<'a> {
             function_signatures,
             type_signatures,
             function_table,
+            exported_wasm_func_indices,
             wasm_memory_base,
             max_memory_pages,
         })
@@ -440,4 +470,96 @@ fn eval_const_ref(expr: &wasmparser::ConstExpr) -> Option<u32> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WasmModule;
+
+    #[test]
+    fn main_export_name_overrides_alias() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (func $canonical_main (export "main"))
+                (func $alias_main (export "refine"))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+
+        assert_eq!(module.main_func_local_idx, 0);
+    }
+
+    #[test]
+    fn secondary_main2_export_name_overrides_alias() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (func $main (export "main"))
+                (func $canonical_secondary (export "main2"))
+                (func $alias_secondary (export "accumulate_ext"))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+
+        assert!(module.has_secondary_entry);
+        assert_eq!(module.secondary_entry_local_idx, Some(1));
+    }
+
+    #[test]
+    fn reverse_main_export_name_overrides_alias() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (func $canonical_main)
+                (func $alias_main)
+                (export "refine" (func $alias_main))
+                (export "main" (func $canonical_main))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+
+        assert_eq!(module.main_func_local_idx, 0);
+    }
+
+    #[test]
+    fn reverse_secondary_main2_export_name_overrides_alias() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (func $main (export "main"))
+                (func $canonical_secondary)
+                (func $alias_secondary)
+                (export "accumulate_ext" (func $alias_secondary))
+                (export "main2" (func $canonical_secondary))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+
+        assert!(module.has_secondary_entry);
+        assert_eq!(module.secondary_entry_local_idx, Some(1));
+    }
+
+    #[test]
+    fn imported_entry_export_returns_error() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (import "env" "main_import" (func $main_import))
+                (func $local_main)
+                (export "main" (func $main_import))
+            )"#,
+        )
+        .expect("valid WAT");
+
+        match WasmModule::parse(&wasm) {
+            Ok(_) => panic!("must reject imported main export"),
+            Err(crate::Error::Internal(msg)) => {
+                assert!(
+                    msg.contains("imported function index"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
 }

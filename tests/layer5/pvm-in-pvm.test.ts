@@ -26,6 +26,7 @@ import "../layer1/is-prime.test";
 import "../layer1/start-section.test";
 
 // --- Layer 2 imports ---
+import "../layer2/aslan-fib.test";
 import "../layer2/as-alloc-test-incremental.test";
 import "../layer2/as-alloc-test-minimal.test";
 import "../layer2/as-alloc-test-stub.test";

@@ -54,6 +54,7 @@ BENCHMARKS=(
   "as-decoder-test|00000000|0|AS decoder|wasm:tests/build/wasm/decoder-test.wasm"
   "as-array-test|00000000|0|AS array|wasm:tests/build/wasm/array-test.wasm"
   "regalloc-two-loops|f4010000|0|regalloc two loops(500)|wat:tests/fixtures/wat/regalloc-two-loops.jam.wat"
+  "aslan-fib|2a0000|5|aslan-fib accumulate|wat:tests/fixtures/wat/aslan-fib.jam.wat"
   "anan-as-compiler||0|anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
 )
 
@@ -63,6 +64,9 @@ benchmark_imports_for() {
   case "$basename" in
     anan-as-compiler)
       echo "tests/fixtures/imports/anan-as-compiler.imports|tests/fixtures/imports/anan-as-compiler.adapter.wat"
+      ;;
+    aslan-fib)
+      echo "|tests/fixtures/imports/aslan-fib.adapter.wat"
       ;;
     *)
       echo ""
@@ -82,6 +86,7 @@ PVM_IN_PVM_BENCHMARKS=(
   "EXT:tests/fixtures/external/jam-sdk-fib.jam|0100000002000000030000000000000000000000|5|PiP JAM-SDK fib(10)"
   "EXT:tests/fixtures/external/jambrains-fib.jam|0100000002000000030000000000000000000000|5|PiP Jambrains fib(10)"
   "EXT:tests/fixtures/external/jade-fib.jam|0100000002000000030000000000000000000000|5|PiP JADE fib(10)"
+  "aslan-fib|2a0000|5|PiP aslan-fib accumulate"
 )
 
 # Extract raw PVM code size (instruction bytes only) from a JAM file.

@@ -28,6 +28,8 @@
 - `compute_wasm_memory_base()` compares `SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC` with `GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)`, then rounds the larger address up to the next 4KB (PVM page) boundary. This typically gives `0x33000`.
 - `build_rw_data()` copies globals and active segments into a contiguous image, then trims trailing zero bytes before SPI encoding.
 - Call return addresses are pre-assigned as jump-table refs `((idx + 1) * 2)` at emission time; fixup resolution accepts direct (`LoadImmJump`) and indirect (`LoadImm` / `LoadImmJumpInd`) return-address carriers.
+- Export parsing tracks `exported_wasm_func_indices` in WASM global index space for dead-function-elimination roots; entry resolution prefers canonical names (`main`, `main2`) over aliases (`refine*`, `accumulate*`) regardless of export order.
+- Entry exports (`main`/`main2` and aliases) must target local (non-imported) functions; imported targets are rejected during parse with `Error::Internal` to avoid index-underflow panics.
 
 ## Current Memory Layout
 
