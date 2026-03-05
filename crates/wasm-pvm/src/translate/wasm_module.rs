@@ -91,6 +91,8 @@ pub struct WasmModule<'a> {
     pub type_signatures: Vec<(usize, usize)>,
     /// Function table for indirect calls (`u32::MAX` = invalid entry).
     pub function_table: Vec<u32>,
+    /// Global indices of all exported functions (for dead function elimination roots).
+    pub exported_func_indices: Vec<u32>,
     /// Base address of WASM linear memory in PVM address space.
     pub wasm_memory_base: i32,
     /// Maximum WASM memory pages available for memory.grow.
@@ -112,6 +114,7 @@ impl<'a> WasmModule<'a> {
         let mut main_func_idx: Option<u32> = None;
         let mut secondary_entry_func_idx: Option<u32> = None;
         let mut start_func_idx: Option<u32> = None;
+        let mut exported_func_indices: Vec<u32> = Vec::new();
         let mut tables: Vec<wasmparser::TableType> = Vec::new();
         let mut table_elements: Vec<(u32, u32, Vec<u32>)> = Vec::new();
         let mut data_segments: Vec<DataSegment> = Vec::new();
@@ -208,10 +211,15 @@ impl<'a> WasmModule<'a> {
                         let export = export?;
                         match export.kind {
                             wasmparser::ExternalKind::Func => {
-                                if export.name == "main" {
-                                    main_func_idx = Some(export.index);
-                                } else if export.name == "main2" {
-                                    secondary_entry_func_idx = Some(export.index);
+                                exported_func_indices.push(export.index);
+                                match export.name {
+                                    "main" | "refine" | "refine_ext" => {
+                                        main_func_idx = Some(export.index);
+                                    }
+                                    "main2" | "accumulate" | "accumulate_ext" => {
+                                        secondary_entry_func_idx = Some(export.index);
+                                    }
+                                    _ => {}
                                 }
                             }
                             wasmparser::ExternalKind::Global => {
@@ -408,6 +416,7 @@ impl<'a> WasmModule<'a> {
             function_signatures,
             type_signatures,
             function_table,
+            exported_func_indices,
             wasm_memory_base,
             max_memory_pages,
         })

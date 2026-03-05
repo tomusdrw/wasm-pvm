@@ -31,6 +31,15 @@ pub fn reachable_functions(module: &WasmModule) -> Result<HashSet<usize>> {
         worklist.push_back(idx);
     }
 
+    // Seed: all exported functions (may include entry points already, dedup via reachable set)
+    for &global_idx in &module.exported_func_indices {
+        if let Some(local_idx) = (global_idx as usize).checked_sub(num_imports) {
+            if local_idx < num_locals {
+                worklist.push_back(local_idx);
+            }
+        }
+    }
+
     // Seed: all functions referenced in the element table (for call_indirect)
     for &global_idx in &module.function_table {
         if global_idx != u32::MAX
