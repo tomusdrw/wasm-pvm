@@ -91,8 +91,8 @@ pub struct WasmModule<'a> {
     pub type_signatures: Vec<(usize, usize)>,
     /// Function table for indirect calls (`u32::MAX` = invalid entry).
     pub function_table: Vec<u32>,
-    /// Global indices of all exported functions (for dead function elimination roots).
-    pub exported_func_indices: Vec<u32>,
+    /// WASM global indices of all exported functions.
+    pub exported_wasm_func_indices: Vec<u32>,
     /// Base address of WASM linear memory in PVM address space.
     pub wasm_memory_base: i32,
     /// Maximum WASM memory pages available for memory.grow.
@@ -114,7 +114,7 @@ impl<'a> WasmModule<'a> {
         let mut main_func_idx: Option<u32> = None;
         let mut secondary_entry_func_idx: Option<u32> = None;
         let mut start_func_idx: Option<u32> = None;
-        let mut exported_func_indices: Vec<u32> = Vec::new();
+        let mut exported_wasm_func_indices: Vec<u32> = Vec::new();
         let mut tables: Vec<wasmparser::TableType> = Vec::new();
         let mut table_elements: Vec<(u32, u32, Vec<u32>)> = Vec::new();
         let mut data_segments: Vec<DataSegment> = Vec::new();
@@ -211,12 +211,20 @@ impl<'a> WasmModule<'a> {
                         let export = export?;
                         match export.kind {
                             wasmparser::ExternalKind::Func => {
-                                exported_func_indices.push(export.index);
+                                exported_wasm_func_indices.push(export.index);
                                 match export.name {
-                                    "main" | "refine" | "refine_ext" => {
+                                    "main" => {
                                         main_func_idx = Some(export.index);
                                     }
-                                    "main2" | "accumulate" | "accumulate_ext" => {
+                                    "refine" | "refine_ext" if main_func_idx.is_none() => {
+                                        main_func_idx = Some(export.index);
+                                    }
+                                    "main2" => {
+                                        secondary_entry_func_idx = Some(export.index);
+                                    }
+                                    "accumulate" | "accumulate_ext"
+                                        if secondary_entry_func_idx.is_none() =>
+                                    {
                                         secondary_entry_func_idx = Some(export.index);
                                     }
                                     _ => {}
@@ -416,7 +424,7 @@ impl<'a> WasmModule<'a> {
             function_signatures,
             type_signatures,
             function_table,
-            exported_func_indices,
+            exported_wasm_func_indices,
             wasm_memory_base,
             max_memory_pages,
         })
@@ -449,4 +457,39 @@ fn eval_const_ref(expr: &wasmparser::ConstExpr) -> Option<u32> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WasmModule;
+
+    #[test]
+    fn main_export_name_overrides_alias() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (func $canonical_main (export "main"))
+                (func $alias_main (export "refine"))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+
+        assert_eq!(module.main_func_local_idx, 0);
+    }
+
+    #[test]
+    fn secondary_main2_export_name_overrides_alias() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (func $main (export "main"))
+                (func $canonical_secondary (export "main2"))
+                (func $alias_secondary (export "accumulate_ext"))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+
+        assert!(module.has_secondary_entry);
+        assert_eq!(module.secondary_entry_local_idx, Some(1));
+    }
 }

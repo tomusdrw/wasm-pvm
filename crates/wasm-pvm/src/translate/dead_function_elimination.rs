@@ -32,7 +32,7 @@ pub fn reachable_functions(module: &WasmModule) -> Result<HashSet<usize>> {
     }
 
     // Seed: all exported functions (may include entry points already, dedup via reachable set)
-    for &global_idx in &module.exported_func_indices {
+    for &global_idx in &module.exported_wasm_func_indices {
         if let Some(local_idx) = (global_idx as usize).checked_sub(num_imports)
             && local_idx < num_locals
         {
@@ -124,6 +124,29 @@ mod tests {
         assert_eq!(reachable.len(), 1);
         assert!(reachable.contains(&0));
         assert!(!reachable.contains(&1));
+    }
+
+    #[test]
+    fn exported_non_entry_preserved() {
+        // Global function indices:
+        //   0 = imported function
+        //   1 = local main (local idx 0)
+        //   2 = local exported helper (local idx 1)
+        //   3 = local dead function (local idx 2)
+        let reachable = reachable_from_wat(
+            r#"(module
+                (import "env" "host_log" (func $host_log))
+                (func $main (export "main")
+                    (call $host_log)
+                )
+                (func $exported_helper (export "helper_export"))
+                (func $dead)
+            )"#,
+        );
+
+        assert!(reachable.contains(&0)); // main local idx
+        assert!(reachable.contains(&1)); // exported non-entry local idx
+        assert!(!reachable.contains(&2)); // non-exported dead local idx
     }
 
     #[test]
