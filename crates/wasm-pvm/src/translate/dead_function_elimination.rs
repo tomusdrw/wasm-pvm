@@ -33,10 +33,10 @@ pub fn reachable_functions(module: &WasmModule) -> Result<HashSet<usize>> {
 
     // Seed: all exported functions (may include entry points already, dedup via reachable set)
     for &global_idx in &module.exported_func_indices {
-        if let Some(local_idx) = (global_idx as usize).checked_sub(num_imports) {
-            if local_idx < num_locals {
-                worklist.push_back(local_idx);
-            }
+        if let Some(local_idx) = (global_idx as usize).checked_sub(num_imports)
+            && local_idx < num_locals
+        {
+            worklist.push_back(local_idx);
         }
     }
 
