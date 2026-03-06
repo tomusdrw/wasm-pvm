@@ -229,6 +229,7 @@ async function main() {
       console.log("  aslan-debug.jam compiled.");
     } catch (err: any) {
       console.error(`  FAIL: aslan-debug: ${err.message}`);
+      process.exit(1);
     }
   }
 
