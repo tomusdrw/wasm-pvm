@@ -3,13 +3,13 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/fluffylabs/wasm-pvm"
 
 [workspace.dependencies]
-wasm-pvm = { path = "crates/wasm-pvm", version = "0.3.0" }
+wasm-pvm = { path = "crates/wasm-pvm", version = "0.4.0" }
 wasm-encoder = "0.219"
 wasmparser = "0.219"
 wat = "1"
