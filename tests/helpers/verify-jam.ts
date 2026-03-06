@@ -68,6 +68,9 @@ export function verifyJamStructure(jamFile: string): {
   const { value: jumpTableLength, bytesRead: jtlBytes } = readVarU32(data, offset);
   offset += jtlBytes;
 
+  if (offset >= data.length) {
+    throw new Error(`PVM blob truncated: expected jumpTableItemBytes at offset ${offset}`);
+  }
   const jumpTableItemBytes = data[offset];
   offset += 1;
 
@@ -78,8 +81,15 @@ export function verifyJamStructure(jamFile: string): {
     throw new Error("Blob code length is 0");
   }
 
+  const jumpTableSize = jumpTableLength * jumpTableItemBytes;
+  if (offset + jumpTableSize + blobCodeLength > data.length) {
+    throw new Error(
+      `PVM blob truncated: jump table(${jumpTableSize}) + code(${blobCodeLength}) exceeds remaining ${data.length - offset} bytes`
+    );
+  }
+
   // Skip jump table
-  offset += jumpTableLength * jumpTableItemBytes;
+  offset += jumpTableSize;
 
   // Skip code
   offset += blobCodeLength;
