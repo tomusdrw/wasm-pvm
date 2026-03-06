@@ -1627,7 +1627,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
         // post-inline instcombine converges reliably (avoids LLVM fixpoint errors).
         let opts = PassBuilderOptions::create();
         self.module
-            .run_passes("mem2reg,instcombine<max-iterations=2>,simplifycfg", &machine, opts)
+            .run_passes(
+                "mem2reg,instcombine<max-iterations=2>,simplifycfg",
+                &machine,
+                opts,
+            )
             .map_err(|e| Error::Internal(format!("LLVM pre-inline passes failed: {e}")))?;
 
         // Phase 2 (optional): Inline small functions at the CGSCC level.
