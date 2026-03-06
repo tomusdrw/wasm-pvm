@@ -115,18 +115,31 @@ function readVarU32(
   data: Buffer,
   offset: number
 ): { value: number; bytesRead: number } {
+  if (offset >= data.length) {
+    throw new RangeError(`readVarU32: offset ${offset} out of bounds (length ${data.length})`);
+  }
+
   const firstByte = data[offset];
 
   if (firstByte < 0x80) {
     return { value: firstByte, bytesRead: 1 };
   } else if (firstByte < 0xc0) {
+    if (offset + 2 > data.length) {
+      throw new RangeError(`readVarU32: need 2 bytes at offset ${offset}, only ${data.length - offset} available`);
+    }
     const value = ((firstByte - 0x80) << 8) | data[offset + 1];
     return { value, bytesRead: 2 };
   } else if (firstByte < 0xe0) {
+    if (offset + 3 > data.length) {
+      throw new RangeError(`readVarU32: need 3 bytes at offset ${offset}, only ${data.length - offset} available`);
+    }
     const value =
       ((firstByte - 0xc0) << 16) | data[offset + 1] | (data[offset + 2] << 8);
     return { value, bytesRead: 3 };
   } else {
+    if (offset + 4 > data.length) {
+      throw new RangeError(`readVarU32: need 4 bytes at offset ${offset}, only ${data.length - offset} available`);
+    }
     const value =
       ((firstByte - 0xe0) << 24) |
       data[offset + 1] |
