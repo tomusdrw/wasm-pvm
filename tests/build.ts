@@ -215,7 +215,25 @@ async function main() {
     `  JAM: ${jamCompiled} compiled`
   );
 
-  // Phase 3: Compile anan-as compiler WASM -> JAM (for PVM-in-PVM tests)
+  // Phase 3: Compile external WASM fixtures -> JAM
+  // aslan-debug: as-lan debug build (regression test for LLVM instcombine convergence)
+  const aslanDebugWasm = path.join(PROJECT_ROOT, "tests/fixtures/external/aslan-debug.wasm");
+  const aslanDebugAdapter = path.join(IMPORTS_DIR, "aslan-fib.adapter.wat");
+  const aslanDebugImports = path.join(IMPORTS_DIR, "aslan-debug.imports");
+  if (fs.existsSync(aslanDebugWasm)) {
+    console.log("\nCompiling aslan-debug WASM -> JAM...");
+    const adapter = fs.existsSync(aslanDebugAdapter) ? aslanDebugAdapter : undefined;
+    const imports = fs.existsSync(aslanDebugImports) ? aslanDebugImports : undefined;
+    try {
+      compileToJAM(aslanDebugWasm, "aslan-debug", imports, adapter);
+      console.log("  aslan-debug.jam compiled.");
+    } catch (err: any) {
+      console.error(`  FAIL: aslan-debug: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  // anan-as compiler (for PVM-in-PVM tests)
   const ananAsCompilerWasm = path.join(PROJECT_ROOT, "vendor/anan-as/dist/build/compiler.wasm");
   const ananAsCompilerImports = path.join(IMPORTS_DIR, "anan-as-compiler.imports");
   const ananAsCompilerAdapter = path.join(IMPORTS_DIR, "anan-as-compiler.adapter.wat");
