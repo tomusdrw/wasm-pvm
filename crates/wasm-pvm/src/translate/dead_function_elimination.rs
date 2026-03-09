@@ -217,4 +217,25 @@ mod tests {
         assert!(reachable.contains(&2)); // helper (called by start)
         assert!(!reachable.contains(&3)); // dead
     }
+
+    #[test]
+    fn indirect_table_reference_keeps_target_reachable() {
+        let reachable = reachable_from_wat(
+            r#"(module
+                (type $fnref (func (result i32)))
+                (func $main (export "main") (result i32)
+                    i32.const 0
+                    call_indirect (type $fnref)
+                    drop
+                    i32.const 0)
+                (func $helper (result i32) (i32.const 7))
+                (func $dead (result i32) (i32.const 99))
+                (table 1 funcref)
+                (elem (i32.const 0) $helper)
+            )"#,
+        );
+        assert!(reachable.contains(&0)); // main
+        assert!(reachable.contains(&1)); // helper referenced via table/call_indirect
+        assert!(!reachable.contains(&2)); // dead
+    }
 }
