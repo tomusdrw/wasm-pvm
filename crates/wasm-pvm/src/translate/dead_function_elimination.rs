@@ -238,4 +238,20 @@ mod tests {
         assert!(reachable.contains(&1)); // helper referenced via table/call_indirect
         assert!(!reachable.contains(&2)); // dead
     }
+
+    #[test]
+    fn secondary_entry_reachable() {
+        let reachable = reachable_from_wat(
+            r#"(module
+                (func $main (export "main") (result i32) (i32.const 1))
+                (func $main2 (export "main2") (result i32) (call $helper))
+                (func $helper (result i32) (i32.const 2))
+                (func $dead (result i32) (i32.const 99))
+            )"#,
+        );
+        assert!(reachable.contains(&0)); // main
+        assert!(reachable.contains(&1)); // main2 secondary entry
+        assert!(reachable.contains(&2)); // helper referenced by main2
+        assert!(!reachable.contains(&3)); // dead
+    }
 }
