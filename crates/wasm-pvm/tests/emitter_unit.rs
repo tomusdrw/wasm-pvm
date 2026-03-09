@@ -1052,8 +1052,8 @@ fn test_direct_calls_use_load_imm_jump() {
     }
 }
 
-/// A function that only uses memory (i32.load/i32.store) should be classified as
-/// leaf because PVM memory intrinsics (__pvm_load_*, __pvm_store_*) are lowered
+/// A function that only uses memory (`i32.load`/`i32.store`) should be classified as
+/// leaf because PVM memory intrinsics (`__pvm_load_*`, `__pvm_store_*`) are lowered
 /// inline and don't use the calling convention.
 ///
 /// Regression test for the `is_real_call()` fix: before this fix, ALL functions
@@ -1132,8 +1132,8 @@ fn test_memory_only_function_is_leaf() {
 
 // ── Entry Return Convention (packed i64) ──
 
-/// Entry function returning packed i64 emits ShloR64 + AddImm32 + Add64
-/// to unpack pointer and length into r7/r8.
+/// Entry function returning packed `i64` emits `ShloR64` + `AddImm32` + `Add64`
+/// to unpack pointer and length into `r7`/`r8`.
 #[test]
 fn test_entry_return_packed_i64() {
     let program = compile_wat(

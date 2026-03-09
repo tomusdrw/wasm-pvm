@@ -2502,7 +2502,7 @@ fn test_xnor() {
 
 /// `select` with an inverted condition (`i32.eqz`) should emit `CmovIz` register form.
 /// Note: LLVM may fold `select(icmp eq x, 0, tv, fv)` to `select(x, fv, tv)`, so we
-/// accept either CmovIz (if pattern detected) or CmovNz (if LLVM inverted it).
+/// accept either `CmovIz` (if pattern detected) or `CmovNz` (if LLVM inverted it).
 #[test]
 fn test_cmov_iz_register() {
     let wat = r#"
