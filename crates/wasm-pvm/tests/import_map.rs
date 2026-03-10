@@ -81,10 +81,10 @@ fn test_import_map_unresolved_import_fails() {
 
 #[test]
 fn test_import_map_host_call_not_required() {
-    // host_call and pvm_ptr are known intrinsics and don't need to be in the map.
+    // host_call_N and pvm_ptr are known intrinsics and don't need to be in the map.
     let wat = r#"
         (module
-            (import "env" "host_call" (func $host_call (param i64 i64)))
+            (import "env" "host_call_1" (func $host_call_1 (param i64 i64) (result i64)))
             (import "env" "pvm_ptr" (func $pvm_ptr (param i64) (result i64)))
             (import "env" "abort" (func $abort (param i32 i32 i32 i32)))
             (memory (export "memory") 1)
