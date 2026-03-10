@@ -51,6 +51,10 @@ pub const FIRST_LOCAL_REG: u8 = 9;
 /// Number of registers dedicated to local variables (r9-r12).
 pub const MAX_LOCAL_REGS: usize = 4;
 
+/// Maximum number of data registers for `host_call_N` imports (r7-r12).
+/// This is the hard ceiling: r7 (`RETURN_VALUE_REG`) through r12 = 6 registers.
+pub const MAX_HOST_CALL_DATA_ARGS: u8 = 6;
+
 // ── Stack Frame Layout ──
 
 /// Maximum stack frame header size in bytes (used as default when shrink wrapping is disabled).

@@ -125,7 +125,7 @@ fn is_known_intrinsic(name: &str) -> bool {
         // host_call_0..6 or host_call_0b..6b
         let digits = suffix.strip_suffix('b').unwrap_or(suffix);
         if let Ok(n) = digits.parse::<u8>() {
-            return n <= 6;
+            return n <= crate::abi::MAX_HOST_CALL_DATA_ARGS;
         }
     }
     false
