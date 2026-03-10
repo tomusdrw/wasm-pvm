@@ -40,7 +40,7 @@ cd tests && bun run test:differential
 ## Test Organization
 
 - **Integration tests**: `tests/layer{1,2,3}/*.test.ts` — each file calls `defineSuite()` with hex args (little-endian)
-- **Rust unit tests**: `crates/wasm-pvm/tests/` — operator coverage, emitter units, stack spill, property tests
+- **Rust integration tests**: `crates/wasm-pvm/tests/` — operator coverage, emitter units, stack spill, property tests (true unit tests live inline under `#[cfg(test)]` in source files)
 - **Differential tests**: `tests/differential/differential.test.ts` — verifies PVM output matches Bun's WebAssembly engine
 - **PVM-in-PVM tests**: Layers 4-5 — the anan-as PVM interpreter compiled to PVM, running test programs inside
 

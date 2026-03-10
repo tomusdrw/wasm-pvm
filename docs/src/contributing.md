@@ -20,19 +20,19 @@ Contributions are welcome! This page covers coding conventions, project structur
 
 | Task | Location |
 |------|----------|
-| Add WASM operator | `llvm_frontend/function_builder.rs` |
-| Add PVM lowering (arithmetic) | `llvm_backend/alu.rs` |
-| Add PVM lowering (memory) | `llvm_backend/memory.rs` |
-| Add PVM lowering (control flow) | `llvm_backend/control_flow.rs` |
-| Add PVM lowering (calls) | `llvm_backend/calls.rs` |
-| Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` |
-| Modify emitter core | `llvm_backend/emitter.rs` |
-| Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` |
-| Modify register allocator | `llvm_backend/regalloc.rs` |
-| Modify peephole optimizer | `pvm/peephole.rs` |
-| Fix WASM parsing | `translate/wasm_module.rs` |
-| Fix compilation pipeline | `translate/mod.rs` |
-| Fix adapter merge | `translate/adapter_merge.rs` |
+| Add WASM operator | `crates/wasm-pvm/src/llvm_frontend/function_builder.rs` |
+| Add PVM lowering (arithmetic) | `crates/wasm-pvm/src/llvm_backend/alu.rs` |
+| Add PVM lowering (memory) | `crates/wasm-pvm/src/llvm_backend/memory.rs` |
+| Add PVM lowering (control flow) | `crates/wasm-pvm/src/llvm_backend/control_flow.rs` |
+| Add PVM lowering (calls) | `crates/wasm-pvm/src/llvm_backend/calls.rs` |
+| Add PVM lowering (intrinsics) | `crates/wasm-pvm/src/llvm_backend/intrinsics.rs` |
+| Modify emitter core | `crates/wasm-pvm/src/llvm_backend/emitter.rs` |
+| Add PVM instruction | `crates/wasm-pvm/src/pvm/opcode.rs` + `crates/wasm-pvm/src/pvm/instruction.rs` |
+| Modify register allocator | `crates/wasm-pvm/src/llvm_backend/regalloc.rs` |
+| Modify peephole optimizer | `crates/wasm-pvm/src/pvm/peephole.rs` |
+| Fix WASM parsing | `crates/wasm-pvm/src/translate/wasm_module.rs` |
+| Fix compilation pipeline | `crates/wasm-pvm/src/translate/mod.rs` |
+| Fix adapter merge | `crates/wasm-pvm/src/translate/adapter_merge.rs` |
 | Add integration test | `tests/layer{1,2,3}/*.test.ts` |
 
 ## Anti-Patterns (Forbidden)
