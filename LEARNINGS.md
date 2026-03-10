@@ -48,6 +48,10 @@ AssemblyScript uses a `writeResult(val: i32): i64` helper that stores the value 
 
 ---
 
+### PVM Branch Operand Convention
+
+Two-register branch instructions use **reversed operand order**: `Branch_op { reg1: a, reg2: b }` branches when `reg2 op reg1` (i.e., `b op a`). For example, `BranchLtU { reg1: 3, reg2: 2 }` branches when `reg[2] < reg[3]`. This matches the Gray Paper where `branch_lt_u(rA, rB)` branches when `ω_rB < ω_rA`. In the encoding, `reg1` = high nibble (rA), `reg2` = low nibble (rB). Immediate-form branches are straightforward: `BranchLtUImm { reg, value }` branches when `reg < value`.
+
 ### PVM Memory Layout Optimization
 
 - **Globals only occupy the bytes they actually need**: the compiler now tracks `globals_region_size = (num_globals + 1 + num_passive_segments) * 4` bytes and places the heap immediately after that region instead of reserving a full 64KB block. This keeps the RW data blob limited to real globals/passive-length fields plus active data segments.

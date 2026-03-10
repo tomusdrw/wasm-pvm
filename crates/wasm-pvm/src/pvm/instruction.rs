@@ -270,6 +270,11 @@ pub enum Instruction {
         dst: u8,
         src: u8,
     },
+    /// Two-register branch instructions use **reversed operand order**:
+    /// `Branch_op { reg1: a, reg2: b }` branches when `reg2 op reg1` (i.e., `b op a`).
+    ///
+    /// This matches the PVM spec where `branch_lt_u(rA, rB)` branches when `ω_rB < ω_rA`.
+    /// In the encoding, `reg1` occupies the high nibble (rA) and `reg2` the low nibble (rB).
     BranchEq {
         reg1: u8,
         reg2: u8,

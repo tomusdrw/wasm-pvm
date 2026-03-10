@@ -91,6 +91,18 @@ pub fn dest_reg(&self) -> Option<u8> {
 | Build program blob | `blob.rs:ProgramBlob::with_jump_table()` |
 | Variable int encoding | `blob.rs:encode_var_u32()` |
 
+## Branch Operand Convention (Important!)
+
+Two-register branch instructions use **reversed operand order**:
+`Branch_op { reg1: a, reg2: b }` branches when `reg2 op reg1` (i.e., `b op a`).
+
+For example, `BranchLtU { reg1: 3, reg2: 2 }` branches when `reg[2] < reg[3]`, NOT `reg[3] < reg[2]`.
+
+This matches the PVM spec where `branch_lt_u(rA, rB)` branches when `ω_rB < ω_rA`.
+In the binary encoding, `reg1` = high nibble (rA), `reg2` = low nibble (rB).
+
+**Immediate-form branches** are straightforward: `BranchLtUImm { reg, value }` branches when `reg < value`.
+
 ## Anti-Patterns
 
 1. **Don't change opcode numbers** - Would break existing JAM files
