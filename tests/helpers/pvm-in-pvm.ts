@@ -126,22 +126,37 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
   const resultBuffer =
     resultHex.length > 0 ? Buffer.from(resultHex, "hex") : Buffer.alloc(0);
 
-  // Minimum: status(1) + exitCode(4) + gas(8) + pc(4) = 17 bytes
-  if (resultBuffer.length < 17) {
+  // Short results: status(1) + exitCode(4) = 5 bytes (PANIC, FAULT, OOG, HOST)
+  // Full results: status(1) + exitCode(4) + gas(8) + pc(4) + data = 17+ bytes (HALT)
+  if (resultBuffer.length < 5) {
     const gasMatch = stdout.match(/Gas remaining:\s*(\d+)/);
     const pcMatch = stdout.match(/Program counter:\s*(\d+)/);
     const regsMatch = stdout.match(/Registers:\s*\[([^\]]*)\]/);
     throw new Error(
-      `Result too short (${resultBuffer.length} bytes, need >= 17): 0x${resultHex}\n` +
+      `Result too short (${resultBuffer.length} bytes, need >= 5): 0x${resultHex}\n` +
         `Outer status=${outerStatus}, gas=${gasMatch?.[1] ?? "?"}, pc=${pcMatch?.[1] ?? "?"}\n` +
         `Registers: ${regsMatch?.[1] ?? "?"}\n` +
         `Full output (first 1000 chars): ${stdout.substring(0, 1000)}`,
     );
   }
 
+  const status = resultBuffer.readUInt8(0);
+  const exitCode = resultBuffer.readUInt32LE(1);
+
+  // Short result for non-HALT statuses
+  if (resultBuffer.length < 17) {
+    return {
+      status,
+      exitCode,
+      gasLeft: 0n,
+      pc: 0,
+      resultBytes: Buffer.alloc(0),
+    };
+  }
+
   return {
-    status: resultBuffer.readUInt8(0),
-    exitCode: resultBuffer.readUInt32LE(1),
+    status,
+    exitCode,
     gasLeft: resultBuffer.readBigUInt64LE(5),
     pc: resultBuffer.readUInt32LE(13),
     resultBytes: resultBuffer.subarray(17),
