@@ -200,11 +200,68 @@ fn test_host_call_wrong_arg_count_fails() {
 }
 
 #[test]
-fn test_host_call_6_out_of_range_fails() {
-    // host_call_6 is not a valid variant (max is 5).
+fn test_host_call_6_six_data_args() {
     let wat = r#"
         (module
             (import "env" "host_call_6" (func $host_call_6 (param i64 i64 i64 i64 i64 i64 i64) (result i64)))
+            (func (export "main") (param i32 i32) (result i32)
+                (i32.wrap_i64 (call $host_call_6
+                    (i64.const 7)
+                    (i64.const 1) (i64.const 2) (i64.const 3) (i64.const 4) (i64.const 5) (i64.const 6)))
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("Failed to compile");
+    let instructions = extract_instructions(&program);
+
+    assert!(has_opcode(&instructions, Opcode::Ecalli));
+    assert_has_pattern(
+        &instructions,
+        &[InstructionPattern::Ecalli {
+            index: Pat::Exact(7),
+        }],
+    );
+}
+
+#[test]
+fn test_host_call_6b_captures_r8() {
+    let wat = r#"
+        (module
+            (import "env" "host_call_6b" (func $host_call_6b (param i64 i64 i64 i64 i64 i64 i64) (result i64)))
+            (import "env" "host_call_r8" (func $host_call_r8 (result i64)))
+            (func (export "main") (param i32 i32) (result i32)
+                (drop (call $host_call_6b
+                    (i64.const 7)
+                    (i64.const 1) (i64.const 2) (i64.const 3) (i64.const 4) (i64.const 5) (i64.const 6)))
+                (i32.wrap_i64 (call $host_call_r8))
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("Failed to compile");
+    let instructions = extract_instructions(&program);
+    assert!(has_opcode(&instructions, Opcode::Ecalli));
+    // StoreIndU64 after Ecalli for r8 capture.
+    let ecalli_pos = instructions
+        .iter()
+        .position(|i| matches!(i, wasm_pvm::pvm::Instruction::Ecalli { .. }))
+        .expect("Ecalli not found");
+    assert!(
+        matches!(
+            instructions[ecalli_pos + 1],
+            wasm_pvm::pvm::Instruction::StoreIndU64 { .. }
+        ),
+        "Expected StoreIndU64 after Ecalli for r8 capture"
+    );
+}
+
+#[test]
+fn test_host_call_7_out_of_range_fails() {
+    // host_call_7 is not a valid variant (max is 6).
+    let wat = r#"
+        (module
+            (import "env" "host_call_7" (func $host_call_7 (param i64 i64 i64 i64 i64 i64 i64 i64) (result i64)))
             (func (export "main") (param i32 i32) (result i32)
                 (i32.const 0)
             )
@@ -215,7 +272,7 @@ fn test_host_call_6_out_of_range_fails() {
     let result = wasm_pvm::compile(&wasm);
     assert!(
         result.is_err(),
-        "host_call_6 should be rejected as unresolved import"
+        "host_call_7 should be rejected as unresolved import"
     );
 }
 
