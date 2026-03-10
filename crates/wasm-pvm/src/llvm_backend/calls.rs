@@ -134,10 +134,10 @@ pub fn lower_import_call<'ctx>(
         .map(String::as_str);
 
     // Match host_call variants: host_call_0..5, host_call_Nb, host_call_r8
-    if let Some(name) = import_name {
-        if let Some(variant) = parse_host_call_variant(name) {
-            return lower_host_call_variant(e, instr, has_return, variant);
-        }
+    if let Some(name) = import_name
+        && let Some(variant) = parse_host_call_variant(name)
+    {
+        return lower_host_call_variant(e, instr, has_return, variant);
     }
 
     if import_name == Some("pvm_ptr") {
@@ -223,6 +223,7 @@ fn lower_mapped_import<'ctx>(
 }
 
 /// Host call variant descriptor parsed from import name.
+#[derive(Clone, Copy)]
 enum HostCallVariant {
     /// `host_call_N` — exactly N data args (r7..r7+N-1), always returns r7.
     Typed { data_args: u8 },
@@ -239,18 +240,17 @@ fn parse_host_call_variant(name: &str) -> Option<HostCallVariant> {
     }
     if let Some(suffix) = name.strip_prefix("host_call_") {
         // host_call_2b → TypedWithR8 { data_args: 2 }
-        if let Some(digits) = suffix.strip_suffix('b') {
-            if let Ok(n) = digits.parse::<u8>() {
-                if n <= 5 {
-                    return Some(HostCallVariant::TypedWithR8 { data_args: n });
-                }
-            }
+        if let Some(digits) = suffix.strip_suffix('b')
+            && let Ok(n) = digits.parse::<u8>()
+            && n <= 5
+        {
+            return Some(HostCallVariant::TypedWithR8 { data_args: n });
         }
         // host_call_3 → Typed { data_args: 3 }
-        if let Ok(n) = suffix.parse::<u8>() {
-            if n <= 5 {
-                return Some(HostCallVariant::Typed { data_args: n });
-            }
+        if let Ok(n) = suffix.parse::<u8>()
+            && n <= 5
+        {
+            return Some(HostCallVariant::Typed { data_args: n });
         }
     }
     None
@@ -272,7 +272,7 @@ fn lower_host_call_variant<'ctx>(
     }
 }
 
-/// Extract ecalli index from the first operand of a host_call instruction.
+/// Extract ecalli index from the first operand of a `host_call_N` instruction.
 fn extract_ecalli_index(instr: InstructionValue<'_>) -> Result<u32> {
     let first_arg = get_operand(instr, 0)?;
     let ecalli_index = match first_arg {
@@ -294,7 +294,7 @@ fn extract_ecalli_index(instr: InstructionValue<'_>) -> Result<u32> {
     })
 }
 
-/// Emit an `ecalli` for typed host_call variants (`host_call_0` through `host_call_5`).
+/// Emit an `ecalli` for typed `host_call_N` variants (`host_call_0` through `host_call_5`).
 ///
 /// Convention: `host_call_N(ecalli_index, r7, r8, ..., r7+N-1) -> i64`
 /// Always returns r7. If `capture_r8` is true, also saves r8 to the capture slot.

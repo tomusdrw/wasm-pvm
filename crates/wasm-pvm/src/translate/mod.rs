@@ -116,7 +116,7 @@ pub struct IndirectCallFixup {
 /// `RO_DATA` region size is 64KB (0x10000 to 0x1FFFF)
 const RO_DATA_SIZE: usize = 64 * 1024;
 
-/// Check if an import name is a known compiler intrinsic (host_call variants, pvm_ptr).
+/// Check if an import name is a known compiler intrinsic (`host_call_N` variants, `pvm_ptr`).
 fn is_known_intrinsic(name: &str) -> bool {
     if name == "pvm_ptr" || name == "host_call_r8" {
         return true;
