@@ -111,20 +111,41 @@ crates/
 │       │   ├── calls.rs         # Direct/indirect calls, import stubs (~190 lines)
 │       │   ├── intrinsics.rs    # PVM + LLVM intrinsic lowering (~440 lines)
 │       │   └── regalloc.rs      # Linear-scan register allocator (callee-saved regs, loop-focused) (~360 lines)
-│       ├── translate/     # Compilation orchestration
+│       ├── translate/     # Compilation orchestration (feature = "compiler")
 │       │   ├── mod.rs     (pipeline dispatch + SPI assembly)
 │       │   ├── adapter_merge.rs (WAT adapter merge into WASM before compilation)
-│       │   ├── wasm_module.rs (WASM section parsing)
-│       │   └── memory_layout.rs (PVM memory address constants)
-│       ├── pvm/           # PVM instruction definitions
+│       │   └── wasm_module.rs (WASM section parsing)
+│       ├── pvm/           # PVM instruction definitions (always available)
 │       │   ├── instruction.rs  # Instruction enum + encode/decode helpers
 │       │   ├── opcode.rs       # Opcode constants
 │       │   ├── blob.rs         # Program blob format
-│       │   └── peephole.rs     # Post-codegen peephole optimizer
-│       ├── spi.rs         # JAM/SPI format encoder
+│       │   └── peephole.rs     # Post-codegen peephole optimizer (feature = "compiler")
+│       ├── memory_layout.rs  # PVM memory address constants (always available)
+│       ├── spi.rs         # JAM/SPI format encoder (always available)
 │       └── error.rs       # Error types (thiserror)
 └── wasm-pvm-cli/          # CLI binary
     └── src/main.rs
+```
+
+---
+
+## Crate Features
+
+The `wasm-pvm` crate uses feature flags to allow lightweight downstream usage without the full compiler toolchain (inkwell/LLVM).
+
+| Feature | Default | What it enables |
+|---------|---------|-----------------|
+| `compiler` | Yes | Full WASM-to-PVM compiler (`llvm_frontend`, `llvm_backend`, `translate` modules, `inkwell`/`wasmparser`/`wasm-encoder` deps) |
+| `test-harness` | Yes | Test utilities (implies `compiler`) |
+
+**Without `compiler`** (i.e., `default-features = false`), only PVM types are available: `Instruction`, `Opcode`, `ProgramBlob`, `SpiProgram`, `abi::*`, `memory_layout::*`, and `Error` (without the `WasmParse` variant). This configuration compiles to `wasm32-unknown-unknown`.
+
+```toml
+# Full compiler (default)
+wasm-pvm = "0.5.2"
+
+# PVM types only (no LLVM dependency, WASM-compatible)
+wasm-pvm = { version = "0.5.2", default-features = false }
 ```
 
 ---

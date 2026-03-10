@@ -7,7 +7,7 @@
 
 pub mod adapter_merge;
 pub mod dead_function_elimination;
-pub mod memory_layout;
+pub use crate::memory_layout;
 pub mod wasm_module;
 
 use std::collections::HashMap;

@@ -1,5 +1,6 @@
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[cfg(feature = "compiler")]
     #[error("WASM parsing error: {0}")]
     WasmParse(#[from] wasmparser::BinaryReaderError),
 

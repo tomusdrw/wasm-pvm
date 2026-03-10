@@ -5,10 +5,15 @@
 
 pub mod abi;
 pub mod error;
-pub mod llvm_backend;
-pub mod llvm_frontend;
+pub mod memory_layout;
 pub mod pvm;
 pub mod spi;
+
+#[cfg(feature = "compiler")]
+pub mod llvm_backend;
+#[cfg(feature = "compiler")]
+pub mod llvm_frontend;
+#[cfg(feature = "compiler")]
 pub mod translate;
 
 /// Test harness module for writing unit and integration tests.
@@ -21,6 +26,8 @@ pub mod test_harness;
 pub use error::{Error, Result};
 pub use pvm::{Instruction, Opcode, ProgramBlob};
 pub use spi::SpiProgram;
+
+#[cfg(feature = "compiler")]
 pub use translate::{
     CompileOptions, ImportAction, OptimizationFlags, compile, compile_with_options,
 };
