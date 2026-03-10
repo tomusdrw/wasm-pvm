@@ -264,9 +264,7 @@ fn lower_host_call_variant<'ctx>(
     variant: HostCallVariant,
 ) -> Result<()> {
     match variant {
-        HostCallVariant::Typed { data_args } => {
-            lower_host_call_typed(e, instr, data_args, false)
-        }
+        HostCallVariant::Typed { data_args } => lower_host_call_typed(e, instr, data_args, false),
         HostCallVariant::TypedWithR8 { data_args } => {
             lower_host_call_typed(e, instr, data_args, true)
         }
