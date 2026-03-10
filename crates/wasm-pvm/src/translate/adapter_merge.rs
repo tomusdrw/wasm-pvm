@@ -1169,7 +1169,7 @@ mod tests {
     fn test_merge_with_adapter_imports() {
         let main_wat = r#"
             (module
-                (import "env" "host_call" (func $host_call (param i64 i64 i64 i64 i64 i64)))
+                (import "env" "host_call_5" (func $host_call_5 (param i64 i64 i64 i64 i64 i64) (result i64)))
                 (import "env" "console.log" (func $log (param i32)))
                 (memory (export "memory") 1)
                 (func (export "main") (param i32 i32) (result i32)
@@ -1180,12 +1180,12 @@ mod tests {
         "#;
         let adapter_wat = r#"
             (module
-                (import "env" "host_call" (func $host_call (param i64 i64 i64 i64 i64 i64)))
+                (import "env" "host_call_5" (func $host_call_5 (param i64 i64 i64 i64 i64 i64) (result i64)))
                 (func (export "console.log") (param i32)
-                    (call $host_call
+                    (drop (call $host_call_5
                         (i64.const 3)
                         (i64.extend_i32_u (local.get 0))
-                        (i64.const 0) (i64.const 0) (i64.const 0) (i64.const 0))
+                        (i64.const 0) (i64.const 0) (i64.const 0) (i64.const 0)))
                 )
             )
         "#;
@@ -1196,10 +1196,10 @@ mod tests {
         wasmparser::validate(&merged).expect("merged module should be valid");
 
         let merged_mod = ParsedModule::parse(&merged, "merged").expect("parse merged");
-        // host_call is retained from main + host_call from adapter = 2 imports
+        // host_call_5 is retained from main + host_call_5 from adapter = 2 imports
         assert_eq!(
             merged_mod.num_imported_funcs, 2,
-            "host_call retained from main + adapter"
+            "host_call_5 retained from main + adapter"
         );
         // console.log is resolved, so 2 local funcs: adapter's console.log body + main
         assert_eq!(merged_mod.func_type_indices.len(), 2);
@@ -1305,7 +1305,7 @@ mod tests {
         // Only resolve one of two imports.
         let main_wat = r#"
             (module
-                (import "env" "host_call" (func $host_call (param i64 i64 i64 i64 i64 i64)))
+                (import "env" "host_call_5" (func $host_call_5 (param i64 i64 i64 i64 i64 i64) (result i64)))
                 (import "env" "abort" (func $abort (param i32 i32 i32 i32)))
                 (memory (export "memory") 1)
                 (func (export "main") (param i32 i32) (result i32)
@@ -1327,9 +1327,9 @@ mod tests {
         wasmparser::validate(&merged).expect("merged module should be valid");
 
         let merged_mod = ParsedModule::parse(&merged, "merged").expect("parse merged");
-        // host_call is retained.
+        // host_call_5 is retained.
         assert_eq!(merged_mod.num_imported_funcs, 1);
-        assert_eq!(merged_mod.func_imports[0].name, "host_call");
+        assert_eq!(merged_mod.func_imports[0].name, "host_call_5");
     }
 
     #[test]

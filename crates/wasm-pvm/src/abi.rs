@@ -73,6 +73,10 @@ pub const FRAME_HEADER_SIZE: i32 = 40;
 /// Spilled operand stack values are stored at `SP + OPERAND_SPILL_BASE + slot*8`.
 pub const OPERAND_SPILL_BASE: i32 = -0x100;
 
+/// Stack offset for capturing r8 after `host_call_*b` variants (relative to SP).
+/// Used by `host_call_r8` to retrieve the captured value.
+pub const R8_CAPTURE_SLOT_OFFSET: i32 = -0x108;
+
 // ── Memory Layout ──
 
 // Re-export memory layout constants from the translate module for now.
