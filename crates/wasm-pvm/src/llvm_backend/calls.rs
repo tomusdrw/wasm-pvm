@@ -242,13 +242,13 @@ fn parse_host_call_variant(name: &str) -> Option<HostCallVariant> {
         // host_call_2b → TypedWithR8 { data_args: 2 }
         if let Some(digits) = suffix.strip_suffix('b')
             && let Ok(n) = digits.parse::<u8>()
-            && n <= 5
+            && n <= abi::MAX_HOST_CALL_DATA_ARGS
         {
             return Some(HostCallVariant::TypedWithR8 { data_args: n });
         }
         // host_call_3 → Typed { data_args: 3 }
         if let Ok(n) = suffix.parse::<u8>()
-            && n <= 5
+            && n <= abi::MAX_HOST_CALL_DATA_ARGS
         {
             return Some(HostCallVariant::Typed { data_args: n });
         }
@@ -307,7 +307,7 @@ fn extract_ecalli_index(instr: InstructionValue<'_>) -> Result<u32> {
     })
 }
 
-/// Emit an `ecalli` for typed `host_call_N` variants (`host_call_0` through `host_call_5`).
+/// Emit an `ecalli` for typed `host_call_N` variants (`host_call_0` through `host_call_6`).
 ///
 /// Convention: `host_call_N(ecalli_index, r7, r8, ..., r7+N-1) -> i64`
 /// Always returns r7. If `capture_r8` is true, also saves r8 to the capture slot.

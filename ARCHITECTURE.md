@@ -226,8 +226,8 @@ The indirect call sequence:
 
 ### `host_call_N(ecalli_index, r7, ..., r7+N-1) -> i64` → `ecalli`
 
-A family of typed host call imports where `N` (0–5) indicates the number of data
-arguments loaded into r7–r11. The first argument must be a compile-time constant
+A family of typed host call imports where `N` (0–6) indicates the number of data
+arguments loaded into r7–r12. The first argument must be a compile-time constant
 (the ecalli index). All variants return r7 as an i64.
 
 | Import | Params | Registers set |
@@ -238,6 +238,7 @@ arguments loaded into r7–r11. The first argument must be a compile-time consta
 | `host_call_3` | `(i64 i64 i64 i64)` | r7-r9 |
 | `host_call_4` | `(i64 i64 i64 i64 i64)` | r7-r10 |
 | `host_call_5` | `(i64 i64 i64 i64 i64 i64)` | r7-r11 |
+| `host_call_6` | `(i64 i64 i64 i64 i64 i64 i64)` | r7-r12 |
 
 Example — JIP-1 log call with 5 register args:
 
@@ -262,7 +263,7 @@ stack slot (`R8_CAPTURE_SLOT_OFFSET` relative to SP). Use the companion import
 `host_call_r8() -> i64` (no arguments) to retrieve the captured value. The
 `host_call_r8` call must be in the same function as the preceding `host_call_Nb`.
 
-All `*b` variants (`host_call_0b` through `host_call_5b`) are supported.
+All `*b` variants (`host_call_0b` through `host_call_6b`) are supported.
 
 Example:
 
