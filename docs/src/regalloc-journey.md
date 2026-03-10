@@ -1,5 +1,9 @@
 # Regalloc Cross-Block Propagation Journey
 
+A detailed account of implementing cross-block register allocation propagation — including failed approaches, debugging discoveries, and final results.
+
+---
+
 **Issue**: [#127](https://github.com/tomusdrw/wasm-pvm/issues/127)
 **Branch**: `feature/regalloc-cross-block-propagation`
 **Goal**: Propagate allocated-register state across block boundaries to avoid unnecessary reloads, especially at loop headers.

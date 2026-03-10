@@ -142,7 +142,7 @@ PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost
 
 ## Memory layout summary
 
-The JAM blob reserves separate ranges for RO data, a guard gap, globals/overflow metadata, and the WASM heap; see [`ARCHITECTURE.md`](ARCHITECTURE.md#memory-layout) for the full breakdown, including `GLOBAL_MEMORY_BASE`, `PARAM_OVERFLOW_BASE`, `SPILLED_LOCALS_BASE`, and how `wasm_memory_base` is computed.
+The JAM blob reserves separate ranges for RO data, a guard gap, globals/overflow metadata, and the WASM heap; see the [Architecture docs](docs/src/architecture.md#memory-layout) for the full breakdown, including `GLOBAL_MEMORY_BASE`, `PARAM_OVERFLOW_BASE`, `SPILLED_LOCALS_BASE`, and how `wasm_memory_base` is computed.
 
 The SPI `rw_data` section is simply a contiguous copy of every byte from `GLOBAL_MEMORY_BASE` up to the highest initialized heap address, which is why stub AssemblyScript fixtures such as `decoder-test`/`array-test` emit ~13 KB of RW data even though only a handful of bytes are non-zero: the encoder must preserve the absolute addresses of the data segments, so the zero stretch between globals and the first heap byte is encoded verbatim. Keeping globals/data near the heap base or introducing sparse RW descriptors (future work) are the only ways to shrink those blobs without redesigning SPI.
 
@@ -271,8 +271,7 @@ When both `--imports` and `--adapter` are provided, the adapter runs first, then
 - **[as-lan](https://github.com/tomusdrw/as-lan)** — example AssemblyScript project compiled from WASM to PVM using this tool
 - **[JAM Gray Paper](https://graypaper.com/)** — the JAM protocol specification (PVM is defined in Appendix A)
 - **[AssemblyScript](https://www.assemblyscript.org/)** — TypeScript-like language that compiles to WASM
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** — register conventions, calling convention, stack frame layout, memory map
-- **[LEARNINGS.md](./LEARNINGS.md)** — technical reference and debugging journal
+- **[Documentation Book](docs/src/SUMMARY.md)** — full compiler docs (run `mdbook serve docs` to browse locally)
 
 ## License
 
