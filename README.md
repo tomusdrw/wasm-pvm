@@ -184,16 +184,38 @@ wasm-pvm compile input.wasm -o output.jam \
 
 See the [Import Handling](#import-handling) section for details on resolving WASM imports.
 
+## Using as a Library
+
+The `wasm-pvm` crate can be used as a Rust dependency. It supports two modes:
+
+```toml
+# Full compiler (default) — requires LLVM 18
+wasm-pvm = "0.5.2"
+
+# PVM types only — no LLVM dependency, compiles to wasm32-unknown-unknown
+wasm-pvm = { version = "0.5.2", default-features = false }
+```
+
+With `default-features = false`, only the PVM type definitions are available: `Instruction`, `Opcode`, `ProgramBlob`, `SpiProgram`, `abi::*`, `memory_layout::*`, and `Error`. This is useful for downstream tools that need to work with PVM bytecode (interpreters, debuggers, analyzers) without requiring the full LLVM compiler toolchain.
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `compiler` | Yes | Full WASM-to-PVM compiler (inkwell, wasmparser, wasm-encoder) |
+| `test-harness` | Yes | Test utilities for unit testing (implies `compiler`) |
+
 ## Project Structure
 
 ```text
 crates/
-  wasm-pvm/              # Core compiler library
+  wasm-pvm/              # Core library
     src/
-      llvm_frontend/     # WASM → LLVM IR translation
-      llvm_backend/      # LLVM IR → PVM bytecode lowering
-      translate/         # Compilation orchestration & SPI assembly
-      pvm/               # PVM instruction definitions & peephole optimizer
+      pvm/               # PVM instruction definitions (always available)
+      memory_layout.rs   # PVM memory address constants (always available)
+      spi.rs             # JAM/SPI format encoder (always available)
+      abi.rs             # Register & frame layout constants (always available)
+      llvm_frontend/     # WASM → LLVM IR translation (feature = "compiler")
+      llvm_backend/      # LLVM IR → PVM bytecode lowering (feature = "compiler")
+      translate/         # Compilation orchestration & SPI assembly (feature = "compiler")
   wasm-pvm-cli/          # Command-line interface
 tests/                   # 412 integration tests (TypeScript/Bun)
   fixtures/

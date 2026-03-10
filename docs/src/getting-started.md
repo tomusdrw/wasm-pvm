@@ -73,6 +73,32 @@ export function main(args_ptr: i32, args_len: i32): i64 {
 
 Compile via the AssemblyScript compiler to WASM, then use `wasm-pvm-cli` to produce a JAM blob. See the `tests/fixtures/assembly/` directory for more examples.
 
+## Using as a Library
+
+You can use `wasm-pvm` as a Rust dependency in two modes:
+
+### Full compiler (default)
+
+Requires LLVM 18 installed on the system.
+
+```toml
+[dependencies]
+wasm-pvm = "0.5.2"
+```
+
+This gives you access to the full compiler pipeline (`compile()`, `compile_with_options()`) plus all PVM types.
+
+### PVM types only
+
+No LLVM dependency — compiles to any target including `wasm32-unknown-unknown`.
+
+```toml
+[dependencies]
+wasm-pvm = { version = "0.5.2", default-features = false }
+```
+
+Available types: `Instruction`, `Opcode`, `ProgramBlob`, `SpiProgram`, `abi::*`, `memory_layout::*`, and `Error`. This is useful for PVM interpreters, debuggers, and bytecode analyzers that don't need the WASM compiler.
+
 ## Entry Function ABI
 
 All entry functions must use the signature `main(args_ptr: i32, args_len: i32) -> i64`. The i64 return value packs a result pointer (lower 32 bits) and result length (upper 32 bits). The compiler unpacks this into PVM's SPI convention (`r7` = start address, `r8` = end address).
