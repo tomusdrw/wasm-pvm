@@ -257,12 +257,25 @@ fn parse_host_call_variant(name: &str) -> Option<HostCallVariant> {
 }
 
 /// Dispatch to the appropriate host call lowering based on variant.
+///
+/// All typed `host_call_N` variants require `(result i64)` in their WASM signature.
+/// Declaring one without a return type is a signature error.
 fn lower_host_call_variant<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
-    _has_return: bool,
+    has_return: bool,
     variant: HostCallVariant,
 ) -> Result<()> {
+    if !has_return {
+        let name = match variant {
+            HostCallVariant::Typed { data_args } => format!("host_call_{data_args}"),
+            HostCallVariant::TypedWithR8 { data_args } => format!("host_call_{data_args}b"),
+            HostCallVariant::GetR8 => "host_call_r8".to_string(),
+        };
+        return Err(Error::Unsupported(format!(
+            "{name} must be declared with (result i64)"
+        )));
+    }
     match variant {
         HostCallVariant::Typed { data_args } => lower_host_call_typed(e, instr, data_args, false),
         HostCallVariant::TypedWithR8 { data_args } => {

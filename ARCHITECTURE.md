@@ -262,8 +262,7 @@ stack slot (`R8_CAPTURE_SLOT_OFFSET` relative to SP). Use the companion import
 `host_call_r8() -> i64` (no arguments) to retrieve the captured value. The
 `host_call_r8` call must be in the same function as the preceding `host_call_Nb`.
 
-Currently only `host_call_2b` is defined; other `*b` variants (0b–5b) are
-recognized by the compiler and can be used as needed.
+All `*b` variants (`host_call_0b` through `host_call_5b`) are supported.
 
 Example:
 
@@ -271,10 +270,12 @@ Example:
 (import "env" "host_call_2b" (func $host_call_2b (param i64 i64 i64) (result i64)))
 (import "env" "host_call_r8" (func $host_call_r8 (result i64)))
 
-;; Call ecalli 10, passing r7=100 and r8=200. Returns r7.
-(call $host_call_2b (i64.const 10) (i64.const 100) (i64.const 200))
-;; Retrieve r8 set by the host:
-(call $host_call_r8)
+;; Call ecalli 10, passing r7=100 and r8=200.
+;; Store r7 return value, then retrieve r8.
+(local $r7 i64)
+(local $r8 i64)
+(local.set $r7 (call $host_call_2b (i64.const 10) (i64.const 100) (i64.const 200)))
+(local.set $r8 (call $host_call_r8))
 ```
 
 ### `pvm_ptr(wasm_addr) -> pvm_addr`

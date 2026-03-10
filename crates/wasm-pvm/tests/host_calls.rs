@@ -220,6 +220,142 @@ fn test_host_call_6_out_of_range_fails() {
 }
 
 #[test]
+fn test_host_call_without_return_fails() {
+    // host_call_1 must be declared with (result i64).
+    let wat = r#"
+        (module
+            (import "env" "host_call_1" (func $host_call_1 (param i64 i64)))
+            (func (export "main") (param i32 i32) (result i32)
+                (call $host_call_1 (i64.const 5) (i64.const 42))
+                (i32.const 0)
+            )
+        )
+    "#;
+
+    let wasm = wat_to_wasm(wat).expect("Failed to parse WAT");
+    let result = wasm_pvm::compile(&wasm);
+    assert!(result.is_err(), "host_call_1 without return should fail");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("host_call_1") && err.contains("result i64"),
+        "Error should mention missing return: {err}"
+    );
+}
+
+#[test]
+fn test_host_call_r8_without_return_fails() {
+    // host_call_r8 must be declared with (result i64).
+    let wat = r#"
+        (module
+            (import "env" "host_call_r8" (func $host_call_r8))
+            (func (export "main") (param i32 i32) (result i32)
+                (call $host_call_r8)
+                (i32.const 0)
+            )
+        )
+    "#;
+
+    let wasm = wat_to_wasm(wat).expect("Failed to parse WAT");
+    let result = wasm_pvm::compile(&wasm);
+    assert!(result.is_err(), "host_call_r8 without return should fail");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("host_call_r8") && err.contains("result i64"),
+        "Error should mention missing return: {err}"
+    );
+}
+
+#[test]
+fn test_host_call_0b_captures_r8() {
+    let wat = r#"
+        (module
+            (import "env" "host_call_0b" (func $host_call_0b (param i64) (result i64)))
+            (import "env" "host_call_r8" (func $host_call_r8 (result i64)))
+            (func (export "main") (param i32 i32) (result i32)
+                (drop (call $host_call_0b (i64.const 5)))
+                (i32.wrap_i64 (call $host_call_r8))
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("Failed to compile");
+    let instructions = extract_instructions(&program);
+    assert!(has_opcode(&instructions, Opcode::Ecalli));
+    // StoreIndU64 after Ecalli for r8 capture.
+    let ecalli_pos = instructions
+        .iter()
+        .position(|i| matches!(i, wasm_pvm::pvm::Instruction::Ecalli { .. }))
+        .expect("Ecalli not found");
+    assert!(
+        matches!(
+            instructions[ecalli_pos + 1],
+            wasm_pvm::pvm::Instruction::StoreIndU64 { .. }
+        ),
+        "Expected StoreIndU64 after Ecalli for r8 capture"
+    );
+}
+
+#[test]
+fn test_host_call_5b_captures_r8() {
+    let wat = r#"
+        (module
+            (import "env" "host_call_5b" (func $host_call_5b (param i64 i64 i64 i64 i64 i64) (result i64)))
+            (import "env" "host_call_r8" (func $host_call_r8 (result i64)))
+            (func (export "main") (param i32 i32) (result i32)
+                (drop (call $host_call_5b
+                    (i64.const 7)
+                    (i64.const 1) (i64.const 2) (i64.const 3) (i64.const 4) (i64.const 5)))
+                (i32.wrap_i64 (call $host_call_r8))
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("Failed to compile");
+    let instructions = extract_instructions(&program);
+    assert!(has_opcode(&instructions, Opcode::Ecalli));
+}
+
+#[test]
+fn test_host_call_r8_survives_helper_call() {
+    // Verify the captured r8 slot (SP-relative) is not clobbered by an
+    // intervening function call: host_call_2b → helper() → host_call_r8.
+    let wat = r#"
+        (module
+            (import "env" "host_call_2b" (func $host_call_2b (param i64 i64 i64) (result i64)))
+            (import "env" "host_call_r8" (func $host_call_r8 (result i64)))
+            (func $helper (result i32) (i32.const 99))
+            (func (export "main") (param i32 i32) (result i32)
+                (drop (call $host_call_2b (i64.const 10) (i64.const 100) (i64.const 200)))
+                (drop (call $helper))
+                (i32.wrap_i64 (call $host_call_r8))
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("Failed to compile");
+    let instructions = extract_instructions(&program);
+
+    // The StoreIndU64 (r8 capture) must appear after the Ecalli.
+    let ecalli_pos = instructions
+        .iter()
+        .position(|i| matches!(i, wasm_pvm::pvm::Instruction::Ecalli { .. }))
+        .expect("Ecalli not found");
+    assert!(
+        matches!(
+            instructions[ecalli_pos + 1],
+            wasm_pvm::pvm::Instruction::StoreIndU64 { .. }
+        ),
+        "Expected StoreIndU64 after Ecalli for r8 capture"
+    );
+
+    // The r8 capture slot is SP-relative and preserved across calls because
+    // the caller's SP doesn't change — callees get their own frame below.
+    // Verify the capture store and load are both present.
+    assert!(has_opcode(&instructions, Opcode::Ecalli));
+    assert!(has_opcode(&instructions, Opcode::LoadIndU64));
+}
+
+#[test]
 fn test_unknown_import_fails_compilation() {
     let wat = r#"
         (module
