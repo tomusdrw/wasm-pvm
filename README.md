@@ -266,8 +266,10 @@ When both `--imports` and `--adapter` are provided, the adapter runs first, then
 ## Resources
 
 - **[PVM Debugger](https://github.com/fluffylabs/pvm-debugger)** — upload `.jam` files for disassembly, step-by-step execution, and register/gas inspection
+- **[PVM Decompiler](https://github.com/tomusdrw/pvm-decompiler)** — decompile PVM bytecode back to human-readable form
+- **[ananas (anan-as)](https://github.com/tomusdrw/anan-as)** — PVM interpreter written in AssemblyScript, compiled to PVM itself for PVM-in-PVM execution
+- **[as-lan](https://github.com/tomusdrw/as-lan)** — example AssemblyScript project compiled from WASM to PVM using this tool
 - **[JAM Gray Paper](https://graypaper.com/)** — the JAM protocol specification (PVM is defined in Appendix A)
-- **[ananas (anan-as)](https://github.com/tomusdrw/anan-as)** — the reference PVM implementation
 - **[AssemblyScript](https://www.assemblyscript.org/)** — TypeScript-like language that compiles to WASM
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** — register conventions, calling convention, stack frame layout, memory map
 - **[LEARNINGS.md](./LEARNINGS.md)** — technical reference and debugging journal
