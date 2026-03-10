@@ -56,7 +56,7 @@ Skips `LoadImm`/`LoadImm64` when the target register already holds the required 
 
 ## Register Allocation (`--no-register-alloc`)
 
-Linear-scan allocator assigns loop-spanning values to available callee-saved registers (r9-r12). See the [Register Allocation](./regalloc.md) chapter for details.
+Linear-scan allocator assigns frequently-used values (filtered by live-interval analysis and a minimum-use threshold) to available callee-saved registers (r9-r12). Only functions with loops are considered; loop-free functions skip allocation entirely. See the [Register Allocation](./regalloc.md) chapter for details.
 
 ## Dead Function Elimination (`--no-dead-function-elim`)
 

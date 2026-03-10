@@ -11,7 +11,7 @@
 ## Build
 
 ```bash
-git clone https://github.com/fluffylabs/wasm-pvm.git
+git clone https://github.com/tomusdrw/wasm-pvm.git
 cd wasm-pvm
 cargo build --release
 ```

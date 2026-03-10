@@ -14,7 +14,7 @@ console.log = nop   # do nothing, return zero
 
 ## Adapter WAT (`--adapter`)
 
-A WAT module whose exports replace matching imports, enabling arbitrary logic for import resolution (pointer conversion, memory reads, host calls):
+A WAT module whose exported functions replace matching WASM imports, enabling arbitrary logic for import resolution (pointer conversion, memory reads, host calls). Adapters are function-only overlays — tables, memories, globals, and data sections from the adapter are not merged:
 
 ```wat
 (module

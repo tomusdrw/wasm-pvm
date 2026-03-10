@@ -18,7 +18,8 @@ wasm-pvm compile input.wasm -o output.jam \
   --no-llvm-passes --no-peephole --no-register-cache \
   --no-icmp-fusion --no-shrink-wrap --no-dead-store-elim \
   --no-const-prop --no-inline --no-cross-block-cache \
-  --no-register-alloc --no-fallthrough-jumps
+  --no-register-alloc --no-dead-function-elim \
+  --no-fallthrough-jumps
 ```
 
 ## Optimization Flags

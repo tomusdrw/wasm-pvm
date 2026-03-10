@@ -36,7 +36,7 @@ Three optimization phases run sequentially:
 
 ## Stage 4: LLVM IR → PVM Bytecode
 
-**Files**: `crates/wasm-pvm/src/llvm_backend/` (6 modules)
+**Files**: `crates/wasm-pvm/src/llvm_backend/` (7 modules)
 
 A custom Rust backend reads LLVM IR and emits PVM instructions:
 

@@ -8,7 +8,7 @@ src = "src"
 build-dir = "book"
 
 [output.html]
-git-repository-url = "https://github.com/fluffylabs/wasm-pvm"
-edit-url-template = "https://github.com/fluffylabs/wasm-pvm/edit/main/{path}"
+git-repository-url = "https://github.com/tomusdrw/wasm-pvm"
+edit-url-template = "https://github.com/tomusdrw/wasm-pvm/edit/main/{path}"
 default-theme = "rust"
 preferred-dark-theme = "ayu"

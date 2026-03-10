@@ -2,7 +2,7 @@
 
 The translation module orchestrates the end-to-end WASM → LLVM IR → PVM lowering and assembles the final SPI/JAM output.
 
-Source: [`crates/wasm-pvm/src/translate/`](https://github.com/fluffylabs/wasm-pvm/tree/main/crates/wasm-pvm/src/translate)
+Source: `crates/wasm-pvm/src/translate/`
 
 ## Files
 

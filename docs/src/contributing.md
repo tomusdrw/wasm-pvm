@@ -51,7 +51,7 @@ See the [Getting Started](./getting-started.md) and [Testing](./testing.md) chap
 
 After every task or commit, update relevant documentation:
 - `AGENTS.md` — new modules, build process changes, conventions
-- `docs/src/learnings.md` — technical discoveries and debugging insights
-- `docs/src/architecture.md` — ABI or calling convention changes
-- `docs/src/internals/` — module-specific implementation details
-- `docs/src/SUMMARY.md` — when adding new documentation pages
+- [`learnings.md`](./learnings.md) — technical discoveries and debugging insights
+- [`architecture.md`](./architecture.md) — ABI or calling convention changes
+- [`internals/`](./internals/translation.md) — module-specific implementation details
+- [`SUMMARY.md`](./SUMMARY.md) — when adding new documentation pages

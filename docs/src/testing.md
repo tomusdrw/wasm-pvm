@@ -14,11 +14,11 @@ cargo clippy -- -D warnings
 # Full integration tests (builds artifacts first)
 cd tests && bun run test
 
-# Quick validation (Layer 1 only)
-cd tests && bun test layer1/
+# Quick validation (Layer 1 only — requires build first)
+cd tests && bun build.ts && bun test layer1/
 
-# PVM-in-PVM tests
-cd tests && bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"
+# PVM-in-PVM tests (requires build first)
+cd tests && bun build.ts && bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"
 
 # Differential tests (PVM vs native WASM)
 cd tests && bun run test:differential

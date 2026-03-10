@@ -2,7 +2,7 @@
 
 PolkaVM instruction definitions, opcodes, encoding/decoding, and the peephole optimizer.
 
-Source: [`crates/wasm-pvm/src/pvm/`](https://github.com/fluffylabs/wasm-pvm/tree/main/crates/wasm-pvm/src/pvm)
+Source: `crates/wasm-pvm/src/pvm/`
 
 ## Files
 
@@ -87,7 +87,7 @@ pub fn dest_reg(&self) -> Option<u8> {
 
 | Task | Location |
 |------|----------|
-| Add new PVM instruction | `opcode.rs` (add enum variant) + `instruction.rs` (encoding) |
+| Add new PVM instruction | `opcode.rs` (add enum variant) + `instruction.rs` (encoding + decoding) |
 | Change instruction encoding | `instruction.rs:impl Instruction` |
 | Check opcode exists | `opcode.rs` (~100 opcodes defined) |
 | Build program blob | `blob.rs:ProgramBlob::with_jump_table()` |

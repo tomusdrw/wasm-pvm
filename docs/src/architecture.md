@@ -2,7 +2,7 @@
 
 Register assignments, calling convention, stack frame layout, memory layout, and the SPI/JAM program format used by the WASM-to-PVM recompiler.
 
-The canonical source for constants lives in [`abi.rs`](https://github.com/fluffylabs/wasm-pvm/blob/main/crates/wasm-pvm/src/abi.rs) and [`memory_layout.rs`](https://github.com/fluffylabs/wasm-pvm/blob/main/crates/wasm-pvm/src/translate/memory_layout.rs).
+The canonical source for constants lives in `crates/wasm-pvm/src/abi.rs` and `crates/wasm-pvm/src/translate/memory_layout.rs`.
 
 ---
 
@@ -282,9 +282,9 @@ and adding `wasm_memory_base`.
 
 ### Other imports
 
-All other imported functions emit `Trap`. If the import signature has a return
-value, a dummy zero is pushed (dead code after the trap) to keep the stack
-consistent.
+The `abort` import emits `Trap` (unrecoverable error). All other unresolved
+imports cause a compilation error — they must be resolved via `--imports` or
+`--adapter` before compilation succeeds.
 
 ---
 
@@ -439,11 +439,11 @@ where storing one phi value would overwrite a source needed by another phi.
 
 ## References
 
-- [`abi.rs`](https://github.com/fluffylabs/wasm-pvm/blob/main/crates/wasm-pvm/src/abi.rs) — Register and frame constants
-- [`memory_layout.rs`](https://github.com/fluffylabs/wasm-pvm/blob/main/crates/wasm-pvm/src/translate/memory_layout.rs) — Memory address constants
-- [`emitter.rs`](https://github.com/fluffylabs/wasm-pvm/blob/main/crates/wasm-pvm/src/llvm_backend/emitter.rs) — PvmEmitter and value management
-- [`calls.rs`](https://github.com/fluffylabs/wasm-pvm/blob/main/crates/wasm-pvm/src/llvm_backend/calls.rs) — Calling convention implementation
-- [`control_flow.rs`](https://github.com/fluffylabs/wasm-pvm/blob/main/crates/wasm-pvm/src/llvm_backend/control_flow.rs) — Prologue/epilogue/return
-- [`spi.rs`](https://github.com/fluffylabs/wasm-pvm/blob/main/crates/wasm-pvm/src/spi.rs) — JAM/SPI format encoder
+- `crates/wasm-pvm/src/abi.rs` — Register and frame constants
+- `crates/wasm-pvm/src/translate/memory_layout.rs` — Memory address constants
+- `crates/wasm-pvm/src/llvm_backend/emitter.rs` — PvmEmitter and value management
+- `crates/wasm-pvm/src/llvm_backend/calls.rs` — Calling convention implementation
+- `crates/wasm-pvm/src/llvm_backend/control_flow.rs` — Prologue/epilogue/return
+- `crates/wasm-pvm/src/spi.rs` — JAM/SPI format encoder
 - [Technical Reference](./learnings.md) — Technical reference and debugging journal
 - [Gray Paper](https://graypaper.com/) — JAM/PVM specification
