@@ -16,6 +16,7 @@ Source: `crates/wasm-pvm/src/pvm/`
 ## Key Patterns
 
 ### Instruction Encoding
+
 ```rust
 pub enum Instruction {
     Add32 { dst: u8, src1: u8, src2: u8 },
@@ -57,7 +58,9 @@ pub enum Instruction {
 - For formats where the trailing immediate has no explicit length (`OneImm`, `OneRegOneImm`, `TwoRegOneImm`, `TwoImm`, `OneRegTwoImm`, `TwoRegTwoImm`), decode consumes the remaining bytes as that immediate
 
 ### Terminating Instructions
+
 Instructions that end a basic block:
+
 ```rust
 pub fn is_terminating(&self) -> bool {
     matches!(self,
@@ -67,7 +70,9 @@ pub fn is_terminating(&self) -> bool {
 ```
 
 ### Destination Register Query
+
 Used by the register cache in `emitter.rs` to auto-invalidate stale cache entries:
+
 ```rust
 pub fn dest_reg(&self) -> Option<u8> {
     // Returns Some(reg) for instructions that write to a register
@@ -76,6 +81,7 @@ pub fn dest_reg(&self) -> Option<u8> {
 ```
 
 ### Peephole Notes
+
 - Dead-code elimination runs only when a function has no labels (single-block code). Multi-block
   functions skip DCE to avoid incorrect liveness across control flow.
 - DCE must track side-effects for all store variants: `StoreIndU8/U16/U32/U64`, `StoreImmIndU8/U16/U32/U64`, `StoreImmU8/U16/U32/U64`, `StoreU8/U16/U32/U64`

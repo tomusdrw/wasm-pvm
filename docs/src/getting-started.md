@@ -46,7 +46,7 @@ npx @fluffylabs/anan-as run add.jam 0500000007000000
 
 ## Inspect the Output
 
-Upload the resulting `.jam` file to the [PVM Debugger](https://github.com/fluffylabs/pvm-debugger) for step-by-step execution, disassembly, register inspection, and gas metering visualization.
+Upload the resulting `.jam` file to the [PVM Debugger](https://pvm.fluffylabs.dev/) for step-by-step execution, disassembly, register inspection, and gas metering visualization.
 
 ## AssemblyScript Example
 

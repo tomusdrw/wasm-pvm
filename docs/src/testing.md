@@ -67,6 +67,7 @@ Test programs live in `tests/fixtures/`:
 3. Compile anan-as compiler.wasm → compiler.jam (for PVM-in-PVM)
 
 **Important**: Delete cached WASM files before working on fixtures:
+
 ```bash
 rm -f tests/build/wasm/*.wasm
 cd tests && bun build.ts
@@ -75,6 +76,7 @@ cd tests && bun build.ts
 ## Benchmarks
 
 Run `./tests/utils/benchmark.sh` for performance data. For branch comparisons:
+
 ```bash
 ./tests/utils/benchmark.sh --base main --current <branch>
 ```
