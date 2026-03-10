@@ -247,17 +247,17 @@ A WAT module whose exports replace matching imports, enabling arbitrary logic fo
 
 ```wat
 (module
-  (import "env" "host_call" (func $host_call (param i64 i64 i64 i64 i64 i64)))
+  (import "env" "host_call_5" (func $host_call_5 (param i64 i64 i64 i64 i64 i64) (result i64)))
   (import "env" "pvm_ptr" (func $pvm_ptr (param i64) (result i64)))
 
   (func (export "console.log") (param i32)
-    (call $host_call
+    (drop (call $host_call_5
       (i64.const 100)                                    ;; ecalli index
       (i64.const 3)                                      ;; log level
       (i64.const 0) (i64.const 0)                        ;; target ptr/len
       (call $pvm_ptr (i64.extend_i32_u (local.get 0)))   ;; message ptr
       (i64.extend_i32_u (i32.load offset=0
-        (i32.sub (local.get 0) (i32.const 4))))))        ;; message len
+        (i32.sub (local.get 0) (i32.const 4)))))))       ;; message len
 )
 ```
 

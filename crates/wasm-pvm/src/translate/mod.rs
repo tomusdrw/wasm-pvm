@@ -81,7 +81,7 @@ impl Default for OptimizationFlags {
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
     /// Mapping from import function names to actions.
-    /// When provided, all imports (except known intrinsics like `host_call` and `pvm_ptr`)
+    /// When provided, all imports (except known intrinsics like `host_call_N` and `pvm_ptr`)
     /// must have a mapping or compilation will fail with `UnresolvedImport`.
     pub import_map: Option<HashMap<String, ImportAction>>,
     /// WAT source for an adapter module whose exports replace matching main imports.
@@ -116,13 +116,26 @@ pub struct IndirectCallFixup {
 /// `RO_DATA` region size is 64KB (0x10000 to 0x1FFFF)
 const RO_DATA_SIZE: usize = 64 * 1024;
 
+/// Check if an import name is a known compiler intrinsic (host_call variants, pvm_ptr).
+fn is_known_intrinsic(name: &str) -> bool {
+    if name == "pvm_ptr" || name == "host_call_r8" {
+        return true;
+    }
+    if let Some(suffix) = name.strip_prefix("host_call_") {
+        // host_call_0..5 or host_call_0b..5b
+        let digits = suffix.strip_suffix('b').unwrap_or(suffix);
+        if let Ok(n) = digits.parse::<u8>() {
+            return n <= 5;
+        }
+    }
+    false
+}
+
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     compile_with_options(wasm, &CompileOptions::default())
 }
 
 pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<SpiProgram> {
-    // Known intrinsics that don't need import mappings.
-    const KNOWN_INTRINSICS: &[&str] = &["host_call", "pvm_ptr"];
     // Default mappings applied when no explicit import map is provided.
     const DEFAULT_MAPPINGS: &[&str] = &["abort"];
 
@@ -139,7 +152,7 @@ pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<Spi
 
     // Validate that all imports are resolved.
     for name in &module.imported_func_names {
-        if KNOWN_INTRINSICS.contains(&name.as_str()) {
+        if is_known_intrinsic(name) {
             continue;
         }
         if let Some(import_map) = &options.import_map {

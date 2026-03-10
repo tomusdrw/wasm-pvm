@@ -108,9 +108,10 @@ pub fn lower_wasm_call<'ctx>(
 
 /// Emit code for calling an imported function.
 ///
-/// Recognizes special imports (`host_call`, `pvm_ptr`) and emits appropriate
-/// PVM instructions. Uses the import map from `LoweringContext` when available;
-/// otherwise falls back to default behavior (abort → trap, others → nop).
+/// Recognizes special imports (`host_call_N`, `host_call_Nb`, `host_call_r8`,
+/// `pvm_ptr`) and emits appropriate PVM instructions. Uses the import map from
+/// `LoweringContext` when available; otherwise falls back to default behavior
+/// (abort → trap, others → error).
 pub fn lower_import_call<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -132,8 +133,11 @@ pub fn lower_import_call<'ctx>(
         .get(global_func_idx as usize)
         .map(String::as_str);
 
-    if import_name == Some("host_call") {
-        return lower_host_call(e, instr, has_return);
+    // Match host_call variants: host_call_0..5, host_call_Nb, host_call_r8
+    if let Some(name) = import_name {
+        if let Some(variant) = parse_host_call_variant(name) {
+            return lower_host_call_variant(e, instr, has_return, variant);
+        }
     }
 
     if import_name == Some("pvm_ptr") {
@@ -218,73 +222,163 @@ fn lower_mapped_import<'ctx>(
     Ok(())
 }
 
-/// Emit an `ecalli` instruction for the `host_call` gateway import.
-///
-/// Convention: `host_call(ecalli_index, r7, r8, r9, r10, r11)` where the first
-/// argument is a compile-time constant that becomes the `ecalli` immediate, and
-/// remaining arguments are loaded into registers r7-r11.
-fn lower_host_call<'ctx>(
+/// Host call variant descriptor parsed from import name.
+enum HostCallVariant {
+    /// `host_call_N` — exactly N data args (r7..r7+N-1), always returns r7.
+    Typed { data_args: u8 },
+    /// `host_call_Nb` — exactly N data args, returns r7, also captures r8.
+    TypedWithR8 { data_args: u8 },
+    /// `host_call_r8` — no args, returns captured r8 from last `host_call_*b`.
+    GetR8,
+}
+
+/// Parse a host call variant from an import name.
+fn parse_host_call_variant(name: &str) -> Option<HostCallVariant> {
+    if name == "host_call_r8" {
+        return Some(HostCallVariant::GetR8);
+    }
+    if let Some(suffix) = name.strip_prefix("host_call_") {
+        // host_call_2b → TypedWithR8 { data_args: 2 }
+        if let Some(digits) = suffix.strip_suffix('b') {
+            if let Ok(n) = digits.parse::<u8>() {
+                if n <= 5 {
+                    return Some(HostCallVariant::TypedWithR8 { data_args: n });
+                }
+            }
+        }
+        // host_call_3 → Typed { data_args: 3 }
+        if let Ok(n) = suffix.parse::<u8>() {
+            if n <= 5 {
+                return Some(HostCallVariant::Typed { data_args: n });
+            }
+        }
+    }
+    None
+}
+
+/// Dispatch to the appropriate host call lowering based on variant.
+fn lower_host_call_variant<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
-    has_return: bool,
+    _has_return: bool,
+    variant: HostCallVariant,
 ) -> Result<()> {
-    let num_args = (instr.get_num_operands() - 1) as usize;
-    if num_args == 0 {
-        return Err(Error::Unsupported(
-            "host_call requires at least one argument (ecalli index)".into(),
-        ));
+    match variant {
+        HostCallVariant::Typed { data_args } => {
+            lower_host_call_typed(e, instr, data_args, false)
+        }
+        HostCallVariant::TypedWithR8 { data_args } => {
+            lower_host_call_typed(e, instr, data_args, true)
+        }
+        HostCallVariant::GetR8 => lower_host_call_get_r8(e, instr),
     }
+}
 
-    // First argument must be a compile-time constant (ecalli index is an immediate).
+/// Extract ecalli index from the first operand of a host_call instruction.
+fn extract_ecalli_index(instr: InstructionValue<'_>) -> Result<u32> {
     let first_arg = get_operand(instr, 0)?;
     let ecalli_index = match first_arg {
         BasicValueEnum::IntValue(iv) => iv.get_zero_extended_constant().ok_or_else(|| {
             Error::Unsupported(
-                "host_call first argument (ecalli index) must be a compile-time constant".into(),
+                "host_call_N first argument (ecalli index) must be a compile-time constant".into(),
             )
         })?,
         _ => {
             return Err(Error::Unsupported(
-                "host_call first argument must be an integer".into(),
+                "host_call_N first argument must be an integer".into(),
             ));
         }
     };
+    ecalli_index.try_into().map_err(|_| {
+        Error::Unsupported(format!(
+            "host_call_N ecalli index {ecalli_index} exceeds u32 range"
+        ))
+    })
+}
 
-    if num_args > 6 {
+/// Emit an `ecalli` for typed host_call variants (`host_call_0` through `host_call_5`).
+///
+/// Convention: `host_call_N(ecalli_index, r7, r8, ..., r7+N-1) -> i64`
+/// Always returns r7. If `capture_r8` is true, also saves r8 to the capture slot.
+fn lower_host_call_typed<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+    expected_data_args: u8,
+    capture_r8: bool,
+) -> Result<()> {
+    let num_args = (instr.get_num_operands() - 1) as usize;
+
+    // First arg is ecalli index, rest are data args.
+    let expected_total = 1 + expected_data_args as usize;
+    if num_args != expected_total {
         return Err(Error::Unsupported(format!(
-            "host_call supports at most 6 arguments (1 index + 5 data), got {num_args}"
+            "host_call_{}{} requires exactly {} arguments (1 index + {} data), got {num_args}",
+            expected_data_args,
+            if capture_r8 { "b" } else { "" },
+            expected_total,
+            expected_data_args,
         )));
     }
 
-    let ecalli_index: u32 = ecalli_index.try_into().map_err(|_| {
-        Error::Unsupported(format!(
-            "host_call ecalli index {ecalli_index} exceeds u32 range"
-        ))
-    })?;
+    let ecalli_index = extract_ecalli_index(instr)?;
 
-    // Spill register-allocated values before ecalli (r5/r6 are caller-saved).
+    // Spill register-allocated values before ecalli.
     e.spill_allocated_regs()?;
 
-    // Load remaining arguments into r7-r11.
-    for i in 1..num_args.min(6) {
-        let arg = get_operand(instr, i as u32)?;
-        let target_reg = abi::RETURN_VALUE_REG + (i - 1) as u8;
+    // Load data arguments into r7..r7+N-1.
+    for i in 0..expected_data_args as usize {
+        let arg = get_operand(instr, (i + 1) as u32)?;
+        let target_reg = abi::RETURN_VALUE_REG + i as u8;
         e.load_operand(arg, target_reg)?;
     }
 
     e.emit(Instruction::Ecalli {
         index: ecalli_index,
     });
+
+    // Capture r8 before cache clear clobbers register state.
+    if capture_r8 {
+        e.emit(Instruction::StoreIndU64 {
+            base: abi::STACK_PTR_REG,
+            src: abi::ARGS_LEN_REG, // r8
+            offset: abi::R8_CAPTURE_SLOT_OFFSET,
+        });
+    }
+
     // Ecalli clobbers registers externally.
     e.clear_reg_cache();
 
     // Reload register-allocated values after ecalli.
     e.reload_allocated_regs_after_call();
 
-    if has_return {
-        let slot = result_slot(e, instr)?;
-        e.store_to_slot(slot, abi::RETURN_VALUE_REG);
+    // Always store r7 as the return value.
+    let slot = result_slot(e, instr)?;
+    e.store_to_slot(slot, abi::RETURN_VALUE_REG);
+
+    Ok(())
+}
+
+/// Emit code for `host_call_r8`: returns the r8 value captured by the last `host_call_*b`.
+fn lower_host_call_get_r8<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+) -> Result<()> {
+    let num_args = (instr.get_num_operands() - 1) as usize;
+    if num_args != 0 {
+        return Err(Error::Unsupported(format!(
+            "host_call_r8 takes no arguments, got {num_args}"
+        )));
     }
+
+    // Load captured r8 from the well-known stack slot.
+    e.emit(Instruction::LoadIndU64 {
+        dst: TEMP_RESULT,
+        base: abi::STACK_PTR_REG,
+        offset: abi::R8_CAPTURE_SLOT_OFFSET,
+    });
+
+    let slot = result_slot(e, instr)?;
+    e.store_to_slot(slot, TEMP_RESULT);
 
     Ok(())
 }

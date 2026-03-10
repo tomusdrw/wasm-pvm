@@ -224,11 +224,58 @@ The indirect call sequence:
 
 ## Import Calls
 
-### `host_call(ecalli_index, r7, r8, r9, r10, r11)` → `ecalli`
+### `host_call_N(ecalli_index, r7, ..., r7+N-1) -> i64` → `ecalli`
 
-The first argument must be a compile-time constant (the ecalli index). The remaining
-arguments (up to 5) are loaded into r7–r11, and the `Ecalli <index>` instruction
-is emitted. The result is returned in r7.
+A family of typed host call imports where `N` (0–5) indicates the number of data
+arguments loaded into r7–r11. The first argument must be a compile-time constant
+(the ecalli index). All variants return r7 as an i64.
+
+| Import | Params | Registers set |
+|--------|--------|---------------|
+| `host_call_0` | `(i64)` | none |
+| `host_call_1` | `(i64 i64)` | r7 |
+| `host_call_2` | `(i64 i64 i64)` | r7-r8 |
+| `host_call_3` | `(i64 i64 i64 i64)` | r7-r9 |
+| `host_call_4` | `(i64 i64 i64 i64 i64)` | r7-r10 |
+| `host_call_5` | `(i64 i64 i64 i64 i64 i64)` | r7-r11 |
+
+Example — JIP-1 log call with 5 register args:
+
+```wat
+(import "env" "host_call_5" (func $host_call_5 (param i64 i64 i64 i64 i64 i64) (result i64)))
+(import "env" "pvm_ptr" (func $pvm_ptr (param i64) (result i64)))
+
+;; ecalli 100 = log; r7=level, r8=target_ptr, r9=target_len, r10=msg_ptr, r11=msg_len
+(drop (call $host_call_5
+  (i64.const 100)                                  ;; ecalli index
+  (i64.const 3)                                    ;; r7: log level
+  (call $pvm_ptr (i64.const 0))                    ;; r8: target PVM pointer
+  (i64.const 8)                                    ;; r9: target length
+  (call $pvm_ptr (i64.const 8))                    ;; r10: message PVM pointer
+  (i64.const 15)))                                 ;; r11: message length
+```
+
+### `host_call_Nb` — two-register output variants
+
+Same as `host_call_N` but also captures r8 after the `ecalli` to a dedicated
+stack slot (`R8_CAPTURE_SLOT_OFFSET` relative to SP). Use the companion import
+`host_call_r8() -> i64` (no arguments) to retrieve the captured value. The
+`host_call_r8` call must be in the same function as the preceding `host_call_Nb`.
+
+Currently only `host_call_2b` is defined; other `*b` variants (0b–5b) are
+recognized by the compiler and can be used as needed.
+
+Example:
+
+```wat
+(import "env" "host_call_2b" (func $host_call_2b (param i64 i64 i64) (result i64)))
+(import "env" "host_call_r8" (func $host_call_r8 (result i64)))
+
+;; Call ecalli 10, passing r7=100 and r8=200. Returns r7.
+(call $host_call_2b (i64.const 10) (i64.const 100) (i64.const 200))
+;; Retrieve r8 set by the host:
+(call $host_call_r8)
+```
 
 ### `pvm_ptr(wasm_addr) -> pvm_addr`
 

@@ -82,7 +82,7 @@ async function loadWasmBinary(suiteName: string): Promise<Uint8Array | null> {
 /**
  * Check whether a WASM binary has imports that require host functions.
  *
- * Modules with imports (like `host_call`, `pvm_ptr`) cannot be run natively
+ * Modules with imports (like `host_call_N`, `pvm_ptr`) cannot be run natively
  * without providing matching stubs. We skip these in differential testing.
  */
 function hasNonMemoryImports(wasmBinary: Uint8Array): boolean {
