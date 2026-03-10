@@ -1,0 +1,14 @@
+[book]
+title = "WASM-PVM: WebAssembly to PolkaVM Recompiler"
+authors = ["tomusdrw"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/fluffylabs/wasm-pvm"
+edit-url-template = "https://github.com/fluffylabs/wasm-pvm/edit/main/{path}"
+default-theme = "rust"
+preferred-dark-theme = "ayu"

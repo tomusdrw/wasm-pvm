@@ -271,8 +271,7 @@ When both `--imports` and `--adapter` are provided, the adapter runs first, then
 - **[as-lan](https://github.com/tomusdrw/as-lan)** — example AssemblyScript project compiled from WASM to PVM using this tool
 - **[JAM Gray Paper](https://graypaper.com/)** — the JAM protocol specification (PVM is defined in Appendix A)
 - **[AssemblyScript](https://www.assemblyscript.org/)** — TypeScript-like language that compiles to WASM
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** — register conventions, calling convention, stack frame layout, memory map
-- **[LEARNINGS.md](./LEARNINGS.md)** — technical reference and debugging journal
+- **[Documentation Book](docs/src/SUMMARY.md)** — full compiler docs (run `mdbook serve docs` to browse locally)
 
 ## License
 

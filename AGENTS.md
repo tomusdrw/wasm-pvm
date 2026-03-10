@@ -3,7 +3,7 @@
 **Project**: WebAssembly to PolkaVM (PVM) bytecode recompiler
 **Stack**: Rust (core) + TypeScript (tests) + AssemblyScript (examples)
 **Architecture**: `WASM → [inkwell] → LLVM IR → [mem2reg] → [Rust PVM backend] → PVM bytecode`
-**Docs**: `ARCHITECTURE.md` (ABI & calling conventions), `LEARNINGS.md` (tech reference), `gp-0.7.2.md` (PVM spec)
+**Docs**: `docs/src/` (mdbook — run `mdbook serve docs` to browse), `gp-0.7.2.md` (PVM spec)
 
 ---
 
@@ -67,11 +67,14 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 
 **After every task or commit**, update all relevant documentation files:
 - **`AGENTS.md`** — Update if you added new modules, changed the build process, modified memory layout, or changed conventions
-- **`LEARNINGS.md`** — Update with any new technical knowledge discovered (PVM behaviors, WASM edge cases, compiler quirks, external specs like JIP-1)
-- **`ARCHITECTURE.md`** — Update if ABI, calling conventions, or SPI format changed
-- **Subdirectory `AGENTS.md` files** (`crates/wasm-pvm/src/translate/AGENTS.md`, `crates/wasm-pvm/src/pvm/AGENTS.md`) — Update if the relevant module's internals changed
+- **`docs/src/learnings.md`** — Update with any new technical knowledge discovered (PVM behaviors, WASM edge cases, compiler quirks, external specs like JIP-1)
+- **`docs/src/architecture.md`** — Update if ABI, calling conventions, or SPI format changed
+- **`docs/src/internals/translation.md`** — Update if translation module internals changed
+- **`docs/src/internals/pvm-instructions.md`** — Update if PVM instruction encoding changed
 - **`todo.md`** — Mark completed tasks as `[x]`, add new discovered tasks
 - **`README.md` benchmark tables** — If JAM sizes or gas usage changed (e.g. code generation, memory layout, or optimization changes), re-run `./tests/utils/benchmark.sh` and update the two benchmark tables in `README.md` (Optimizations Impact + PVM-in-PVM) with the latest numbers
+
+All documentation lives in `docs/src/` (mdbook). Preview locally with `mdbook serve docs`.
 
 This is not optional. Stale documentation causes repeated mistakes and wasted investigation time.
 
@@ -167,7 +170,7 @@ crates/
 - **Callee-save shrink wrapping**: For non-entry functions, only callee-saved registers (r9-r12) that are actually used are saved/restored in prologue/epilogue. A register is "used" if it receives a parameter, the function contains any real call instruction, or register allocation assigns values to it. Frame header size is dynamic per-function: `8 (ra) + 8 * num_used_callee_regs`.
 - **Configurable optimizations**: All non-trivial optimizations (LLVM passes, peephole, register cache, ICmp+Branch fusion, shrink wrapping) can be disabled via `OptimizationFlags` / CLI `--no-*` flags. All are enabled by default.
 - **Peephole immediate chain fusion**: `LoadImm + AddImm` and chained `AddImm` sequences are fused into single instructions. Self-moves (`MoveReg r, r`) are eliminated. This reduces code size for address calculations and loop induction variables.
-- **Typed host call imports**: A family of `host_call_N` (N=0..6) imports for PVM `ecalli` instructions, where N is the number of data registers (r7..r7+N-1) to set. All take an ecalli index as the first i64 param (compile-time constant) and return r7 as i64. Variants with `b` suffix (e.g. `host_call_2b`) also capture r8 to a stack slot, retrievable via `host_call_r8() -> i64`. See `ARCHITECTURE.md` "Import Calls" for the full reference. Implementation in `llvm_backend/calls.rs`.
+- **Typed host call imports**: A family of `host_call_N` (N=0..6) imports for PVM `ecalli` instructions, where N is the number of data registers (r7..r7+N-1) to set. All take an ecalli index as the first i64 param (compile-time constant) and return r7 as i64. Variants with `b` suffix (e.g. `host_call_2b`) also capture r8 to a stack slot, retrievable via `host_call_r8() -> i64`. See `docs/src/architecture.md` "Import Calls" for the full reference. Implementation in `llvm_backend/calls.rs`.
 
 ---
 
@@ -296,10 +299,16 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 
 ---
 
-## Subdirectory Docs
+## Documentation
 
-- **`crates/wasm-pvm/src/translate/AGENTS.md`** — Translation module details
-- **`crates/wasm-pvm/src/pvm/AGENTS.md`** — PVM instruction encoding
+All docs live in `docs/src/` (mdbook format). Preview locally with `mdbook serve docs`.
+
+Key pages:
+- **`docs/src/architecture.md`** — ABI, calling conventions, memory layout, SPI format
+- **`docs/src/learnings.md`** — Technical reference (LLVM, PVM semantics, optimizations)
+- **`docs/src/internals/translation.md`** — Translation module details
+- **`docs/src/internals/pvm-instructions.md`** — PVM instruction encoding
+- **`docs/src/optimizations.md`** — All optimization flags with descriptions
 
 ---
 
