@@ -82,6 +82,7 @@ benchmark_imports_for() {
 PVM_IN_PVM_BENCHMARKS=(
   "TRAP||0|PiP TRAP"
   "add|0500000007000000|0|PiP add(5,7)"
+  "host-call-log|00000000|0|PiP host-call-log"
   "as-fibonacci|0a000000|0|PiP AS fib(10)"
   "EXT:tests/fixtures/external/jam-sdk-fib.jam|0100000002000000030000000000000000000000|5|PiP JAM-SDK fib(10)"
   "EXT:tests/fixtures/external/jambrains-fib.jam|0100000002000000030000000000000000000000|5|PiP Jambrains fib(10)"
