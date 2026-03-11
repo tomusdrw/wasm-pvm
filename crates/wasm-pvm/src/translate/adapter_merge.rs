@@ -370,15 +370,35 @@ fn build_merged_module(
         }
     }
 
-    // Also carry through adapter func imports as retained.
-    let adapter_import_start = retained_main_imports.len() as u32;
-    let r = retained_main_imports.len() as u32 + adapter.num_imported_funcs;
+    // Build main export map: export name -> main global func index.
+    let main_export_map: HashMap<&str, u32> = main
+        .func_exports
+        .iter()
+        .map(|(name, idx)| (name.as_str(), *idx))
+        .collect();
 
-    // Build adapter import remap: adapter import idx -> merged func idx.
+    // Resolve adapter imports: either against main exports or carry through as retained.
+    let adapter_import_start = retained_main_imports.len() as u32;
     let mut adapter_import_remap: Vec<u32> = Vec::new();
-    for i in 0..adapter.num_imported_funcs {
-        adapter_import_remap.push(adapter_import_start + i);
+    let mut retained_adapter_imports: Vec<&FuncImport> = Vec::new();
+    // Adapter imports resolved against main exports: adapter import idx -> main global func idx.
+    let mut adapter_imports_resolved_to_main: Vec<(u32, u32)> = Vec::new();
+
+    for i in 0..adapter.num_imported_funcs as usize {
+        let imp = &adapter.func_imports[i];
+        if let Some(&main_global_idx) = main_export_map.get(imp.name.as_str()) {
+            // Resolve against main export. Remap will be set later after main_local_base is known.
+            adapter_imports_resolved_to_main.push((i as u32, main_global_idx));
+            adapter_import_remap.push(0); // placeholder, fixed below
+        } else {
+            // Carry through as retained import.
+            let retained_idx = adapter_import_start + retained_adapter_imports.len() as u32;
+            adapter_import_remap.push(retained_idx);
+            retained_adapter_imports.push(imp);
+        }
     }
+
+    let r = adapter_import_start + retained_adapter_imports.len() as u32;
 
     // R = total retained imports count
     let retained_count = r;
@@ -391,6 +411,19 @@ fn build_merged_module(
             // Merged index: retained_count + adapter_local_idx
             main_import_remap[i] = retained_count + adapter_local_idx;
         }
+    }
+
+    // 3b. Fix adapter import remaps for entries resolved against main exports.
+    let main_local_base_tmp = retained_count + adapter_local_count;
+    for (adapter_import_idx, main_global_idx) in &adapter_imports_resolved_to_main {
+        // Convert main global func idx to merged idx using main_func_remap logic.
+        let merged_idx = if (*main_global_idx as usize) < main.num_imported_funcs as usize {
+            main_import_remap[*main_global_idx as usize]
+        } else {
+            let local_idx = *main_global_idx - main.num_imported_funcs;
+            main_local_base_tmp + local_idx
+        };
+        adapter_import_remap[*adapter_import_idx as usize] = merged_idx;
     }
 
     // 4. Build function index remap tables.
@@ -437,7 +470,7 @@ fn build_merged_module(
             wasm_encoder::EntityType::Function(imp.type_idx),
         );
     }
-    for imp in &adapter.func_imports {
+    for imp in &retained_adapter_imports {
         let remapped_type = adapter_type_remap[imp.type_idx as usize];
         import_section.import(
             &imp.module,
