@@ -43,7 +43,10 @@ jobs:
         run: cargo clippy -- -D warnings
 
       - name: Check no-default-features (PVM types only)
-        run: cargo check -p wasm-pvm --no-default-features
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check -p wasm-pvm --no-default-features
+          cargo check -p wasm-pvm --no-default-features --target wasm32-unknown-unknown
 
       - name: Run tests
         run: cargo test
