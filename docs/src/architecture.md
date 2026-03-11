@@ -2,7 +2,7 @@
 
 Register assignments, calling convention, stack frame layout, memory layout, and the SPI/JAM program format used by the WASM-to-PVM recompiler.
 
-The canonical source for constants lives in `crates/wasm-pvm/src/abi.rs` and `crates/wasm-pvm/src/translate/memory_layout.rs`.
+The canonical source for constants lives in `crates/wasm-pvm/src/abi.rs` and `crates/wasm-pvm/src/memory_layout.rs`.
 
 ---
 
@@ -440,7 +440,7 @@ where storing one phi value would overwrite a source needed by another phi.
 ## References
 
 - `crates/wasm-pvm/src/abi.rs` — Register and frame constants
-- `crates/wasm-pvm/src/translate/memory_layout.rs` — Memory address constants
+- `crates/wasm-pvm/src/memory_layout.rs` — Memory address constants
 - `crates/wasm-pvm/src/llvm_backend/emitter.rs` — PvmEmitter and value management
 - `crates/wasm-pvm/src/llvm_backend/calls.rs` — Calling convention implementation
 - `crates/wasm-pvm/src/llvm_backend/control_flow.rs` — Prologue/epilogue/return

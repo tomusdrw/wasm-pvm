@@ -8,14 +8,15 @@ repository.workspace = true
 readme = "../../README.md"
 
 [features]
-default = ["test-harness"]
-test-harness = ["dep:wat"]
+default = ["compiler", "test-harness"]
+compiler = ["dep:inkwell", "dep:wasmparser", "dep:wasm-encoder"]
+test-harness = ["compiler", "dep:wat"]
 
 [dependencies]
-wasm-encoder.workspace = true
-wasmparser.workspace = true
+wasm-encoder = { workspace = true, optional = true }
+wasmparser = { workspace = true, optional = true }
 thiserror.workspace = true
-inkwell.workspace = true
+inkwell = { workspace = true, optional = true }
 tracing.workspace = true
 wat = { workspace = true, optional = true }
 

@@ -83,6 +83,5 @@ pub const R8_CAPTURE_SLOT_OFFSET: i32 = -0x108;
 
 // ── Memory Layout ──
 
-// Re-export memory layout constants from the translate module for now.
-// In a future refactor, we might move the definitions here entirely.
-pub use crate::translate::memory_layout::*;
+// Re-export memory layout constants for convenience.
+pub use crate::memory_layout::*;
