@@ -440,7 +440,7 @@ where storing one phi value would overwrite a source needed by another phi.
 ## References
 
 - `crates/wasm-pvm/src/abi.rs` — Register and frame constants
-- `crates/wasm-pvm/src/translate/memory_layout.rs` — Memory address constants
+- `crates/wasm-pvm/src/memory_layout.rs` — Memory address constants
 - `crates/wasm-pvm/src/llvm_backend/emitter.rs` — PvmEmitter and value management
 - `crates/wasm-pvm/src/llvm_backend/calls.rs` — Calling convention implementation
 - `crates/wasm-pvm/src/llvm_backend/control_flow.rs` — Prologue/epilogue/return
