@@ -246,18 +246,22 @@ function main() {
 /**
  * Build the scratch buffer response for an ecalli entry.
  *
- * Format: [8:new_r7][8:new_r8][4:num_memwrites][per memwrite: 4:addr, 4:len, data]
+ * Format: [8:new_r7][8:new_r8][4:num_memwrites][8:new_gas][per memwrite: 4:addr, 4:len, data]
+ *
+ * new_gas: 0 = no change, nonzero = set inner gas to this value.
+ * Currently the adapter ignores new_gas (TODO #174).
  */
 function buildScratchResponse(entry: EcalliEntry): Uint8Array {
   const newR7 = getNewR7(entry);
   const newR8 = getNewR8(entry);
+  const newGas = getSetGas(entry);
 
   // Calculate total size
   let memwriteDataSize = 0;
   for (const mw of entry.memWrites) {
     memwriteDataSize += 8 + mw.data.length; // 4:addr + 4:len + data
   }
-  const totalSize = 8 + 8 + 4 + memwriteDataSize;
+  const totalSize = 8 + 8 + 4 + 8 + memwriteDataSize;
 
   const buf = new Uint8Array(totalSize);
   const view = new DataView(buf.buffer);
@@ -268,9 +272,11 @@ function buildScratchResponse(entry: EcalliEntry): Uint8Array {
   view.setBigUint64(8, newR8, true);
   // num_memwrites (4 bytes LE)
   view.setUint32(16, entry.memWrites.length, true);
+  // new_gas (8 bytes LE, 0 = no change)
+  view.setBigUint64(20, newGas, true);
 
   // Memwrite entries
-  let offset = 20;
+  let offset = 28;
   for (const mw of entry.memWrites) {
     view.setUint32(offset, mw.address, true);
     view.setUint32(offset + 4, mw.data.length, true);
@@ -295,6 +301,11 @@ function getNewR8(entry: EcalliEntry): bigint {
     if (sr.index === 8) return sr.value;
   }
   return 0n;
+}
+
+/** Extract setGas value (0 = no change) */
+function getSetGas(entry: EcalliEntry): bigint {
+  return entry.setGas ?? 0n;
 }
 
 main();

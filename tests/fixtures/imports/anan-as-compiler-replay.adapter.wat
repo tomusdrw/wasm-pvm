@@ -10,10 +10,14 @@
 ;;   [8: new_r7 (LE i64)]
 ;;   [8: new_r8 (LE i64)]
 ;;   [4: num_memwrites (LE u32)]
+;;   [8: new_gas (LE i64), 0 = no change]
 ;;   For each memwrite:
 ;;     [4: inner_addr (LE u32)]
 ;;     [4: data_len (LE u32)]
 ;;     [data_len: data bytes]
+;;
+;; Scratch page allocation: grows WASM memory once (on first ecalli) and caches
+;; the page address at a fixed sentinel location (WASM addr 0xFFFF0) for reuse.
 (module
   ;; Outer ecalli 0: forward inner ecalli.
   ;; host_call_2(ecalli=0, r7=scratch_pvm_addr, r8=inner_ecalli_idx) -> r7
@@ -43,19 +47,26 @@
     (param $r10 i64) (param $r11 i64) (param $r12 i64)
     (result i64)
 
-    (local $scratch_page i32)
     (local $scratch_addr i32)
+    (local $scratch_page i32)
     (local $num_writes i32)
     (local $offset i32)
     (local $inner_addr i32)
     (local $data_len i32)
 
-    ;; Allocate a fresh memory page for the scratch buffer.
-    ;; This wastes 64KB per ecalli but is acceptable for a debug/replay tool.
-    (local.set $scratch_page (memory.grow (i32.const 1)))
-    (if (i32.eq (local.get $scratch_page) (i32.const -1))
-      (then unreachable))
-    (local.set $scratch_addr (i32.shl (local.get $scratch_page) (i32.const 16)))
+    ;; Allocate scratch page once, reuse on subsequent calls.
+    ;; Sentinel at WASM addr 0xFFFF0 stores the scratch base address.
+    ;; Initial memory is at least 16 pages (1MB), so 0xFFFF0 is safe.
+    (local.set $scratch_addr (i32.load (i32.const 0xFFFF0)))
+    (if (i32.eqz (local.get $scratch_addr))
+      (then
+        (local.set $scratch_page (memory.grow (i32.const 1)))
+        (if (i32.eq (local.get $scratch_page) (i32.const -1))
+          (then unreachable))
+        (local.set $scratch_addr (i32.shl (local.get $scratch_page) (i32.const 16)))
+        (i32.store (i32.const 0xFFFF0) (local.get $scratch_addr))
+      )
+    )
 
     ;; Forward: outer ecalli 0, r7 = scratch PVM addr, r8 = inner ecalli index
     (drop (call $replay_forward
@@ -64,9 +75,14 @@
       (local.get $ecalli)
     ))
 
-    ;; Process memwrites from the scratch buffer
+    ;; Process memwrites from the scratch buffer.
+    ;; Layout: [8:r7][8:r8][4:num_memwrites][8:new_gas][memwrites...]
     (local.set $num_writes (i32.load (i32.add (local.get $scratch_addr) (i32.const 16))))
-    (local.set $offset (i32.add (local.get $scratch_addr) (i32.const 20)))
+    ;; new_gas at offset 20 (8 bytes) — currently ignored by the adapter because
+    ;; the inner interpreter manages its own gas counter. To support setgas,
+    ;; the compiler module would need to export a gas-setter function.
+    ;; TODO(#174): apply setgas when compiler supports it.
+    (local.set $offset (i32.add (local.get $scratch_addr) (i32.const 28)))
 
     (block $done
       (loop $loop

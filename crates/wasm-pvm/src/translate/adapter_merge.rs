@@ -387,6 +387,41 @@ fn build_merged_module(
     for i in 0..adapter.num_imported_funcs as usize {
         let imp = &adapter.func_imports[i];
         if let Some(&main_global_idx) = main_export_map.get(imp.name.as_str()) {
+            // Validate type signatures match.
+            let adapter_type = adapter.types.get(imp.type_idx as usize).ok_or_else(|| {
+                Error::Internal(format!(
+                    "adapter import type index {} out of range",
+                    imp.type_idx
+                ))
+            })?;
+            let main_type_idx = if (main_global_idx as usize) < main.num_imported_funcs as usize {
+                main.func_imports[main_global_idx as usize].type_idx
+            } else {
+                let local_idx = main_global_idx - main.num_imported_funcs;
+                *main.func_type_indices.get(local_idx as usize).ok_or_else(|| {
+                    Error::Internal(format!(
+                        "main local func {local_idx} type index out of range",
+                    ))
+                })?
+            };
+            let main_type = main.types.get(main_type_idx as usize).ok_or_else(|| {
+                Error::Internal(format!(
+                    "main type index {main_type_idx} out of range for func {main_global_idx}",
+                ))
+            })?;
+            if adapter_type.params != main_type.params
+                || adapter_type.results != main_type.results
+            {
+                return Err(Error::Internal(format!(
+                    "type mismatch for adapter import '{}': adapter expects {:?} -> {:?}, main provides {:?} -> {:?}",
+                    imp.name,
+                    adapter_type.params,
+                    adapter_type.results,
+                    main_type.params,
+                    main_type.results
+                )));
+            }
+
             // Resolve against main export. Remap will be set later after main_local_base is known.
             adapter_imports_resolved_to_main.push((i as u32, main_global_idx));
             adapter_import_remap.push(0); // placeholder, fixed below
@@ -1363,6 +1398,126 @@ mod tests {
         // host_call_5 is retained.
         assert_eq!(merged_mod.num_imported_funcs, 1);
         assert_eq!(merged_mod.func_imports[0].name, "host_call_5");
+    }
+
+    #[test]
+    fn test_adapter_import_resolved_from_main_export() {
+        // Adapter imports a function that the main module exports.
+        // This tests the "adapter imports resolved against main exports" path,
+        // used by the replay adapter where the adapter imports host_write_memory
+        // which is exported by the main (compiler) module.
+        let main_wat = r#"
+            (module
+                (import "env" "do_stuff" (func $do_stuff (param i32)))
+                (memory (export "memory") 1)
+                (func (export "helper") (param i32 i32) (result i32)
+                    (i32.add (local.get 0) (local.get 1))
+                )
+                (func (export "main") (param i32 i32) (result i32)
+                    (call $do_stuff (i32.const 1))
+                    (i32.const 0)
+                )
+            )
+        "#;
+        let adapter_wat = r#"
+            (module
+                (import "env" "helper" (func $helper (param i32 i32) (result i32)))
+                (func (export "do_stuff") (param i32)
+                    (drop (call $helper (local.get 0) (i32.const 10)))
+                )
+            )
+        "#;
+
+        let main_wasm = wat::parse_str(main_wat).expect("main WAT parse");
+        let merged = merge_adapter(&main_wasm, adapter_wat).expect("merge");
+
+        wasmparser::validate(&merged).expect("merged module should be valid");
+
+        let merged_mod = ParsedModule::parse(&merged, "merged").expect("parse merged");
+        // do_stuff is resolved by adapter, helper is resolved internally → no imports
+        assert_eq!(
+            merged_mod.num_imported_funcs, 0,
+            "all imports should be resolved"
+        );
+        // 3 local funcs: adapter's do_stuff + main's helper + main's main
+        assert_eq!(merged_mod.func_type_indices.len(), 3);
+    }
+
+    #[test]
+    fn test_adapter_import_from_main_export_type_mismatch() {
+        // Adapter imports a name exported by main but with wrong type → error.
+        let main_wat = r#"
+            (module
+                (import "env" "nop" (func $nop))
+                (memory (export "memory") 1)
+                (func (export "helper") (param i32) (result i32)
+                    (local.get 0)
+                )
+                (func (export "main") (param i32 i32) (result i32)
+                    (i32.const 0)
+                )
+            )
+        "#;
+        let adapter_wat = r#"
+            (module
+                (import "env" "helper" (func $helper (param i64) (result i64)))
+                (func (export "nop")
+                    (drop (call $helper (i64.const 0)))
+                )
+            )
+        "#;
+
+        let main_wasm = wat::parse_str(main_wat).expect("main WAT parse");
+        let result = merge_adapter(&main_wasm, adapter_wat);
+        assert!(result.is_err(), "type mismatch should cause an error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("type mismatch"),
+            "Expected type mismatch error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_adapter_import_from_main_export_with_retained_imports() {
+        // Mix: adapter has imports resolved from main exports AND retained imports.
+        let main_wat = r#"
+            (module
+                (import "env" "do_stuff" (func $do_stuff (param i32)))
+                (memory (export "memory") 1)
+                (func (export "write_mem") (param i32 i32 i32) (result i32)
+                    (i32.const 0)
+                )
+                (func (export "main") (param i32 i32) (result i32)
+                    (call $do_stuff (i32.const 1))
+                    (i32.const 0)
+                )
+            )
+        "#;
+        let adapter_wat = r#"
+            (module
+                (import "env" "host_call_2" (func $hc2 (param i64 i64 i64) (result i64)))
+                (import "env" "write_mem" (func $write_mem (param i32 i32 i32) (result i32)))
+                (func (export "do_stuff") (param i32)
+                    (drop (call $hc2 (i64.const 0) (i64.const 0) (i64.const 0)))
+                    (drop (call $write_mem (i32.const 0) (i32.const 0) (i32.const 4)))
+                )
+            )
+        "#;
+
+        let main_wasm = wat::parse_str(main_wat).expect("main WAT parse");
+        let merged = merge_adapter(&main_wasm, adapter_wat).expect("merge");
+
+        wasmparser::validate(&merged).expect("merged module should be valid");
+
+        let merged_mod = ParsedModule::parse(&merged, "merged").expect("parse merged");
+        // host_call_2 retained from adapter → 1 import
+        assert_eq!(
+            merged_mod.num_imported_funcs, 1,
+            "host_call_2 should be retained"
+        );
+        assert_eq!(merged_mod.func_imports[0].name, "host_call_2");
+        // 3 local funcs: adapter's do_stuff + main's write_mem + main's main
+        assert_eq!(merged_mod.func_type_indices.len(), 3);
     }
 
     #[test]
