@@ -1,7 +1,11 @@
 //! PVM memory address layout constants.
 
 // Memory layout constants often use negative i32s or large u32s that wrap.
-#![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
 
 //! All WASM-to-PVM memory regions are defined here so the layout can be
 //! understood and modified in one place.
@@ -51,10 +55,6 @@ pub const DEFAULT_STACK_SIZE: u32 = 64 * 1024;
 /// Exit address: jumping here terminates the program.
 /// This is `0xFFFF0000` interpreted as a signed i32.
 pub const EXIT_ADDRESS: i32 = -65536;
-
-/// Operand stack spill area base offset (relative to SP, negative direction).
-/// Spilled operand stack values are stored at `SP + OPERAND_SPILL_BASE + slot*8`.
-pub const OPERAND_SPILL_BASE: i32 = -0x100;
 
 /// Minimum address the stack pointer can reach (`STACK_SEGMENT_END - stack_size`).
 /// If SP goes below this, we have a stack overflow.

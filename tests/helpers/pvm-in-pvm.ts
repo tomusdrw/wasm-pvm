@@ -143,7 +143,14 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
   const status = resultBuffer.readUInt8(0);
   const exitCode = resultBuffer.readUInt32LE(1);
 
-  // Short result for non-HALT statuses
+  // HALT requires full result (status + exitCode + gas + pc + data = 17+ bytes)
+  if (status === 0 /* HALT */ && resultBuffer.length < 17) {
+    throw new Error(
+      `HALT result too short (${resultBuffer.length} bytes, need >= 17): 0x${resultHex}`,
+    );
+  }
+
+  // Short result for non-HALT statuses (PANIC, FAULT, OOG)
   if (resultBuffer.length < 17) {
     return {
       status,

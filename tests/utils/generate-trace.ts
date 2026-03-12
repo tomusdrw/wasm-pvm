@@ -131,7 +131,9 @@ function main() {
         const regs = pause.registers;
         regs[7] = WHAT;
         pvmSetRegisters(id, regs);
-        gas = pause.gas >= 10n ? pause.gas - 10n : 0n;
+        // Deduct a nominal gas cost for ecalli handling (matches anan-as convention)
+        const ECALLI_GAS_COST = 10n;
+        gas = pause.gas >= ECALLI_GAS_COST ? pause.gas - ECALLI_GAS_COST : 0n;
         pc = pause.nextPc;
       } else {
         // Unknown ecalli: just set r7 = 0 and continue

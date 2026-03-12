@@ -3,3 +3,4 @@ node_modules
 target
 *.spi
 repro.log
+docs/book

@@ -4,6 +4,7 @@
 mod blob;
 mod instruction;
 mod opcode;
+#[cfg(feature = "compiler")]
 pub(crate) mod peephole;
 
 pub use blob::ProgramBlob;

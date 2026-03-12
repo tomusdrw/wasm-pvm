@@ -53,18 +53,27 @@
         ;; r7 = level, r8 = target_ptr, r9 = target_len, r10 = msg_ptr, r11 = msg_len
 
         ;; Copy target string from inner memory (r8=addr, r9=len)
-        (local.set $target_packed
-          (call $host_read_memory
-            (i32.wrap_i64 (local.get $r8))
-            (i32.wrap_i64 (local.get $r9))
+        ;; Skip host_read_memory if length is 0 to avoid translating a bogus pointer.
+        (if (i32.wrap_i64 (local.get $r9))
+          (then
+            (local.set $target_packed
+              (call $host_read_memory
+                (i32.wrap_i64 (local.get $r8))
+                (i32.wrap_i64 (local.get $r9))
+              )
+            )
           )
         )
 
         ;; Copy message string from inner memory (r10=addr, r11=len)
-        (local.set $msg_packed
-          (call $host_read_memory
-            (i32.wrap_i64 (local.get $r10))
-            (i32.wrap_i64 (local.get $r11))
+        (if (i32.wrap_i64 (local.get $r11))
+          (then
+            (local.set $msg_packed
+              (call $host_read_memory
+                (i32.wrap_i64 (local.get $r10))
+                (i32.wrap_i64 (local.get $r11))
+              )
+            )
           )
         )
 

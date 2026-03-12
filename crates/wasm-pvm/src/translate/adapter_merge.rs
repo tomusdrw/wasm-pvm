@@ -451,21 +451,21 @@ fn build_merged_module(
     }
 
     // 3b. Fix adapter import remaps for entries resolved against main exports.
-    let main_local_base_tmp = retained_count + adapter_local_count;
+    // Main local functions start after retained imports + adapter locals.
+    let main_local_base = retained_count + adapter_local_count;
     for (adapter_import_idx, main_global_idx) in &adapter_imports_resolved_to_main {
         // Convert main global func idx to merged idx using main_func_remap logic.
         let merged_idx = if (*main_global_idx as usize) < main.num_imported_funcs as usize {
             main_import_remap[*main_global_idx as usize]
         } else {
             let local_idx = *main_global_idx - main.num_imported_funcs;
-            main_local_base_tmp + local_idx
+            main_local_base + local_idx
         };
         adapter_import_remap[*adapter_import_idx as usize] = merged_idx;
     }
 
     // 4. Build function index remap tables.
     // Main func remap: main global func idx -> merged global func idx.
-    let main_local_base = retained_count + adapter_local_count;
     let main_func_remap = |old_idx: u32| -> u32 {
         if (old_idx as usize) < main.num_imported_funcs as usize {
             main_import_remap[old_idx as usize]

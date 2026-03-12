@@ -1,49 +1,5 @@
 # Translation Module
 
-**Purpose**: Orchestrate end-to-end WASM → LLVM IR → PVM lowering and assemble final SPI/JAM output.
+This document has moved to the [docs book](../../../../docs/src/internals/translation.md).
 
-## Files
-
-| File | Role |
-|------|------|
-| `mod.rs` | Pipeline dispatch, SPI assembly, entry header + data sections |
-| `wasm_module.rs` | WASM section parsing into `WasmModule` |
-| `memory_layout.rs` | Memory address constants and helper functions |
-| `adapter_merge.rs` | Merges WAT adapter into WASM before compilation. Adapter exports replace matching main imports; adapter imports matching main exports resolve internally (e.g. `host_read_memory`); remaining adapter imports become retained imports in the merged module. |
-
-## Pipeline
-
-1. Parse module sections in `wasm_module.rs` (`WasmModule::parse()`).
-2. Translate WASM operators to LLVM IR in `llvm_frontend/function_builder.rs`.
-3. Run LLVM optimization pipeline (`mem2reg`, `instcombine`, `simplifycfg`, optional inlining, cleanup passes).
-4. Lower LLVM IR to PVM instructions in `llvm_backend/mod.rs`.
-5. Build SPI sections in `mod.rs`:
-   - Entry header and dispatch tables
-   - `ro_data` (jump table refs + passive data)
-   - `rw_data` (globals + active data segments), with trailing zero trim
-   - Encoded PVM blob + metadata
-
-## Key Behaviors
-
-- `calculate_heap_pages()` uses WASM `initial_pages` (not max), with a minimum of 16 WASM pages for `(memory 0)`.
-- `compute_wasm_memory_base()` compares `SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC` with `GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)`, then rounds the larger address up to the next 4KB (PVM page) boundary. This typically gives `0x33000`.
-- `build_rw_data()` copies globals and active segments into a contiguous image, then trims trailing zero bytes before SPI encoding.
-- Call return addresses are pre-assigned as jump-table refs `((idx + 1) * 2)` at emission time; fixup resolution accepts direct (`LoadImmJump`) and indirect (`LoadImm` / `LoadImmJumpInd`) return-address carriers.
-- Export parsing tracks `exported_wasm_func_indices` in WASM global index space for dead-function-elimination roots; entry resolution prefers canonical names (`main`, `main2`) over aliases (`refine*`, `accumulate*`) regardless of export order.
-- Entry exports (`main`/`main2` and aliases) must target local (non-imported) functions; imported targets are rejected during parse with `Error::Internal` to avoid index-underflow panics.
-
-## Current Memory Layout
-
-| Address | Purpose |
-|---------|---------|
-| `0x10000` | Read-only data |
-| `0x30000` | Globals window (8KB cap; actual bytes = `globals_region_size(num_globals, num_passive_segments)`). The heap starts at `compute_wasm_memory_base()`, which is the 4KB-aligned address after `max(globals_end, spills_end)`. |
-| `0x32000` | Parameter overflow area |
-| `0x32100+` | Spilled-locals base (spills are stack-based; base kept for layout/alignment) |
-| `0x33000+` | WASM linear memory (4KB-aligned, computed dynamically) |
-
-## Anti-Patterns
-
-1. Don't change layout constants without validating pvm-in-pvm tests.
-2. Don't bypass `Result` error handling with panics in library code.
-3. Don't assume `rw_data` must include trailing zero bytes.
+Build and view locally with `mdbook serve docs`.

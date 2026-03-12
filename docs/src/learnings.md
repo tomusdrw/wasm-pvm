@@ -1,6 +1,6 @@
-# Technical Learnings
+# Technical Reference
 
-Accumulated knowledge from development. Update after every task.
+Accumulated technical knowledge from development — LLVM pass behavior, PVM instruction semantics, code generation patterns, and optimization details.
 
 ---
 
