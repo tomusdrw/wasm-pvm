@@ -398,19 +398,21 @@ fn build_merged_module(
                 main.func_imports[main_global_idx as usize].type_idx
             } else {
                 let local_idx = main_global_idx - main.num_imported_funcs;
-                *main.func_type_indices.get(local_idx as usize).ok_or_else(|| {
-                    Error::Internal(format!(
-                        "main local func {local_idx} type index out of range",
-                    ))
-                })?
+                *main
+                    .func_type_indices
+                    .get(local_idx as usize)
+                    .ok_or_else(|| {
+                        Error::Internal(format!(
+                            "main local func {local_idx} type index out of range",
+                        ))
+                    })?
             };
             let main_type = main.types.get(main_type_idx as usize).ok_or_else(|| {
                 Error::Internal(format!(
                     "main type index {main_type_idx} out of range for func {main_global_idx}",
                 ))
             })?;
-            if adapter_type.params != main_type.params
-                || adapter_type.results != main_type.results
+            if adapter_type.params != main_type.params || adapter_type.results != main_type.results
             {
                 return Err(Error::Internal(format!(
                     "type mismatch for adapter import '{}': adapter expects {:?} -> {:?}, main provides {:?} -> {:?}",
