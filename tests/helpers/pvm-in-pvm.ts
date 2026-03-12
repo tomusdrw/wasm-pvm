@@ -151,14 +151,21 @@ export function runCompilerJam(argsHex: string, timeoutMs?: number): InnerResult
   }
 
   // Short result for non-HALT statuses (PANIC, FAULT, OOG)
-  if (resultBuffer.length < 17) {
-    return {
-      status,
-      exitCode,
-      gasLeft: 0n,
-      pc: 0,
-      resultBytes: Buffer.alloc(0),
-    };
+  // Strictly enforce 5-byte format: [1:status][4:exitCode]
+  if (status !== 0) {
+    if (resultBuffer.length === 5) {
+      return {
+        status,
+        exitCode,
+        gasLeft: 0n,
+        pc: 0,
+        resultBytes: Buffer.alloc(0),
+      };
+    } else {
+      throw new Error(
+        `Non-HALT status ${status} requires exactly 5 bytes, got ${resultBuffer.length}: 0x${resultHex}`,
+      );
+    }
   }
 
   return {

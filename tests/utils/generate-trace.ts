@@ -136,13 +136,10 @@ function main() {
         gas = pause.gas >= ECALLI_GAS_COST ? pause.gas - ECALLI_GAS_COST : 0n;
         pc = pause.nextPc;
       } else {
-        // Unknown ecalli: just set r7 = 0 and continue
-        console.log(`  setreg r07 <- 0x0`);
-        const regs = pause.registers;
-        regs[7] = 0n;
-        pvmSetRegisters(id, regs);
-        gas = pause.gas;
-        pc = pause.nextPc;
+        // Unknown ecalli: fail fast with identifying context
+        throw new Error(
+          `Unsupported ecalli encountered: index=${ecalliIdx}, pc=${pause.pc}, gas=${pause.gas}, nextPc=${pause.nextPc}`
+        );
       }
     } else {
       // Termination
