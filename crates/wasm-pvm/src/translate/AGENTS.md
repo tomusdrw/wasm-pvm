@@ -9,6 +9,7 @@
 | `mod.rs` | Pipeline dispatch, SPI assembly, entry header + data sections |
 | `wasm_module.rs` | WASM section parsing into `WasmModule` |
 | `memory_layout.rs` | Memory address constants and helper functions |
+| `adapter_merge.rs` | Merges WAT adapter into WASM before compilation. Adapter exports replace matching main imports; adapter imports matching main exports resolve internally (e.g. `host_read_memory`); remaining adapter imports become retained imports in the merged module. |
 
 ## Pipeline
 

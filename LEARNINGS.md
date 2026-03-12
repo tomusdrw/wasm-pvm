@@ -392,6 +392,14 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
 
 ### Comparison Code Size Optimizations (2026-03)
 
+### PVM-in-PVM Ecalli Forwarding (2026-03)
+
+- **Dynamic ecalli index is not supported by PVM**: The `ecalli` instruction takes a static u32 immediate. To forward inner program ecalli with dynamic indices, either use a per-ecalli dispatch table in the adapter or use a fixed "proxy" ecalli with a data buffer protocol.
+- **Adapter import resolution against main exports**: `adapter_merge.rs` resolves adapter imports matching main export names internally. Key use case: adapter importing `host_read_memory` / `host_write_memory` (exported by the compiler module) to access inner PVM memory during ecalli handling.
+- **Scratch buffer protocol for trace replay**: The replay adapter allocates a fresh WASM memory page (`memory.grow(1)`) per ecalli call as a scratch buffer. This wastes 64KB per call but avoids the need for adapter globals (not supported by `adapter_merge`). The outer handler writes the ecalli response (new registers + memwrite data) to the buffer at the PVM address obtained via `pvm_ptr`.
+- **Adapter globals not supported**: `adapter_merge` only merges function-related sections (types, imports, functions, code) from the adapter. Globals, data sections, and memory declarations from the adapter are NOT included in the merged module. Workaround: use main module memory with fixed addresses or `memory.grow`.
+- **host_call_N requires compile-time constant ecalli index**: The first argument to `host_call_N` imports must be a compile-time constant because it becomes the immediate operand of the PVM `ecalli` instruction. Runtime ecalli indices (e.g., forwarded from inner programs) cause compilation failure.
+
 - **NE comparison optimization was reverted for correctness in PVM-in-PVM**:
   `Xor + SetGtUImm(0)` looked equivalent to `Xor + LoadImm(0) + SetLtU`, but it regressed
   `as-decoder-subarray-test` in layer5 (inner run returned empty `Result: [0x]`).
