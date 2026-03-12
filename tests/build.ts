@@ -247,6 +247,21 @@ async function main() {
     } catch (err: any) {
       console.error(`  FAIL: anan-as-compiler: ${err.message}`);
     }
+
+    // Replay variant (for PVM-in-PVM trace replay)
+    const replayImports = path.join(IMPORTS_DIR, "anan-as-compiler-replay.imports");
+    const replayAdapter = path.join(IMPORTS_DIR, "anan-as-compiler-replay.adapter.wat");
+    try {
+      compileToJAM(
+        ananAsCompilerWasm,
+        "anan-as-compiler-replay",
+        fs.existsSync(replayImports) ? replayImports : undefined,
+        fs.existsSync(replayAdapter) ? replayAdapter : undefined,
+      );
+      console.log("  anan-as-compiler-replay.jam compiled.");
+    } catch (err: any) {
+      console.error(`  FAIL: anan-as-compiler-replay: ${err.message}`);
+    }
   } else {
     console.log("\nSkipping anan-as compiler (WASM not found at vendor/anan-as/dist/build/compiler.wasm).");
   }
