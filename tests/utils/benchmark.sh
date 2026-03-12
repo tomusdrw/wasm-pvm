@@ -55,6 +55,7 @@ BENCHMARKS=(
   "as-array-test|00000000|0|AS array|wasm:tests/build/wasm/array-test.wasm"
   "regalloc-two-loops|f4010000|0|regalloc two loops(500)|wat:tests/fixtures/wat/regalloc-two-loops.jam.wat"
   "aslan-fib|2a0000|5|aslan-fib accumulate|wat:tests/fixtures/wat/aslan-fib.jam.wat"
+  "host-call-log|00000000|0|host-call-log|wat:tests/fixtures/wat/host-call-log.jam.wat"
   "anan-as-compiler||0|anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
 )
 

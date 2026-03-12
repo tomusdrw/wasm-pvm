@@ -56,7 +56,11 @@
 
     ;; Allocate scratch page once, reuse on subsequent calls.
     ;; Sentinel at WASM addr 0xFFFF0 stores the scratch base address.
-    ;; Initial memory is at least 16 pages (1MB), so 0xFFFF0 is safe.
+    ;; This address is in the compiler module's linear memory (at least 16 pages = 1MB),
+    ;; well beyond the compiler's own data usage. The compiler (anan-as) uses memory
+    ;; starting from its heap base (~0x30000+), so 0xFFFF0 is in unused high space
+    ;; within the initial 16 pages. This is an adapter-internal convention, not a
+    ;; general-purpose pattern — see LEARNINGS.md for caveats.
     (local.set $scratch_addr (i32.load (i32.const 0xFFFF0)))
     (if (i32.eqz (local.get $scratch_addr))
       (then

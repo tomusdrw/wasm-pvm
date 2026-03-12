@@ -1523,27 +1523,26 @@ mod tests {
     }
 
     #[test]
-    fn test_adapter_import_from_main_reexported_import() {
-        // Main module imports "host_fn", re-exports it, adapter imports it.
-        // This exercises the main_import_remap path and the branch checking
-        // main_global_idx < main.num_imported_funcs.
+    fn test_adapter_import_resolved_from_main_reexported_import() {
+        // Main re-exports an import. Adapter imports the re-exported name.
+        // This tests the main_global_idx < num_imported_funcs branch.
         let main_wat = r#"
             (module
                 (import "env" "host_fn" (func $host_fn (param i64) (result i64)))
-                (import "env" "another_import" (func $another (param i32)))
+                (import "env" "do_stuff" (func $do_stuff (param i32)))
                 (memory (export "memory") 1)
-                (export "host_fn" (func $host_fn))
+                (export "another_import" (func $host_fn))
                 (func (export "main") (param i32 i32) (result i32)
-                    (call $another (i32.const 1))
+                    (call $do_stuff (i32.const 1))
                     (i32.const 0)
                 )
             )
         "#;
         let adapter_wat = r#"
             (module
-                (import "env" "host_fn" (func $host_fn (param i64) (result i64)))
-                (func (export "another_import") (param i32)
-                    (drop (call $host_fn (i64.const 42)))
+                (import "env" "another_import" (func $another (param i64) (result i64)))
+                (func (export "do_stuff") (param i32)
+                    (drop (call $another (i64.extend_i32_u (local.get 0))))
                 )
             )
         "#;
@@ -1554,20 +1553,17 @@ mod tests {
         wasmparser::validate(&merged).expect("merged module should be valid");
 
         let merged_mod = ParsedModule::parse(&merged, "merged").expect("parse merged");
-        // Both host_fn and another_import are retained as imports (both originally from main)
+        // host_fn retained (adapter's "another_import" resolves to it, but host_fn itself stays)
         assert_eq!(
-            merged_mod.num_imported_funcs, 2,
-            "host_fn and another_import should be retained"
+            merged_mod.num_imported_funcs, 1,
+            "host_fn should be retained"
         );
         assert_eq!(merged_mod.func_imports[0].name, "host_fn");
-        assert_eq!(merged_mod.func_imports[1].name, "another_import");
-        // Type check: host_fn should have (param i64) (result i64)
-        let host_fn_type_idx = merged_mod.func_type_indices[0];
-        let host_fn_type = &merged_mod.func_types[host_fn_type_idx as usize];
-        assert_eq!(host_fn_type.params().len(), 1);
-        assert_eq!(host_fn_type.results().len(), 1);
-        // 2 local funcs: adapter's another_import + main's main
-        assert_eq!(merged_mod.func_type_indices.len(), 2);
+        // Verify type: (param i64) (result i64)
+        let host_fn_type_idx = merged_mod.func_imports[0].type_idx;
+        let host_fn_type = &merged_mod.types[host_fn_type_idx as usize];
+        assert_eq!(host_fn_type.params.len(), 1);
+        assert_eq!(host_fn_type.results.len(), 1);
     }
 
     #[test]

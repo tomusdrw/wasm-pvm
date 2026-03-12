@@ -1,8 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
-import crypto from "node:crypto";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { describe, test, expect } from "bun:test";
 import { JAM_DIR, PROJECT_ROOT } from "../helpers/paths";
 
@@ -27,11 +26,10 @@ function traceReplay(jamName: string, argsHex?: string, gas?: number): void {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "trace-replay-"));
   const traceFile = path.join(tmpDir, `${jamName}.trace`);
   try {
-    const genArgs = [jamFile];
+    const genArgs = ["run", GENERATE_TRACE, jamFile];
     if (argsHex) genArgs.push(argsHex);
     if (gas !== undefined) genArgs.push("--gas", gas.toString());
-    const genCmd = `bun ${GENERATE_TRACE} ${genArgs.join(" ")}`;
-    const traceOutput = execSync(genCmd, {
+    const traceOutput = execFileSync("bun", genArgs, {
       cwd: PROJECT_ROOT,
       encoding: "utf8",
       timeout: 60_000,
@@ -40,8 +38,7 @@ function traceReplay(jamName: string, argsHex?: string, gas?: number): void {
     fs.writeFileSync(traceFile, traceOutput);
 
     // Replay through PVM-in-PVM
-    const replayCmd = `bun ${TRACE_REPLAY_PIP} ${traceFile}`;
-    const replayOutput = execSync(replayCmd, {
+    const replayOutput = execFileSync("bun", ["run", TRACE_REPLAY_PIP, traceFile], {
       cwd: PROJECT_ROOT,
       encoding: "utf8",
       timeout: TIMEOUT,

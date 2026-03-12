@@ -251,6 +251,7 @@ async function main() {
     // Replay variant (for PVM-in-PVM trace replay)
     const replayImports = path.join(IMPORTS_DIR, "anan-as-compiler-replay.imports");
     const replayAdapter = path.join(IMPORTS_DIR, "anan-as-compiler-replay.adapter.wat");
+    const replayJamPath = path.join(JAM_DIR, "anan-as-compiler-replay.jam");
     try {
       compileToJAM(
         ananAsCompilerWasm,
@@ -261,6 +262,8 @@ async function main() {
       console.log("  anan-as-compiler-replay.jam compiled.");
     } catch (err: any) {
       console.error(`  FAIL: anan-as-compiler-replay: ${err.message}`);
+      // Delete stale artifact to avoid masking breakage
+      if (fs.existsSync(replayJamPath)) fs.unlinkSync(replayJamPath);
     }
   } else {
     console.log("\nSkipping anan-as compiler (WASM not found at vendor/anan-as/dist/build/compiler.wasm).");

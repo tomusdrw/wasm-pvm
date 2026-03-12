@@ -93,6 +93,7 @@ function main() {
   // For SPI, r7 = args_ptr, r8 = args_len at start
   console.log(`start pc=${pc} gas=${gas} r7=0x${ARGS_SEGMENT_START.toString(16)} r8=0x${spiArgs.length.toString(16)}`);
 
+  try {
   for (;;) {
     const pause = pvmResume(id, gas, pc, false);
     if (!pause) {
@@ -136,9 +137,9 @@ function main() {
         gas = pause.gas >= ECALLI_GAS_COST ? pause.gas - ECALLI_GAS_COST : 0n;
         pc = pause.nextPc;
       } else {
-        // Unknown ecalli: fail fast with identifying context
+        // Unknown ecalli: fail fast to avoid generating a synthetic trace
         throw new Error(
-          `Unsupported ecalli encountered: index=${ecalliIdx}, pc=${pause.pc}, gas=${pause.gas}, nextPc=${pause.nextPc}`
+          `Unsupported ecalli ${ecalliIdx} at pc=${pause.pc}. Only ecalli ${LOG_HOST_CALL_INDEX} (JIP-1 log) is supported.`,
         );
       }
     } else {
@@ -158,8 +159,9 @@ function main() {
       break;
     }
   }
-
-  pvmDestroy(id);
+  } finally {
+    pvmDestroy(id);
+  }
 }
 
 main();

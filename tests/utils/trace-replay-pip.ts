@@ -189,7 +189,7 @@ function main() {
     }
 
     // Outer result is the inner program's packed output
-    const resultBytes = new Uint8Array(outerResult.result);
+    const resultBytes = new Uint8Array(outerResult.result ?? []);
     if (resultBytes.length < 5) {
       console.error(`Outer result too short (${resultBytes.length} bytes).`);
       process.exit(1);
@@ -222,13 +222,18 @@ function main() {
         ok = false;
       }
 
+      if (termination.panicArg !== undefined && innerExitCode !== termination.panicArg) {
+        console.error(`MISMATCH: panic arg: expected ${termination.panicArg}, got ${innerExitCode}`);
+        ok = false;
+      }
+
       if (pendingEcalli.length > 0) {
         console.error(`MISMATCH: ${pendingEcalli.length} ecalli entries were not consumed`);
         ok = false;
       }
 
       // Note: gas and PC may differ slightly in PVM-in-PVM due to overhead,
-      // so we only check termination type by default.
+      // so we only check termination type and exit code by default.
 
       if (ok) {
         console.log("Verification: PASSED");
