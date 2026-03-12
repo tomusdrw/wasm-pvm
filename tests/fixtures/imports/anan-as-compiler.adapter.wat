@@ -79,14 +79,22 @@
 
         ;; Issue outer ecalli 100 with translated pointers.
         ;; host_read_memory returns packed i64: lower 32 = wasm ptr.
+        ;; For zero-length strings, $target_packed/$msg_packed remain 0 (locals init),
+        ;; so pass 0 directly instead of translating via pvm_ptr (which would produce
+        ;; the base of linear memory instead of null).
         (return
           (call $outer_host_call_5
             (i64.const 100)                                               ;; ecalli 100
             (local.get $r7)                                               ;; r7: level
-            (call $pvm_ptr (i64.and (local.get $target_packed)            ;; r8: target PVM ptr
-              (i64.const 0xffffffff)))
+            (if (result i64) (i32.wrap_i64 (local.get $r9))              ;; r8: target PVM ptr
+              (then (call $pvm_ptr (i64.and (local.get $target_packed)
+                (i64.const 0xffffffff))))
+              (else (i64.const 0)))
             (local.get $r9)                                               ;; r9: target len
-            (call $pvm_ptr (i64.and (local.get $msg_packed)               ;; r10: msg PVM ptr
+            (if (result i64) (i32.wrap_i64 (local.get $r11))             ;; r10: msg PVM ptr
+              (then (call $pvm_ptr (i64.and (local.get $msg_packed)
+                (i64.const 0xffffffff))))
+              (else (i64.const 0)))
               (i64.const 0xffffffff)))
             (local.get $r11)                                              ;; r11: msg len
           )

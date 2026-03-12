@@ -200,11 +200,16 @@ function main() {
     const innerExitCode = resultView.getUint32(1, true);
 
     const innerType = statusToTermination(innerStatus);
-    const isShort = innerStatus === INNER_STATUS.PANIC || innerStatus === INNER_STATUS.FAULT || innerStatus === INNER_STATUS.OOG;
+
+    // HALT requires full 17-byte header; reject truncated payloads
+    if (innerStatus === INNER_STATUS.HALT && resultBytes.length < 17) {
+      console.error(`HALT result too short (${resultBytes.length} bytes, need >= 17).`);
+      process.exit(1);
+    }
 
     let innerGasLeft = 0n;
     let innerPcFinal = 0;
-    if (!isShort && resultBytes.length >= 17) {
+    if (innerStatus === INNER_STATUS.HALT && resultBytes.length >= 17) {
       innerGasLeft = resultView.getBigUint64(5, true);
       innerPcFinal = resultView.getUint32(13, true);
     }
@@ -267,6 +272,15 @@ function buildScratchResponse(entry: EcalliEntry): Uint8Array {
     memwriteDataSize += 8 + mw.data.length; // 4:addr + 4:len + data
   }
   const totalSize = 8 + 8 + 4 + 8 + memwriteDataSize;
+
+  // Scratch buffer is a single WASM page (64KB). Reject oversize responses.
+  const SCRATCH_PAGE_SIZE = 65536;
+  if (totalSize > SCRATCH_PAGE_SIZE) {
+    throw new Error(
+      `Scratch response too large (${totalSize} bytes, max ${SCRATCH_PAGE_SIZE}). ` +
+        `Trace entry has ${entry.memWrites.length} memwrites totaling ${memwriteDataSize} bytes.`,
+    );
+  }
 
   const buf = new Uint8Array(totalSize);
   const view = new DataView(buf.buffer);
