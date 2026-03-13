@@ -1,32 +1,115 @@
-;; Adapter for anan-as compiler: maps abort and console.log at WASM level.
-;; console.log uses JIP-1 logging host call (ecalli 100).
+;; Adapter for anan-as compiler: handles abort, console.log, and ecalli forwarding.
 ;;
-;; host_call_5 convention: host_call_5(ecalli_index, r7, r8, r9, r10, r11) -> i64
-;; JIP-1 register convention:
-;;   r7  = log level (3 = helpful/debug)
-;;   r8  = target pointer (0 = no target)
-;;   r9  = target length  (0 = no target)
-;;   r10 = message pointer (PVM address)
-;;   r11 = message length  (bytes)
+;; The compiler calls host_call_6b(ecalli, r7..r12) for each inner ecalli.
+;; This adapter handles:
+;;   - ecalli 100 (JIP-1 log): translates inner memory pointers via host_read_memory
+;;   - all other ecalli: trap (not yet supported)
 ;;
-;; AssemblyScript object header: rtSize (byte length) is at ptr - 4.
+;; host_read_memory(addr, len) -> packed i64 (lower 32 = wasm_ptr, upper 32 = len)
+;; is an export of the compiler module, resolved by adapter_merge.
 (module
-  (import "env" "host_call_5" (func $host_call_5 (param i64 i64 i64 i64 i64 i64) (result i64)))
+  ;; Outer PVM intrinsics
+  (import "env" "host_call_5" (func $outer_host_call_5 (param i64 i64 i64 i64 i64 i64) (result i64)))
   (import "env" "pvm_ptr" (func $pvm_ptr (param i64) (result i64)))
 
+  ;; Compiler export resolved by adapter_merge (adapter import matched to main export).
+  (import "env" "host_read_memory" (func $host_read_memory (param i32 i32) (result i64)))
+
+  ;; --- abort: AS runtime abort handler ---
   (func (export "abort") (param i32 i32 i32 i32)
     unreachable
   )
 
+  ;; --- console.log: AS runtime logging (compiler's own logs) ---
+  ;; Uses JIP-1 ecalli 100 with level=3 (helpful).
+  ;; AS strings are at ptr with rtSize (byte length) at ptr-4.
   (func (export "console.log") (param i32)
-    (drop (call $host_call_5
-      (i64.const 100)                                           ;; ecalli index (JIP-1 log)
-      (i64.const 3)                                             ;; r7: log level 3 (helpful)
-      (i64.const 0)                                             ;; r8: target pointer (none)
-      (i64.const 0)                                             ;; r9: target length (none)
-      (call $pvm_ptr (i64.extend_i32_u (local.get 0)))          ;; r10: message PVM pointer
-      (i64.extend_i32_u (i32.load offset=0                      ;; r11: message byte length
-        (i32.sub (local.get 0) (i32.const 4))))                 ;;   read rtSize at ptr - 4
+    (drop (call $outer_host_call_5
+      (i64.const 100)                                           ;; ecalli 100
+      (i64.const 3)                                             ;; r7: log level 3
+      (i64.const 0)                                             ;; r8: target ptr (none)
+      (i64.const 0)                                             ;; r9: target len (none)
+      (call $pvm_ptr (i64.extend_i32_u (local.get 0)))          ;; r10: message PVM ptr
+      (i64.extend_i32_u (i32.load offset=0                      ;; r11: message byte len
+        (i32.sub (local.get 0) (i32.const 4))))                 ;;   rtSize at ptr-4
     ))
+  )
+
+  ;; --- host_call_6b: inner program ecalli forwarding ---
+  ;; Called by the compiler when the inner program executes ecalli.
+  ;; Dispatches based on ecalli index.
+  (func (export "host_call_6b")
+    (param $ecalli i64) (param $r7 i64) (param $r8 i64) (param $r9 i64)
+    (param $r10 i64) (param $r11 i64) (param $r12 i64)
+    (result i64)
+
+    (local $target_packed i64)
+    (local $msg_packed i64)
+
+    ;; Check if ecalli == 100 (JIP-1 log)
+    (if (i64.eq (local.get $ecalli) (i64.const 100))
+      (then
+        ;; ecalli 100: JIP-1 log
+        ;; r7 = level, r8 = target_ptr, r9 = target_len, r10 = msg_ptr, r11 = msg_len
+
+        ;; Copy target string from inner memory (r8=addr, r9=len)
+        ;; Skip host_read_memory if length is 0 to avoid translating a bogus pointer.
+        (if (i32.wrap_i64 (local.get $r9))
+          (then
+            (local.set $target_packed
+              (call $host_read_memory
+                (i32.wrap_i64 (local.get $r8))
+                (i32.wrap_i64 (local.get $r9))
+              )
+            )
+          )
+        )
+
+        ;; Copy message string from inner memory (r10=addr, r11=len)
+        (if (i32.wrap_i64 (local.get $r11))
+          (then
+            (local.set $msg_packed
+              (call $host_read_memory
+                (i32.wrap_i64 (local.get $r10))
+                (i32.wrap_i64 (local.get $r11))
+              )
+            )
+          )
+        )
+
+        ;; Issue outer ecalli 100 with translated pointers.
+        ;; host_read_memory returns packed i64: lower 32 = wasm ptr.
+        ;; For zero-length strings, $target_packed/$msg_packed remain 0 (locals init),
+        ;; so pass 0 directly instead of translating via pvm_ptr (which would produce
+        ;; the base of linear memory instead of null).
+        (return
+          (call $outer_host_call_5
+            (i64.const 100)                                               ;; ecalli 100
+            (local.get $r7)                                               ;; r7: level
+            (if (result i64) (i32.wrap_i64 (local.get $r9))              ;; r8: target PVM ptr
+              (then (call $pvm_ptr (i64.and (local.get $target_packed)
+                (i64.const 0xffffffff))))
+              (else (i64.const 0)))
+            (local.get $r9)                                               ;; r9: target len
+            (if (result i64) (i32.wrap_i64 (local.get $r11))             ;; r10: msg PVM ptr
+              (then (call $pvm_ptr (i64.and (local.get $msg_packed)
+                (i64.const 0xffffffff))))
+              (else (i64.const 0)))
+            (local.get $r11)                                              ;; r11: msg len
+          )
+        )
+      )
+    )
+
+    ;; Default: unsupported ecalli — trap.
+    ;; TODO: implement dynamic ecalli forwarding for non-100 ecalli indices.
+    unreachable
+  )
+
+  ;; --- host_call_r8: return captured r8 from last host call ---
+  ;; For ecalli 100, r8 is not meaningful. Return 0.
+  ;; TODO: implement proper r8 forwarding when dynamic ecalli is supported.
+  (func (export "host_call_r8") (result i64)
+    (i64.const 0)
   )
 )

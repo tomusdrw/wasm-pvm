@@ -56,7 +56,7 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
    - **Layer 4**: PVM-in-PVM smoke tests (3 tests) - Quick pvm-in-pvm sanity check
    - **Layer 5**: Comprehensive PVM-in-PVM tests (all compatible suites) - Runs in CI after regular tests pass
      - Run with: `bun test layer4/ layer5/ --test-name-pattern "pvm-in-pvm"`
-     - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): host-call-log (ecalli 100 unhandled), as-life (timeout), i64-ops (timeout)
+     - Some suites skip pvm-in-pvm (`skipPvmInPvm: true`): as-life (timeout), i64-ops (timeout)
    - **Differential**: PVM vs native WASM (~142 tests) - Verifies PVM output matches Bun's WebAssembly engine
      - Run with: `cd tests && bun run test:differential`
      - Auto-skips modules with function imports (AssemblyScript (AS) modules, host-call-log)
@@ -192,6 +192,11 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 - **Configurable optimizations**: All non-trivial optimizations (LLVM passes, peephole, register cache, ICmp+Branch fusion, shrink wrapping) can be disabled via `OptimizationFlags` / CLI `--no-*` flags. All are enabled by default.
 - **Peephole immediate chain fusion**: `LoadImm + AddImm` and chained `AddImm` sequences are fused into single instructions. Self-moves (`MoveReg r, r`) are eliminated. This reduces code size for address calculations and loop induction variables.
 - **Typed host call imports**: A family of `host_call_N` (N=0..6) imports for PVM `ecalli` instructions, where N is the number of data registers (r7..r7+N-1) to set. All take an ecalli index as the first i64 param (compile-time constant) and return r7 as i64. Variants with `b` suffix (e.g. `host_call_2b`) also capture r8 to a stack slot, retrievable via `host_call_r8() -> i64`. See `docs/src/architecture.md` "Import Calls" for the full reference. Implementation in `llvm_backend/calls.rs`.
+- **PVM-in-PVM ecalli forwarding**: Inner program ecalli are forwarded to the outer PVM via the adapter WAT. Two adapter variants exist:
+  - `anan-as-compiler.adapter.wat` (regular): Handles ecalli 100 (JIP-1 log) with pointer translation via `host_read_memory` + `pvm_ptr`. Traps on unknown ecalli. Imports resolved against main exports (e.g. `host_read_memory`).
+  - `anan-as-compiler-replay.adapter.wat` (trace replay): Uses a scratch buffer protocol. Adapter calls outer ecalli 0 ("forward") with scratch PVM addr + inner ecalli index. Outer handler writes response `[8:new_r7][8:new_r8][4:num_memwrites][8:new_gas][entries...]` to the buffer. Adapter applies memwrites via `host_write_memory` and returns new_r7. Outer ecalli 1 ("get r8") returns the last r8 value.
+- **Adapter import resolution against main exports**: `adapter_merge.rs` now resolves adapter imports that match main module export names internally, with type signature validation, instead of carrying them through as retained imports. This allows the adapter to call compiler functions like `host_read_memory` and `host_write_memory` directly.
+- **Dynamic ecalli limitation**: PVM `ecalli` instruction requires a static (compile-time constant) index. The regular adapter handles only ecalli 100; other ecalli types would need individual handlers or a dispatch table. The replay adapter avoids this by using fixed outer ecalli indices (0 and 1) for the forwarding protocol.
 
 ---
 
@@ -242,6 +247,8 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` |
 | Fix test build | `tests/build.ts` + `tests/helpers/compile.ts` | Build orchestrator + compilation helpers |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
+| Generate execution trace | `tests/utils/generate-trace.ts` | Outputs anan-as trace format to stdout |
+| PVM-in-PVM trace replay | `tests/utils/trace-replay-pip.ts` | Replays trace through PVM-in-PVM pipeline |
 | Verify JAM file | `tests/utils/verify-jam.ts` | Parse headers, jump table, code |
 | Add/modify optimization | `translate/mod.rs` (`OptimizationFlags`) | Add flag + thread through `LoweringContext` → `PvmEmitter` |
 | Toggle optimization in CLI | `wasm-pvm-cli/src/main.rs` | Add `--no-*` flag to `Compile` subcommand |
