@@ -95,7 +95,6 @@
               (then (call $pvm_ptr (i64.and (local.get $msg_packed)
                 (i64.const 0xffffffff))))
               (else (i64.const 0)))
-              (i64.const 0xffffffff)))
             (local.get $r11)                                              ;; r11: msg len
           )
         )
