@@ -93,6 +93,9 @@ pub struct CompileOptions {
     pub metadata: Vec<u8>,
     /// Optimization flags controlling which compiler passes are enabled.
     pub optimizations: OptimizationFlags,
+    /// Override the maximum memory pages (memory.grow ceiling).
+    /// When set, this takes precedence over both the WASM-declared max and the compiler default.
+    pub max_memory_pages: Option<u32>,
 }
 
 // Re-export register constants from abi module
@@ -157,7 +160,12 @@ pub fn compile_with_stats(
         wasm
     };
 
-    let module = WasmModule::parse(wasm)?;
+    let mut module = WasmModule::parse(wasm)?;
+
+    // Apply max_memory_pages override if provided.
+    if let Some(max_pages) = options.max_memory_pages {
+        module.max_memory_pages = max_pages.max(module.memory_limits.initial_pages);
+    }
 
     // Validate imports and collect resolutions.
     let mut import_resolutions = Vec::new();

@@ -38,7 +38,7 @@ export function compileAS(
   return wasmFile;
 }
 
-export function compileToJAM(inputPath: string, outputName: string, importsPath?: string, adapterPath?: string): string {
+export function compileToJAM(inputPath: string, outputName: string, importsPath?: string, adapterPath?: string, maxMemory?: number): string {
   const jamFile = path.join(
     TESTS_DIR,
     "build",
@@ -52,6 +52,9 @@ export function compileToJAM(inputPath: string, outputName: string, importsPath?
   }
   if (importsPath) {
     cmd += ` --imports ${importsPath}`;
+  }
+  if (maxMemory !== undefined) {
+    cmd += ` --max-memory ${maxMemory}`;
   }
   execSync(cmd, {
     cwd: PROJECT_ROOT,
