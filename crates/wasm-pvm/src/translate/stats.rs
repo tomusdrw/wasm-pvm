@@ -10,6 +10,8 @@ pub struct CompileStats {
     pub function_table_entries: usize,
     pub initial_memory_pages: u32,
     pub max_memory_pages: u32,
+    /// The max pages declared in the WASM module (None = module didn't specify, default was used).
+    pub wasm_declared_max_pages: Option<u32>,
     pub import_resolutions: Vec<ImportResolution>,
 
     // ── Memory Layout ──

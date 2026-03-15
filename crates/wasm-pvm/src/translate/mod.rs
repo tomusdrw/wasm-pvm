@@ -224,6 +224,7 @@ pub fn compile_with_stats(
         function_table_entries: module.function_table.len(),
         initial_memory_pages: module.memory_limits.initial_pages,
         max_memory_pages: module.max_memory_pages,
+        wasm_declared_max_pages: module.memory_limits.max_pages,
         import_resolutions,
         wasm_memory_base: module.wasm_memory_base,
         globals_region_bytes,

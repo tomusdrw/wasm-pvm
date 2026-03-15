@@ -204,6 +204,7 @@ fn format_memory_size(pages: u32, page_size_kb: u32) -> String {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn print_text(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, ms: u64) {
     println!("wasm-pvm v{COMPILER_VERSION}");
     println!();
@@ -250,6 +251,16 @@ fn print_text(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, 
             format_memory_size(stats.max_memory_pages, 64)
         ),
     );
+    if let Some(declared) = stats.wasm_declared_max_pages
+        && declared > 16
+    {
+        println!(
+            "  \x1b[33mWARNING: WASM module declares max memory of {} pages ({}), \
+             PVM recommendation is \u{2264}1 MB (16 pages)\x1b[0m",
+            declared,
+            format_memory_size(declared, 64)
+        );
+    }
     if !stats.import_resolutions.is_empty() {
         let imports_str: Vec<String> = stats
             .import_resolutions
@@ -459,6 +470,7 @@ fn print_json(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, 
             "memory": {
                 "initial_pages": stats.initial_memory_pages,
                 "max_pages": stats.max_memory_pages,
+                "wasm_declared_max_pages": stats.wasm_declared_max_pages,
             },
             "imports": imports_arr,
         },
