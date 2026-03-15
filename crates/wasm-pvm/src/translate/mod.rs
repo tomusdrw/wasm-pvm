@@ -198,8 +198,16 @@ pub fn compile_with_stats(
         )));
     }
 
-    let active_data_segments = module.data_segments.iter().filter(|s| s.offset.is_some()).count();
-    let passive_data_segments = module.data_segments.iter().filter(|s| s.offset.is_none()).count();
+    let active_data_segments = module
+        .data_segments
+        .iter()
+        .filter(|s| s.offset.is_some())
+        .count();
+    let passive_data_segments = module
+        .data_segments
+        .iter()
+        .filter(|s| s.offset.is_none())
+        .count();
     let globals_region_bytes =
         memory_layout::globals_region_size(module.globals.len(), passive_data_segments);
 

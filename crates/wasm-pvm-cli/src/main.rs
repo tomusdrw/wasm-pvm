@@ -173,21 +173,9 @@ fn main() -> Result<()> {
                 .with_context(|| format!("Failed to write output to {}", output.display()))?;
 
             if json {
-                print_json(
-                    &stats,
-                    &input,
-                    &output,
-                    verbose,
-                    elapsed.as_millis() as u64,
-                );
+                print_json(&stats, &input, &output, verbose, elapsed.as_millis() as u64);
             } else {
-                print_text(
-                    &stats,
-                    &input,
-                    &output,
-                    verbose,
-                    elapsed.as_millis() as u64,
-                );
+                print_text(&stats, &input, &output, verbose, elapsed.as_millis() as u64);
             }
         }
     }
@@ -292,7 +280,10 @@ fn print_text(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, 
     section("Output");
     row("Destination", output.display());
     row("PVM instructions", format_number(stats.pvm_instructions));
-    row("Code size", format!("{} bytes", format_number(stats.code_bytes)));
+    row(
+        "Code size",
+        format!("{} bytes", format_number(stats.code_bytes)),
+    );
     row(
         "Jump table",
         format!(
@@ -323,11 +314,7 @@ fn print_verbose_text(stats: &CompileStats) {
     section("Functions");
     for f in &stats.functions {
         if f.is_dead {
-            println!(
-                "  #{:<4} {:<20} DEAD",
-                f.index,
-                truncate(&f.name, 20),
-            );
+            println!("  #{:<4} {:<20} DEAD", f.index, truncate(&f.name, 20),);
             continue;
         }
         let kind = if f.is_leaf { "leaf" } else { "calls" };
@@ -371,15 +358,18 @@ fn print_verbose_text(stats: &CompileStats) {
         .sum();
 
     let total_load_hits: usize = stats.functions.iter().map(|f| f.regalloc.load_hits).sum();
-    let total_load_reloads: usize = stats.functions.iter().map(|f| f.regalloc.load_reloads).sum();
+    let total_load_reloads: usize = stats
+        .functions
+        .iter()
+        .map(|f| f.regalloc.load_reloads)
+        .sum();
     let total_load_moves: usize = stats.functions.iter().map(|f| f.regalloc.load_moves).sum();
     let total_store_hits: usize = stats.functions.iter().map(|f| f.regalloc.store_hits).sum();
     let total_store_moves: usize = stats.functions.iter().map(|f| f.regalloc.store_moves).sum();
 
     let has_dse = total_pre_dse > 0 && total_pre_dse != total_pre_peep;
     let has_peephole = total_pre_peep > 0 && total_pre_peep != total_final;
-    let has_regalloc =
-        total_load_hits > 0 || total_load_reloads > 0 || total_store_hits > 0;
+    let has_regalloc = total_load_hits > 0 || total_load_reloads > 0 || total_store_hits > 0;
 
     if has_dse || has_peephole || has_regalloc {
         println!();
@@ -420,11 +410,7 @@ fn reduction_pct(before: usize, after: usize) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
-    }
+    if s.len() <= max { s } else { &s[..max] }
 }
 
 fn format_number(n: usize) -> String {
@@ -525,7 +511,10 @@ fn print_json(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, 
         obj["functions"] = serde_json::Value::Array(functions);
     }
 
-    println!("{}", serde_json::to_string_pretty(&obj).expect("JSON serialization failed"));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&obj).expect("JSON serialization failed")
+    );
 }
 
 // ── Helpers ──
