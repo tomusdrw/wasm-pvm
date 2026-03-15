@@ -29,7 +29,7 @@ export function compileAS(
   }
 
   const ascBin = path.join(TESTS_DIR, "node_modules/.bin/asc");
-  const cmd = `${ascBin} ${sourceFile} -o ${wasmFile} --runtime ${runtime} --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=`;
+  const cmd = `${ascBin} ${sourceFile} -o ${wasmFile} --runtime ${runtime} --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort= --maximumMemory 16`;
   execSync(cmd, {
     cwd: TESTS_DIR,
     encoding: "utf8",
