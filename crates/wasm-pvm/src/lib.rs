@@ -30,4 +30,8 @@ pub use spi::SpiProgram;
 #[cfg(feature = "compiler")]
 pub use translate::{
     CompileOptions, ImportAction, OptimizationFlags, compile, compile_with_options,
+    compile_with_stats,
 };
+
+#[cfg(feature = "compiler")]
+pub use translate::stats::CompileStats;

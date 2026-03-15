@@ -201,6 +201,9 @@ pub fn lower_function(
     }
     emitter.next_block_label = None;
 
+    // Collect pre-DSE instruction count for stats.
+    let pre_dse_instructions = emitter.instructions.len();
+
     // Dead store elimination: remove SP-relative stores that are never loaded from.
     if ctx.optimizations.dead_store_elimination {
         crate::pvm::peephole::eliminate_dead_stores(
@@ -211,6 +214,9 @@ pub fn lower_function(
             &mut emitter.labels,
         );
     }
+
+    // Collect pre-peephole instruction count for stats.
+    let pre_peephole_instructions = emitter.instructions.len();
 
     // Peephole optimization: remove redundant instructions before fixup resolution.
     if ctx.optimizations.peephole {
@@ -250,12 +256,32 @@ pub fn lower_function(
         );
     }
 
+    // Build per-function lowering stats.
+    let regalloc_stats = &emitter.regalloc.stats;
+    let regalloc_usage = &emitter.regalloc_usage;
+    let lowering_stats = emitter::FunctionLoweringStats {
+        frame_size: emitter.frame_size,
+        is_leaf: !emitter.has_calls,
+        pre_dse_instructions,
+        pre_peephole_instructions,
+        regalloc_total_values: regalloc_stats.total_values,
+        regalloc_allocated_values: regalloc_stats.allocated_values,
+        regalloc_registers_used: emitter.regalloc.reg_to_slot.keys().copied().collect(),
+        regalloc_skipped_reason: regalloc_stats.skipped_reason,
+        regalloc_load_hits: regalloc_usage.load_hits,
+        regalloc_load_reloads: regalloc_usage.load_reloads,
+        regalloc_load_moves: regalloc_usage.load_moves,
+        regalloc_store_hits: regalloc_usage.store_hits,
+        regalloc_store_moves: regalloc_usage.store_moves,
+    };
+
     let num_call_returns = emitter.num_call_returns();
     Ok(LlvmFunctionTranslation {
         instructions: emitter.instructions,
         call_fixups: emitter.call_fixups,
         indirect_call_fixups: emitter.indirect_call_fixups,
         num_call_returns,
+        lowering_stats,
     })
 }
 
