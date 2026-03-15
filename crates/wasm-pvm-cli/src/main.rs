@@ -410,7 +410,10 @@ fn reduction_pct(before: usize, after: usize) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    match s.char_indices().nth(max) {
+        Some((byte_idx, _)) => &s[..byte_idx],
+        None => s,
+    }
 }
 
 fn format_number(n: usize) -> String {
