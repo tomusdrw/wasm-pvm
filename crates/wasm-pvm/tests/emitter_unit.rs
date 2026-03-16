@@ -4,12 +4,29 @@
 use wasm_pvm::test_harness::*;
 use wasm_pvm::{CompileOptions, Instruction, Opcode, OptimizationFlags};
 
+/// Compile WAT with register allocation disabled (for slot-mechanic tests).
+fn compile_wat_no_regalloc(wat: &str) -> wasm_pvm::Result<wasm_pvm::SpiProgram> {
+    compile_wat_with_options(
+        wat,
+        &CompileOptions {
+            optimizations: OptimizationFlags {
+                register_allocation: false,
+                aggressive_register_allocation: false,
+                allocate_scratch_regs: false,
+                allocate_caller_saved_regs: false,
+                ..OptimizationFlags::default()
+            },
+            ..CompileOptions::default()
+        },
+    )
+}
+
 // ── Slot Allocation ──
 
 /// Slot offsets start after the frame header and increment by 8.
 #[test]
 fn test_slot_allocation_offsets() {
-    let program = compile_wat(
+    let program = compile_wat_no_regalloc(
         r#"
         (module
             (func (export "main") (param i32 i32) (result i32)
@@ -60,7 +77,7 @@ fn test_slot_allocation_offsets() {
 /// Each SSA value gets its own slot — verify multiple slots are allocated.
 #[test]
 fn test_multiple_slot_allocation() {
-    let program = compile_wat(
+    let program = compile_wat_no_regalloc(
         r#"
         (module
             (func (export "main") (param i32 i32 i32) (result i32)
@@ -253,7 +270,7 @@ fn test_loop_backward_branch() {
 /// Verify that parameters are loaded from stack slots via SP-relative loads.
 #[test]
 fn test_param_loaded_from_sp_slot() {
-    let program = compile_wat(
+    let program = compile_wat_no_regalloc(
         r#"
         (module
             (func (export "main") (param i32 i32) (result i32)
@@ -406,7 +423,7 @@ fn test_call_saves_return_address() {
 /// Verify that chained operations properly load intermediate results from slots.
 #[test]
 fn test_chained_operations_use_slots() {
-    let program = compile_wat(
+    let program = compile_wat_no_regalloc(
         r#"
         (module
             (func (export "main") (param i32 i32 i32) (result i32)
@@ -440,7 +457,7 @@ fn test_chained_operations_use_slots() {
 /// Select (ternary) operation should produce correct slot pattern.
 #[test]
 fn test_select_uses_slots() {
-    let program = compile_wat(
+    let program = compile_wat_no_regalloc(
         r#"
         (module
             (func (export "main") (param i32 i32 i32) (result i32)
@@ -467,7 +484,7 @@ fn test_select_uses_slots() {
 /// After a call, previously computed values must still be loadable from their slots.
 #[test]
 fn test_spill_preservation_across_call() {
-    let program = compile_wat(
+    let program = compile_wat_no_regalloc(
         r#"
         (module
             (func $identity (param i32) (result i32)
@@ -531,7 +548,7 @@ fn test_spill_preservation_across_call() {
 /// If/else with a result value should produce phi-like slot stores from both branches.
 #[test]
 fn test_if_else_result_phi_slots() {
-    let program = compile_wat(
+    let program = compile_wat_no_regalloc(
         r#"
         (module
             (func (export "main") (param i32) (result i32)

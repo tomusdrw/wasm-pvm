@@ -1,8 +1,8 @@
 // Linear-scan register allocator for the PVM backend.
 //
-// Allocates long-lived SSA values to physical registers so they persist across
-// basic block boundaries — particularly loop back-edges where the per-block
-// register cache is cleared.
+// Allocates SSA values to physical registers so they persist across basic
+// block boundaries. Benefits both loop-heavy code (avoiding cache clears at
+// back-edges) and straight-line code (reducing LoadIndU64 traffic).
 //
 // Allocatable registers:
 //   - r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) are available in leaf functions whose
@@ -18,10 +18,6 @@
 // The allocator operates on LLVM IR (before PVM lowering) and produces a
 // mapping from `ValKey` → physical register. The emitter then uses this mapping
 // in `load_operand`/`store_to_slot` to avoid redundant memory traffic.
-//
-// Functions without loops are skipped entirely — the per-block register cache
-// already handles within-block forwarding, and adding spill/reload around calls
-// would be a net negative.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -43,11 +39,9 @@ use super::successors::collect_successors;
 /// (r9-r12, when available) is configured below.
 const BASE_ALLOCATABLE_REGS: &[u8] = &[];
 /// Minimum dynamic use count required before a value is considered for allocation.
-const MIN_USES_FOR_ALLOCATION: usize = 3;
+const MIN_USES_FOR_ALLOCATION: usize = 2;
 /// Lower threshold when aggressive register allocation is enabled.
-const MIN_USES_FOR_ALLOCATION_AGGRESSIVE: usize = 2;
-/// Non-leaf functions smaller than this are unlikely to amortize regalloc moves.
-const MIN_TOTAL_VALUES_NON_LEAF: usize = 24;
+const MIN_USES_FOR_ALLOCATION_AGGRESSIVE: usize = 1;
 
 /// A live interval for an SSA value.
 #[derive(Debug, Clone)]
@@ -161,27 +155,6 @@ pub fn run(
     stats.has_loops = has_loops;
     stats.total_intervals = intervals.len();
 
-    // Skip allocation for functions without loops — the per-block register cache
-    // already handles within-block forwarding, and spill/reload around calls
-    // would be a net cost.
-    if !has_loops {
-        stats.skipped_reason = Some("no_loops");
-        tracing::debug!(
-            target: "wasm_pvm::regalloc",
-            function = %fn_name,
-            is_leaf,
-            num_params,
-            total_values = stats.total_values,
-            total_intervals = stats.total_intervals,
-            has_loops = stats.has_loops,
-            skipped_reason = stats.skipped_reason,
-            "regalloc skipped"
-        );
-        return RegAllocResult {
-            stats,
-            ..RegAllocResult::default()
-        };
-    }
     if intervals.is_empty() {
         stats.skipped_reason = Some("no_candidate_intervals");
         tracing::debug!(
@@ -238,10 +211,8 @@ pub fn run(
     }
     stats.allocatable_regs = allocatable_regs.len();
 
-    // In non-leaf functions, a single allocatable register tends to thrash on
-    // large AS workloads and can regress gas. Keep allocation disabled unless
-    // we have at least two allocatable callee regs to work with.
-    if !is_leaf && allocatable_regs.len() < 2 {
+    // Non-leaf functions need at least one allocatable register to proceed.
+    if !is_leaf && allocatable_regs.is_empty() {
         stats.skipped_reason = Some("insufficient_nonleaf_regs");
         tracing::debug!(
             target: "wasm_pvm::regalloc",
@@ -267,28 +238,6 @@ pub fn run(
     // avoided stack loads.
     if !is_leaf && has_calls_in_loops(&block_ranges, &loop_headers) {
         stats.skipped_reason = Some("calls_in_loops");
-        tracing::debug!(
-            target: "wasm_pvm::regalloc",
-            function = %fn_name,
-            is_leaf,
-            num_params,
-            total_values = stats.total_values,
-            total_intervals = stats.total_intervals,
-            has_loops = stats.has_loops,
-            allocatable_regs = stats.allocatable_regs,
-            skipped_reason = stats.skipped_reason,
-            "regalloc skipped"
-        );
-        return RegAllocResult {
-            stats,
-            ..RegAllocResult::default()
-        };
-    }
-
-    // Very small non-leaf functions (few SSA values) usually don't benefit:
-    // extra move/reload traffic outweighs saved loads.
-    if !is_leaf && stats.total_values < MIN_TOTAL_VALUES_NON_LEAF {
-        stats.skipped_reason = Some("small_nonleaf_function");
         tracing::debug!(
             target: "wasm_pvm::regalloc",
             function = %fn_name,
@@ -522,22 +471,6 @@ fn compute_live_intervals<'ctx>(
 
         // Skip low-use values — not worth allocating a register.
         if uses < min_uses {
-            continue;
-        }
-
-        // Values defined inside loop bodies are typically updated every
-        // iteration. With write-through slots this tends to add move traffic
-        // without enough load savings, so we only allocate loop-carried values
-        // that originate before the loop.
-        let mut defined_in_loop = false;
-        for (&header_bb, &back_edge_end) in loop_headers {
-            let (header_start, _) = block_ranges[&header_bb];
-            if start >= header_start && start <= back_edge_end {
-                defined_in_loop = true;
-                break;
-            }
-        }
-        if defined_in_loop {
             continue;
         }
 
