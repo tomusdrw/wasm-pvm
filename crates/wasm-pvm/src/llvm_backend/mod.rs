@@ -79,6 +79,7 @@ pub fn lower_function(
             function.count_params() as usize,
             ctx.optimizations.aggressive_register_allocation,
             scratch_safe,
+            ctx.optimizations.allocate_caller_saved_regs,
         );
 
         // If regalloc allocated any callee-saved registers (r9-r12), mark them

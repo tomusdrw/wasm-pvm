@@ -64,6 +64,10 @@ pub struct OptimizationFlags {
     /// Allocate r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) in leaf functions that don't
     /// clobber them (no bulk memory ops, no funnel shifts).
     pub allocate_scratch_regs: bool,
+    /// Allocate r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) in leaf functions.
+    /// These are caller-saved and idle after the prologue; lowering paths that
+    /// use them as scratch will invalidate and trigger lazy reload.
+    pub allocate_caller_saved_regs: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -83,6 +87,7 @@ impl Default for OptimizationFlags {
             fallthrough_jumps: true,
             aggressive_register_allocation: true,
             allocate_scratch_regs: true,
+            allocate_caller_saved_regs: true,
         }
     }
 }

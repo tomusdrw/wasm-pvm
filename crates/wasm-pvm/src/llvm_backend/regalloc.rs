@@ -8,6 +8,9 @@
 //   - r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) are available in leaf functions whose
 //     LLVM IR contains no operations that clobber them (bulk memory ops,
 //     non-rotation funnel shifts). Detected via `scratch_regs_safe` parameter.
+//   - r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) are available in leaf functions.
+//     Lowering paths that use them as scratch trigger `invalidate_reg` on emit,
+//     forcing lazy reload from the write-through stack slot.
 //   - r9-r12 (`abi::FIRST_LOCAL_REG`..+4) are available beyond parameter count
 //     in both leaf and non-leaf functions. Non-leaf functions invalidate
 //     allocated callee regs after calls since call argument setup reuses r9-r12.
@@ -98,6 +101,7 @@ pub struct RegAllocStats {
 /// `aggressive` lowers the minimum-use threshold from 3 to 2, capturing more candidates.
 /// `scratch_regs_safe` indicates that this function never clobbers r5/r6
 /// (`abi::SCRATCH1`/`SCRATCH2`), making them available for allocation.
+/// `allocate_caller_saved` enables r7/r8 allocation in leaf functions.
 pub fn run(
     function: FunctionValue<'_>,
     value_slots: &HashMap<ValKey, i32>,
@@ -105,6 +109,7 @@ pub fn run(
     num_params: usize,
     aggressive: bool,
     scratch_regs_safe: bool,
+    allocate_caller_saved: bool,
 ) -> RegAllocResult {
     let fn_name = function.get_name().to_string_lossy().to_string();
     let mut stats = RegAllocStats {
@@ -205,6 +210,19 @@ pub fn run(
     if scratch_regs_safe && is_leaf {
         allocatable_regs.push(crate::abi::SCRATCH1);
         allocatable_regs.push(crate::abi::SCRATCH2);
+    }
+
+    // Add r7/r8 (RETURN_VALUE_REG/ARGS_LEN_REG) in leaf functions.
+    // These are caller-saved and idle after the prologue in leaf functions.
+    // r7 is overwritten by the return sequence (load_operand into r7 calls
+    // invalidate_reg), so no explicit eviction is needed.
+    // r8 has no epilogue use at all.
+    // Lowering paths that use r7/r8 as scratch (alu.rs signed div, NE compare,
+    // control_flow.rs multi-phi) will trigger invalidate_reg via emit(), forcing
+    // a lazy reload from the write-through stack slot on next use.
+    if allocate_caller_saved && is_leaf {
+        allocatable_regs.push(crate::abi::ARGS_LEN_REG); // r8
+        allocatable_regs.push(crate::abi::RETURN_VALUE_REG); // r7
     }
 
     // Add callee-saved registers (r9-r12) beyond parameter count.

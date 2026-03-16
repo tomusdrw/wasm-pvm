@@ -105,6 +105,12 @@ enum Commands {
 
         #[arg(
             long,
+            help = "Disable r7/r8 caller-saved register allocation in leaf functions"
+        )]
+        no_caller_saved_alloc: bool,
+
+        #[arg(
+            long,
             help = "Override maximum memory pages (default: 16 = 1 MB, each page = 64 KB)"
         )]
         max_memory: Option<u32>,
@@ -140,6 +146,7 @@ fn main() -> Result<()> {
             no_fallthrough_jumps,
             no_aggressive_regalloc,
             no_scratch_reg_alloc,
+            no_caller_saved_alloc,
             max_memory,
         } => {
             let wasm = read_wasm(&input)?;
@@ -183,6 +190,7 @@ fn main() -> Result<()> {
                     fallthrough_jumps: !no_fallthrough_jumps,
                     aggressive_register_allocation: !no_aggressive_regalloc,
                     allocate_scratch_regs: !no_scratch_reg_alloc,
+                    allocate_caller_saved_regs: !no_caller_saved_alloc,
                 },
                 max_memory_pages: max_memory,
             };
