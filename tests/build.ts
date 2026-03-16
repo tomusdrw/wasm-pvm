@@ -260,6 +260,7 @@ async function main() {
         "anan-as-compiler-replay",
         fs.existsSync(replayImports) ? replayImports : undefined,
         fs.existsSync(replayAdapter) ? replayAdapter : undefined,
+        256,
       );
       console.log("  anan-as-compiler-replay.jam compiled.");
     } catch (err: any) {

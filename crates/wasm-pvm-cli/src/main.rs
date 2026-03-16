@@ -206,7 +206,12 @@ fn row(label: &str, value: impl std::fmt::Display) {
 fn format_memory_size(pages: u32, page_size_kb: u32) -> String {
     let total_kb = u64::from(pages) * u64::from(page_size_kb);
     if total_kb >= 1024 {
-        format!("{} MB", total_kb / 1024)
+        let mb = total_kb as f64 / 1024.0;
+        if mb.fract() == 0.0 {
+            format!("{mb:.0} MB")
+        } else {
+            format!("{mb:.1} MB")
+        }
     } else {
         format!("{total_kb} KB")
     }
