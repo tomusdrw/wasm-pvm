@@ -292,14 +292,17 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
 
 ### Linear-Scan Register Allocation
 
-- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to available callee-saved registers (r9-r12) beyond parameter count.
+- Allocates SSA values to physical registers using spill-weight eviction (`use_count × 10^loop_depth`).
 - Operates on LLVM IR before PVM lowering; produces `ValKey` → physical register mapping
 - `load_operand` checks regalloc before slot lookup: uses `MoveReg` from allocated reg instead of `LoadIndU64` from stack
 - `store_to_slot` uses write-through: copies to allocated reg AND stores to stack; DSE removes the stack store if never loaded
-- r5/r6 are excluded from global allocation because they are heavily reused as scratch in lowering paths
+- r5/r6 allocatable in safe leaf functions (no bulk memory ops or funnel shifts); detected by `scratch_regs_safe()` LLVM IR scan
+- r7/r8 allocatable in all leaf functions; lowering paths that use them as scratch trigger `invalidate_reg` via `emit()`
 - Clobbered allocated scratch regs (when present) are handled with lazy invalidation/reload instead of eager spill+reload
-- Values with ≤1 use are skipped (not worth a register)
+- Allocates in all functions (looped and straight-line), not just loop-heavy code
+- MIN_USES default=2 (aggressive=1); values with fewer uses are skipped
 - Loop extension: back-edges detected by successor having lower block index; live ranges extended to cover the back-edge source
+- Eviction uses spill weight (sum of `10^loop_depth` per use) instead of furthest-end heuristic
 - `linear_scan` must track active assignments separately from final assignments:
   - naturally expired intervals should remain in the final `val_to_reg`/`slot_to_reg` maps (their earlier uses still benefit),
   - evicted intervals must be removed from final mapping (whole-interval mapping is no longer valid after eviction).
@@ -319,10 +322,7 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
 - Follow-up stabilization:
   - Corrective follow-up: `CacheSnapshot` now includes allocated-register slot ownership (`alloc_reg_slot`), which replaced the earlier label-boundary `alloc_reg_valid` reset approach by restoring allocation state path-sensitively across propagated edges.
   - `alloc_reg_valid` was removed; slot identity (`alloc_reg_slot == Some(slot)`) is sufficient to decide whether a lazy reload is needed.
-  - Conservative non-leaf filter currently helps avoid large regressions: skip values defined inside loop bodies and require at least 3 uses before considering allocation.
-  - Additional non-leaf gates that reduced remaining regressions:
-    - Skip regalloc when fewer than 2 non-leaf allocatable callee registers are available (1-register allocation tended to thrash on AS decoder/array workloads).
-    - Skip very small non-leaf functions (`total_values < 24`) where move/reload overhead often dominates.
+  - Non-leaf gate: skip when no allocatable registers remain (all r9-r12 used by params/call args). Previously skipped at <2 regs and <24 SSA values, but these conservative gates were removed in Phase 2 (#165).
 - Post-fix benchmark shape: consistent JAM size reductions from regalloc, but gas/time gains are workload-dependent and often near-noise on current microbenchmarks.
 - **Leaf detection fix**: PVM intrinsics (`__pvm_load_i32`, `__pvm_store_i32`, etc.) are LLVM `Call` instructions but are NOT real function calls — they're lowered inline using temp registers only. The `is_real_call()` function in `emitter.rs` distinguishes real calls (`wasm_func_*`, `__pvm_call_indirect`) from intrinsics (`__pvm_*`, `llvm.*`). Before this fix, ALL functions with memory access were classified as non-leaf, causing unnecessary callee-save prologue/epilogue overhead.
 - **Cross-block alloc_reg_slot propagation**: In leaf functions (no real calls), `alloc_reg_slot` is preserved across all block boundaries because allocated registers are never clobbered. In non-leaf functions with multi-predecessor blocks, predecessor exit snapshots are intersected — only entries where ALL processed predecessors agree are kept. Back-edges (unprocessed predecessors) are treated conservatively.
