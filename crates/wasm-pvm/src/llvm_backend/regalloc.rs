@@ -41,6 +41,8 @@ use super::successors::collect_successors;
 const BASE_ALLOCATABLE_REGS: &[u8] = &[];
 /// Minimum dynamic use count required before a value is considered for allocation.
 const MIN_USES_FOR_ALLOCATION: usize = 3;
+/// Lower threshold when aggressive register allocation is enabled.
+const MIN_USES_FOR_ALLOCATION_AGGRESSIVE: usize = 2;
 /// Non-leaf functions smaller than this are unlikely to amortize regalloc moves.
 const MIN_TOTAL_VALUES_NON_LEAF: usize = 24;
 
@@ -93,11 +95,13 @@ pub struct RegAllocStats {
 ///
 /// `value_slots` maps `ValKey` → stack slot offset (from the pre-scan bump allocator).
 /// `num_params` is the number of function parameters (for determining available callee-saved regs).
+/// `aggressive` lowers the minimum-use threshold from 3 to 2, capturing more candidates.
 pub fn run(
     function: FunctionValue<'_>,
     value_slots: &HashMap<ValKey, i32>,
     is_leaf: bool,
     num_params: usize,
+    aggressive: bool,
 ) -> RegAllocResult {
     let fn_name = function.get_name().to_string_lossy().to_string();
     let mut stats = RegAllocStats {
@@ -128,9 +132,24 @@ pub fn run(
     let max_call_args = max_call_args(function);
     stats.max_call_args = max_call_args;
 
+    // Phase 1b: Detect loop headers (used by both live interval computation
+    // and the calls-in-loops heuristic).
+    let loop_headers = detect_loop_headers(&blocks, &block_ranges);
+
     // Phase 2: Compute live intervals + detect loops.
-    let (intervals, has_loops) =
-        compute_live_intervals(&blocks, &instr_index, &block_ranges, value_slots);
+    let min_uses = if aggressive {
+        MIN_USES_FOR_ALLOCATION_AGGRESSIVE
+    } else {
+        MIN_USES_FOR_ALLOCATION
+    };
+    let (intervals, has_loops) = compute_live_intervals(
+        &blocks,
+        &instr_index,
+        &block_ranges,
+        value_slots,
+        &loop_headers,
+        min_uses,
+    );
     stats.has_loops = has_loops;
     stats.total_intervals = intervals.len();
 
@@ -195,6 +214,30 @@ pub fn run(
     // we have at least two allocatable callee regs to work with.
     if !is_leaf && allocatable_regs.len() < 2 {
         stats.skipped_reason = Some("insufficient_nonleaf_regs");
+        tracing::debug!(
+            target: "wasm_pvm::regalloc",
+            function = %fn_name,
+            is_leaf,
+            num_params,
+            total_values = stats.total_values,
+            total_intervals = stats.total_intervals,
+            has_loops = stats.has_loops,
+            allocatable_regs = stats.allocatable_regs,
+            skipped_reason = stats.skipped_reason,
+            "regalloc skipped"
+        );
+        return RegAllocResult {
+            stats,
+            ..RegAllocResult::default()
+        };
+    }
+
+    // Non-leaf functions with calls inside loop bodies suffer from frequent
+    // register invalidation after each call, making allocation a net negative.
+    // The callee-save overhead + reload traffic outweighs the savings from
+    // avoided stack loads.
+    if !is_leaf && has_calls_in_loops(&block_ranges, &loop_headers) {
+        stats.skipped_reason = Some("calls_in_loops");
         tracing::debug!(
             target: "wasm_pvm::regalloc",
             function = %fn_name,
@@ -300,25 +343,14 @@ fn max_call_args(function: FunctionValue<'_>) -> usize {
     max_args
 }
 
-/// Compute live intervals for all SSA values (parameters and instruction results).
-/// Also returns whether any loops were detected (back-edges exist).
-fn compute_live_intervals<'ctx>(
+/// Detect loop back-edges and return a map from loop header → back-edge end position.
+fn detect_loop_headers<'ctx>(
     blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
-    instr_index: &HashMap<ValKey, usize>,
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
-    value_slots: &HashMap<ValKey, i32>,
-) -> (Vec<LiveInterval>, bool) {
-    use inkwell::values::InstructionOpcode;
-
-    let mut def_point: HashMap<ValKey, usize> = HashMap::new();
-    let mut last_use: HashMap<ValKey, usize> = HashMap::new();
-    let mut use_count: HashMap<ValKey, usize> = HashMap::new();
-
-    // Collect block index mapping for back-edge detection.
+) -> HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize> {
     let block_order: HashMap<inkwell::basic_block::BasicBlock<'_>, usize> =
         blocks.iter().enumerate().map(|(i, &bb)| (bb, i)).collect();
 
-    // Detect loop back-edges: successor has a lower block index than the source.
     let mut loop_headers: HashMap<inkwell::basic_block::BasicBlock<'_>, usize> = HashMap::new();
     for &bb in blocks {
         if let Some(term) = bb.get_terminator() {
@@ -329,13 +361,77 @@ fn compute_live_intervals<'ctx>(
                 if let Some(&succ_idx) = block_order.get(&succ)
                     && succ_idx <= bb_idx
                 {
-                    // Back-edge: bb -> succ (succ is a loop header).
                     let entry = loop_headers.entry(succ).or_insert(0);
                     *entry = (*entry).max(bb_end);
                 }
             }
         }
     }
+    loop_headers
+}
+
+/// Check if any real function call (wasm_func_*) exists inside a loop body.
+fn has_calls_in_loops<'ctx>(
+    block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
+    loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
+) -> bool {
+    use inkwell::values::InstructionOpcode;
+
+    if loop_headers.is_empty() {
+        return false;
+    }
+
+    for (&bb, &(bb_start, bb_end)) in block_ranges {
+        // Check if this block is inside any loop body.
+        let in_loop = loop_headers.iter().any(|(header_bb, &back_edge_end)| {
+            let (header_start, _) = block_ranges[header_bb];
+            bb_start >= header_start && bb_end <= back_edge_end
+        });
+
+        if !in_loop {
+            continue;
+        }
+
+        // Check for real WASM function calls (not intrinsics).
+        for instr in bb.get_instructions() {
+            if instr.get_opcode() == InstructionOpcode::Call {
+                let call_site: std::result::Result<inkwell::values::CallSiteValue, _> =
+                    instr.try_into();
+                if let Ok(cs) = call_site
+                    && let Some(fn_val) = cs.get_called_fn_value()
+                {
+                    let name = fn_val.get_name().to_string_lossy();
+                    // Skip intrinsics — they don't use the calling convention.
+                    // __pvm_call_indirect IS a real call (indirect dispatch).
+                    if (name.starts_with("__pvm_") && name != "__pvm_call_indirect")
+                        || name.starts_with("llvm.")
+                    {
+                        continue;
+                    }
+                    // This is a real function call inside a loop body.
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Compute live intervals for all SSA values (parameters and instruction results).
+/// Also returns whether any loops were detected (back-edges exist).
+fn compute_live_intervals<'ctx>(
+    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
+    instr_index: &HashMap<ValKey, usize>,
+    block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
+    value_slots: &HashMap<ValKey, i32>,
+    loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
+    min_uses: usize,
+) -> (Vec<LiveInterval>, bool) {
+    use inkwell::values::InstructionOpcode;
+
+    let mut def_point: HashMap<ValKey, usize> = HashMap::new();
+    let mut last_use: HashMap<ValKey, usize> = HashMap::new();
+    let mut use_count: HashMap<ValKey, usize> = HashMap::new();
 
     let has_loops = !loop_headers.is_empty();
 
@@ -396,7 +492,7 @@ fn compute_live_intervals<'ctx>(
         let uses = use_count.get(&vk).copied().unwrap_or(0);
 
         // Skip low-use values — not worth allocating a register.
-        if uses < MIN_USES_FOR_ALLOCATION {
+        if uses < min_uses {
             continue;
         }
 
@@ -405,7 +501,7 @@ fn compute_live_intervals<'ctx>(
         // without enough load savings, so we only allocate loop-carried values
         // that originate before the loop.
         let mut defined_in_loop = false;
-        for (&header_bb, &back_edge_end) in &loop_headers {
+        for (&header_bb, &back_edge_end) in loop_headers {
             let (header_start, _) = block_ranges[&header_bb];
             if start >= header_start && start <= back_edge_end {
                 defined_in_loop = true;
@@ -418,7 +514,7 @@ fn compute_live_intervals<'ctx>(
 
         // Loop extension: if this value is live at a loop header and the loop's
         // back-edge source is beyond the current end, extend the range.
-        for (&header_bb, &back_edge_end) in &loop_headers {
+        for (&header_bb, &back_edge_end) in loop_headers {
             let (header_start, _) = block_ranges[&header_bb];
             if start <= header_start && end >= header_start {
                 end = end.max(back_edge_end);

@@ -56,7 +56,11 @@ Skips `LoadImm`/`LoadImm64` when the target register already holds the required 
 
 ## Register Allocation (`--no-register-alloc`)
 
-Linear-scan allocator assigns frequently-used values (filtered by live-interval analysis and a minimum-use threshold) to available callee-saved registers (r9-r12). Only functions with loops are considered; loop-free functions skip allocation entirely. See the [Register Allocation](./regalloc.md) chapter for details.
+Linear-scan allocator assigns frequently-used values (filtered by live-interval analysis and a minimum-use threshold) to available callee-saved registers (r9-r12). Only functions with loops are considered; loop-free functions skip allocation entirely. Non-leaf functions with real function calls inside loop bodies are also skipped, because the callee-save overhead plus reload traffic after each call outweighs savings. See the [Register Allocation](./regalloc.md) chapter for details.
+
+## Aggressive Register Allocation (`--no-aggressive-regalloc`)
+
+Lowers the minimum-use threshold for register allocation candidates from 3 to 2, capturing values used in two-branch patterns (e.g., if-else). This benefits larger programs (e.g., aslan-fib: −114 gas) at the cost of slightly more MoveReg traffic in small leaf functions (e.g., AS fib: +6 gas). Enabled by default; disable with `--no-aggressive-regalloc` to restore the conservative threshold.
 
 ## Dead Function Elimination (`--no-dead-function-elim`)
 

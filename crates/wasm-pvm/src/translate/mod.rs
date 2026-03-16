@@ -57,6 +57,10 @@ pub struct OptimizationFlags {
     pub dead_function_elimination: bool,
     /// Eliminate unconditional jumps to the immediately following block (fallthrough).
     pub fallthrough_jumps: bool,
+    /// Lower the minimum-use threshold for register allocation candidates from 3 to 2.
+    /// Captures more values (e.g. two-branch if-else patterns) at the cost of slightly
+    /// more MoveReg traffic in small leaf functions.
+    pub aggressive_register_allocation: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -74,6 +78,7 @@ impl Default for OptimizationFlags {
             register_allocation: true,
             dead_function_elimination: true,
             fallthrough_jumps: true,
+            aggressive_register_allocation: true,
         }
     }
 }

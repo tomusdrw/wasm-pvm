@@ -93,6 +93,12 @@ enum Commands {
 
         #[arg(
             long,
+            help = "Disable aggressive register allocation (lower min-use threshold from 3 to 2)"
+        )]
+        no_aggressive_regalloc: bool,
+
+        #[arg(
+            long,
             help = "Override maximum memory pages (default: 16 = 1 MB, each page = 64 KB)"
         )]
         max_memory: Option<u32>,
@@ -126,6 +132,7 @@ fn main() -> Result<()> {
             no_register_alloc,
             no_dead_function_elim,
             no_fallthrough_jumps,
+            no_aggressive_regalloc,
             max_memory,
         } => {
             let wasm = read_wasm(&input)?;
@@ -167,6 +174,7 @@ fn main() -> Result<()> {
                     register_allocation: !no_register_alloc,
                     dead_function_elimination: !no_dead_function_elim,
                     fallthrough_jumps: !no_fallthrough_jumps,
+                    aggressive_register_allocation: !no_aggressive_regalloc,
                 },
                 max_memory_pages: max_memory,
             };
