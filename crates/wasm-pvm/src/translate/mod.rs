@@ -61,6 +61,9 @@ pub struct OptimizationFlags {
     /// Captures more values (e.g. two-branch if-else patterns) at the cost of slightly
     /// more `MoveReg` traffic in small leaf functions.
     pub aggressive_register_allocation: bool,
+    /// Allocate r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) in leaf functions that don't
+    /// clobber them (no bulk memory ops, no funnel shifts).
+    pub allocate_scratch_regs: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -79,6 +82,7 @@ impl Default for OptimizationFlags {
             dead_function_elimination: true,
             fallthrough_jumps: true,
             aggressive_register_allocation: true,
+            allocate_scratch_regs: true,
         }
     }
 }

@@ -5,9 +5,9 @@
 // register cache is cleared.
 //
 // Allocatable registers:
-//   - `BASE_ALLOCATABLE_REGS` is currently empty: we intentionally avoid global
-//     allocation of r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) because several lowering
-//     paths reuse them as scratch registers.
+//   - r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) are available in leaf functions whose
+//     LLVM IR contains no operations that clobber them (bulk memory ops,
+//     non-rotation funnel shifts). Detected via `scratch_regs_safe` parameter.
 //   - r9-r12 (`abi::FIRST_LOCAL_REG`..+4) are available beyond parameter count
 //     in both leaf and non-leaf functions. Non-leaf functions invalidate
 //     allocated callee regs after calls since call argument setup reuses r9-r12.
@@ -96,12 +96,15 @@ pub struct RegAllocStats {
 /// `value_slots` maps `ValKey` → stack slot offset (from the pre-scan bump allocator).
 /// `num_params` is the number of function parameters (for determining available callee-saved regs).
 /// `aggressive` lowers the minimum-use threshold from 3 to 2, capturing more candidates.
+/// `scratch_regs_safe` indicates that this function never clobbers r5/r6
+/// (`abi::SCRATCH1`/`SCRATCH2`), making them available for allocation.
 pub fn run(
     function: FunctionValue<'_>,
     value_slots: &HashMap<ValKey, i32>,
     is_leaf: bool,
     num_params: usize,
     aggressive: bool,
+    scratch_regs_safe: bool,
 ) -> RegAllocResult {
     let fn_name = function.get_name().to_string_lossy().to_string();
     let mut stats = RegAllocStats {
@@ -195,6 +198,14 @@ pub fn run(
 
     // Phase 3: Build the allocatable register set.
     let mut allocatable_regs: Vec<u8> = BASE_ALLOCATABLE_REGS.to_vec();
+
+    // Add r5/r6 (abi::SCRATCH1/SCRATCH2) when the function doesn't clobber them.
+    // Only in leaf functions for now — in non-leaf functions, r5/r6 are caller-saved
+    // and would need explicit spill/reload around every call site.
+    if scratch_regs_safe && is_leaf {
+        allocatable_regs.push(crate::abi::SCRATCH1);
+        allocatable_regs.push(crate::abi::SCRATCH2);
+    }
 
     // Add callee-saved registers (r9-r12) beyond parameter count.
     // For non-leaf functions, reserve outgoing argument registers (r9..)

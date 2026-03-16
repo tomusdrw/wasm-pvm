@@ -714,19 +714,14 @@ impl<'ctx> PvmEmitter<'ctx> {
     // ── Register allocation spill/reload ──
 
     /// Spill scratch register-allocated values (r5/r6) to their stack slots.
-    /// Called before instructions that may clobber caller-saved registers.
+    /// Called before instructions that may clobber r5/r6 (bulk memory, funnel shifts).
+    ///
+    /// Under write-through semantics, the stack slot is always authoritative.
+    /// This is a no-op for correctness — values are already written through.
+    /// The `reload_allocated_regs_after_scratch_clobber` call after the clobbering
+    /// instruction will invalidate the register mappings, forcing a reload on next use.
     pub fn spill_allocated_regs(&mut self) -> Result<()> {
-        // No-op: allocated values are already write-through in stack slots.
-        if self
-            .regalloc
-            .reg_to_slot
-            .keys()
-            .any(|&r| r == crate::abi::SCRATCH1 || r == crate::abi::SCRATCH2)
-        {
-            return Err(Error::Internal(
-                "r5/r6 allocation requires explicit spill handling".into(),
-            ));
-        }
+        // Write-through: stack slots are always up-to-date, nothing to spill.
         Ok(())
     }
 
@@ -1211,6 +1206,50 @@ fn is_real_call(instr: InstructionValue<'_>) -> bool {
     }
     if name.starts_with("llvm.") {
         return false;
+    }
+    true
+}
+
+/// Check whether any instruction in the function will lower to a path that
+/// clobbers r5/r6 (`abi::SCRATCH1`/`abi::SCRATCH2`).
+///
+/// Returns `true` if the function is safe (no r5/r6 clobbers).
+///
+/// Operations that clobber r5/r6:
+/// - `__pvm_memory_grow`, `__pvm_memory_fill`, `__pvm_memory_copy`, `__pvm_memory_init`
+/// - `llvm.fshl.*`, `llvm.fshr.*` (funnel shifts — conservatively flagged even if
+///   they might lower to a rotation which doesn't clobber)
+pub fn scratch_regs_safe(function: FunctionValue<'_>) -> bool {
+    use inkwell::values::InstructionOpcode;
+
+    for bb in function.get_basic_blocks() {
+        for instr in bb.get_instructions() {
+            if instr.get_opcode() == InstructionOpcode::Call {
+                let call_site: std::result::Result<inkwell::values::CallSiteValue, _> =
+                    instr.try_into();
+                let Ok(cs) = call_site else {
+                    continue;
+                };
+                let Some(fn_val) = cs.get_called_fn_value() else {
+                    continue;
+                };
+                let name = fn_val.get_name().to_string_lossy();
+                // Bulk memory intrinsics clobber r5/r6.
+                if matches!(
+                    name.as_ref(),
+                    "__pvm_memory_grow"
+                        | "__pvm_memory_fill"
+                        | "__pvm_memory_copy"
+                        | "__pvm_memory_init"
+                ) {
+                    return false;
+                }
+                // Funnel shifts (conservatively including rotations).
+                if name.starts_with("llvm.fshl.") || name.starts_with("llvm.fshr.") {
+                    return false;
+                }
+            }
+        }
     }
     true
 }

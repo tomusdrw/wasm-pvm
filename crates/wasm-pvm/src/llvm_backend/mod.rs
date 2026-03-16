@@ -69,12 +69,16 @@ pub fn lower_function(
 
     // Phase 1b: Register allocation — assign long-lived values to physical registers.
     if emitter.config.register_allocation_enabled {
+        let is_leaf = !emitter.has_calls;
+        let scratch_safe =
+            ctx.optimizations.allocate_scratch_regs && emitter::scratch_regs_safe(function);
         emitter.regalloc = regalloc::run(
             function,
             &emitter.value_slots,
-            !emitter.has_calls,
+            is_leaf,
             function.count_params() as usize,
             ctx.optimizations.aggressive_register_allocation,
+            scratch_safe,
         );
 
         // If regalloc allocated any callee-saved registers (r9-r12), mark them
