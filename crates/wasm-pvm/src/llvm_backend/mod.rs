@@ -74,6 +74,7 @@ pub fn lower_function(
             &emitter.value_slots,
             !emitter.has_calls,
             function.count_params() as usize,
+            ctx.optimizations.aggressive_register_allocation,
         );
 
         // If regalloc allocated any callee-saved registers (r9-r12), mark them

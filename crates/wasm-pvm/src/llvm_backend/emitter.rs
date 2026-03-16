@@ -755,12 +755,23 @@ impl<'ctx> PvmEmitter<'ctx> {
     ///
     /// Call argument setup may overwrite local argument registers (r9+), so
     /// allocated local-register mappings are invalidated after each call.
+    /// This blanket variant invalidates all r9-r12; prefer
+    /// `reload_allocated_regs_after_call_with_arity` when the call's argument
+    /// count is known.
     pub fn reload_allocated_regs_after_call(&mut self) {
+        self.reload_allocated_regs_after_call_with_arity(crate::abi::MAX_LOCAL_REGS);
+    }
+
+    /// Invalidate only the allocated registers actually clobbered by a call
+    /// with `num_args` arguments. Registers r9..r9+min(num_args,4)-1 are
+    /// clobbered by argument setup; higher registers remain valid.
+    pub fn reload_allocated_regs_after_call_with_arity(&mut self, num_args: usize) {
+        let clobbered_locals = num_args.min(crate::abi::MAX_LOCAL_REGS);
         self.invalidate_allocated_regs_where(|r| {
             r == crate::abi::SCRATCH1
                 || r == crate::abi::SCRATCH2
                 || (r >= crate::abi::FIRST_LOCAL_REG
-                    && r < crate::abi::FIRST_LOCAL_REG + crate::abi::MAX_LOCAL_REGS as u8)
+                    && r < crate::abi::FIRST_LOCAL_REG + clobbered_locals as u8)
         });
     }
 

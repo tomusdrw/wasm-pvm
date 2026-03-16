@@ -37,6 +37,7 @@ NO_OPT_FLAGS=(
   --no-const-prop
   --no-inline
   --no-cross-block-cache
+  --no-aggressive-regalloc
 )
 
 # Representative benchmarks: (jam_basename, args, pc, description, wasm_source)

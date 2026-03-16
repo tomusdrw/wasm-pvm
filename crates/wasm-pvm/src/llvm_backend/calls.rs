@@ -88,8 +88,9 @@ pub fn lower_wasm_call<'ctx>(
     e.emit(Instruction::Fallthrough);
     e.clear_reg_cache();
 
-    // Reload register-allocated values after the call.
-    e.reload_allocated_regs_after_call();
+    // Reload register-allocated values after the call — only invalidate
+    // registers actually used for this call's arguments.
+    e.reload_allocated_regs_after_call_with_arity(num_args);
 
     e.call_fixups.push(LlvmCallFixup {
         return_addr_instr: jump_instr, // same instruction for LoadImmJump
@@ -564,8 +565,9 @@ pub fn lower_pvm_call_indirect<'ctx>(
     e.emit(Instruction::Fallthrough);
     e.clear_reg_cache();
 
-    // Reload register-allocated values after the indirect call.
-    e.reload_allocated_regs_after_call();
+    // Reload register-allocated values after the indirect call — only
+    // invalidate registers actually used for this call's arguments.
+    e.reload_allocated_regs_after_call_with_arity(num_args);
 
     e.indirect_call_fixups.push(LlvmIndirectCallFixup {
         return_addr_instr,
