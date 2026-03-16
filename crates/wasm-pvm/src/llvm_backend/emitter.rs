@@ -62,6 +62,31 @@ pub struct LlvmFunctionTranslation {
     pub indirect_call_fixups: Vec<LlvmIndirectCallFixup>,
     /// Number of call return addresses allocated by this function (for jump table indexing).
     pub num_call_returns: usize,
+    /// Stats collected during lowering (for compiler output).
+    pub lowering_stats: FunctionLoweringStats,
+}
+
+/// Stats collected during function lowering for the compile stats output.
+#[derive(Debug, Clone, Default)]
+pub struct FunctionLoweringStats {
+    pub frame_size: i32,
+    pub is_leaf: bool,
+    /// Instruction count before dead store elimination.
+    pub pre_dse_instructions: usize,
+    /// Instruction count after DSE but before peephole.
+    pub pre_peephole_instructions: usize,
+    // ── Regalloc stats ──
+    pub regalloc_total_values: usize,
+    pub regalloc_allocated_values: usize,
+    /// Physical register numbers allocated (e.g. [9, 10]).
+    pub regalloc_registers_used: Vec<u8>,
+    pub regalloc_skipped_reason: Option<&'static str>,
+    // ── Regalloc usage stats ──
+    pub regalloc_load_hits: usize,
+    pub regalloc_load_reloads: usize,
+    pub regalloc_load_moves: usize,
+    pub regalloc_store_hits: usize,
+    pub regalloc_store_moves: usize,
 }
 
 #[derive(Debug, Clone)]

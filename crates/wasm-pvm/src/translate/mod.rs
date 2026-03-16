@@ -8,6 +8,7 @@
 pub mod adapter_merge;
 pub mod dead_function_elimination;
 pub use crate::memory_layout;
+pub mod stats;
 pub mod wasm_module;
 
 use std::collections::HashMap;
@@ -92,6 +93,9 @@ pub struct CompileOptions {
     pub metadata: Vec<u8>,
     /// Optimization flags controlling which compiler passes are enabled.
     pub optimizations: OptimizationFlags,
+    /// Override the maximum memory pages (memory.grow ceiling).
+    /// When set, this takes precedence over both the WASM-declared max and the compiler default.
+    pub max_memory_pages: Option<u32>,
 }
 
 // Re-export register constants from abi module
@@ -131,14 +135,22 @@ fn is_known_intrinsic(name: &str) -> bool {
     false
 }
 
+/// Default mappings applied when no explicit import map is provided.
+const DEFAULT_MAPPINGS: &[&str] = &["abort"];
+
 pub fn compile(wasm: &[u8]) -> Result<SpiProgram> {
     compile_with_options(wasm, &CompileOptions::default())
 }
 
 pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<SpiProgram> {
-    // Default mappings applied when no explicit import map is provided.
-    const DEFAULT_MAPPINGS: &[&str] = &["abort"];
+    let (program, _) = compile_with_stats(wasm, options)?;
+    Ok(program)
+}
 
+pub fn compile_with_stats(
+    wasm: &[u8],
+    options: &CompileOptions,
+) -> Result<(SpiProgram, stats::CompileStats)> {
     // Apply adapter merge if provided (produces a new WASM binary with fewer imports).
     let merged_wasm;
     let wasm = if let Some(adapter_wat) = &options.adapter {
@@ -148,18 +160,45 @@ pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<Spi
         wasm
     };
 
-    let module = WasmModule::parse(wasm)?;
+    let mut module = WasmModule::parse(wasm)?;
 
-    // Validate that all imports are resolved.
+    // Apply max_memory_pages override if provided.
+    if let Some(max_pages) = options.max_memory_pages {
+        module.max_memory_pages = max_pages.max(module.memory_limits.initial_pages);
+    }
+
+    // Validate imports and collect resolutions.
+    let mut import_resolutions = Vec::new();
     for name in &module.imported_func_names {
         if is_known_intrinsic(name) {
+            let action = if name == "pvm_ptr" || name == "host_call_r8" {
+                "intrinsic"
+            } else {
+                "ecalli"
+            };
+            import_resolutions.push(stats::ImportResolution {
+                name: name.clone(),
+                action: action.to_string(),
+            });
             continue;
         }
         if let Some(import_map) = &options.import_map {
-            if import_map.contains_key(name) {
+            if let Some(action) = import_map.get(name) {
+                let action_str = match action {
+                    ImportAction::Trap => "trap",
+                    ImportAction::Nop => "nop",
+                };
+                import_resolutions.push(stats::ImportResolution {
+                    name: name.clone(),
+                    action: action_str.to_string(),
+                });
                 continue;
             }
         } else if DEFAULT_MAPPINGS.contains(&name.as_str()) {
+            import_resolutions.push(stats::ImportResolution {
+                name: name.clone(),
+                action: "trap (default)".to_string(),
+            });
             continue;
         }
         return Err(Error::UnresolvedImport(format!(
@@ -167,10 +206,62 @@ pub fn compile_with_options(wasm: &[u8], options: &CompileOptions) -> Result<Spi
         )));
     }
 
-    compile_via_llvm(&module, options)
+    let active_data_segments = module
+        .data_segments
+        .iter()
+        .filter(|s| s.offset.is_some())
+        .count();
+    let passive_data_segments = module
+        .data_segments
+        .iter()
+        .filter(|s| s.offset.is_none())
+        .count();
+    let globals_region_bytes =
+        memory_layout::globals_region_size(module.globals.len(), passive_data_segments);
+
+    let result = compile_via_llvm(&module, options)?;
+
+    let spi_blob_bytes = result.program.encode().len();
+
+    let compile_stats = stats::CompileStats {
+        local_functions: module.functions.len(),
+        imported_functions: module.num_imported_funcs as usize,
+        globals: module.globals.len(),
+        active_data_segments,
+        passive_data_segments,
+        function_table_entries: module.function_table.len(),
+        initial_memory_pages: module.memory_limits.initial_pages,
+        max_memory_pages: module.max_memory_pages,
+        wasm_declared_max_pages: module.memory_limits.max_pages,
+        import_resolutions,
+        wasm_memory_base: module.wasm_memory_base,
+        globals_region_bytes,
+        ro_data_bytes: result.program.ro_data().len(),
+        rw_data_bytes: result.program.rw_data().len(),
+        heap_pages: result.program.heap_pages(),
+        stack_size: memory_layout::DEFAULT_STACK_SIZE,
+        pvm_instructions: result.pvm_instructions,
+        code_bytes: result.code_bytes,
+        jump_table_entries: result.jump_table_entries,
+        dead_functions_eliminated: result.dead_functions_eliminated,
+        spi_blob_bytes,
+        functions: result.function_stats,
+    };
+
+    Ok((result.program, compile_stats))
 }
 
-pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<SpiProgram> {
+/// Internal result of `compile_via_llvm`, carrying both the program and stats.
+struct CompilationOutput {
+    program: SpiProgram,
+    function_stats: Vec<stats::FunctionStats>,
+    dead_functions_eliminated: usize,
+    pvm_instructions: usize,
+    code_bytes: usize,
+    jump_table_entries: usize,
+}
+
+fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<CompilationOutput> {
     use crate::llvm_backend::{self, LoweringContext};
     use crate::llvm_frontend;
     use inkwell::context::Context;
@@ -252,6 +343,8 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
     let mut all_indirect_call_fixups: Vec<(usize, IndirectCallFixup)> = Vec::new();
     let mut function_offsets: Vec<usize> = vec![0; module.functions.len()];
     let mut next_call_return_idx: usize = 0;
+    let mut function_stats: Vec<stats::FunctionStats> = Vec::with_capacity(module.functions.len());
+    let mut dead_functions_eliminated: usize = 0;
 
     // Entry header: Jump to main (PC=0) + Trap or secondary Jump (PC=5).
     // When there's no secondary entry, we omit the Fallthrough padding (6 bytes instead of 10).
@@ -287,6 +380,20 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
             let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
             function_offsets[local_func_idx] = func_start_offset;
             all_instructions.push(Instruction::Trap);
+            dead_functions_eliminated += 1;
+            let global_func_idx = module.num_imported_funcs as usize + local_func_idx;
+            function_stats.push(stats::FunctionStats {
+                name: format!("wasm_func_{global_func_idx}"),
+                index: local_func_idx,
+                instruction_count: 1,
+                frame_size: 0,
+                is_leaf: true,
+                is_entry: false,
+                is_dead: true,
+                regalloc: stats::FunctionRegAllocStats::default(),
+                pre_dse_instructions: 0,
+                pre_peephole_instructions: 0,
+            });
             continue;
         }
 
@@ -389,6 +496,34 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
             ));
         }
 
+        let ls = &translation.lowering_stats;
+        function_stats.push(stats::FunctionStats {
+            name: fn_name,
+            index: local_func_idx,
+            instruction_count: translation.instructions.len(),
+            frame_size: ls.frame_size,
+            is_leaf: ls.is_leaf,
+            is_entry,
+            is_dead: false,
+            regalloc: stats::FunctionRegAllocStats {
+                total_values: ls.regalloc_total_values,
+                allocated_values: ls.regalloc_allocated_values,
+                registers_used: ls
+                    .regalloc_registers_used
+                    .iter()
+                    .map(|r| format!("r{r}"))
+                    .collect(),
+                skipped_reason: ls.regalloc_skipped_reason.map(String::from),
+                load_hits: ls.regalloc_load_hits,
+                load_reloads: ls.regalloc_load_reloads,
+                load_moves: ls.regalloc_load_moves,
+                store_hits: ls.regalloc_store_hits,
+                store_moves: ls.regalloc_store_moves,
+            },
+            pre_dse_instructions: ls.pre_dse_instructions,
+            pre_peephole_instructions: ls.pre_peephole_instructions,
+        });
+
         all_instructions.extend(translation.instructions);
     }
 
@@ -443,6 +578,11 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         }
     }
 
+    // Capture stats before moving instructions into the blob.
+    let pvm_instructions = all_instructions.len();
+    let code_bytes: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
+    let jump_table_entries = jump_table.len();
+
     let blob = crate::pvm::ProgramBlob::new(all_instructions).with_jump_table(jump_table);
     let rw_data_section = build_rw_data(
         &module.data_segments,
@@ -460,11 +600,20 @@ pub fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result
         module.functions.len(),
     )?;
 
-    Ok(SpiProgram::new(blob)
+    let program = SpiProgram::new(blob)
         .with_heap_pages(heap_pages)
         .with_ro_data(ro_data)
         .with_rw_data(rw_data_section)
-        .with_metadata(options.metadata.clone()))
+        .with_metadata(options.metadata.clone());
+
+    Ok(CompilationOutput {
+        program,
+        function_stats,
+        dead_functions_eliminated,
+        pvm_instructions,
+        code_bytes,
+        jump_table_entries,
+    })
 }
 
 /// Calculate the number of 4KB PVM heap pages needed after `rw_data`.

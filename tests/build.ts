@@ -242,7 +242,9 @@ async function main() {
     const imports = fs.existsSync(ananAsCompilerImports) ? ananAsCompilerImports : undefined;
     const adapter = fs.existsSync(ananAsCompilerAdapter) ? ananAsCompilerAdapter : undefined;
     try {
-      compileToJAM(ananAsCompilerWasm, "anan-as-compiler", imports, adapter);
+      // The anan-as compiler is a full AS-to-WASM compiler that needs significant memory
+      // for ASTs, code generation, etc. Override the 1 MB default to 16 MB (256 pages).
+      compileToJAM(ananAsCompilerWasm, "anan-as-compiler", imports, adapter, 256);
       console.log("  anan-as-compiler.jam compiled.");
     } catch (err: any) {
       console.error(`  FAIL: anan-as-compiler: ${err.message}`);
@@ -258,6 +260,7 @@ async function main() {
         "anan-as-compiler-replay",
         fs.existsSync(replayImports) ? replayImports : undefined,
         fs.existsSync(replayAdapter) ? replayAdapter : undefined,
+        256,
       );
       console.log("  anan-as-compiler-replay.jam compiled.");
     } catch (err: any) {

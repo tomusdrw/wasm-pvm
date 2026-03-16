@@ -29,7 +29,7 @@ export function compileAS(
   }
 
   const ascBin = path.join(TESTS_DIR, "node_modules/.bin/asc");
-  const cmd = `${ascBin} ${sourceFile} -o ${wasmFile} --runtime ${runtime} --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort=`;
+  const cmd = `${ascBin} ${sourceFile} -o ${wasmFile} --runtime ${runtime} --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort= --maximumMemory 16`;
   execSync(cmd, {
     cwd: TESTS_DIR,
     encoding: "utf8",
@@ -38,7 +38,7 @@ export function compileAS(
   return wasmFile;
 }
 
-export function compileToJAM(inputPath: string, outputName: string, importsPath?: string, adapterPath?: string): string {
+export function compileToJAM(inputPath: string, outputName: string, importsPath?: string, adapterPath?: string, maxMemory?: number): string {
   const jamFile = path.join(
     TESTS_DIR,
     "build",
@@ -52,6 +52,9 @@ export function compileToJAM(inputPath: string, outputName: string, importsPath?
   }
   if (importsPath) {
     cmd += ` --imports ${importsPath}`;
+  }
+  if (maxMemory !== undefined) {
+    cmd += ` --max-memory ${maxMemory}`;
   }
   execSync(cmd, {
     cwd: PROJECT_ROOT,
