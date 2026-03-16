@@ -52,8 +52,9 @@ struct LiveInterval {
     start: usize,
     /// End position (last use, inclusive).
     end: usize,
-    /// Number of uses (for spill weight heuristic).
-    use_count: usize,
+    /// Spill weight: sum of loop-depth-weighted uses. Higher weight → more
+    /// expensive to spill (the value is used frequently in hot code).
+    spill_weight: f64,
 }
 
 /// Result of register allocation for one function.
@@ -138,6 +139,10 @@ pub fn run(
     // and the calls-in-loops heuristic).
     let loop_headers = detect_loop_headers(&blocks, &block_ranges);
 
+    // Phase 1c: Compute per-position loop nesting depth for spill weight.
+    let max_position = instr_index.values().copied().max().unwrap_or(0);
+    let loop_depths = compute_loop_depths(&block_ranges, &loop_headers, max_position);
+
     // Phase 2: Compute live intervals + detect loops.
     let min_uses = if aggressive {
         MIN_USES_FOR_ALLOCATION_AGGRESSIVE
@@ -150,6 +155,7 @@ pub fn run(
         &block_ranges,
         value_slots,
         &loop_headers,
+        &loop_depths,
         min_uses,
     );
     stats.has_loops = has_loops;
@@ -348,6 +354,26 @@ fn detect_loop_headers<'ctx>(
     loop_headers
 }
 
+/// Compute loop nesting depth for each instruction position.
+///
+/// For each loop (identified by a back-edge to a header), all positions within
+/// [header_start, back_edge_end] have their depth incremented. Nested loops
+/// contribute additively.
+fn compute_loop_depths<'ctx>(
+    block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
+    loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
+    max_position: usize,
+) -> Vec<u32> {
+    let mut depths = vec![0u32; max_position + 1];
+    for (&header_bb, &back_edge_end) in loop_headers {
+        let (header_start, _) = block_ranges[&header_bb];
+        for d in &mut depths[header_start..=back_edge_end.min(max_position)] {
+            *d += 1;
+        }
+    }
+    depths
+}
+
 /// Check if any real function call (`wasm_func_*`) exists inside a loop body.
 fn has_calls_in_loops<'ctx>(
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
@@ -403,6 +429,7 @@ fn compute_live_intervals<'ctx>(
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
     value_slots: &HashMap<ValKey, i32>,
     loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
+    loop_depths: &[u32],
     min_uses: usize,
 ) -> (Vec<LiveInterval>, bool) {
     use inkwell::values::InstructionOpcode;
@@ -410,6 +437,8 @@ fn compute_live_intervals<'ctx>(
     let mut def_point: HashMap<ValKey, usize> = HashMap::new();
     let mut last_use: HashMap<ValKey, usize> = HashMap::new();
     let mut use_count: HashMap<ValKey, usize> = HashMap::new();
+    // Accumulated loop-depth-weighted use count per value.
+    let mut weighted_uses: HashMap<ValKey, f64> = HashMap::new();
 
     let has_loops = !loop_headers.is_empty();
 
@@ -437,7 +466,14 @@ fn compute_live_intervals<'ctx>(
                                 let vk = val_key_basic(val);
                                 if value_slots.contains_key(&vk) {
                                     let (_, pred_end) = block_ranges[&pred_bb];
-                                    update_use(&mut last_use, &mut use_count, vk, pred_end);
+                                    update_use(
+                                        &mut last_use,
+                                        &mut use_count,
+                                        &mut weighted_uses,
+                                        loop_depths,
+                                        vk,
+                                        pred_end,
+                                    );
                                 }
                             }
                         }
@@ -448,7 +484,14 @@ fn compute_live_intervals<'ctx>(
                         if let Some(inkwell::values::Operand::Value(val)) = instr.get_operand(i) {
                             let vk = val_key_basic(val);
                             if value_slots.contains_key(&vk) {
-                                update_use(&mut last_use, &mut use_count, vk, instr_idx);
+                                update_use(
+                                    &mut last_use,
+                                    &mut use_count,
+                                    &mut weighted_uses,
+                                    loop_depths,
+                                    vk,
+                                    instr_idx,
+                                );
                             }
                         }
                     }
@@ -468,6 +511,7 @@ fn compute_live_intervals<'ctx>(
         let start = def_point.get(&vk).copied().unwrap_or(0);
         let mut end = last_use.get(&vk).copied().unwrap_or(start);
         let uses = use_count.get(&vk).copied().unwrap_or(0);
+        let weight = weighted_uses.get(&vk).copied().unwrap_or(0.0);
 
         // Skip low-use values — not worth allocating a register.
         if uses < min_uses {
@@ -491,32 +535,41 @@ fn compute_live_intervals<'ctx>(
             slot,
             start,
             end,
-            use_count: uses,
+            spill_weight: weight,
         });
     }
 
     (intervals, has_loops)
 }
 
+/// Loop depth multiplier: each nesting level multiplies cost by 10.
+fn depth_weight(depth: u32) -> f64 {
+    10.0f64.powi(depth as i32)
+}
+
 fn update_use(
     last_use: &mut HashMap<ValKey, usize>,
     use_count: &mut HashMap<ValKey, usize>,
+    weighted_uses: &mut HashMap<ValKey, f64>,
+    loop_depths: &[u32],
     vk: ValKey,
     idx: usize,
 ) {
     let entry = last_use.entry(vk).or_insert(0);
     *entry = (*entry).max(idx);
     *use_count.entry(vk).or_insert(0) += 1;
+    let depth = loop_depths.get(idx).copied().unwrap_or(0);
+    *weighted_uses.entry(vk).or_insert(0.0) += depth_weight(depth);
 }
 
-/// Standard linear-scan register allocation.
+/// Standard linear-scan register allocation with spill-weight eviction.
 fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> RegAllocResult {
-    // Sort by start point (ascending), then by use_count descending (prefer allocating
-    // heavily-used values when two intervals start at the same point).
+    // Sort by start point (ascending), then by spill_weight descending (prefer
+    // allocating high-weight values when two intervals start at the same point).
     intervals.sort_by(|a, b| {
         a.start
             .cmp(&b.start)
-            .then_with(|| b.use_count.cmp(&a.use_count))
+            .then_with(|| b.spill_weight.partial_cmp(&a.spill_weight).unwrap_or(std::cmp::Ordering::Equal))
     });
 
     let mut result = RegAllocResult::default();
@@ -548,25 +601,35 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
             active_assigned.insert(i, reg);
             final_assigned.insert(i, reg);
             active.insert((interval.end, i));
-        } else if let Some(&(furthest_end, furthest_idx)) = active.iter().next_back()
-            && furthest_end > interval.end
-        {
-            // Evict the interval with the furthest end, give its register to us.
-            if let Some(reg) = active_assigned.remove(&furthest_idx) {
-                active.remove(&(furthest_end, furthest_idx));
-                // Evicted interval no longer has a stable whole-interval assignment.
-                final_assigned.remove(&furthest_idx);
+        } else {
+            // No free register: evict the active interval with the LOWEST
+            // spill weight (cheapest to reload), but only if the current
+            // interval has a higher weight (more valuable to keep in a register).
+            let evict_candidate = active
+                .iter()
+                .filter_map(|&(end, idx)| {
+                    Some((idx, end, intervals[idx].spill_weight))
+                })
+                .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
 
-                active_assigned.insert(i, reg);
-                final_assigned.insert(i, reg);
-                active.insert((interval.end, i));
-            } else {
-                // Keep allocation robust if active tracking gets out of sync.
-                active.remove(&(furthest_end, furthest_idx));
-                final_assigned.remove(&furthest_idx);
+            if let Some((evict_idx, evict_end, evict_weight)) = evict_candidate
+                && interval.spill_weight > evict_weight
+            {
+                if let Some(reg) = active_assigned.remove(&evict_idx) {
+                    active.remove(&(evict_end, evict_idx));
+                    // Evicted interval no longer has a stable whole-interval assignment.
+                    final_assigned.remove(&evict_idx);
+
+                    active_assigned.insert(i, reg);
+                    final_assigned.insert(i, reg);
+                    active.insert((interval.end, i));
+                } else {
+                    active.remove(&(evict_end, evict_idx));
+                    final_assigned.remove(&evict_idx);
+                }
             }
+            // else: current interval has lower/equal weight — spill it.
         }
-        // else: no free register and current interval ends further — spill it.
     }
 
     // Build result from all non-evicted assignments (single pass).
@@ -592,14 +655,14 @@ mod tests {
                 slot: 8,
                 start: 0,
                 end: 1,
-                use_count: 3,
+                spill_weight: 3.0,
             },
             LiveInterval {
                 val_key: ValKey(2),
                 slot: 16,
                 start: 2,
                 end: 3,
-                use_count: 3,
+                spill_weight: 3.0,
             },
         ];
 
@@ -613,21 +676,22 @@ mod tests {
     }
 
     #[test]
-    fn linear_scan_drops_evicted_interval_assignment() {
+    fn linear_scan_evicts_lowest_weight() {
+        // Two overlapping intervals: ValKey(1) has lower weight, so it gets evicted.
         let intervals = vec![
             LiveInterval {
                 val_key: ValKey(1),
                 slot: 8,
                 start: 0,
                 end: 10,
-                use_count: 3,
+                spill_weight: 2.0, // low weight — eviction candidate
             },
             LiveInterval {
                 val_key: ValKey(2),
                 slot: 16,
                 start: 1,
                 end: 4,
-                use_count: 3,
+                spill_weight: 50.0, // high weight (loop-hot) — wins
             },
         ];
 
@@ -635,5 +699,31 @@ mod tests {
 
         assert!(!result.val_to_reg.contains_key(&ValKey(1)));
         assert_eq!(result.val_to_reg.get(&ValKey(2)), Some(&9));
+    }
+
+    #[test]
+    fn linear_scan_keeps_higher_weight_active() {
+        // Current interval has lower weight than active — no eviction.
+        let intervals = vec![
+            LiveInterval {
+                val_key: ValKey(1),
+                slot: 8,
+                start: 0,
+                end: 10,
+                spill_weight: 50.0, // high weight — should stay
+            },
+            LiveInterval {
+                val_key: ValKey(2),
+                slot: 16,
+                start: 1,
+                end: 4,
+                spill_weight: 2.0, // low weight — gets spilled
+            },
+        ];
+
+        let result = linear_scan(intervals, &[9]);
+
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
+        assert!(!result.val_to_reg.contains_key(&ValKey(2)));
     }
 }
