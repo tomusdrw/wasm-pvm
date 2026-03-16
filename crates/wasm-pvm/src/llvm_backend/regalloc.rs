@@ -370,7 +370,7 @@ fn detect_loop_headers<'ctx>(
     loop_headers
 }
 
-/// Check if any real function call (wasm_func_*) exists inside a loop body.
+/// Check if any real function call (`wasm_func_*`) exists inside a loop body.
 fn has_calls_in_loops<'ctx>(
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
     loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,

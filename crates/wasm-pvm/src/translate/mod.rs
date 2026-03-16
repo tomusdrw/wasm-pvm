@@ -59,7 +59,7 @@ pub struct OptimizationFlags {
     pub fallthrough_jumps: bool,
     /// Lower the minimum-use threshold for register allocation candidates from 3 to 2.
     /// Captures more values (e.g. two-branch if-else patterns) at the cost of slightly
-    /// more MoveReg traffic in small leaf functions.
+    /// more `MoveReg` traffic in small leaf functions.
     pub aggressive_register_allocation: bool,
 }
 
