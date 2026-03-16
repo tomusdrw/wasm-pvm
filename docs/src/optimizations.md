@@ -56,11 +56,19 @@ Skips `LoadImm`/`LoadImm64` when the target register already holds the required 
 
 ## Register Allocation (`--no-register-alloc`)
 
-Linear-scan allocator assigns frequently-used values (filtered by live-interval analysis and a minimum-use threshold) to available callee-saved registers (r9-r12). Only functions with loops are considered; loop-free functions skip allocation entirely. Non-leaf functions with real function calls inside loop bodies are also skipped, because the callee-save overhead plus reload traffic after each call outweighs savings. See the [Register Allocation](./regalloc.md) chapter for details.
+Linear-scan allocator assigns SSA values to physical registers, reducing `LoadIndU64` memory traffic. Allocates in all functions (looped and straight-line). Eviction uses a spill-weight model (`use_count × 10^loop_depth`) to keep loop-hot values in registers. Non-leaf functions with calls inside loop bodies are skipped (reload traffic outweighs savings). See the [Register Allocation](./regalloc.md) chapter for details.
 
 ## Aggressive Register Allocation (`--no-aggressive-regalloc`)
 
-Lowers the minimum-use threshold for register allocation candidates from 3 to 2, capturing values used in two-branch patterns (e.g., if-else). This benefits larger programs (e.g., aslan-fib: −114 gas) at the cost of slightly more MoveReg traffic in small leaf functions (e.g., AS fib: +6 gas). Enabled by default; disable with `--no-aggressive-regalloc` to restore the conservative threshold.
+Lowers the minimum-use threshold for register allocation candidates from 2 to 1, capturing single-use values when a register is free. Enabled by default.
+
+## Scratch Register Allocation (`--no-scratch-reg-alloc`)
+
+Adds r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) to the allocatable set in leaf functions that don't clobber them (no bulk memory ops, no funnel shifts). Per-function LLVM IR scan detects clobbering operations. Doubles allocation capacity in the common case (e.g., 2-param function: 2 → 4 allocatable regs).
+
+## Caller-Saved Register Allocation (`--no-caller-saved-alloc`)
+
+Adds r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) to the allocatable set in leaf functions. These registers are idle after the prologue. Lowering paths that use them as scratch (signed div, NE compare, multi-phi) trigger `invalidate_reg`, forcing lazy reload from the write-through stack slot. Combined with r5/r6, gives up to 6 extra registers in leaf functions.
 
 ## Dead Function Elimination (`--no-dead-function-elim`)
 

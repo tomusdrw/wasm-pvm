@@ -32,11 +32,8 @@ use inkwell::values::{FunctionValue, PhiValue};
 use super::emitter::{ValKey, val_key_basic, val_key_instr};
 use super::successors::collect_successors;
 
-/// Base registers available for allocation.
-///
-/// We currently avoid allocating r5/r6 globally because they are reused as
-/// scratch registers by several lowering paths. Callee-saved allocation
-/// (r9-r12, when available) is configured below.
+/// Base registers always available for allocation (empty — all allocatable
+/// registers are added conditionally in `run()` based on leaf/scratch analysis).
 const BASE_ALLOCATABLE_REGS: &[u8] = &[];
 /// Minimum dynamic use count required before a value is considered for allocation.
 const MIN_USES_FOR_ALLOCATION: usize = 2;
@@ -607,9 +604,7 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
             // interval has a higher weight (more valuable to keep in a register).
             let evict_candidate = active
                 .iter()
-                .filter_map(|&(end, idx)| {
-                    Some((idx, end, intervals[idx].spill_weight))
-                })
+                .map(|&(end, idx)| (idx, end, intervals[idx].spill_weight))
                 .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
 
             if let Some((evict_idx, evict_end, evict_weight)) = evict_candidate
@@ -725,5 +720,39 @@ mod tests {
 
         assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
         assert!(!result.val_to_reg.contains_key(&ValKey(2)));
+    }
+
+    #[test]
+    fn linear_scan_equal_weight_no_eviction() {
+        // When weights are equal, no eviction occurs — the new interval is spilled.
+        let intervals = vec![
+            LiveInterval {
+                val_key: ValKey(1),
+                slot: 8,
+                start: 0,
+                end: 10,
+                spill_weight: 5.0,
+            },
+            LiveInterval {
+                val_key: ValKey(2),
+                slot: 16,
+                start: 1,
+                end: 4,
+                spill_weight: 5.0, // same weight → no eviction
+            },
+        ];
+
+        let result = linear_scan(intervals, &[9]);
+
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
+        assert!(!result.val_to_reg.contains_key(&ValKey(2)));
+    }
+
+    #[test]
+    fn depth_weight_scales_exponentially() {
+        assert_eq!(depth_weight(0), 1.0);
+        assert_eq!(depth_weight(1), 10.0);
+        assert_eq!(depth_weight(2), 100.0);
+        assert_eq!(depth_weight(3), 1000.0);
     }
 }
