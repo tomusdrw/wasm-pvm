@@ -111,6 +111,12 @@ enum Commands {
 
         #[arg(
             long,
+            help = "Disable lazy spill (skip stack stores for register-allocated values)"
+        )]
+        no_lazy_spill: bool,
+
+        #[arg(
+            long,
             help = "Override maximum memory pages (default: 16 = 1 MB, each page = 64 KB)"
         )]
         max_memory: Option<u32>,
@@ -147,6 +153,7 @@ fn main() -> Result<()> {
             no_aggressive_regalloc,
             no_scratch_reg_alloc,
             no_caller_saved_alloc,
+            no_lazy_spill,
             max_memory,
         } => {
             let wasm = read_wasm(&input)?;
@@ -191,6 +198,7 @@ fn main() -> Result<()> {
                     aggressive_register_allocation: !no_aggressive_regalloc,
                     allocate_scratch_regs: !no_scratch_reg_alloc,
                     allocate_caller_saved_regs: !no_caller_saved_alloc,
+                    lazy_spill: !no_lazy_spill,
                 },
                 max_memory_pages: max_memory,
             };

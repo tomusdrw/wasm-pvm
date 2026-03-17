@@ -133,6 +133,9 @@ pub struct EmitterConfig {
 
     /// Whether fallthrough jump elimination is enabled.
     pub fallthrough_jumps_enabled: bool,
+
+    /// Whether lazy spill is enabled (skip stack stores for register-allocated values).
+    pub lazy_spill_enabled: bool,
 }
 
 /// PVM code emitter for a single function.
@@ -208,6 +211,11 @@ pub struct PvmEmitter<'ctx> {
     /// intervals; this tracks runtime ownership so stale values are reloaded.
     alloc_reg_slot: [Option<i32>; 13],
 
+    /// Dirty bit per register: true when the register holds a value not yet
+    /// written to its stack slot (lazy spill). Only meaningful when
+    /// `config.lazy_spill_enabled` is true.
+    alloc_dirty: [bool; 13],
+
     /// Runtime usage counters for register-allocated mappings.
     pub(crate) regalloc_usage: RegAllocUsageStats,
 
@@ -224,6 +232,7 @@ pub struct CacheSnapshot {
     pub reg_to_slot: [Option<i32>; 13],
     pub reg_to_const: [Option<u64>; 13],
     pub alloc_reg_slot: [Option<i32>; 13],
+    pub alloc_dirty: [bool; 13],
 }
 
 /// Instrumentation counters describing how much allocated mappings are used by codegen.
@@ -245,16 +254,19 @@ impl CacheSnapshot {
     /// Invalidate a register's cache entries in this snapshot.
     /// Used to remove entries for registers that a terminator may clobber.
     pub fn invalidate_reg(&mut self, reg: u8) {
-        if let Some(slot) = self.reg_to_slot[reg as usize].take() {
+        let idx = reg as usize;
+        if let Some(slot) = self.reg_to_slot[idx].take() {
             self.slot_cache.remove(&slot);
         }
-        self.reg_to_const[reg as usize] = None;
+        self.reg_to_const[idx] = None;
         self.invalidate_alloc_reg(reg);
     }
 
     /// Invalidate allocated-register slot ownership in this snapshot.
     pub fn invalidate_alloc_reg(&mut self, reg: u8) {
-        self.alloc_reg_slot[reg as usize] = None;
+        let idx = reg as usize;
+        self.alloc_reg_slot[idx] = None;
+        self.alloc_dirty[idx] = false;
     }
 }
 
@@ -308,6 +320,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             has_calls: true, // conservative default
             regalloc: RegAllocResult::default(),
             alloc_reg_slot: [None; 13],
+            alloc_dirty: [false; 13],
             regalloc_usage: RegAllocUsageStats::default(),
             next_block_label: None,
         }
@@ -688,9 +701,6 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     pub fn store_to_slot(&mut self, slot_offset: i32, src_reg: u8) {
         let alloc_reg = self.regalloc.slot_to_reg.get(&slot_offset).copied();
-        // If this slot has an allocated register, copy the value into it.
-        // The stack store is still emitted (write-through); DSE will remove it
-        // if the slot is never loaded from stack.
         if let Some(alloc_reg) = alloc_reg {
             self.regalloc_usage.store_hits += 1;
             if src_reg != alloc_reg {
@@ -702,6 +712,13 @@ impl<'ctx> PvmEmitter<'ctx> {
             }
             let reg_idx = alloc_reg as usize;
             self.alloc_reg_slot[reg_idx] = Some(slot_offset);
+
+            if self.config.lazy_spill_enabled {
+                // Lazy spill: mark dirty, skip the stack store.
+                self.alloc_dirty[reg_idx] = true;
+                self.cache_slot(slot_offset, alloc_reg);
+                return;
+            }
         }
         self.emit(Instruction::StoreIndU64 {
             base: STACK_PTR_REG,
@@ -713,15 +730,73 @@ impl<'ctx> PvmEmitter<'ctx> {
 
     // ── Register allocation spill/reload ──
 
-    /// Spill scratch register-allocated values (r5/r6) to their stack slots.
-    /// Called before instructions that may clobber r5/r6 (bulk memory, funnel shifts).
+    /// Flush a single dirty allocated register to its stack slot.
     ///
-    /// Under write-through semantics, the stack slot is always authoritative.
-    /// This is a no-op for correctness — values are already written through.
-    /// The `reload_allocated_regs_after_scratch_clobber` call after the clobbering
-    /// instruction will invalidate the register mappings, forcing a reload on next use.
+    /// Emits `StoreIndU64` directly (bypassing `emit()` to avoid `invalidate_reg`
+    /// clearing `alloc_reg_slot`), then marks the register clean.
+    fn spill_dirty_reg(&mut self, reg: u8) {
+        let reg_idx = reg as usize;
+        if !self.alloc_dirty[reg_idx] {
+            return;
+        }
+        if let Some(slot) = self.alloc_reg_slot[reg_idx] {
+            let instr = Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: reg,
+                offset: slot,
+            };
+            self.byte_offset += instr.encode().len();
+            self.instructions.push(instr);
+        }
+        self.alloc_dirty[reg_idx] = false;
+    }
+
+    /// Flush ALL dirty allocated registers to their stack slots.
+    pub fn spill_all_dirty_regs(&mut self) {
+        let regs: Vec<u8> = self.regalloc.reg_to_slot.keys().copied().collect();
+        for reg in regs {
+            self.spill_dirty_reg(reg);
+        }
+    }
+
+    /// Set alloc_reg_slot for a specific register to a given slot and mark dirty.
+    ///
+    /// Used after register-aware phi copies to tell the emitter that the
+    /// allocated register now holds the phi destination value.
+    /// Must be called AFTER emit(MoveReg) since emit() triggers invalidate_reg().
+    pub fn set_alloc_reg_for_slot(&mut self, reg: u8, slot: i32) {
+        let idx = reg as usize;
+        self.alloc_reg_slot[idx] = Some(slot);
+        self.alloc_dirty[idx] = true;
+        self.cache_slot(slot, reg);
+    }
+
+    /// Check if a register currently owns its expected allocated slot.
+    pub fn is_alloc_reg_valid(&self, reg: u8, slot: i32) -> bool {
+        self.alloc_reg_slot[reg as usize] == Some(slot)
+    }
+
+    /// Emit a raw MoveReg bypassing emit() (no invalidate_reg on dst).
+    /// Used for register-aware phi copies where we manage alloc state manually.
+    pub fn emit_raw_move(&mut self, dst: u8, src: u8) {
+        let instr = Instruction::MoveReg { dst, src };
+        self.byte_offset += instr.encode().len();
+        self.instructions.push(instr);
+    }
+
+    /// Public wrapper for spilling a single dirty register.
+    /// Used by the parallel move resolver in phi copies.
+    pub fn spill_dirty_reg_pub(&mut self, reg: u8) {
+        self.spill_dirty_reg(reg);
+    }
+
+    /// Spill register-allocated values before instructions that clobber them.
+    /// With lazy spill, flushes dirty registers to stack.
+    /// Without lazy spill (write-through), this is a no-op.
     pub fn spill_allocated_regs(&mut self) -> Result<()> {
-        // Write-through: stack slots are always up-to-date, nothing to spill.
+        if self.config.lazy_spill_enabled {
+            self.spill_all_dirty_regs();
+        }
         Ok(())
     }
 
@@ -773,7 +848,7 @@ impl<'ctx> PvmEmitter<'ctx> {
     // ── Register cache ──
 
     /// Record that `reg` now holds the value of `slot`.
-    fn cache_slot(&mut self, slot: i32, reg: u8) {
+    pub fn cache_slot(&mut self, slot: i32, reg: u8) {
         if !self.config.register_cache_enabled {
             return;
         }
@@ -789,20 +864,37 @@ impl<'ctx> PvmEmitter<'ctx> {
     }
 
     /// Invalidate a register's cache entry (called when the register is overwritten).
+    /// With lazy spill, if the register holds a dirty value, flush it to the
+    /// stack before losing it.
     fn invalidate_reg(&mut self, reg: u8) {
-        if let Some(slot) = self.reg_to_slot[reg as usize].take() {
+        let idx = reg as usize;
+        if let Some(slot) = self.reg_to_slot[idx].take() {
             self.slot_cache.remove(&slot);
         }
         if self.regalloc.reg_to_slot.contains_key(&reg) {
-            self.alloc_reg_slot[reg as usize] = None;
+            // Lazy spill: if the register is dirty, spill to stack before clearing.
+            if self.config.lazy_spill_enabled
+                && self.alloc_dirty[idx]
+                && let Some(slot) = self.alloc_reg_slot[idx]
+            {
+                let instr = Instruction::StoreIndU64 {
+                    base: STACK_PTR_REG,
+                    src: reg,
+                    offset: slot,
+                };
+                self.byte_offset += instr.encode().len();
+                self.instructions.push(instr);
+            }
+            self.alloc_reg_slot[idx] = None;
+            self.alloc_dirty[idx] = false;
         }
-        self.reg_to_const[reg as usize] = None;
+        self.reg_to_const[idx] = None;
     }
 
     /// Clear the entire register cache (at block boundaries).
     ///
     /// Clears the general cache (`slot_cache`, `reg_to_slot`, `reg_to_const`) and
-    /// allocated register state (`alloc_reg_slot`).
+    /// allocated register state (`alloc_reg_slot`, `alloc_dirty`).
     pub fn clear_reg_cache(&mut self) {
         self.slot_cache.clear();
         self.reg_to_slot = [None; 13];
@@ -813,18 +905,20 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Clear the general register cache but preserve allocated register state.
     ///
     /// Used at block boundaries in leaf functions where allocated registers
-    /// (r9-r12) are never clobbered by calls, so write-through semantics
-    /// guarantee they always hold their assigned slot values.
+    /// are never clobbered by calls. With lazy spill, dirty values are preserved
+    /// (they remain valid in registers across blocks in leaf functions).
     pub fn clear_reg_cache_preserving_alloc(&mut self) {
         self.slot_cache.clear();
         self.reg_to_slot = [None; 13];
         self.reg_to_const = [None; 13];
-        // alloc_reg_slot intentionally NOT cleared.
+        // alloc_reg_slot and alloc_dirty intentionally NOT cleared for leaf functions.
     }
 
     fn clear_allocated_reg_state(&mut self) {
         for &reg in self.regalloc.reg_to_slot.keys() {
-            self.alloc_reg_slot[reg as usize] = None;
+            let idx = reg as usize;
+            self.alloc_reg_slot[idx] = None;
+            self.alloc_dirty[idx] = false;
         }
     }
 
@@ -854,6 +948,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             reg_to_slot: self.reg_to_slot,
             reg_to_const: self.reg_to_const,
             alloc_reg_slot: self.alloc_reg_slot,
+            alloc_dirty: self.alloc_dirty,
         }
     }
 
@@ -863,6 +958,7 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.reg_to_slot = snapshot.reg_to_slot;
         self.reg_to_const = snapshot.reg_to_const;
         self.alloc_reg_slot = snapshot.alloc_reg_slot;
+        self.alloc_dirty = snapshot.alloc_dirty;
     }
 
     /// Define a label without clearing the register cache.

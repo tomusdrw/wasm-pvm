@@ -78,6 +78,20 @@ Removes functions not reachable from exports or the function table. Reduces code
 
 When a block ends with an unconditional jump to the next block in layout order, the `Jump` is skipped — execution falls through naturally.
 
+## Lazy Spill (`--no-lazy-spill`)
+
+Eliminates write-through stack stores for register-allocated values. When a value is stored to a slot that has an allocated register, the value goes only into the register (marked "dirty") and the `StoreIndU64` to the stack is skipped. Values are flushed to the stack only when required:
+
+- When the register is about to be clobbered by another instruction (auto-spill in `invalidate_reg`)
+- Before function calls and ecalli (via `spill_allocated_regs()`)
+- Before the function epilogue (return)
+- Before terminators at block boundaries
+- After prologue parameter stores
+
+With **register-aware phi resolution** (Phase 5), phi copies between blocks use direct register-to-register moves when both the incoming value and the phi destination are in allocated registers, avoiding stack round-trips. The target block restores `alloc_reg_slot` for phi destinations after `define_label`, so subsequent reads use the register directly. For mixed cases (some values allocated, some not), a two-pass approach loads all incoming values into temp registers, then stores to destinations (registers or stack). This handles all dependency cases including cycles without needing a separate parallel move resolver.
+
+Requires `register_allocation` to be effective.
+
 ## Adding a New Optimization
 
 1. Add a field to `OptimizationFlags` in `translate/mod.rs`
@@ -91,14 +105,14 @@ All optimizations enabled (default):
 
 | Benchmark | WASM size | JAM size | Code size | Gas Used |
 |-----------|----------|----------|-----------|----------|
-| add(5,7) | 68 B | 201 B | 130 B | 39 |
-| fib(20) | 110 B | 270 B | 186 B | 612 |
-| factorial(10) | 102 B | 242 B | 161 B | 269 |
-| is_prime(25) | 162 B | 328 B | 239 B | 80 |
-| AS fib(10) | 234 B | 708 B | 572 B | 324 |
-| AS factorial(7) | 233 B | 697 B | 562 B | 281 |
-| AS gcd(2017,200) | 228 B | 686 B | 558 B | 190 |
-| AS decoder | 1.5 KB | 20.8 KB | 6.8 KB | 721 |
-| AS array | 1.4 KB | 19.9 KB | 6.0 KB | 623 |
-| aslan-fib accumulate | 7.8 KB | 37.1 KB | 17.6 KB | 15,968 |
-| anan-as PVM interpreter | 57.7 KB | 180.2 KB | 127.8 KB | - |
+| add(5,7) | 68 B | 245 B | 169 B | 58 |
+| fib(20) | 110 B | 280 B | 195 B | 721 |
+| factorial(10) | 102 B | 253 B | 171 B | 327 |
+| is_prime(25) | 162 B | 388 B | 292 B | 111 |
+| AS fib(10) | 235 B | 741 B | 601 B | 383 |
+| AS factorial(7) | 234 B | 727 B | 589 B | 321 |
+| AS gcd(2017,200) | 229 B | 728 B | 595 B | 231 |
+| AS decoder | 1.5 KB | 21.9 KB | 7.5 KB | 896 |
+| AS array | 1.4 KB | 20.9 KB | 6.6 KB | 763 |
+| aslan-fib accumulate | - | 39.7 KB | 19.1 KB | 12,467 |
+| anan-as PVM interpreter | 54.6 KB | 174.1 KB | 123.1 KB | - |

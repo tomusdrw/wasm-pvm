@@ -13,14 +13,14 @@
 
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
-use inkwell::values::{BasicValueEnum, InstructionOpcode, InstructionValue, PhiValue};
+use inkwell::values::{AnyValue, BasicValueEnum, InstructionOpcode, InstructionValue, PhiValue};
 
 use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
 use super::emitter::{
     PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, result_slot,
-    try_get_constant,
+    try_get_constant, val_key_basic, val_key_instr,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -222,6 +222,12 @@ pub fn lower_return<'ctx>(
         }
     }
 
+    // Flush dirty callee-saved registers before epilogue restores them from stack.
+    // (The epilogue will overwrite the physical registers with saved values.)
+    if !is_main {
+        e.spill_all_dirty_regs();
+    }
+
     emit_epilogue(e, is_main);
     Ok(())
 }
@@ -387,27 +393,41 @@ fn emit_fused_branch<'a>(
     Ok(())
 }
 
+/// Information about a phi copy with register allocation details.
+struct PhiCopy<'ctx> {
+    phi_slot: i32,
+    incoming_value: BasicValueEnum<'ctx>,
+    /// Allocated register for the phi destination (if any).
+    phi_reg: Option<u8>,
+    /// Allocated register for the incoming value (if valid — i.e., the reg
+    /// currently materializes the correct slot).
+    incoming_reg: Option<u8>,
+}
+
 /// Emit copies for phi nodes in `target_bb` that have incoming values from `current_bb`.
 ///
-/// Uses a two-pass approach to handle potential phi cycles: first loads all
-/// incoming values into temp registers (or temp stack slots), then stores them
-/// to the phi node slots.
+/// With lazy spill enabled, uses register-aware phi resolution:
+/// - reg→reg copies use MoveReg (or no-op if same register)
+/// - reg→stack and stack→reg copies avoid unnecessary round-trips
+/// - Parallel move resolver handles cycles in register-to-register copies
+///
+/// Without lazy spill, falls back to the two-pass temp-register approach.
 pub fn emit_phi_copies<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     current_bb: BasicBlock<'ctx>,
     target_bb: BasicBlock<'ctx>,
 ) -> Result<()> {
-    // Collect (phi_slot, incoming_value) pairs.
-    let mut copies: Vec<(i32, BasicValueEnum<'ctx>)> = Vec::new();
+    // Collect (phi_slot, incoming_value) pairs along with allocation info.
+    let mut copies: Vec<PhiCopy<'ctx>> = Vec::new();
 
     for instr in target_bb.get_instructions() {
         if instr.get_opcode() != InstructionOpcode::Phi {
-            break; // Phi nodes are always at the start of a block.
+            break;
         }
         let phi_slot = result_slot(e, instr)?;
-        // Use PhiValue API to properly access incoming (value, block) pairs.
-        // InstructionValue::get_num_operands() only counts values, not blocks,
-        // so the old `get_num_operands() / 2` approach was wrong.
+        let phi_key = val_key_instr(instr);
+        let phi_reg = e.regalloc.val_to_reg.get(&phi_key).copied();
+
         let phi: PhiValue<'ctx> = instr
             .try_into()
             .map_err(|()| Error::Internal("expected Phi instruction".into()))?;
@@ -416,7 +436,14 @@ pub fn emit_phi_copies<'ctx>(
             if let Some((value, block)) = phi.get_incoming(i)
                 && block == current_bb
             {
-                copies.push((phi_slot, value));
+                // Check if incoming value has an allocated register that's valid.
+                let incoming_reg = get_valid_alloc_reg(e, value);
+                copies.push(PhiCopy {
+                    phi_slot,
+                    incoming_value: value,
+                    phi_reg,
+                    incoming_reg,
+                });
                 break;
             }
         }
@@ -426,31 +453,131 @@ pub fn emit_phi_copies<'ctx>(
         return Ok(());
     }
 
-    if copies.len() == 1 {
-        // Single phi — no cycle possible, direct copy.
-        let (slot, value) = copies[0];
-        e.load_operand(value, TEMP1)?;
-        e.store_to_slot(slot, TEMP1);
-    } else {
-        // Multiple phis — use two-pass to avoid clobbering.
-        let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
+    // Without lazy spill, use the original two-pass approach.
+    if !e.config.lazy_spill_enabled {
+        return emit_phi_copies_legacy(e, &copies);
+    }
 
-        if copies.len() <= temp_regs.len() {
-            // All fit in temp registers: load all first, then store all.
-            for (i, (_, value)) in copies.iter().enumerate() {
-                e.load_operand(*value, temp_regs[i])?;
+    // With lazy spill: register-aware phi resolution.
+    emit_phi_copies_regaware(e, &copies)
+}
+
+/// Get the valid allocated register for an incoming value, if any.
+/// Returns None if the value is a constant, has no allocation, or the
+/// register doesn't currently hold the right slot.
+fn get_valid_alloc_reg(e: &PvmEmitter<'_>, value: BasicValueEnum<'_>) -> Option<u8> {
+    if let BasicValueEnum::IntValue(iv) = value {
+        // Constants don't have allocated registers.
+        if iv.get_sign_extended_constant().is_some() || iv.get_zero_extended_constant().is_some() {
+            return None;
+        }
+        if iv.is_poison() || iv.is_undef() {
+            return None;
+        }
+        let key = val_key_basic(value);
+        if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key) {
+            let slot = e.get_slot(key)?;
+            if e.is_alloc_reg_valid(alloc_reg, slot) {
+                return Some(alloc_reg);
             }
-            for (i, (slot, _)) in copies.iter().enumerate() {
-                e.store_to_slot(*slot, temp_regs[i]);
+        }
+    }
+    None
+}
+
+/// Legacy two-pass phi copy (used when lazy spill is disabled).
+fn emit_phi_copies_legacy<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    copies: &[PhiCopy<'ctx>],
+) -> Result<()> {
+    e.spill_all_dirty_regs();
+
+    if copies.len() == 1 {
+        let copy = &copies[0];
+        e.load_operand(copy.incoming_value, TEMP1)?;
+        e.store_to_slot(copy.phi_slot, TEMP1);
+    } else {
+        let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
+        if copies.len() <= temp_regs.len() {
+            for (i, copy) in copies.iter().enumerate() {
+                e.load_operand(copy.incoming_value, temp_regs[i])?;
+            }
+            for (i, copy) in copies.iter().enumerate() {
+                e.store_to_slot(copy.phi_slot, temp_regs[i]);
             }
         } else {
-            // Too many phi values to fit in temp registers.
-            // This requires spill space in the frame, which is not currently reserved.
             return Err(Error::Unsupported(
                 "too many phi values for available temp registers".to_string(),
             ));
         }
     }
 
+    e.spill_all_dirty_regs();
     Ok(())
 }
+
+/// Register-aware phi copy resolution with parallel move handling.
+///
+/// Uses a unified approach: ALL copies (reg→reg, reg→stack, stack→reg, stack→stack)
+/// are handled together using a two-phase strategy:
+/// 1. Load ALL incoming values into temporaries (temp regs or save allocated regs)
+/// 2. Store all values to destinations
+///
+/// This avoids ordering issues where reg→reg copies clobber sources needed by other copies.
+fn emit_phi_copies_regaware<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    copies: &[PhiCopy<'ctx>],
+) -> Result<()> {
+    // Check if any incoming value needs to be loaded from stack.
+    let needs_stack = copies.iter().any(|c| c.incoming_reg.is_none());
+    if needs_stack {
+        // Flush dirty regs so the stack is authoritative for stack loads.
+        e.spill_all_dirty_regs();
+    }
+
+    // Phase 1: Snapshot all incoming values.
+    // For incoming values in allocated registers, we need to save them before
+    // any destination writes can clobber them.
+    //
+    // Strategy: use temp registers to hold ALL incoming values, then write
+    // them to destinations. This is simple and handles all dependency cases.
+    let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
+
+    if copies.len() <= temp_regs.len() {
+        // Phase 1: Load all incoming values into temp registers.
+        for (i, copy) in copies.iter().enumerate() {
+            if let Some(src_reg) = copy.incoming_reg {
+                if src_reg != temp_regs[i] {
+                    e.emit(Instruction::MoveReg {
+                        dst: temp_regs[i],
+                        src: src_reg,
+                    });
+                }
+            } else {
+                e.load_operand(copy.incoming_value, temp_regs[i])?;
+            }
+        }
+
+        // Phase 2: Store all values to destinations.
+        for (i, copy) in copies.iter().enumerate() {
+            if let Some(phi_reg) = copy.phi_reg {
+                // Destination is an allocated register.
+                e.spill_dirty_reg_pub(phi_reg);
+                if phi_reg != temp_regs[i] {
+                    e.emit_raw_move(phi_reg, temp_regs[i]);
+                }
+                e.set_alloc_reg_for_slot(phi_reg, copy.phi_slot);
+            } else {
+                // Destination is stack only.
+                e.store_to_slot(copy.phi_slot, temp_regs[i]);
+            }
+        }
+    } else {
+        return Err(Error::Unsupported(
+            "too many phi values for available temp registers".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+

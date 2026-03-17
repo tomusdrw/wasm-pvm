@@ -409,3 +409,10 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
   - Optimized: 1 instruction using `NegAddImm64` which computes `val = imm - src`
   - `NegAddImm64(dst, src, 0)` = `dst = 0 - src` = `-src`
   - Saves 1 instruction per boolean sign-extension
+
+### Register-Aware Phi Resolution (Phase 5, 2026-03)
+
+- **Ordering dependencies between reg→reg and reg→stack phi copies**: When phi copies include both register-to-register copies and copies involving stack, they must be treated as a single set of parallel moves. An initial implementation separated them into two independent phases, but this caused incorrect results when a reg→reg copy clobbered a source register that a reg→stack copy also needed. The fix: use a unified two-pass approach (load ALL incoming values into temp registers first, then store all to destinations).
+- **Phi destinations must be restored after `define_label`**: After `define_label` clears all alloc state at a block boundary, blocks with phi nodes must call `restore_phi_alloc_reg_slots` to re-establish `alloc_reg_slot` for phi destinations. Without this, `load_operand` falls back to stack loads, missing the values that the phi copy placed in registers.
+- **Dirty phi values and block exit**: After `restore_phi_alloc_reg_slots` marks phi destinations as dirty, the before-terminator `spill_all_dirty_regs()` writes them to the stack. This is essential: non-phi successor blocks (like loop exit blocks) clear alloc state and read from the stack. Without the spill, exit paths read stale stack values. This limits the code-size benefit of lazy spill — each iteration still writes phi values to the stack once via the before-terminator spill.
+- **`alloc_reg_slot` shared between phi destination and incoming value**: The same SSA value can be both a phi destination (in the header) and an incoming value (from the body). After mem2reg, phi incoming values from the loop body ARE the phi results from the current iteration. The regalloc may assign them the same physical register. When `phi_reg == incoming_reg`, the phi copy is a no-op (the value is already in the right register).

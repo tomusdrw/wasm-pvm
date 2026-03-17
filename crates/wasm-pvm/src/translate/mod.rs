@@ -68,6 +68,10 @@ pub struct OptimizationFlags {
     /// These are caller-saved and idle after the prologue; lowering paths that
     /// use them as scratch will invalidate and trigger lazy reload.
     pub allocate_caller_saved_regs: bool,
+    /// Skip stack stores at definition for register-allocated values (lazy spill).
+    /// Values are only written to the stack when required (call clobber, return,
+    /// phi reads, eviction). Requires `register_allocation` to be effective.
+    pub lazy_spill: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -88,6 +92,7 @@ impl Default for OptimizationFlags {
             aggressive_register_allocation: true,
             allocate_scratch_regs: true,
             allocate_caller_saved_regs: true,
+            lazy_spill: true,
         }
     }
 }
