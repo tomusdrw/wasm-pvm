@@ -17,7 +17,8 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    LoweringContext, PvmEmitter, get_operand, operand_bit_width, result_slot, val_key_basic,
+    LoweringContext, PvmEmitter, get_operand, operand_bit_width, result_reg, result_slot,
+    val_key_basic,
 };
 use super::memory::{
     PvmLoadKind, PvmStoreKind, emit_pvm_data_drop, emit_pvm_load, emit_pvm_memory_copy,
@@ -117,6 +118,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
     {
         let a = get_operand(instr, 0)?;
         let b = get_operand(instr, 1)?;
+        let dst = result_reg(e, instr);
         e.load_operand(a, TEMP1)?;
         e.load_operand(b, TEMP2)?;
 
@@ -142,56 +144,57 @@ pub fn lower_llvm_intrinsic<'ctx>(
         // Emit single-instruction min/max.
         match (is_max, is_signed) {
             (true, true) => e.emit(Instruction::Max {
-                dst: TEMP_RESULT,
+                dst,
                 src1: TEMP1,
                 src2: TEMP2,
             }),
             (true, false) => e.emit(Instruction::MaxU {
-                dst: TEMP_RESULT,
+                dst,
                 src1: TEMP1,
                 src2: TEMP2,
             }),
             (false, true) => e.emit(Instruction::Min {
-                dst: TEMP_RESULT,
+                dst,
                 src1: TEMP1,
                 src2: TEMP2,
             }),
             (false, false) => e.emit(Instruction::MinU {
-                dst: TEMP_RESULT,
+                dst,
                 src1: TEMP1,
                 src2: TEMP2,
             }),
         }
 
-        e.store_to_slot(slot, TEMP_RESULT);
+        e.store_to_slot(slot, dst);
         return Ok(());
     }
 
     // llvm.bswap — byte swap (reverse byte order).
     if name.contains("bswap") {
         let val = get_operand(instr, 0)?;
+        let dst = result_reg(e, instr);
         e.load_operand(val, TEMP1)?;
         let bits = operand_bit_width(instr);
 
         // Use ReverseBytes to swap all 8 bytes of the 64-bit register.
         // For sub-64-bit types, shift right to move the reversed bytes to the low bits.
         e.emit(Instruction::ReverseBytes {
-            dst: TEMP_RESULT,
+            dst,
             src: TEMP1,
         });
 
         if bits == 16 {
             // Reversed bytes are in the top 2 positions; shift right by 48.
             e.emit(Instruction::ShloRImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP_RESULT,
+                dst,
+                src: dst,
                 value: 48,
             });
         } else if bits == 32 {
             // Reversed bytes are in the top 4 positions; shift right by 32.
             e.emit(Instruction::ShloRImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP_RESULT,
+                dst,
+                src: dst,
                 value: 32,
             });
         } else if bits != 64 {
@@ -200,7 +203,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
             )));
         }
 
-        e.store_to_slot(slot, TEMP_RESULT);
+        e.store_to_slot(slot, dst);
         return Ok(());
     }
 
@@ -257,58 +260,61 @@ pub fn lower_llvm_intrinsic<'ctx>(
 
     if name.contains("ctlz") {
         let val = get_operand(instr, 0)?;
+        let dst = result_reg(e, instr);
         e.load_operand(val, TEMP1)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::LeadingZeroBits32 {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP1,
             });
         } else {
             e.emit(Instruction::LeadingZeroBits64 {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP1,
             });
         }
-        e.store_to_slot(slot, TEMP_RESULT);
+        e.store_to_slot(slot, dst);
         return Ok(());
     }
 
     if name.contains("cttz") {
         let val = get_operand(instr, 0)?;
+        let dst = result_reg(e, instr);
         e.load_operand(val, TEMP1)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::TrailingZeroBits32 {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP1,
             });
         } else {
             e.emit(Instruction::TrailingZeroBits64 {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP1,
             });
         }
-        e.store_to_slot(slot, TEMP_RESULT);
+        e.store_to_slot(slot, dst);
         return Ok(());
     }
 
     if name.contains("ctpop") {
         let val = get_operand(instr, 0)?;
+        let dst = result_reg(e, instr);
         e.load_operand(val, TEMP1)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::CountSetBits32 {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP1,
             });
         } else {
             e.emit(Instruction::CountSetBits64 {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP1,
             });
         }
-        e.store_to_slot(slot, TEMP_RESULT);
+        e.store_to_slot(slot, dst);
         return Ok(());
     }
 
@@ -324,37 +330,38 @@ pub fn lower_llvm_intrinsic<'ctx>(
 
         // Rotation detection: when a and b are the same SSA value, use RotL/RotR.
         if val_key_basic(a) == val_key_basic(b) {
+            let dst = result_reg(e, instr);
             e.load_operand(a, TEMP1)?;
             e.load_operand(amt, TEMP2)?;
             let rot = if name.contains("fshl") {
                 if is_32 {
                     Instruction::RotL32 {
-                        dst: TEMP_RESULT,
+                        dst,
                         src1: TEMP1,
                         src2: TEMP2,
                     }
                 } else {
                     Instruction::RotL64 {
-                        dst: TEMP_RESULT,
+                        dst,
                         src1: TEMP1,
                         src2: TEMP2,
                     }
                 }
             } else if is_32 {
                 Instruction::RotR32 {
-                    dst: TEMP_RESULT,
+                    dst,
                     src1: TEMP1,
                     src2: TEMP2,
                 }
             } else {
                 Instruction::RotR64 {
-                    dst: TEMP_RESULT,
+                    dst,
                     src1: TEMP1,
                     src2: TEMP2,
                 }
             };
             e.emit(rot);
-            e.store_to_slot(slot, TEMP_RESULT);
+            e.store_to_slot(slot, dst);
             return Ok(());
         }
 
@@ -448,13 +455,14 @@ pub fn lower_llvm_intrinsic<'ctx>(
             }
         }
 
+        let dst = result_reg(e, instr);
         e.emit(Instruction::Or {
-            dst: TEMP_RESULT,
+            dst,
             src1: TEMP1,
             src2: TEMP2,
         });
 
-        e.store_to_slot(slot, TEMP_RESULT);
+        e.store_to_slot(slot, dst);
 
         // Reload register-allocated values after using SCRATCH1/SCRATCH2.
         e.reload_allocated_regs_after_scratch_clobber();

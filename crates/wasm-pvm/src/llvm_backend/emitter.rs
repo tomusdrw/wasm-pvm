@@ -1081,6 +1081,26 @@ pub fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i3
         .ok_or_else(|| Error::Internal(format!("no slot for {:?} result", instr.get_opcode())))
 }
 
+/// Get the register to use for this instruction's result.
+/// Returns the allocated register (for store-side coalescing) or TEMP_RESULT as fallback.
+/// When the result has an allocated register, computing directly into it avoids a
+/// subsequent MoveReg in `store_to_slot`.
+pub fn result_reg(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> u8 {
+    result_reg_or(e, instr, crate::abi::TEMP_RESULT)
+}
+
+/// Like `result_reg` but with a custom fallback register.
+/// Used by lowering paths that naturally use a different working register
+/// (e.g., zext/sext/trunc use TEMP1 instead of TEMP_RESULT).
+pub fn result_reg_or(e: &PvmEmitter<'_>, instr: InstructionValue<'_>, fallback: u8) -> u8 {
+    let key = val_key_instr(instr);
+    if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key) {
+        alloc_reg
+    } else {
+        fallback
+    }
+}
+
 /// Detect the bit width of an instruction's **result** type.
 ///
 /// For most instructions (binary ops, comparisons), this is the correct width
