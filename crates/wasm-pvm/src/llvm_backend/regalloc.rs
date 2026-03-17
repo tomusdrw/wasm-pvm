@@ -5,12 +5,15 @@
 // back-edges) and straight-line code (reducing LoadIndU64 traffic).
 //
 // Allocatable registers:
-//   - r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) are available in leaf functions whose
+//   - r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) are available in all functions whose
 //     LLVM IR contains no operations that clobber them (bulk memory ops,
 //     non-rotation funnel shifts). Detected via `scratch_regs_safe` parameter.
-//   - r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) are available in leaf functions.
-//     Lowering paths that use them as scratch trigger `invalidate_reg` on emit,
-//     forcing lazy reload from the write-through stack slot.
+//     In non-leaf functions, these are caller-saved and spilled/reloaded around
+//     calls automatically via spill_allocated_regs + clear_reg_cache.
+//   - r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) are available in all functions.
+//     In non-leaf functions, they are caller-saved and handled the same way as
+//     r5/r6. Lowering paths that use them as scratch trigger `invalidate_reg`
+//     on emit, forcing lazy reload from the stack slot.
 //   - r9-r12 (`abi::FIRST_LOCAL_REG`..+4) are available beyond parameter count
 //     in both leaf and non-leaf functions. Non-leaf functions invalidate
 //     allocated callee regs after calls since call argument setup reuses r9-r12.
@@ -181,22 +184,25 @@ pub fn run(
     let mut allocatable_regs: Vec<u8> = BASE_ALLOCATABLE_REGS.to_vec();
 
     // Add r5/r6 (abi::SCRATCH1/SCRATCH2) when the function doesn't clobber them.
-    // Only in leaf functions for now — in non-leaf functions, r5/r6 are caller-saved
-    // and would need explicit spill/reload around every call site.
-    if scratch_regs_safe && is_leaf {
+    // In leaf functions, these are always available.
+    // In non-leaf functions, they are caller-saved and clobbered by calls.
+    // The call lowering (spill_allocated_regs + clear_reg_cache) handles
+    // spill/reload: dirty values are flushed before the call, alloc_reg_slot
+    // is cleared after, and load_operand lazily reloads on next use.
+    if scratch_regs_safe {
         allocatable_regs.push(crate::abi::SCRATCH1);
         allocatable_regs.push(crate::abi::SCRATCH2);
     }
 
-    // Add r7/r8 (RETURN_VALUE_REG/ARGS_LEN_REG) in leaf functions.
-    // These are caller-saved and idle after the prologue in leaf functions.
-    // r7 is overwritten by the return sequence (load_operand into r7 calls
-    // invalidate_reg), so no explicit eviction is needed.
-    // r8 has no epilogue use at all.
+    // Add r7/r8 (RETURN_VALUE_REG/ARGS_LEN_REG) in all functions.
+    // In leaf functions, these are idle after the prologue.
+    // In non-leaf functions, r7 holds the return value after calls and r8 is
+    // used as scratch in indirect call dispatch. The call lowering handles
+    // spill/reload via the same mechanism as r5/r6 above.
     // Lowering paths that use r7/r8 as scratch (alu.rs signed div, NE compare,
     // control_flow.rs multi-phi) will trigger invalidate_reg via emit(), forcing
     // a lazy reload from the write-through stack slot on next use.
-    if allocate_caller_saved && is_leaf {
+    if allocate_caller_saved {
         allocatable_regs.push(crate::abi::ARGS_LEN_REG); // r8
         allocatable_regs.push(crate::abi::RETURN_VALUE_REG); // r7
     }
@@ -217,30 +223,6 @@ pub fn run(
     // Non-leaf functions need at least one allocatable register to proceed.
     if !is_leaf && allocatable_regs.is_empty() {
         stats.skipped_reason = Some("insufficient_nonleaf_regs");
-        tracing::debug!(
-            target: "wasm_pvm::regalloc",
-            function = %fn_name,
-            is_leaf,
-            num_params,
-            total_values = stats.total_values,
-            total_intervals = stats.total_intervals,
-            has_loops = stats.has_loops,
-            allocatable_regs = stats.allocatable_regs,
-            skipped_reason = stats.skipped_reason,
-            "regalloc skipped"
-        );
-        return RegAllocResult {
-            stats,
-            ..RegAllocResult::default()
-        };
-    }
-
-    // Non-leaf functions with calls inside loop bodies suffer from frequent
-    // register invalidation after each call, making allocation a net negative.
-    // The callee-save overhead + reload traffic outweighs the savings from
-    // avoided stack loads.
-    if !is_leaf && has_calls_in_loops(&block_ranges, &loop_headers) {
-        stats.skipped_reason = Some("calls_in_loops");
         tracing::debug!(
             target: "wasm_pvm::regalloc",
             function = %fn_name,
@@ -369,53 +351,6 @@ fn compute_loop_depths<'ctx>(
         }
     }
     depths
-}
-
-/// Check if any real function call (`wasm_func_*`) exists inside a loop body.
-fn has_calls_in_loops<'ctx>(
-    block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
-    loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
-) -> bool {
-    use inkwell::values::InstructionOpcode;
-
-    if loop_headers.is_empty() {
-        return false;
-    }
-
-    for (&bb, &(bb_start, bb_end)) in block_ranges {
-        // Check if this block is inside any loop body.
-        let in_loop = loop_headers.iter().any(|(header_bb, &back_edge_end)| {
-            let (header_start, _) = block_ranges[header_bb];
-            bb_start >= header_start && bb_end <= back_edge_end
-        });
-
-        if !in_loop {
-            continue;
-        }
-
-        // Check for real WASM function calls (not intrinsics).
-        for instr in bb.get_instructions() {
-            if instr.get_opcode() == InstructionOpcode::Call {
-                let call_site: std::result::Result<inkwell::values::CallSiteValue, _> =
-                    instr.try_into();
-                if let Ok(cs) = call_site
-                    && let Some(fn_val) = cs.get_called_fn_value()
-                {
-                    let name = fn_val.get_name().to_string_lossy();
-                    // Skip intrinsics — they don't use the calling convention.
-                    // __pvm_call_indirect IS a real call (indirect dispatch).
-                    if (name.starts_with("__pvm_") && name != "__pvm_call_indirect")
-                        || name.starts_with("llvm.")
-                    {
-                        continue;
-                    }
-                    // This is a real function call inside a loop body.
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 /// Compute live intervals for all SSA values (parameters and instruction results).

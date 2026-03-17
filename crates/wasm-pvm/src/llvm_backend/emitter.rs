@@ -638,7 +638,17 @@ impl<'ctx> PvmEmitter<'ctx> {
                     // register currently materializes a different slot, reload
                     // lazily from the canonical stack slot.
                     let reg_idx = alloc_reg as usize;
-                    if self.alloc_reg_slot[reg_idx] != Some(slot) {
+                    if self.alloc_reg_slot[reg_idx] == Some(slot) {
+                        // Fast path: register holds the correct value.
+                        if alloc_reg != temp_reg {
+                            self.regalloc_usage.load_moves += 1;
+                            self.emit(Instruction::MoveReg {
+                                dst: temp_reg,
+                                src: alloc_reg,
+                            });
+                        }
+                    } else if alloc_reg == temp_reg {
+                        // Reload directly into the target (which is the alloc reg).
                         self.regalloc_usage.load_reloads += 1;
                         self.emit(Instruction::LoadIndU64 {
                             dst: alloc_reg,
@@ -647,14 +657,17 @@ impl<'ctx> PvmEmitter<'ctx> {
                         });
                         self.alloc_reg_slot[reg_idx] = Some(slot);
                         self.cache_slot(slot, alloc_reg);
-                    }
-
-                    if alloc_reg != temp_reg {
-                        self.regalloc_usage.load_moves += 1;
-                        self.emit(Instruction::MoveReg {
+                    } else {
+                        // Allocated register was invalidated and target is different.
+                        // Load directly into temp_reg to avoid clobbering alloc_reg
+                        // (which may hold a call argument or other transient value).
+                        self.regalloc_usage.load_reloads += 1;
+                        self.emit(Instruction::LoadIndU64 {
                             dst: temp_reg,
-                            src: alloc_reg,
+                            base: STACK_PTR_REG,
+                            offset: slot,
                         });
+                        self.cache_slot(slot, temp_reg);
                     }
                 } else if let Some(slot) = self.get_slot(key) {
                     // Check register cache: skip load if value is already in a register.
@@ -835,11 +848,16 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Invalidate only the allocated registers actually clobbered by a call
     /// with `num_args` arguments. Registers r9..r9+min(num_args,4)-1 are
     /// clobbered by argument setup; higher registers remain valid.
+    /// r5/r6 (scratch) and r7/r8 (caller-saved) are always clobbered by calls.
+    /// Note: `clear_reg_cache()` already clears all alloc state before this is
+    /// called, so this is largely a documentation/safety net.
     pub fn reload_allocated_regs_after_call_with_arity(&mut self, num_args: usize) {
         let clobbered_locals = num_args.min(crate::abi::MAX_LOCAL_REGS);
         self.invalidate_allocated_regs_where(|r| {
             r == crate::abi::SCRATCH1
                 || r == crate::abi::SCRATCH2
+                || r == crate::abi::RETURN_VALUE_REG
+                || r == crate::abi::ARGS_LEN_REG
                 || (r >= crate::abi::FIRST_LOCAL_REG
                     && r < crate::abi::FIRST_LOCAL_REG + clobbered_locals as u8)
         });
