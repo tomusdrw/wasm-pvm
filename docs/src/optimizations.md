@@ -98,8 +98,8 @@ When a value has an allocated register, `result_reg()` / `result_reg_or()` helpe
 
 This is a codegen-only optimization (no new flag) — it is always active when register allocation is enabled.
 
-**Not coalesced** (correctness constraints):
-- `lower_select`: loading the default value into the allocated register corrupts register cache state needed by subsequent operand loads
+**Not coalesced** (store-side correctness constraints):
+- `lower_select`: loading the default value into the allocated register corrupts register cache state needed by subsequent operand loads (load-side coalescing IS applied — see Phase 9 below)
 - `emit_pvm_memory_grow`: TEMP_RESULT is used across control flow (branch between grow success/failure)
 - `lower_abs` intrinsic: TEMP_RESULT is used across control flow (branch between positive/negative paths)
 
@@ -127,6 +127,30 @@ Applied across all lowering modules:
 **Dst-conflict safety**: When an operand's allocated register matches the destination register (`result_reg`), the operand falls back to the temp register to avoid invalidation hazards from `emit() → invalidate_reg(dst)`.
 
 This is a codegen-only optimization — always active when register allocation is enabled.
+
+## Phase 9: Select Coalescing, Spill Weight Refinement & Call Return Hints
+
+Three allocator improvements added in Phase 9:
+
+### Select Coalescing (load-side)
+
+`lower_select` now uses `operand_reg()` for all Cmov operands (default value, condition, and source). Values already in their allocated registers are used directly as CmovNz/CmovIz/CmovNzImm/CmovIzImm operands without MoveReg copies. Store-side coalescing (using `result_reg()` for the Cmov dst) remains deferred due to the `invalidate_reg` cache corruption issue documented in Phase 7.
+
+### Spill Weight Refinement
+
+Values whose live ranges span real call instructions receive a penalty to their spill weight. Each spanning call costs `CALL_SPANNING_PENALTY` (2.0) weight, representing the spill+reload pair required when a register is allocated across a call boundary. The formula:
+
+```
+effective_weight = base_weight - (num_spanning_calls × 2.0)
+```
+
+Values spanning many calls get lower weights, making them more likely to be evicted in favor of values with fewer spanning calls. This improves allocation decisions in call-heavy functions. Call positions are collected during linearization using the same `is_real_call()` check from `emitter.rs`; counting uses binary search for efficiency.
+
+### Call Return Value Coalescing (register hints)
+
+When a value is defined by a real call instruction, the linear scan allocator prefers assigning r7 (`RETURN_VALUE_REG`). Since call return values are already in r7, this eliminates the `MoveReg` from r7 to the allocated register in `store_to_slot`. The hint is best-effort — if r7 is not free, a different register is used.
+
+All three are codegen-only optimizations — always active when register allocation is enabled.
 
 ## Adding a New Optimization
 

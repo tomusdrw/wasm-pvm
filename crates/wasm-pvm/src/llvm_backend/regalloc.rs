@@ -771,4 +771,48 @@ mod tests {
         assert_eq!(depth_weight(2), 100.0);
         assert_eq!(depth_weight(3), 1000.0);
     }
+
+    #[test]
+    fn preferred_reg_hint_selects_preferred_when_available() {
+        // ValKey(1) prefers register 7; both r7 and r9 are free.
+        let intervals = vec![LiveInterval {
+            val_key: ValKey(1),
+            slot: 8,
+            start: 0,
+            end: 5,
+            spill_weight: 3.0,
+            preferred_reg: Some(7),
+        }];
+
+        let result = linear_scan(intervals, &[9, 7]);
+
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&7));
+    }
+
+    #[test]
+    fn preferred_reg_falls_back_when_unavailable() {
+        // ValKey(1) prefers r7 but r7 is not allocatable.
+        let intervals = vec![LiveInterval {
+            val_key: ValKey(1),
+            slot: 8,
+            start: 0,
+            end: 5,
+            spill_weight: 3.0,
+            preferred_reg: Some(7),
+        }];
+
+        let result = linear_scan(intervals, &[9]);
+
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
+    }
+
+    #[test]
+    fn count_spanning_calls_basic() {
+        let call_positions = vec![2, 5, 8, 12];
+        assert_eq!(count_spanning_calls(&call_positions, 0, 1), 0);
+        assert_eq!(count_spanning_calls(&call_positions, 0, 3), 1);
+        assert_eq!(count_spanning_calls(&call_positions, 0, 10), 3);
+        assert_eq!(count_spanning_calls(&call_positions, 5, 8), 2);
+        assert_eq!(count_spanning_calls(&call_positions, 0, 20), 4);
+    }
 }
