@@ -1101,6 +1101,30 @@ pub fn result_reg_or(e: &PvmEmitter<'_>, instr: InstructionValue<'_>, fallback: 
     }
 }
 
+/// Get the allocated register for a value if it's currently valid, otherwise return fallback.
+/// Used for load-side coalescing: callers can use the allocated register directly as an
+/// instruction operand instead of copying to a temp register via `load_operand`.
+pub fn operand_reg(e: &PvmEmitter<'_>, val: BasicValueEnum<'_>, fallback: u8) -> u8 {
+    if let BasicValueEnum::IntValue(iv) = val {
+        // Constants don't have allocated registers.
+        if iv.get_sign_extended_constant().is_some() || iv.get_zero_extended_constant().is_some() {
+            return fallback;
+        }
+        if iv.is_poison() || iv.is_undef() {
+            return fallback;
+        }
+        let key = val_key_int(iv);
+        if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key) {
+            if let Some(slot) = e.get_slot(key) {
+                if e.alloc_reg_slot[alloc_reg as usize] == Some(slot) {
+                    return alloc_reg;
+                }
+            }
+        }
+    }
+    fallback
+}
+
 /// Detect the bit width of an instruction's **result** type.
 ///
 /// For most instructions (binary ops, comparisons), this is the correct width

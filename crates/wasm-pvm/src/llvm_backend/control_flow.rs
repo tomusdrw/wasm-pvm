@@ -19,8 +19,8 @@ use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
 use super::emitter::{
-    PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, result_slot,
-    try_get_constant, val_key_basic, val_key_instr,
+    PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, operand_reg,
+    result_slot, try_get_constant, val_key_basic, val_key_instr,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -70,22 +70,26 @@ pub fn lower_br<'ctx>(
                 emit_fused_branch(e, &fused, then_label)?;
                 e.emit_jump_to_label(else_label);
             } else {
-                e.load_operand(cond, TEMP1)?;
-                e.emit_branch_ne_imm_to_label(TEMP1, 0, then_label);
+                // Load-side coalescing for branch condition (no dst conflict — branches have no dest).
+                let cond_reg = operand_reg(e, cond, TEMP1);
+                if cond_reg == TEMP1 {
+                    e.load_operand(cond, TEMP1)?;
+                }
+                e.emit_branch_ne_imm_to_label(cond_reg, 0, then_label);
                 e.emit_jump_to_label(else_label);
             }
         } else {
             // Need per-edge phi copies. Create trampolines.
-            // Disable fallthrough optimization: the Jump to else_label is followed
-            // by trampoline code (not the next block's define_label), so eliminating
-            // it would cause the else path to fall through into the then trampoline.
             let saved_next = e.next_block_label.take();
             let then_trampoline = e.alloc_label();
             if let Some(fused) = fused {
                 emit_fused_branch(e, &fused, then_trampoline)?;
             } else {
-                e.load_operand(cond, TEMP1)?;
-                e.emit_branch_ne_imm_to_label(TEMP1, 0, then_trampoline);
+                let cond_reg = operand_reg(e, cond, TEMP1);
+                if cond_reg == TEMP1 {
+                    e.load_operand(cond, TEMP1)?;
+                }
+                e.emit_branch_ne_imm_to_label(cond_reg, 0, then_trampoline);
             }
 
             // Else path: phi copies + jump to else.
@@ -118,7 +122,11 @@ pub fn lower_switch<'ctx>(
         .get(&default_bb)
         .ok_or_else(|| Error::Internal("switch default to unknown block".into()))?;
 
-    e.load_operand(val, TEMP1)?;
+    // Load-side coalescing for switch value (no dst conflict — branches have no dest).
+    let val_reg = operand_reg(e, val, TEMP1);
+    if val_reg == TEMP1 {
+        e.load_operand(val, TEMP1)?;
+    }
 
     // Collect cases. For each case that targets a block with phis, use a trampoline.
     let num_operands = instr.get_num_operands();
@@ -133,16 +141,15 @@ pub fn lower_switch<'ctx>(
             && let Some(c) = iv.get_zero_extended_constant()
         {
             if has_phi_from(current_bb, case_bb) {
-                // Needs a trampoline for phi copies.
                 let trampoline = e.alloc_label();
-                e.emit_branch_eq_imm_to_label(TEMP1, c as i32, trampoline);
+                e.emit_branch_eq_imm_to_label(val_reg, c as i32, trampoline);
                 trampolines.push((trampoline, case_bb));
             } else {
                 let case_label = *e
                     .block_labels
                     .get(&case_bb)
                     .ok_or_else(|| Error::Internal("switch case to unknown block".into()))?;
-                e.emit_branch_eq_imm_to_label(TEMP1, c as i32, case_label);
+                e.emit_branch_eq_imm_to_label(val_reg, c as i32, case_label);
             }
         }
         i += 2;
@@ -293,100 +300,96 @@ fn emit_fused_branch<'a>(
     // Try immediate folding: branch-imm instructions avoid loading one operand.
     // BranchXxxImm { reg, value, offset } branches if reg <op> sign_extend(value).
 
+    // Load-side coalescing for fused branches (no dst conflict — branches have no dest register).
+
     // RHS constant → load only LHS, use branch-imm directly.
     if let Some(rhs_const) = try_get_constant(fused.rhs)
         && i32::try_from(rhs_const).is_ok()
     {
         let imm = rhs_const as i32;
-        e.load_operand(fused.lhs, TEMP1)?;
+        let lhs_reg = operand_reg(e, fused.lhs, TEMP1);
+        if lhs_reg == TEMP1 {
+            e.load_operand(fused.lhs, TEMP1)?;
+        }
         match fused.predicate {
-            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::NE => e.emit_branch_ne_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::ULT => e.emit_branch_lt_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::ULE => e.emit_branch_le_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::UGT => e.emit_branch_gt_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::UGE => e.emit_branch_ge_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SLT => e.emit_branch_lt_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SLE => e.emit_branch_le_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SGT => e.emit_branch_gt_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SGE => e.emit_branch_ge_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::NE => e.emit_branch_ne_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::ULT => e.emit_branch_lt_u_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::ULE => e.emit_branch_le_u_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::UGT => e.emit_branch_gt_u_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::UGE => e.emit_branch_ge_u_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::SLT => e.emit_branch_lt_s_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::SLE => e.emit_branch_le_s_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::SGT => e.emit_branch_gt_s_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::SGE => e.emit_branch_ge_s_imm_to_label(lhs_reg, imm, true_label),
         }
         return Ok(());
     }
 
     // LHS constant → load only RHS, flip the predicate direction.
-    // "const <op> x" ⟺ "x <flipped_op> const"
     if let Some(lhs_const) = try_get_constant(fused.lhs)
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
-        e.load_operand(fused.rhs, TEMP1)?;
+        let rhs_reg = operand_reg(e, fused.rhs, TEMP1);
+        if rhs_reg == TEMP1 {
+            e.load_operand(fused.rhs, TEMP1)?;
+        }
         match fused.predicate {
-            // Symmetric predicates — no flip needed.
-            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::NE => e.emit_branch_ne_imm_to_label(TEMP1, imm, true_label),
-            // Flip: const < x ⟺ x > const
-            IntPredicate::ULT => e.emit_branch_gt_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::ULE => e.emit_branch_ge_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::UGT => e.emit_branch_lt_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::UGE => e.emit_branch_le_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SLT => e.emit_branch_gt_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SLE => e.emit_branch_ge_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SGT => e.emit_branch_lt_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SGE => e.emit_branch_le_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::NE => e.emit_branch_ne_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::ULT => e.emit_branch_gt_u_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::ULE => e.emit_branch_ge_u_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::UGT => e.emit_branch_lt_u_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::UGE => e.emit_branch_le_u_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::SLT => e.emit_branch_gt_s_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::SLE => e.emit_branch_ge_s_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::SGT => e.emit_branch_lt_s_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::SGE => e.emit_branch_le_s_imm_to_label(rhs_reg, imm, true_label),
         }
         return Ok(());
     }
 
-    e.load_operand(fused.lhs, TEMP1)?;
-    e.load_operand(fused.rhs, TEMP2)?;
+    let lhs_reg = operand_reg(e, fused.lhs, TEMP1);
+    let rhs_reg = operand_reg(e, fused.rhs, TEMP2);
+    if lhs_reg == TEMP1 {
+        e.load_operand(fused.lhs, TEMP1)?;
+    }
+    if rhs_reg == TEMP2 {
+        e.load_operand(fused.rhs, TEMP2)?;
+    }
 
     // PVM convention: Branch_op { reg1: a, reg2: b } branches if b op a.
-    // So to test "TEMP1 op TEMP2" we pass reg1=TEMP2, reg2=TEMP1.
     match fused.predicate {
-        // EQ: branch if TEMP1 == TEMP2 (symmetric)
         IntPredicate::EQ => {
-            e.emit_branch_eq_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_eq_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // NE: branch if TEMP1 != TEMP2 (symmetric)
         IntPredicate::NE => {
-            e.emit_branch_ne_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_ne_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // ULT: branch if lhs < rhs → TEMP1 < TEMP2
-        // Need: reg2 < reg1, so reg2=TEMP1, reg1=TEMP2
         IntPredicate::ULT => {
-            e.emit_branch_lt_u_to_label(TEMP2, TEMP1, true_label);
+            e.emit_branch_lt_u_to_label(rhs_reg, lhs_reg, true_label);
         }
-        // UGE: branch if lhs >= rhs → TEMP1 >= TEMP2
-        // Need: reg2 >= reg1, so reg2=TEMP1, reg1=TEMP2
         IntPredicate::UGE => {
-            e.emit_branch_ge_u_to_label(TEMP2, TEMP1, true_label);
+            e.emit_branch_ge_u_to_label(rhs_reg, lhs_reg, true_label);
         }
-        // UGT: branch if lhs > rhs → TEMP2 < TEMP1
-        // Need: reg2 < reg1, so reg2=TEMP2, reg1=TEMP1
         IntPredicate::UGT => {
-            e.emit_branch_lt_u_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_lt_u_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // ULE: branch if lhs <= rhs → TEMP2 >= TEMP1
-        // Need: reg2 >= reg1, so reg2=TEMP2, reg1=TEMP1
         IntPredicate::ULE => {
-            e.emit_branch_ge_u_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_ge_u_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // SLT: branch if lhs < rhs (signed) → TEMP1 < TEMP2
         IntPredicate::SLT => {
-            e.emit_branch_lt_s_to_label(TEMP2, TEMP1, true_label);
+            e.emit_branch_lt_s_to_label(rhs_reg, lhs_reg, true_label);
         }
-        // SGE: branch if lhs >= rhs (signed) → TEMP1 >= TEMP2
         IntPredicate::SGE => {
-            e.emit_branch_ge_s_to_label(TEMP2, TEMP1, true_label);
+            e.emit_branch_ge_s_to_label(rhs_reg, lhs_reg, true_label);
         }
-        // SGT: branch if lhs > rhs (signed) → TEMP2 < TEMP1
         IntPredicate::SGT => {
-            e.emit_branch_lt_s_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_lt_s_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // SLE: branch if lhs <= rhs (signed) → TEMP2 >= TEMP1
         IntPredicate::SLE => {
-            e.emit_branch_ge_s_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_ge_s_to_label(lhs_reg, rhs_reg, true_label);
         }
     }
 

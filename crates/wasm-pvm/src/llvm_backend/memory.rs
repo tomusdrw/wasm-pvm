@@ -16,7 +16,7 @@ use inkwell::values::{BasicValueEnum, InstructionValue};
 use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
-use super::emitter::{LoweringContext, PvmEmitter, get_operand, result_reg, result_slot, try_get_constant};
+use super::emitter::{LoweringContext, PvmEmitter, get_operand, operand_reg, result_reg, result_slot, try_get_constant};
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 /// Lower a load from a WASM global variable.
@@ -86,9 +86,13 @@ pub fn lower_wasm_global_store<'ctx>(
                 return Ok(());
             }
 
-            e.load_operand(val, TEMP1)?;
+            // Load-side coalescing for global store value.
+            let val_reg = operand_reg(e, val, TEMP1);
+            if val_reg == TEMP1 {
+                e.load_operand(val, TEMP1)?;
+            }
             e.emit(Instruction::StoreU32 {
-                src: TEMP1,
+                src: val_reg,
                 address: global_addr,
             });
             return Ok(());
@@ -132,47 +136,52 @@ pub fn emit_pvm_load<'ctx>(
     let slot = result_slot(e, instr)?;
     let dst = result_reg(e, instr);
 
-    e.load_operand(addr, TEMP1)?;
+    // Load-side coalescing: use allocated register for the address operand.
+    let mut addr_reg = operand_reg(e, addr, TEMP1);
+    if addr_reg != TEMP1 && addr_reg == dst {
+        addr_reg = TEMP1;
+    }
+    if addr_reg == TEMP1 {
+        e.load_operand(addr, TEMP1)?;
+    }
 
-    // Emit the PVM load with wasm_memory_base as the offset.
     let offset = ctx.wasm_memory_base;
     match kind {
         PvmLoadKind::U8 => e.emit(Instruction::LoadIndU8 {
             dst,
-            base: TEMP1,
+            base: addr_reg,
             offset,
         }),
         PvmLoadKind::I8 => e.emit(Instruction::LoadIndI8 {
             dst,
-            base: TEMP1,
+            base: addr_reg,
             offset,
         }),
         PvmLoadKind::U16 => e.emit(Instruction::LoadIndU16 {
             dst,
-            base: TEMP1,
+            base: addr_reg,
             offset,
         }),
         PvmLoadKind::I16 => e.emit(Instruction::LoadIndI16 {
             dst,
-            base: TEMP1,
+            base: addr_reg,
             offset,
         }),
         PvmLoadKind::U32 => e.emit(Instruction::LoadIndU32 {
             dst,
-            base: TEMP1,
+            base: addr_reg,
             offset,
         }),
         PvmLoadKind::I32S => {
-            // Signed i32 load (sign-extends to 64 bits).
             e.emit(Instruction::LoadIndI32 {
                 dst,
-                base: TEMP1,
+                base: addr_reg,
                 offset,
             });
         }
         PvmLoadKind::U64 => e.emit(Instruction::LoadIndU64 {
             dst,
-            base: TEMP1,
+            base: addr_reg,
             offset,
         }),
     }
@@ -202,25 +211,29 @@ pub fn emit_pvm_store<'ctx>(
         && i32::try_from(val_const).is_ok()
     {
         let imm = val_const as i32;
-        e.load_operand(addr, TEMP1)?;
+        // Load-side coalescing for address (no dst conflict — store has no dest register).
+        let addr_reg = operand_reg(e, addr, TEMP1);
+        if addr_reg == TEMP1 {
+            e.load_operand(addr, TEMP1)?;
+        }
         match kind {
             PvmStoreKind::U8 => e.emit(Instruction::StoreImmIndU8 {
-                base: TEMP1,
+                base: addr_reg,
                 offset,
                 value: imm,
             }),
             PvmStoreKind::U16 => e.emit(Instruction::StoreImmIndU16 {
-                base: TEMP1,
+                base: addr_reg,
                 offset,
                 value: imm,
             }),
             PvmStoreKind::U32 => e.emit(Instruction::StoreImmIndU32 {
-                base: TEMP1,
+                base: addr_reg,
                 offset,
                 value: imm,
             }),
             PvmStoreKind::U64 => e.emit(Instruction::StoreImmIndU64 {
-                base: TEMP1,
+                base: addr_reg,
                 offset,
                 value: imm,
             }),
@@ -228,28 +241,35 @@ pub fn emit_pvm_store<'ctx>(
         return Ok(());
     }
 
-    e.load_operand(addr, TEMP1)?;
-    e.load_operand(val, TEMP2)?;
+    // Load-side coalescing for both address and value (no dst conflict — store has no dest register).
+    let addr_reg = operand_reg(e, addr, TEMP1);
+    let val_reg = operand_reg(e, val, TEMP2);
+    if addr_reg == TEMP1 {
+        e.load_operand(addr, TEMP1)?;
+    }
+    if val_reg == TEMP2 {
+        e.load_operand(val, TEMP2)?;
+    }
 
     match kind {
         PvmStoreKind::U8 => e.emit(Instruction::StoreIndU8 {
-            base: TEMP1,
-            src: TEMP2,
+            base: addr_reg,
+            src: val_reg,
             offset,
         }),
         PvmStoreKind::U16 => e.emit(Instruction::StoreIndU16 {
-            base: TEMP1,
-            src: TEMP2,
+            base: addr_reg,
+            src: val_reg,
             offset,
         }),
         PvmStoreKind::U32 => e.emit(Instruction::StoreIndU32 {
-            base: TEMP1,
-            src: TEMP2,
+            base: addr_reg,
+            src: val_reg,
             offset,
         }),
         PvmStoreKind::U64 => e.emit(Instruction::StoreIndU64 {
-            base: TEMP1,
-            src: TEMP2,
+            base: addr_reg,
+            src: val_reg,
             offset,
         }),
     }

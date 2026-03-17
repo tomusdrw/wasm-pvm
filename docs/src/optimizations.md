@@ -107,6 +107,27 @@ This is a codegen-only optimization (no new flag) — it is always active when r
 
 **Impact** (anan-as compiler): 54% reduction in store_moves (2720 to 1262), 4% reduction in total instructions (37225 to 35744), 2.9% reduction in JAM size (169,853 to 164,902 bytes).
 
+## Load-Side Coalescing (Phase 8)
+
+When a value is live in its allocated register, `operand_reg()` returns that register directly instead of requiring `load_operand()` to copy it into a temp register (TEMP1/TEMP2). The instruction's source operand fields use the allocated register, eliminating the `MoveReg` that `load_operand()` would otherwise emit.
+
+Applied across all lowering modules:
+- **alu.rs**: Binary arithmetic (register-register and immediate-folding paths), comparisons, zext/sext/trunc
+- **memory.rs**: PVM load/store address and value operands, global store values
+- **control_flow.rs**: Branch conditions, fused ICmp+Branch operands, switch values
+- **intrinsics.rs**: min/max, bswap, ctlz/cttz/ctpop, rotation operands
+
+**Not coalesced** (complexity/safety constraints):
+- Div/rem operations: intermediate trap code may clobber scratch registers
+- Non-rotation funnel shifts: use SCRATCH1/SCRATCH2 after spill_allocated_regs
+- `lower_abs`: control flow between positive/negative paths
+- Call argument setup: already loaded into specific registers
+- Phi resolution: already uses register-aware moves
+
+**Dst-conflict safety**: When an operand's allocated register matches the destination register (`result_reg`), the operand falls back to the temp register to avoid invalidation hazards from `emit() → invalidate_reg(dst)`.
+
+This is a codegen-only optimization — always active when register allocation is enabled.
+
 ## Adding a New Optimization
 
 1. Add a field to `OptimizationFlags` in `translate/mod.rs`
@@ -120,15 +141,15 @@ All optimizations enabled (default):
 
 | Benchmark | WASM size | JAM size | Code size | Gas Used |
 |-----------|----------|----------|-----------|----------|
-| add(5,7) | 68 B | 192 B | - | 39 |
-| fib(20) | 110 B | 258 B | - | 613 |
-| factorial(10) | 102 B | 229 B | - | 260 |
-| is_prime(25) | 162 B | 320 B | - | 81 |
-| AS fib(10) | 235 B | 685 B | - | 336 |
-| AS factorial(7) | 234 B | 670 B | - | 275 |
-| AS gcd(2017,200) | 229 B | 674 B | - | 198 |
-| AS decoder | 1.5 KB | 21.3 KB | - | 746 |
-| AS array | 1.4 KB | 20.4 KB | - | 642 |
-| regalloc two loops | - | 652 B | - | 23,334 |
-| aslan-fib accumulate | - | 39.1 KB | - | 12,157 |
-| anan-as PVM interpreter | 54.6 KB | 164.9 KB | - | - |
+| add(5,7) | 68 B | 165 B | - | 28 |
+| fib(20) | 110 B | 247 B | - | 511 |
+| factorial(10) | 102 B | 209 B | - | 178 |
+| is_prime(25) | 162 B | 293 B | - | 65 |
+| AS fib(10) | 235 B | 640 B | - | 247 |
+| AS factorial(7) | 234 B | 625 B | - | 209 |
+| AS gcd(2017,200) | 229 B | 649 B | - | 176 |
+| AS decoder | 1.5 KB | 20.8 KB | - | 637 |
+| AS array | 1.4 KB | 20.0 KB | - | 557 |
+| regalloc two loops | - | 595 B | - | 16,776 |
+| aslan-fib accumulate | - | 38.5 KB | - | 11,089 |
+| anan-as PVM interpreter | 54.6 KB | 158.9 KB | - | - |
