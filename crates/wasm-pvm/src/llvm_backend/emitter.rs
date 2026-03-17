@@ -650,11 +650,17 @@ impl<'ctx> PvmEmitter<'ctx> {
                     } else if alloc_reg == temp_reg {
                         // Reload directly into the target (which is the alloc reg).
                         self.regalloc_usage.load_reloads += 1;
-                        self.emit(Instruction::LoadIndU64 {
-                            dst: alloc_reg,
-                            base: STACK_PTR_REG,
-                            offset: slot,
-                        });
+                        // Rematerialization: use LoadImm for known constants instead
+                        // of LoadIndU64 from stack (smaller code size).
+                        if let Some(&const_val) = self.regalloc.val_constants.get(&key) {
+                            self.emit_const_to_reg(alloc_reg, const_val);
+                        } else {
+                            self.emit(Instruction::LoadIndU64 {
+                                dst: alloc_reg,
+                                base: STACK_PTR_REG,
+                                offset: slot,
+                            });
+                        }
                         self.alloc_reg_slot[reg_idx] = Some(slot);
                         self.cache_slot(slot, alloc_reg);
                     } else {
@@ -662,11 +668,15 @@ impl<'ctx> PvmEmitter<'ctx> {
                         // Load directly into temp_reg to avoid clobbering alloc_reg
                         // (which may hold a call argument or other transient value).
                         self.regalloc_usage.load_reloads += 1;
-                        self.emit(Instruction::LoadIndU64 {
-                            dst: temp_reg,
-                            base: STACK_PTR_REG,
-                            offset: slot,
-                        });
+                        if let Some(&const_val) = self.regalloc.val_constants.get(&key) {
+                            self.emit_const_to_reg(temp_reg, const_val);
+                        } else {
+                            self.emit(Instruction::LoadIndU64 {
+                                dst: temp_reg,
+                                base: STACK_PTR_REG,
+                                offset: slot,
+                            });
+                        }
                         self.cache_slot(slot, temp_reg);
                     }
                 } else if let Some(slot) = self.get_slot(key) {
