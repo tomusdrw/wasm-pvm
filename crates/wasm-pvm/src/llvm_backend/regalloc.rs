@@ -59,6 +59,9 @@ struct LiveInterval {
     /// Spill weight: sum of loop-depth-weighted uses. Higher weight → more
     /// expensive to spill (the value is used frequently in hot code).
     spill_weight: f64,
+    /// Preferred register hint. If set, the allocator tries to assign this
+    /// register first (e.g., r7 for call return values to avoid MoveReg).
+    preferred_reg: Option<u8>,
 }
 
 /// Result of register allocation for one function.
@@ -410,6 +413,8 @@ fn compute_live_intervals<'ctx>(
     let mut use_count: HashMap<ValKey, usize> = HashMap::new();
     // Accumulated loop-depth-weighted use count per value.
     let mut weighted_uses: HashMap<ValKey, f64> = HashMap::new();
+    // Values defined by real call instructions (prefer r7 allocation).
+    let mut call_defined: HashMap<ValKey, bool> = HashMap::new();
 
     let has_loops = !loop_headers.is_empty();
 
@@ -422,6 +427,10 @@ fn compute_live_intervals<'ctx>(
             // This instruction defines instr_key (if it produces a value).
             if value_slots.contains_key(&instr_key) {
                 def_point.entry(instr_key).or_insert(instr_idx);
+                // Track call-defined values for register preference hints.
+                if instr.get_opcode() == InstructionOpcode::Call && is_real_call(instr) {
+                    call_defined.insert(instr_key, true);
+                }
             }
 
             // Check all operands for uses.
@@ -506,12 +515,20 @@ fn compute_live_intervals<'ctx>(
         let spanning_calls = count_spanning_calls(call_positions, start, end);
         let adjusted_weight = weight - (spanning_calls as f64 * CALL_SPANNING_PENALTY);
 
+        // Call return value hint: prefer r7 for values defined by call instructions.
+        let preferred_reg = if call_defined.contains_key(&vk) {
+            Some(crate::abi::RETURN_VALUE_REG)
+        } else {
+            None
+        };
+
         intervals.push(LiveInterval {
             val_key: vk,
             slot,
             start,
             end,
             spill_weight: adjusted_weight,
+            preferred_reg,
         });
     }
 
@@ -575,7 +592,17 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
             }
         }
 
-        if let Some(reg) = free_regs.pop() {
+        // Prefer the hinted register if available (e.g., r7 for call return values).
+        let reg = if let Some(pref) = interval.preferred_reg {
+            if let Some(pos) = free_regs.iter().position(|&r| r == pref) {
+                Some(free_regs.swap_remove(pos))
+            } else {
+                free_regs.pop()
+            }
+        } else {
+            free_regs.pop()
+        };
+        if let Some(reg) = reg {
             active_assigned.insert(i, reg);
             final_assigned.insert(i, reg);
             active.insert((interval.end, i));
@@ -632,6 +659,7 @@ mod tests {
                 start: 0,
                 end: 1,
                 spill_weight: 3.0,
+                preferred_reg: None,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -639,6 +667,7 @@ mod tests {
                 start: 2,
                 end: 3,
                 spill_weight: 3.0,
+                preferred_reg: None,
             },
         ];
 
@@ -661,6 +690,7 @@ mod tests {
                 start: 0,
                 end: 10,
                 spill_weight: 2.0, // low weight — eviction candidate
+                preferred_reg: None,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -668,6 +698,7 @@ mod tests {
                 start: 1,
                 end: 4,
                 spill_weight: 50.0, // high weight (loop-hot) — wins
+                preferred_reg: None,
             },
         ];
 
@@ -687,6 +718,7 @@ mod tests {
                 start: 0,
                 end: 10,
                 spill_weight: 50.0, // high weight — should stay
+                preferred_reg: None,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -694,6 +726,7 @@ mod tests {
                 start: 1,
                 end: 4,
                 spill_weight: 2.0, // low weight — gets spilled
+                preferred_reg: None,
             },
         ];
 
@@ -713,6 +746,7 @@ mod tests {
                 start: 0,
                 end: 10,
                 spill_weight: 5.0,
+                preferred_reg: None,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -720,6 +754,7 @@ mod tests {
                 start: 1,
                 end: 4,
                 spill_weight: 5.0, // same weight → no eviction
+                preferred_reg: None,
             },
         ];
 
