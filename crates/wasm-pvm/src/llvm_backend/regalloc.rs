@@ -32,7 +32,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use inkwell::values::{FunctionValue, PhiValue};
 
-use super::emitter::{ValKey, val_key_basic, val_key_instr};
+use super::emitter::{ValKey, is_real_call, val_key_basic, val_key_instr};
 use super::successors::collect_successors;
 
 /// Base registers always available for allocation (empty — all allocatable
@@ -42,6 +42,10 @@ const BASE_ALLOCATABLE_REGS: &[u8] = &[];
 const MIN_USES_FOR_ALLOCATION: usize = 2;
 /// Lower threshold when aggressive register allocation is enabled.
 const MIN_USES_FOR_ALLOCATION_AGGRESSIVE: usize = 1;
+/// Spill weight penalty per call that falls within a value's live range.
+/// Each spanning call costs a spill+reload pair, so values with many spanning
+/// calls are less profitable to keep in registers.
+const CALL_SPANNING_PENALTY: f64 = 2.0;
 
 /// A live interval for an SSA value.
 #[derive(Debug, Clone)]
@@ -143,6 +147,9 @@ pub fn run(
     let max_position = instr_index.values().copied().max().unwrap_or(0);
     let loop_depths = compute_loop_depths(&block_ranges, &loop_headers, max_position);
 
+    // Phase 1d: Collect real call positions for spill weight refinement.
+    let call_positions = collect_call_positions(&blocks, &instr_index);
+
     // Phase 2: Compute live intervals + detect loops.
     let min_uses = if aggressive {
         MIN_USES_FOR_ALLOCATION_AGGRESSIVE
@@ -156,6 +163,7 @@ pub fn run(
         value_slots,
         &loop_headers,
         &loop_depths,
+        &call_positions,
         min_uses,
     );
     stats.has_loops = has_loops;
@@ -353,6 +361,36 @@ fn compute_loop_depths<'ctx>(
     depths
 }
 
+/// Collect linearized positions of real call instructions (sorted ascending).
+/// Used for spill weight refinement: values spanning many calls are penalized.
+fn collect_call_positions<'ctx>(
+    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
+    instr_index: &HashMap<ValKey, usize>,
+) -> Vec<usize> {
+    let mut positions = Vec::new();
+    for &bb in blocks {
+        for instr in bb.get_instructions() {
+            if instr.get_opcode() == inkwell::values::InstructionOpcode::Call && is_real_call(instr)
+            {
+                let key = val_key_instr(instr);
+                if let Some(&idx) = instr_index.get(&key) {
+                    positions.push(idx);
+                }
+            }
+        }
+    }
+    positions.sort_unstable();
+    positions
+}
+
+/// Count how many call positions fall within the range [start, end] (inclusive).
+fn count_spanning_calls(call_positions: &[usize], start: usize, end: usize) -> usize {
+    // Binary search for the first call >= start and the first call > end.
+    let lo = call_positions.partition_point(|&p| p < start);
+    let hi = call_positions.partition_point(|&p| p <= end);
+    hi - lo
+}
+
 /// Compute live intervals for all SSA values (parameters and instruction results).
 /// Also returns whether any loops were detected (back-edges exist).
 fn compute_live_intervals<'ctx>(
@@ -362,6 +400,7 @@ fn compute_live_intervals<'ctx>(
     value_slots: &HashMap<ValKey, i32>,
     loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
     loop_depths: &[u32],
+    call_positions: &[usize],
     min_uses: usize,
 ) -> (Vec<LiveInterval>, bool) {
     use inkwell::values::InstructionOpcode;
@@ -462,12 +501,17 @@ fn compute_live_intervals<'ctx>(
             }
         }
 
+        // Spill weight refinement: penalize values whose live range spans calls.
+        // Each spanning call costs a spill+reload pair when the value is allocated.
+        let spanning_calls = count_spanning_calls(call_positions, start, end);
+        let adjusted_weight = weight - (spanning_calls as f64 * CALL_SPANNING_PENALTY);
+
         intervals.push(LiveInterval {
             val_key: vk,
             slot,
             start,
             end,
-            spill_weight: weight,
+            spill_weight: adjusted_weight,
         });
     }
 

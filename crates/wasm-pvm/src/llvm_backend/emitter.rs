@@ -1349,7 +1349,7 @@ fn instruction_produces_value(instr: InstructionValue<'_>) -> bool {
 /// registers and never clobber callee-saved registers.
 ///
 /// Real calls: `wasm_func_*` (direct) and `__pvm_call_indirect` (indirect).
-fn is_real_call(instr: InstructionValue<'_>) -> bool {
+pub(super) fn is_real_call(instr: InstructionValue<'_>) -> bool {
     let call_site: std::result::Result<inkwell::values::CallSiteValue, _> = instr.try_into();
     let Ok(call_site) = call_site else {
         return true; // Conservative: treat as call if we can't classify.

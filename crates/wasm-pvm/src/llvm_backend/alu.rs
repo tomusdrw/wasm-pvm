@@ -1012,9 +1012,11 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
     let false_val = get_operand(instr, 2)?;
     let slot = result_slot(e, instr)?;
 
-    // NOTE: Select coalescing (loading default value into result_reg) is deferred
-    // because load_operand(val, alloc_reg) can corrupt alloc state that subsequent
-    // operand loads depend on. This needs a more careful implementation.
+    // Load-side coalescing: use allocated registers directly as Cmov operands.
+    // Safe because all select operands are simultaneously live (different alloc
+    // regs guaranteed by the allocator). Store-side coalescing (result_reg) is
+    // NOT applied because loading into the alloc reg triggers invalidate_reg
+    // which can corrupt cache state for subsequent operand loads.
 
     // Try to use CmovNzImm/CmovIzImm when one operand is a constant that fits i32.
     // CmovNzImm: if cond != 0, dst = imm (keeps dst otherwise)
@@ -1024,45 +1026,57 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
 
     if let Some(tv) = true_const {
         // true_val is constant: load false_val as default, CmovNzImm overwrites if cond != 0
-        e.load_operand(false_val, TEMP_RESULT)?;
-        e.load_operand(cond, TEMP1)?;
+        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        e.load_operand(false_val, def_reg)?;
+        let cond_reg = operand_reg(e, cond, TEMP1);
+        e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovNzImm {
-            dst: TEMP_RESULT,
-            cond: TEMP1,
+            dst: def_reg,
+            cond: cond_reg,
             value: tv as i32,
         });
+        e.store_to_slot(slot, def_reg);
     } else if let Some(fv) = false_const {
         // false_val is constant: load true_val as default, CmovIzImm overwrites if cond == 0
-        e.load_operand(true_val, TEMP_RESULT)?;
-        e.load_operand(cond, TEMP1)?;
+        let def_reg = operand_reg(e, true_val, TEMP_RESULT);
+        e.load_operand(true_val, def_reg)?;
+        let cond_reg = operand_reg(e, cond, TEMP1);
+        e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovIzImm {
-            dst: TEMP_RESULT,
-            cond: TEMP1,
+            dst: def_reg,
+            cond: cond_reg,
             value: fv as i32,
         });
+        e.store_to_slot(slot, def_reg);
     } else if let Some(inner_cond) = try_get_inverted_condition(cond) {
         // Inverted condition: select(!c, tv, fv) ≡ select(c, fv, tv)
         // Use CmovIz: load false_val as default, overwrite with true_val when inner_cond==0
-        e.load_operand(false_val, TEMP_RESULT)?;
-        e.load_operand(true_val, TEMP2)?;
-        e.load_operand(inner_cond, TEMP1)?;
+        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        e.load_operand(false_val, def_reg)?;
+        let src_reg = operand_reg(e, true_val, TEMP2);
+        e.load_operand(true_val, src_reg)?;
+        let cond_reg = operand_reg(e, inner_cond, TEMP1);
+        e.load_operand(inner_cond, cond_reg)?;
         e.emit(Instruction::CmovIz {
-            dst: TEMP_RESULT,
-            src: TEMP2,
-            cond: TEMP1,
+            dst: def_reg,
+            src: src_reg,
+            cond: cond_reg,
         });
+        e.store_to_slot(slot, def_reg);
     } else {
         // Neither is a small constant: use register CmovNz
-        e.load_operand(false_val, TEMP_RESULT)?;
-        e.load_operand(true_val, TEMP2)?;
-        e.load_operand(cond, TEMP1)?;
+        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        e.load_operand(false_val, def_reg)?;
+        let src_reg = operand_reg(e, true_val, TEMP2);
+        e.load_operand(true_val, src_reg)?;
+        let cond_reg = operand_reg(e, cond, TEMP1);
+        e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovNz {
-            dst: TEMP_RESULT,
-            src: TEMP2,
-            cond: TEMP1,
+            dst: def_reg,
+            src: src_reg,
+            cond: cond_reg,
         });
+        e.store_to_slot(slot, def_reg);
     }
-
-    e.store_to_slot(slot, TEMP_RESULT);
     Ok(())
 }
