@@ -16,7 +16,10 @@ use inkwell::values::{BasicValueEnum, InstructionValue};
 use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
-use super::emitter::{LoweringContext, PvmEmitter, get_operand, operand_reg, result_reg, result_slot, try_get_constant};
+use super::emitter::{
+    LoweringContext, PvmEmitter, get_operand, operand_reg, result_reg, result_slot,
+    try_get_constant,
+};
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
 /// Lower a load from a WASM global variable.

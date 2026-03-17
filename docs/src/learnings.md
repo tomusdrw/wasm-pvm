@@ -426,6 +426,20 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
 - **Store instructions have no dst conflict**: PVM store instructions (`StoreIndU8`, etc.) write to memory, not to a register, so they have no destination register. Both address and value operands can freely use allocated registers without conflict checks.
 - **Impact**: The fib(20) benchmark dropped from 613 to 511 gas (17%), regalloc two loops from 23,334 to 16,776 gas (28%), and the anan-as PVM interpreter JAM size from 164.9 KB to 158.9 KB (3.6%).
 
+### Rematerialization — Why It Doesn't Work Here (Phase 8 investigation, 2026-03)
+
+Rematerialization (reloading values with `LoadImm` instead of `LoadIndU64` from the stack) was investigated and found to have **zero practical impact** in this architecture. Three approaches were tried and all failed for the same fundamental reason:
+
+**Approach 1: LLVM IR constant detection** — Evaluate LLVM instructions with all-constant operands (e.g., `add(3, 5)` → `8`). **Why it fails**: LLVM's `IRBuilder` constant-folds at instruction *creation* time, before any passes run. `LLVMBuildAdd(3, 5)` produces the constant `8` directly — the `add` instruction is never created. This applies to ALL pure computations (binary ops, casts). Even with `--no-llvm-passes`, no instruction with all-constant operands survives construction.
+
+**Approach 2: PVM emitter constant tracking** — Capture `reg_to_const[src_reg]` at `store_to_slot` time. **Why it fails**: `reg_to_const` is only set by `LoadImm`/`LoadImm64` instructions. All compute instructions (Add, Sub, etc.) clear it via `emit() → invalidate_reg(dst)`. So at `store_to_slot` time, `reg_to_const[alloc_reg]` is `Some` only when the last instruction was `LoadImm` — which means the original value IS an LLVM constant. But LLVM constants are caught by `get_sign_extended_constant()` at the top of `load_operand()`, before the regalloc path is entered. On reload, the same check fires again and emits `LoadImm` directly. The regalloc reload path is never reached.
+
+**Approach 3: Regalloc-level constant map** — Track `val_constants: HashMap<ValKey, u64>` and check it during reload. Same root cause: no non-constant LLVM value produces a compile-time-known PVM result.
+
+**Root cause summary**: Every value that enters the regalloc reload path is a non-constant instruction result (parameter, ALU result, memory load, phi, call return). Constants are intercepted by `get_sign_extended_constant()` before reaching the alloc code path. There is no gap between "LLVM knows it's constant" and "the emitter needs to reload it."
+
+**What WOULD make rematerialization useful**: Extending PVM-level constant propagation beyond `LoadImm`/`LoadImm64` — e.g., tracking that `AddImm32 { dst, src, value: 0 }` where `reg_to_const[src]` is known means `reg_to_const[dst]` is computable. This is a significant feature (PVM-level constant folding across all instruction types) with uncertain ROI.
+
 ### Store-Side Coalescing (Phase 7, 2026-03)
 
 - **Avoiding MoveReg by computing directly into allocated registers**: `result_reg()` returns the allocated register for the current instruction's result slot, allowing ALU/memory-load/intrinsic lowering to use it as the output destination. This eliminates the `MoveReg` that `store_to_slot` would otherwise emit to copy from TEMP_RESULT into the allocated register. On the anan-as compiler, this reduced store_moves by 54% (2720 to 1262) and total instructions by 4%.

@@ -903,15 +903,9 @@ pub fn lower_sext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
             value: 0,
         });
     } else if from_bits == 8 {
-        e.emit(Instruction::SignExtend8 {
-            dst,
-            src: src_reg,
-        });
+        e.emit(Instruction::SignExtend8 { dst, src: src_reg });
     } else if from_bits == 16 {
-        e.emit(Instruction::SignExtend16 {
-            dst,
-            src: src_reg,
-        });
+        e.emit(Instruction::SignExtend16 { dst, src: src_reg });
     } else if from_bits == 32 {
         e.emit(Instruction::AddImm32 {
             dst,
@@ -920,10 +914,7 @@ pub fn lower_sext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         });
     } else if src_reg != dst {
         // Fallback: no transform, just copy to dst.
-        e.emit(Instruction::MoveReg {
-            dst,
-            src: src_reg,
-        });
+        e.emit(Instruction::MoveReg { dst, src: src_reg });
     }
 
     e.store_to_slot(slot, dst);
@@ -967,10 +958,7 @@ pub fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>
         });
     } else if src_reg != dst {
         // i64 → i64 is a no-op, but if src is in a different register, copy it.
-        e.emit(Instruction::MoveReg {
-            dst,
-            src: src_reg,
-        });
+        e.emit(Instruction::MoveReg { dst, src: src_reg });
     }
 
     e.store_to_slot(slot, dst);

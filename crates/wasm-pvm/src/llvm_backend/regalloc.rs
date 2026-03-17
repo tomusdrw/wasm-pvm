@@ -30,7 +30,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use inkwell::values::{BasicValueEnum, FunctionValue, InstructionOpcode, InstructionValue, PhiValue};
+use inkwell::values::{FunctionValue, PhiValue};
 
 use super::emitter::{ValKey, val_key_basic, val_key_instr};
 use super::successors::collect_successors;
@@ -66,10 +66,6 @@ pub struct RegAllocResult {
     pub slot_to_reg: HashMap<i32, u8>,
     /// Reverse: physical register → stack slot offset (for spill/reload).
     pub reg_to_slot: HashMap<u8, i32>,
-    /// Known constant values for allocated SSA values (for rematerialization).
-    /// When an allocated register is invalidated (e.g., after a call), these values
-    /// can be reloaded with `LoadImm`/`LoadImm64` instead of `LoadIndU64` from stack.
-    pub val_constants: HashMap<ValKey, u64>,
     /// Instrumentation stats for this function's allocation run.
     pub stats: RegAllocStats,
 }
@@ -153,7 +149,7 @@ pub fn run(
     } else {
         MIN_USES_FOR_ALLOCATION
     };
-    let (intervals, has_loops, val_constants) = compute_live_intervals(
+    let (intervals, has_loops) = compute_live_intervals(
         &blocks,
         &instr_index,
         &block_ranges,
@@ -249,11 +245,6 @@ pub fn run(
     let mut result = linear_scan(intervals, &allocatable_regs);
     stats.allocated_values = result.val_to_reg.len();
     result.stats = stats;
-    // Only keep constants for values that were actually allocated.
-    result.val_constants = val_constants
-        .into_iter()
-        .filter(|(k, _)| result.val_to_reg.contains_key(k))
-        .collect();
 
     tracing::debug!(
         target: "wasm_pvm::regalloc",
@@ -363,8 +354,7 @@ fn compute_loop_depths<'ctx>(
 }
 
 /// Compute live intervals for all SSA values (parameters and instruction results).
-/// Also returns whether any loops were detected (back-edges exist) and a map of
-/// known constant values for rematerialization.
+/// Also returns whether any loops were detected (back-edges exist).
 fn compute_live_intervals<'ctx>(
     blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
     instr_index: &HashMap<ValKey, usize>,
@@ -373,7 +363,7 @@ fn compute_live_intervals<'ctx>(
     loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
     loop_depths: &[u32],
     min_uses: usize,
-) -> (Vec<LiveInterval>, bool, HashMap<ValKey, u64>) {
+) -> (Vec<LiveInterval>, bool) {
     use inkwell::values::InstructionOpcode;
 
     let mut def_point: HashMap<ValKey, usize> = HashMap::new();
@@ -381,8 +371,6 @@ fn compute_live_intervals<'ctx>(
     let mut use_count: HashMap<ValKey, usize> = HashMap::new();
     // Accumulated loop-depth-weighted use count per value.
     let mut weighted_uses: HashMap<ValKey, f64> = HashMap::new();
-    // Known constant values for rematerialization.
-    let mut val_constants: HashMap<ValKey, u64> = HashMap::new();
 
     let has_loops = !loop_headers.is_empty();
 
@@ -395,10 +383,6 @@ fn compute_live_intervals<'ctx>(
             // This instruction defines instr_key (if it produces a value).
             if value_slots.contains_key(&instr_key) {
                 def_point.entry(instr_key).or_insert(instr_idx);
-                // Try to evaluate the instruction as a constant for rematerialization.
-                if let Some(const_val) = try_eval_constant(instr) {
-                    val_constants.insert(instr_key, const_val);
-                }
             }
 
             // Check all operands for uses.
@@ -487,7 +471,7 @@ fn compute_live_intervals<'ctx>(
         });
     }
 
-    (intervals, has_loops, val_constants)
+    (intervals, has_loops)
 }
 
 /// Loop depth multiplier: each nesting level multiplies cost by 10.
@@ -515,9 +499,11 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
     // Sort by start point (ascending), then by spill_weight descending (prefer
     // allocating high-weight values when two intervals start at the same point).
     intervals.sort_by(|a, b| {
-        a.start
-            .cmp(&b.start)
-            .then_with(|| b.spill_weight.partial_cmp(&a.spill_weight).unwrap_or(std::cmp::Ordering::Equal))
+        a.start.cmp(&b.start).then_with(|| {
+            b.spill_weight
+                .partial_cmp(&a.spill_weight)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     let mut result = RegAllocResult::default();
@@ -587,79 +573,6 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
     }
 
     result
-}
-
-/// Try to evaluate an LLVM instruction as a constant.
-/// Returns the 64-bit constant value if all operands are constants and the
-/// opcode is a pure computation. Used for rematerialization: if an allocated
-/// value is a known constant, reloads can use `LoadImm` instead of `LoadIndU64`.
-fn try_eval_constant(instr: InstructionValue<'_>) -> Option<u64> {
-    let op0_const = get_operand_constant(instr, 0)?;
-    match instr.get_opcode() {
-        // Unary conversions
-        InstructionOpcode::ZExt | InstructionOpcode::Trunc => Some(op0_const),
-        InstructionOpcode::SExt => {
-            // Need source bit width for sign extension
-            if let Some(inkwell::values::Operand::Value(BasicValueEnum::IntValue(iv))) =
-                instr.get_operand(0)
-            {
-                let from_bits = iv.get_type().get_bit_width();
-                Some(sign_extend(op0_const, from_bits))
-            } else {
-                Some(op0_const)
-            }
-        }
-        // Binary ops
-        InstructionOpcode::Add
-        | InstructionOpcode::Sub
-        | InstructionOpcode::Mul
-        | InstructionOpcode::And
-        | InstructionOpcode::Or
-        | InstructionOpcode::Xor
-        | InstructionOpcode::Shl
-        | InstructionOpcode::LShr
-        | InstructionOpcode::AShr => {
-            let op1_const = get_operand_constant(instr, 1)?;
-            let a = op0_const;
-            let b = op1_const;
-            match instr.get_opcode() {
-                InstructionOpcode::Add => Some(a.wrapping_add(b)),
-                InstructionOpcode::Sub => Some(a.wrapping_sub(b)),
-                InstructionOpcode::Mul => Some(a.wrapping_mul(b)),
-                InstructionOpcode::And => Some(a & b),
-                InstructionOpcode::Or => Some(a | b),
-                InstructionOpcode::Xor => Some(a ^ b),
-                InstructionOpcode::Shl => Some(a.wrapping_shl(b as u32)),
-                InstructionOpcode::LShr => Some(a.wrapping_shr(b as u32)),
-                InstructionOpcode::AShr => Some((a as i64).wrapping_shr(b as u32) as u64),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
-/// Try to get a constant value from an instruction's operand.
-fn get_operand_constant(instr: InstructionValue<'_>, idx: u32) -> Option<u64> {
-    let operand = instr.get_operand(idx)?;
-    if let inkwell::values::Operand::Value(BasicValueEnum::IntValue(iv)) = operand {
-        if let Some(v) = iv.get_sign_extended_constant() {
-            return Some(v as u64);
-        }
-        if let Some(v) = iv.get_zero_extended_constant() {
-            return Some(v);
-        }
-    }
-    None
-}
-
-/// Sign-extend a value from `from_bits` to 64 bits.
-fn sign_extend(value: u64, from_bits: u32) -> u64 {
-    if from_bits >= 64 {
-        return value;
-    }
-    let shift = 64 - from_bits;
-    ((value as i64) << shift >> shift) as u64
 }
 
 #[cfg(test)]

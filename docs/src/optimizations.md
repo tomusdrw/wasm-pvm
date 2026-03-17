@@ -128,14 +128,6 @@ Applied across all lowering modules:
 
 This is a codegen-only optimization — always active when register allocation is enabled.
 
-## Rematerialization (Phase 8)
-
-When an allocated register is invalidated (e.g., after a function call) and the value is a known compile-time constant, the reload emits `LoadImm`/`LoadImm64` instead of `LoadIndU64` from the stack. This is smaller in code size (2-3 bytes vs 5 bytes for small constants).
-
-During register allocation analysis, `compute_live_intervals` evaluates each instruction result with constant operands (ZExt, SExt, Trunc, Add, Sub, Mul, And, Or, Xor, Shl, LShr, AShr). Known constant values are stored in `val_constants` and used by `load_operand` at reload time.
-
-**Impact**: Negligible with LLVM optimization enabled, since `instcombine` already folds constant expressions. Primarily benefits `--no-llvm-passes` mode or edge cases that survive optimization.
-
 ## Adding a New Optimization
 
 1. Add a field to `OptimizationFlags` in `translate/mod.rs`

@@ -489,10 +489,7 @@ fn get_valid_alloc_reg(e: &PvmEmitter<'_>, value: BasicValueEnum<'_>) -> Option<
 }
 
 /// Legacy two-pass phi copy (used when lazy spill is disabled).
-fn emit_phi_copies_legacy<'ctx>(
-    e: &mut PvmEmitter<'ctx>,
-    copies: &[PhiCopy<'ctx>],
-) -> Result<()> {
+fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx>]) -> Result<()> {
     e.spill_all_dirty_regs();
 
     if copies.len() == 1 {
@@ -583,4 +580,3 @@ fn emit_phi_copies_regaware<'ctx>(
 
     Ok(())
 }
-

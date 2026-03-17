@@ -205,10 +205,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
         }
         let bits = operand_bit_width(instr);
 
-        e.emit(Instruction::ReverseBytes {
-            dst,
-            src: val_reg,
-        });
+        e.emit(Instruction::ReverseBytes { dst, src: val_reg });
 
         if bits == 16 {
             // Reversed bytes are in the top 2 positions; shift right by 48.
@@ -297,15 +294,9 @@ pub fn lower_llvm_intrinsic<'ctx>(
         }
         let bits = operand_bit_width(instr);
         if bits == 32 {
-            e.emit(Instruction::LeadingZeroBits32 {
-                dst,
-                src: val_reg,
-            });
+            e.emit(Instruction::LeadingZeroBits32 { dst, src: val_reg });
         } else {
-            e.emit(Instruction::LeadingZeroBits64 {
-                dst,
-                src: val_reg,
-            });
+            e.emit(Instruction::LeadingZeroBits64 { dst, src: val_reg });
         }
         e.store_to_slot(slot, dst);
         return Ok(());
@@ -323,15 +314,9 @@ pub fn lower_llvm_intrinsic<'ctx>(
         }
         let bits = operand_bit_width(instr);
         if bits == 32 {
-            e.emit(Instruction::TrailingZeroBits32 {
-                dst,
-                src: val_reg,
-            });
+            e.emit(Instruction::TrailingZeroBits32 { dst, src: val_reg });
         } else {
-            e.emit(Instruction::TrailingZeroBits64 {
-                dst,
-                src: val_reg,
-            });
+            e.emit(Instruction::TrailingZeroBits64 { dst, src: val_reg });
         }
         e.store_to_slot(slot, dst);
         return Ok(());
@@ -349,15 +334,9 @@ pub fn lower_llvm_intrinsic<'ctx>(
         }
         let bits = operand_bit_width(instr);
         if bits == 32 {
-            e.emit(Instruction::CountSetBits32 {
-                dst,
-                src: val_reg,
-            });
+            e.emit(Instruction::CountSetBits32 { dst, src: val_reg });
         } else {
-            e.emit(Instruction::CountSetBits64 {
-                dst,
-                src: val_reg,
-            });
+            e.emit(Instruction::CountSetBits64 { dst, src: val_reg });
         }
         e.store_to_slot(slot, dst);
         return Ok(());
