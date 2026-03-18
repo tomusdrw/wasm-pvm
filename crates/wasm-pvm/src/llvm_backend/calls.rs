@@ -19,7 +19,7 @@ use crate::{Error, Result, abi};
 use super::emitter::{
     LlvmCallFixup, LlvmIndirectCallFixup, LoweringContext, PvmEmitter, get_operand, result_slot,
 };
-use crate::abi::{HostCallVariant, TEMP1, TEMP2, TEMP_RESULT, parse_host_call_variant};
+use crate::abi::{HostCallVariant, TEMP_RESULT, TEMP1, TEMP2, parse_host_call_variant};
 
 /// Lower a WASM function call.
 pub fn lower_wasm_call<'ctx>(
