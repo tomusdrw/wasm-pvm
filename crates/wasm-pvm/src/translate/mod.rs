@@ -127,17 +127,7 @@ const RO_DATA_SIZE: usize = 64 * 1024;
 
 /// Check if an import name is a known compiler intrinsic (`host_call_N` variants, `pvm_ptr`).
 fn is_known_intrinsic(name: &str) -> bool {
-    if name == "pvm_ptr" || name == "host_call_r8" {
-        return true;
-    }
-    if let Some(suffix) = name.strip_prefix("host_call_") {
-        // host_call_0..6 or host_call_0b..6b
-        let digits = suffix.strip_suffix('b').unwrap_or(suffix);
-        if let Ok(n) = digits.parse::<u8>() {
-            return n <= crate::abi::MAX_HOST_CALL_DATA_ARGS;
-        }
-    }
-    false
+    name == "pvm_ptr" || crate::abi::parse_host_call_variant(name).is_some()
 }
 
 /// Default mappings applied when no explicit import map is provided.
