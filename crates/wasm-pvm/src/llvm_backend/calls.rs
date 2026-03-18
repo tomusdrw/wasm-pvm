@@ -19,7 +19,7 @@ use crate::{Error, Result, abi};
 use super::emitter::{
     LlvmCallFixup, LlvmIndirectCallFixup, LoweringContext, PvmEmitter, get_operand, result_slot,
 };
-use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
+use crate::abi::{HostCallVariant, TEMP_RESULT, TEMP1, TEMP2, parse_host_call_variant};
 
 /// Lower a WASM function call.
 pub fn lower_wasm_call<'ctx>(
@@ -221,40 +221,6 @@ fn lower_mapped_import<'ctx>(
     }
 
     Ok(())
-}
-
-/// Host call variant descriptor parsed from import name.
-#[derive(Clone, Copy)]
-enum HostCallVariant {
-    /// `host_call_N` — exactly N data args (r7..r7+N-1), always returns r7.
-    Typed { data_args: u8 },
-    /// `host_call_Nb` — exactly N data args, returns r7, also captures r8.
-    TypedWithR8 { data_args: u8 },
-    /// `host_call_r8` — no args, returns captured r8 from last `host_call_*b`.
-    GetR8,
-}
-
-/// Parse a host call variant from an import name.
-fn parse_host_call_variant(name: &str) -> Option<HostCallVariant> {
-    if name == "host_call_r8" {
-        return Some(HostCallVariant::GetR8);
-    }
-    if let Some(suffix) = name.strip_prefix("host_call_") {
-        // host_call_2b → TypedWithR8 { data_args: 2 }
-        if let Some(digits) = suffix.strip_suffix('b')
-            && let Ok(n) = digits.parse::<u8>()
-            && n <= abi::MAX_HOST_CALL_DATA_ARGS
-        {
-            return Some(HostCallVariant::TypedWithR8 { data_args: n });
-        }
-        // host_call_3 → Typed { data_args: 3 }
-        if let Ok(n) = suffix.parse::<u8>()
-            && n <= abi::MAX_HOST_CALL_DATA_ARGS
-        {
-            return Some(HostCallVariant::Typed { data_args: n });
-        }
-    }
-    None
 }
 
 /// Dispatch to the appropriate host call lowering based on variant.

@@ -55,6 +55,43 @@ pub const MAX_LOCAL_REGS: usize = 4;
 /// This is the hard ceiling: r7 (`RETURN_VALUE_REG`) through r12 = 6 registers.
 pub const MAX_HOST_CALL_DATA_ARGS: u8 = 6;
 
+/// Host call variant descriptor parsed from import name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostCallVariant {
+    /// `host_call_N` — exactly N data args (r7..r7+N-1), always returns r7.
+    Typed { data_args: u8 },
+    /// `host_call_Nb` — exactly N data args, returns r7, also captures r8.
+    TypedWithR8 { data_args: u8 },
+    /// `host_call_r8` — no args, returns captured r8 from last `host_call_*b`.
+    GetR8,
+}
+
+/// Parse a host call variant from an import name.
+///
+/// Returns `Some(variant)` for `host_call_0..6`, `host_call_0b..6b`, and `host_call_r8`.
+#[must_use]
+pub fn parse_host_call_variant(name: &str) -> Option<HostCallVariant> {
+    if name == "host_call_r8" {
+        return Some(HostCallVariant::GetR8);
+    }
+    if let Some(suffix) = name.strip_prefix("host_call_") {
+        // host_call_2b → TypedWithR8 { data_args: 2 }
+        if let Some(digits) = suffix.strip_suffix('b')
+            && let Ok(n) = digits.parse::<u8>()
+            && n <= MAX_HOST_CALL_DATA_ARGS
+        {
+            return Some(HostCallVariant::TypedWithR8 { data_args: n });
+        }
+        // host_call_3 → Typed { data_args: 3 }
+        if let Ok(n) = suffix.parse::<u8>()
+            && n <= MAX_HOST_CALL_DATA_ARGS
+        {
+            return Some(HostCallVariant::Typed { data_args: n });
+        }
+    }
+    None
+}
+
 // ── Stack Frame Layout ──
 
 /// Maximum stack frame header size in bytes (used as default when shrink wrapping is disabled).
