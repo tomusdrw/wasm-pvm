@@ -69,6 +69,7 @@ pub enum HostCallVariant {
 /// Parse a host call variant from an import name.
 ///
 /// Returns `Some(variant)` for `host_call_0..6`, `host_call_0b..6b`, and `host_call_r8`.
+#[must_use]
 pub fn parse_host_call_variant(name: &str) -> Option<HostCallVariant> {
     if name == "host_call_r8" {
         return Some(HostCallVariant::GetR8);
