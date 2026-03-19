@@ -453,6 +453,15 @@ Rematerialization (reloading values with `LoadImm` instead of `LoadIndU64` from 
 - **Call return value register hints**: The linear scan allocator accepts `preferred_reg` hints on live intervals. Values defined by real call instructions get a hint for r7 (`RETURN_VALUE_REG`), since the return value is already in r7 after a call. If r7 is free, it's used; otherwise, a different register is allocated. This eliminates the `MoveReg` from r7 to the allocated register in `store_to_slot`.
 - **`is_real_call()` made `pub(super)`**: The function distinguishing real calls from PVM/LLVM intrinsics was made module-visible so `regalloc.rs` can use it for call position collection without code duplication.
 
+### Loop Phi Early Interval Expiration (Phase 10, 2026-03)
+
+- **Post-allocation coalescing doesn't work**: Three approaches were tried and all failed due to the emitter's per-register `alloc_reg_slot` tracking disagreeing with the allocator's per-value liveness model. See git history for details.
+- **Early interval expiration works**: Modifying the linear scan to expire loop phi destination intervals at their actual last use (before loop extension) frees the register earlier. The incoming back-edge value naturally gets the freed register via the free pool. Since the linear scan's `slot_to_reg` maps reflect both assignments from the start, the emitter handles transitions correctly.
+- **Pressure guard**: When `intervals.len() > allocatable_regs.len() * 2`, early expiration is disabled. Under high pressure, freed phi registers get taken by unrelated values, causing reload traffic that outweighs the MoveReg savings.
+- **Phi copy no-op**: When incoming_reg == phi_reg AND the register currently holds the incoming value (verified by `is_alloc_reg_valid`), the phi copy is skipped — just update `alloc_reg_slot`. The `is_alloc_reg_valid` check is critical: without it, a third value that overwrote the register between the incoming's store and the phi copy would cause silent data corruption.
+- **store_to_slot safety**: When storing to a slot whose allocated register currently holds a DIFFERENT dirty slot, spill the dirty value first. Prevents data loss when multiple slots share a register via early expiration.
+- **Impact**: fib(20) -15.7% gas / -7.2% code, factorial -5.6% gas. No regressions.
+
 ### Non-Leaf r5-r8 Allocation and load_operand Reload Bug (Phase 6, 2026-03)
 
 - **Removing the leaf-only restriction for r5-r8**: Previously r5/r6 (`allocate_scratch_regs`) and r7/r8 (`allocate_caller_saved_regs`) were only available in leaf functions. Phase 6 makes them available in all functions. The existing non-leaf call lowering infrastructure (`spill_allocated_regs` before calls, `clear_reg_cache` after calls, lazy reload on next access) handles caller-saved register spill/reload automatically, so no new mechanism was needed.

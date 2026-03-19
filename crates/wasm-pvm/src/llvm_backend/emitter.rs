@@ -715,6 +715,16 @@ impl<'ctx> PvmEmitter<'ctx> {
     pub fn store_to_slot(&mut self, slot_offset: i32, src_reg: u8) {
         let alloc_reg = self.regalloc.slot_to_reg.get(&slot_offset).copied();
         if let Some(alloc_reg) = alloc_reg {
+            // If the register currently holds a DIFFERENT slot's dirty value,
+            // spill it first. This happens when multiple values share a register
+            // via early interval expiration (loop phi register reuse).
+            let reg_idx = alloc_reg as usize;
+            if let Some(current_slot) = self.alloc_reg_slot[reg_idx] {
+                if current_slot != slot_offset && self.alloc_dirty[reg_idx] {
+                    self.spill_dirty_reg(alloc_reg);
+                }
+            }
+
             self.regalloc_usage.store_hits += 1;
             if src_reg != alloc_reg {
                 self.regalloc_usage.store_moves += 1;
@@ -723,7 +733,6 @@ impl<'ctx> PvmEmitter<'ctx> {
                     src: src_reg,
                 });
             }
-            let reg_idx = alloc_reg as usize;
             self.alloc_reg_slot[reg_idx] = Some(slot_offset);
 
             if self.config.lazy_spill_enabled {

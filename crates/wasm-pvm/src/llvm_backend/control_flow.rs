@@ -535,7 +535,30 @@ fn emit_phi_copies_regaware<'ctx>(
         e.spill_all_dirty_regs();
     }
 
-    // Phase 1: Snapshot all incoming values.
+    // Filter no-op copies: when incoming_reg == phi_reg AND the register
+    // currently holds the incoming value, the phi copy is a no-op. This
+    // happens when the linear scan assigns the same register to both via
+    // early interval expiration for loop phi destinations. Only update the
+    // emitter's alloc_reg_slot state — no data movement needed.
+    let mut active_copies: Vec<usize> = Vec::new();
+    for (i, copy) in copies.iter().enumerate() {
+        if let (Some(src_reg), Some(phi_reg)) = (copy.incoming_reg, copy.phi_reg) {
+            if src_reg == phi_reg {
+                let key = val_key_basic(copy.incoming_value);
+                if let Some(slot) = e.get_slot(key) {
+                    if e.is_alloc_reg_valid(src_reg, slot) {
+                        // No-op: value is already in the right register.
+                        e.spill_dirty_reg_pub(phi_reg);
+                        e.set_alloc_reg_for_slot(phi_reg, copy.phi_slot);
+                        continue;
+                    }
+                }
+            }
+        }
+        active_copies.push(i);
+    }
+
+    // Phase 1: Snapshot all ACTIVE incoming values.
     // For incoming values in allocated registers, we need to save them before
     // any destination writes can clobber them.
     //
@@ -543,33 +566,35 @@ fn emit_phi_copies_regaware<'ctx>(
     // them to destinations. This is simple and handles all dependency cases.
     let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
 
-    if copies.len() <= temp_regs.len() {
+    if active_copies.len() <= temp_regs.len() {
         // Phase 1: Load all incoming values into temp registers.
-        for (i, copy) in copies.iter().enumerate() {
+        for (ti, &ci) in active_copies.iter().enumerate() {
+            let copy = &copies[ci];
             if let Some(src_reg) = copy.incoming_reg {
-                if src_reg != temp_regs[i] {
+                if src_reg != temp_regs[ti] {
                     e.emit(Instruction::MoveReg {
-                        dst: temp_regs[i],
+                        dst: temp_regs[ti],
                         src: src_reg,
                     });
                 }
             } else {
-                e.load_operand(copy.incoming_value, temp_regs[i])?;
+                e.load_operand(copy.incoming_value, temp_regs[ti])?;
             }
         }
 
         // Phase 2: Store all values to destinations.
-        for (i, copy) in copies.iter().enumerate() {
+        for (ti, &ci) in active_copies.iter().enumerate() {
+            let copy = &copies[ci];
             if let Some(phi_reg) = copy.phi_reg {
                 // Destination is an allocated register.
                 e.spill_dirty_reg_pub(phi_reg);
-                if phi_reg != temp_regs[i] {
-                    e.emit_raw_move(phi_reg, temp_regs[i]);
+                if phi_reg != temp_regs[ti] {
+                    e.emit_raw_move(phi_reg, temp_regs[ti]);
                 }
                 e.set_alloc_reg_for_slot(phi_reg, copy.phi_slot);
             } else {
                 // Destination is stack only.
-                e.store_to_slot(copy.phi_slot, temp_regs[i]);
+                e.store_to_slot(copy.phi_slot, temp_regs[ti]);
             }
         }
     } else {

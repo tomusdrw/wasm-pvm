@@ -56,6 +56,11 @@ struct LiveInterval {
     start: usize,
     /// End position (last use, inclusive).
     end: usize,
+    /// Expiration point used for linear scan active set expiration.
+    /// For loop phi destinations, this is the actual last use before loop
+    /// extension (so the register becomes available earlier when the value
+    /// is no longer truly live). For all other values, equals `end`.
+    expiration: usize,
     /// Spill weight: sum of loop-depth-weighted uses. Higher weight → more
     /// expensive to spill (the value is used frequently in hot code).
     spill_weight: f64,
@@ -159,7 +164,7 @@ pub fn run(
     } else {
         MIN_USES_FOR_ALLOCATION
     };
-    let (intervals, has_loops) = compute_live_intervals(
+    let (mut intervals, has_loops) = compute_live_intervals(
         &blocks,
         &instr_index,
         &block_ranges,
@@ -250,6 +255,14 @@ pub fn run(
             stats,
             ..RegAllocResult::default()
         };
+    }
+
+    // Pressure guard: disable early expiration when register pressure is high.
+    // Freed phi registers get taken by unrelated values, causing reload traffic.
+    if intervals.len() > allocatable_regs.len() * 2 {
+        for iv in &mut intervals {
+            iv.expiration = iv.end;
+        }
     }
 
     // Phase 4: Linear scan allocation.
@@ -415,11 +428,14 @@ fn compute_live_intervals<'ctx>(
     let mut weighted_uses: HashMap<ValKey, f64> = HashMap::new();
     // Values defined by real call instructions (prefer r7 allocation).
     let mut call_defined: HashMap<ValKey, bool> = HashMap::new();
+    // Values defined by phi instructions at loop headers (for early expiration).
+    let mut is_loop_phi: std::collections::HashSet<ValKey> = std::collections::HashSet::new();
 
     let has_loops = !loop_headers.is_empty();
 
     // Walk all instructions to find defs and uses.
     for &bb in blocks {
+        let at_loop_header = loop_headers.contains_key(&bb);
         for instr in bb.get_instructions() {
             let instr_key = val_key_instr(instr);
             let instr_idx = instr_index[&instr_key];
@@ -430,6 +446,10 @@ fn compute_live_intervals<'ctx>(
                 // Track call-defined values for register preference hints.
                 if instr.get_opcode() == InstructionOpcode::Call && is_real_call(instr) {
                     call_defined.insert(instr_key, true);
+                }
+                // Track phi instructions at loop headers for early expiration.
+                if at_loop_header && instr.get_opcode() == InstructionOpcode::Phi {
+                    is_loop_phi.insert(instr_key);
                 }
             }
 
@@ -498,6 +518,9 @@ fn compute_live_intervals<'ctx>(
             continue;
         }
 
+        // Capture end before loop extension for early expiration of loop phis.
+        let pre_extension_end = end;
+
         // Loop extension: if this value is live at a loop header and the loop's
         // back-edge source is beyond the current end, extend the range.
         for (&header_bb, &back_edge_end) in loop_headers {
@@ -522,11 +545,21 @@ fn compute_live_intervals<'ctx>(
             None
         };
 
+        // For loop phi destinations, use pre-extension end as expiration so the
+        // register is freed earlier in linear scan when the value is no longer
+        // truly live (the extension only keeps the interval alive for correctness).
+        let expiration = if is_loop_phi.contains(&vk) && pre_extension_end < end {
+            pre_extension_end
+        } else {
+            end
+        };
+
         intervals.push(LiveInterval {
             val_key: vk,
             slot,
             start,
             end,
+            expiration,
             spill_weight: adjusted_weight,
             preferred_reg,
         });
@@ -569,7 +602,7 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
 
     let mut result = RegAllocResult::default();
 
-    // Active intervals sorted by end point (using BTreeSet of (end, index)).
+    // Active intervals sorted by expiration point (using BTreeSet of (expiration, index)).
     let mut active: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut free_regs: Vec<u8> = allocatable_regs.to_vec();
     // Register assignment for currently active intervals.
@@ -605,29 +638,29 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
         if let Some(reg) = reg {
             active_assigned.insert(i, reg);
             final_assigned.insert(i, reg);
-            active.insert((interval.end, i));
+            active.insert((interval.expiration, i));
         } else {
             // No free register: evict the active interval with the LOWEST
             // spill weight (cheapest to reload), but only if the current
             // interval has a higher weight (more valuable to keep in a register).
             let evict_candidate = active
                 .iter()
-                .map(|&(end, idx)| (idx, end, intervals[idx].spill_weight))
+                .map(|&(exp, idx)| (idx, exp, intervals[idx].spill_weight))
                 .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
 
-            if let Some((evict_idx, evict_end, evict_weight)) = evict_candidate
+            if let Some((evict_idx, evict_exp, evict_weight)) = evict_candidate
                 && interval.spill_weight > evict_weight
             {
                 if let Some(reg) = active_assigned.remove(&evict_idx) {
-                    active.remove(&(evict_end, evict_idx));
+                    active.remove(&(evict_exp, evict_idx));
                     // Evicted interval no longer has a stable whole-interval assignment.
                     final_assigned.remove(&evict_idx);
 
                     active_assigned.insert(i, reg);
                     final_assigned.insert(i, reg);
-                    active.insert((interval.end, i));
+                    active.insert((interval.expiration, i));
                 } else {
-                    active.remove(&(evict_end, evict_idx));
+                    active.remove(&(evict_exp, evict_idx));
                     final_assigned.remove(&evict_idx);
                 }
             }
@@ -658,6 +691,7 @@ mod tests {
                 slot: 8,
                 start: 0,
                 end: 1,
+                expiration: 1,
                 spill_weight: 3.0,
                 preferred_reg: None,
             },
@@ -666,6 +700,7 @@ mod tests {
                 slot: 16,
                 start: 2,
                 end: 3,
+                expiration: 3,
                 spill_weight: 3.0,
                 preferred_reg: None,
             },
@@ -689,6 +724,7 @@ mod tests {
                 slot: 8,
                 start: 0,
                 end: 10,
+                expiration: 10,
                 spill_weight: 2.0, // low weight — eviction candidate
                 preferred_reg: None,
             },
@@ -697,6 +733,7 @@ mod tests {
                 slot: 16,
                 start: 1,
                 end: 4,
+                expiration: 4,
                 spill_weight: 50.0, // high weight (loop-hot) — wins
                 preferred_reg: None,
             },
@@ -717,6 +754,7 @@ mod tests {
                 slot: 8,
                 start: 0,
                 end: 10,
+                expiration: 10,
                 spill_weight: 50.0, // high weight — should stay
                 preferred_reg: None,
             },
@@ -725,6 +763,7 @@ mod tests {
                 slot: 16,
                 start: 1,
                 end: 4,
+                expiration: 4,
                 spill_weight: 2.0, // low weight — gets spilled
                 preferred_reg: None,
             },
@@ -745,6 +784,7 @@ mod tests {
                 slot: 8,
                 start: 0,
                 end: 10,
+                expiration: 10,
                 spill_weight: 5.0,
                 preferred_reg: None,
             },
@@ -753,6 +793,7 @@ mod tests {
                 slot: 16,
                 start: 1,
                 end: 4,
+                expiration: 4,
                 spill_weight: 5.0, // same weight → no eviction
                 preferred_reg: None,
             },
@@ -780,6 +821,7 @@ mod tests {
             slot: 8,
             start: 0,
             end: 5,
+            expiration: 5,
             spill_weight: 3.0,
             preferred_reg: Some(7),
         }];
@@ -797,6 +839,7 @@ mod tests {
             slot: 8,
             start: 0,
             end: 5,
+            expiration: 5,
             spill_weight: 3.0,
             preferred_reg: Some(7),
         }];
@@ -814,5 +857,71 @@ mod tests {
         assert_eq!(count_spanning_calls(&call_positions, 0, 10), 3);
         assert_eq!(count_spanning_calls(&call_positions, 5, 8), 2);
         assert_eq!(count_spanning_calls(&call_positions, 0, 20), 4);
+    }
+
+    #[test]
+    fn early_expiration_frees_register_for_reuse() {
+        // Simulates a loop phi destination (expiration=3, end=10) and an incoming
+        // value starting at position 4. Without early expiration, the phi would
+        // occupy the register until position 10, blocking the incoming value.
+        // With early expiration, the phi frees the register at position 3.
+        let intervals = vec![
+            LiveInterval {
+                val_key: ValKey(1),
+                slot: 8,
+                start: 0,
+                end: 10,       // loop-extended
+                expiration: 3, // actual last use
+                spill_weight: 10.0,
+                preferred_reg: None,
+            },
+            LiveInterval {
+                val_key: ValKey(2),
+                slot: 16,
+                start: 4,
+                end: 10,
+                expiration: 10,
+                spill_weight: 5.0,
+                preferred_reg: None,
+            },
+        ];
+
+        // Only 1 register: without early expiration, ValKey(2) would be evicted
+        // or spilled. With early expiration, ValKey(1) frees the register at 3,
+        // and ValKey(2) gets it at 4.
+        let result = linear_scan(intervals, &[9]);
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
+        assert_eq!(result.val_to_reg.get(&ValKey(2)), Some(&9));
+    }
+
+    #[test]
+    fn no_early_expiration_without_gap() {
+        // When expiration == end (no loop extension), standard behavior applies.
+        // Two overlapping intervals with 1 register: second gets evicted.
+        let intervals = vec![
+            LiveInterval {
+                val_key: ValKey(1),
+                slot: 8,
+                start: 0,
+                end: 10,
+                expiration: 10, // no early expiration
+                spill_weight: 10.0,
+                preferred_reg: None,
+            },
+            LiveInterval {
+                val_key: ValKey(2),
+                slot: 16,
+                start: 4,
+                end: 10,
+                expiration: 10,
+                spill_weight: 5.0,
+                preferred_reg: None,
+            },
+        ];
+
+        let result = linear_scan(intervals, &[9]);
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
+        // ValKey(2) not allocated — ValKey(1) still active (higher weight)
+        assert!(!result.val_to_reg.contains_key(&ValKey(2)));
     }
 }

@@ -152,6 +152,19 @@ When a value is defined by a real call instruction, the linear scan allocator pr
 
 All three are codegen-only optimizations — always active when register allocation is enabled.
 
+## Phase 10: Loop Phi Early Interval Expiration
+
+Eliminates phi MoveReg instructions in loop headers by modifying the linear scan to expire loop phi destination intervals at their actual last use (before loop extension) instead of the loop-extended end. This frees the phi's register earlier, allowing the incoming back-edge value to naturally reuse it via the free register pool. When both values share the same register, the phi copy at the back-edge becomes a no-op (skipped entirely in `emit_phi_copies_regaware`).
+
+Three coordinated changes:
+1. **regalloc.rs**: `LiveInterval.expiration` field — for loop phi destinations where `pre_extension_end < end`, expires early. Pressure guard disables when `intervals > 2× registers`.
+2. **control_flow.rs**: Phi copy no-op filter — when `incoming_reg == phi_reg` and `is_alloc_reg_valid(src_reg, incoming_slot)`, skips data movement.
+3. **emitter.rs**: `store_to_slot` safety — spills dirty values before overwriting `alloc_reg_slot` with a different slot.
+
+Impact: fib(20) -15.7% gas / -7.2% code, factorial -5.6% gas. No regressions.
+
+This is a codegen-only optimization — always active when register allocation is enabled.
+
 ## Adding a New Optimization
 
 1. Add a field to `OptimizationFlags` in `translate/mod.rs`
