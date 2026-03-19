@@ -123,8 +123,9 @@ pub fn lower_function(
     // predecessor map. Needed for non-leaf functions (intersection at merge points
     // + dominator propagation at loop headers) and leaf functions with lazy spill
     // (dominator propagation at loop headers).
-    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> =
-        if has_regalloc && (!is_leaf || emitter.config.lazy_spill_enabled) {
+    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = if has_regalloc
+        && (!is_leaf || emitter.config.lazy_spill_enabled)
+    {
         let mut map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = HashMap::new();
         for bb in function.get_basic_blocks() {
             if let Some(term) = bb.get_terminator() {
@@ -191,33 +192,30 @@ pub fn lower_function(
                         // max_call_args are safe (never clobbered by call argument
                         // setup or caller-save convention). For leaf functions,
                         // all registers are safe (no calls to clobber them).
-                        let mut processed = preds
-                            .iter()
-                            .filter(|p| block_exit_cache.contains_key(p));
+                        let mut processed =
+                            preds.iter().filter(|p| block_exit_cache.contains_key(p));
                         if let Some(first) = processed.next() {
                             let first_snap = &block_exit_cache[first];
                             if is_leaf {
-                                emitter
-                                    .set_alloc_reg_slot_from(&first_snap.alloc_reg_slot);
+                                emitter.set_alloc_reg_slot_from(&first_snap.alloc_reg_slot);
                             } else {
                                 let clobbered_locals = emitter
                                     .regalloc
                                     .stats
                                     .max_call_args
                                     .min(crate::abi::MAX_LOCAL_REGS);
-                                let first_safe = crate::abi::FIRST_LOCAL_REG
-                                    + clobbered_locals as u8;
-                                let last_safe = crate::abi::FIRST_LOCAL_REG
-                                    + crate::abi::MAX_LOCAL_REGS as u8;
-                                emitter.set_alloc_reg_slot_filtered(
-                                    &first_snap.alloc_reg_slot,
-                                    |r| r >= first_safe && r < last_safe,
-                                );
+                                let first_safe =
+                                    crate::abi::FIRST_LOCAL_REG + clobbered_locals as u8;
+                                let last_safe =
+                                    crate::abi::FIRST_LOCAL_REG + crate::abi::MAX_LOCAL_REGS as u8;
+                                emitter
+                                    .set_alloc_reg_slot_filtered(&first_snap.alloc_reg_slot, |r| {
+                                        r >= first_safe && r < last_safe
+                                    });
                             }
                             for pred in processed {
                                 let snap = &block_exit_cache[pred];
-                                emitter
-                                    .intersect_alloc_reg_slot(&snap.alloc_reg_slot);
+                                emitter.intersect_alloc_reg_slot(&snap.alloc_reg_slot);
                             }
                         }
                     }
