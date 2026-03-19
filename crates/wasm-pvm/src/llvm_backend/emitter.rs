@@ -719,10 +719,11 @@ impl<'ctx> PvmEmitter<'ctx> {
             // spill it first. This happens when multiple values share a register
             // via early interval expiration (loop phi register reuse).
             let reg_idx = alloc_reg as usize;
-            if let Some(current_slot) = self.alloc_reg_slot[reg_idx] {
-                if current_slot != slot_offset && self.alloc_dirty[reg_idx] {
-                    self.spill_dirty_reg(alloc_reg);
-                }
+            if let Some(current_slot) = self.alloc_reg_slot[reg_idx]
+                && current_slot != slot_offset
+                && self.alloc_dirty[reg_idx]
+            {
+                self.spill_dirty_reg(alloc_reg);
             }
 
             self.regalloc_usage.store_hits += 1;
@@ -781,11 +782,11 @@ impl<'ctx> PvmEmitter<'ctx> {
         }
     }
 
-    /// Set alloc_reg_slot for a specific register to a given slot and mark dirty.
+    /// Set `alloc_reg_slot` for a specific register to a given slot and mark dirty.
     ///
     /// Used after register-aware phi copies to tell the emitter that the
     /// allocated register now holds the phi destination value.
-    /// Must be called AFTER emit(MoveReg) since emit() triggers invalidate_reg().
+    /// Must be called AFTER `emit(MoveReg)` since `emit()` triggers `invalidate_reg()`.
     pub fn set_alloc_reg_for_slot(&mut self, reg: u8, slot: i32) {
         let idx = reg as usize;
         self.alloc_reg_slot[idx] = Some(slot);
@@ -798,7 +799,7 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.alloc_reg_slot[reg as usize] == Some(slot)
     }
 
-    /// Emit a raw MoveReg bypassing emit() (no invalidate_reg on dst).
+    /// Emit a raw `MoveReg` bypassing `emit()` (no `invalidate_reg` on dst).
     /// Used for register-aware phi copies where we manage alloc state manually.
     pub fn emit_raw_move(&mut self, dst: u8, src: u8) {
         let instr = Instruction::MoveReg { dst, src };
@@ -815,11 +816,10 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Spill register-allocated values before instructions that clobber them.
     /// With lazy spill, flushes dirty registers to stack.
     /// Without lazy spill (write-through), this is a no-op.
-    pub fn spill_allocated_regs(&mut self) -> Result<()> {
+    pub fn spill_allocated_regs(&mut self) {
         if self.config.lazy_spill_enabled {
             self.spill_all_dirty_regs();
         }
-        Ok(())
     }
 
     fn invalidate_allocated_regs_where(&mut self, mut pred: impl FnMut(u8) -> bool) {
@@ -1106,16 +1106,16 @@ pub fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i3
 }
 
 /// Get the register to use for this instruction's result.
-/// Returns the allocated register (for store-side coalescing) or TEMP_RESULT as fallback.
+/// Returns the allocated register (for store-side coalescing) or `TEMP_RESULT` as fallback.
 /// When the result has an allocated register, computing directly into it avoids a
-/// subsequent MoveReg in `store_to_slot`.
+/// subsequent `MoveReg` in `store_to_slot`.
 pub fn result_reg(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> u8 {
     result_reg_or(e, instr, crate::abi::TEMP_RESULT)
 }
 
 /// Like `result_reg` but with a custom fallback register.
 /// Used by lowering paths that naturally use a different working register
-/// (e.g., zext/sext/trunc use TEMP1 instead of TEMP_RESULT).
+/// (e.g., zext/sext/trunc use `TEMP1` instead of `TEMP_RESULT`).
 pub fn result_reg_or(e: &PvmEmitter<'_>, instr: InstructionValue<'_>, fallback: u8) -> u8 {
     let key = val_key_instr(instr);
     if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key) {
@@ -1138,12 +1138,11 @@ pub fn operand_reg(e: &PvmEmitter<'_>, val: BasicValueEnum<'_>, fallback: u8) ->
             return fallback;
         }
         let key = val_key_int(iv);
-        if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key) {
-            if let Some(slot) = e.get_slot(key) {
-                if e.alloc_reg_slot[alloc_reg as usize] == Some(slot) {
-                    return alloc_reg;
-                }
-            }
+        if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key)
+            && let Some(slot) = e.get_slot(key)
+            && e.alloc_reg_slot[alloc_reg as usize] == Some(slot)
+        {
+            return alloc_reg;
         }
     }
     fallback

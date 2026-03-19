@@ -410,7 +410,7 @@ struct PhiCopy<'ctx> {
 /// Emit copies for phi nodes in `target_bb` that have incoming values from `current_bb`.
 ///
 /// With lazy spill enabled, uses register-aware phi resolution:
-/// - reg→reg copies use MoveReg (or no-op if same register)
+/// - reg→reg copies use `MoveReg` (or no-op if same register)
 /// - reg→stack and stack→reg copies avoid unnecessary round-trips
 /// - Parallel move resolver handles cycles in register-to-register copies
 ///
@@ -542,17 +542,17 @@ fn emit_phi_copies_regaware<'ctx>(
     // emitter's alloc_reg_slot state — no data movement needed.
     let mut active_copies: Vec<usize> = Vec::new();
     for (i, copy) in copies.iter().enumerate() {
-        if let (Some(src_reg), Some(phi_reg)) = (copy.incoming_reg, copy.phi_reg) {
-            if src_reg == phi_reg {
-                let key = val_key_basic(copy.incoming_value);
-                if let Some(slot) = e.get_slot(key) {
-                    if e.is_alloc_reg_valid(src_reg, slot) {
-                        // No-op: value is already in the right register.
-                        e.spill_dirty_reg_pub(phi_reg);
-                        e.set_alloc_reg_for_slot(phi_reg, copy.phi_slot);
-                        continue;
-                    }
-                }
+        if let (Some(src_reg), Some(phi_reg)) = (copy.incoming_reg, copy.phi_reg)
+            && src_reg == phi_reg
+        {
+            let key = val_key_basic(copy.incoming_value);
+            if let Some(slot) = e.get_slot(key)
+                && e.is_alloc_reg_valid(src_reg, slot)
+            {
+                // No-op: value is already in the right register.
+                e.spill_dirty_reg_pub(phi_reg);
+                e.set_alloc_reg_for_slot(phi_reg, copy.phi_slot);
+                continue;
             }
         }
         active_copies.push(i);

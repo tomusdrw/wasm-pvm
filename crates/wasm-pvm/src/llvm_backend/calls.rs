@@ -50,7 +50,7 @@ pub fn lower_wasm_call<'ctx>(
         .ok_or_else(|| Error::Internal(format!("unknown function index: {global_func_idx}")))?;
 
     // Spill register-allocated values before the call (r5/r6 are caller-saved).
-    e.spill_allocated_regs()?;
+    e.spill_allocated_regs();
 
     // Load arguments from LLVM call operands into r9-r12 (first 4) and
     // PARAM_OVERFLOW_BASE (5th+). The last operand is the function pointer.
@@ -335,7 +335,7 @@ fn lower_host_call_typed<'ctx>(
     let ecalli_index = extract_ecalli_index(instr)?;
 
     // Spill register-allocated values before ecalli.
-    e.spill_allocated_regs()?;
+    e.spill_allocated_regs();
 
     // Load data arguments into r7..r7+N-1.
     for i in 0..expected_data_args as usize {
@@ -479,7 +479,7 @@ pub fn lower_pvm_call_indirect<'ctx>(
     };
 
     // Spill register-allocated values before indirect call (r5/r6 are caller-saved).
-    e.spill_allocated_regs()?;
+    e.spill_allocated_regs();
 
     // Load table entry index into ARGS_LEN_REG and save it in the spill area.
     // Using OPERAND_SPILL_BASE ensures we have reserved space in the frame.

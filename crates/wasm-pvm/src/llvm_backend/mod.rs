@@ -375,7 +375,7 @@ pub fn lower_function(
     })
 }
 
-/// Restore alloc_reg_slot for phi destinations at the start of a block.
+/// Restore `alloc_reg_slot` for phi destinations at the start of a block.
 ///
 /// After `define_label` clears all alloc state, this re-establishes ownership
 /// for phi destinations that have allocated registers. The phi copy code

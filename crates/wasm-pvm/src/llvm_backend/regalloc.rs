@@ -65,7 +65,7 @@ struct LiveInterval {
     /// expensive to spill (the value is used frequently in hot code).
     spill_weight: f64,
     /// Preferred register hint. If set, the allocator tries to assign this
-    /// register first (e.g., r7 for call return values to avoid MoveReg).
+    /// register first (e.g., r7 for call return values to avoid `MoveReg`).
     preferred_reg: Option<u8>,
     /// Whether this interval's live range contains at least one real call.
     spans_calls: bool,
@@ -111,6 +111,7 @@ pub struct RegAllocStats {
 /// `scratch_regs_safe` indicates that this function never clobbers r5/r6
 /// (`abi::SCRATCH1`/`SCRATCH2`), making them available for allocation.
 /// `allocate_caller_saved` enables r7/r8 allocation in leaf functions.
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn run(
     function: FunctionValue<'_>,
     value_slots: &HashMap<ValKey, i32>,
@@ -362,7 +363,7 @@ fn detect_loop_headers<'ctx>(
 /// Compute loop nesting depth for each instruction position.
 ///
 /// For each loop (identified by a back-edge to a header), all positions within
-/// [header_start, back_edge_end] have their depth incremented. Nested loops
+/// `[header_start, back_edge_end]` have their depth incremented. Nested loops
 /// contribute additively.
 fn compute_loop_depths<'ctx>(
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
@@ -381,8 +382,8 @@ fn compute_loop_depths<'ctx>(
 
 /// Collect linearized positions of real call instructions (sorted ascending).
 /// Used for spill weight refinement: values spanning many calls are penalized.
-fn collect_call_positions<'ctx>(
-    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
+fn collect_call_positions(
+    blocks: &[inkwell::basic_block::BasicBlock<'_>],
     instr_index: &HashMap<ValKey, usize>,
 ) -> Vec<usize> {
     let mut positions = Vec::new();
@@ -411,6 +412,7 @@ fn count_spanning_calls(call_positions: &[usize], start: usize, end: usize) -> u
 
 /// Compute live intervals for all SSA values (parameters and instruction results).
 /// Also returns whether any loops were detected (back-edges exist).
+#[allow(clippy::too_many_arguments)]
 fn compute_live_intervals<'ctx>(
     blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
     instr_index: &HashMap<ValKey, usize>,
@@ -538,6 +540,7 @@ fn compute_live_intervals<'ctx>(
         // Spill weight refinement: penalize values whose live range spans calls.
         // Each spanning call costs a spill+reload pair when the value is allocated.
         let spanning_calls = count_spanning_calls(call_positions, start, end);
+        #[allow(clippy::cast_precision_loss)]
         let adjusted_weight = weight - (spanning_calls as f64 * CALL_SPANNING_PENALTY);
 
         // Call return value hint: prefer r7 for values defined by call instructions.
