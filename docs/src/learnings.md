@@ -470,6 +470,12 @@ Rematerialization (reloading values with `LoadImm` instead of `LoadIndU64` from 
 - **pred_map condition expanded**: The predecessor map was previously built only for non-leaf functions. It is now built whenever `has_regalloc && (!is_leaf || lazy_spill_enabled)`, enabling alloc state propagation for leaf functions with lazy spill.
 - **Impact**: fib(20) -5.1% gas, factorial(10) -7.1% gas, is_prime(25) -4.6% gas, PiP aslan-fib -0.52% gas.
 
+### Callee-Saved Preference for Call-Spanning Intervals (Phase 12, 2026-03)
+
+- **Problem**: The linear scan's default `free_regs.pop()` behavior assigns callee-saved registers (added last to `allocatable_regs`) to the FIRST intervals processed. Call-spanning intervals, penalized by `CALL_SPANNING_PENALTY`, sort later and get caller-saved registers that are invalidated after every call — the opposite of what's optimal.
+- **Solution**: `LiveInterval.spans_calls` flag marks intervals whose live range contains at least one real call. In non-leaf functions, call-spanning intervals explicitly prefer callee-saved registers (r9-r12 beyond `max_call_args`), while non-call-spanning intervals prefer caller-saved (r5-r8). In leaf functions, all registers are equal (no preference applied). The `preferred_reg` hint (e.g., r7 for call return values) takes priority over the class preference.
+- **Impact**: Modest — primarily benefits non-leaf functions with call-spanning values. anan-as PVM interpreter -0.2% code size. Most benchmarks are leaf-dominated.
+
 ### Non-Leaf r5-r8 Allocation and load_operand Reload Bug (Phase 6, 2026-03)
 
 - **Removing the leaf-only restriction for r5-r8**: Previously r5/r6 (`allocate_scratch_regs`) and r7/r8 (`allocate_caller_saved_regs`) were only available in leaf functions. Phase 6 makes them available in all functions. The existing non-leaf call lowering infrastructure (`spill_allocated_regs` before calls, `clear_reg_cache` after calls, lazy reload on next access) handles caller-saved register spill/reload automatically, so no new mechanism was needed.

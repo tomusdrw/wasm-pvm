@@ -121,25 +121,25 @@ All PVM-level optimizations enabled (default):
 | AS fib(10) | 235 B | 631 B | 504 B | 245 |
 | AS factorial(7) | 234 B | 616 B | 490 B | 207 |
 | AS gcd(2017,200) | 229 B | 640 B | 517 B | 174 |
-| AS decoder | 1.5 KB | 20.7 KB | 6,461 B | 633 |
-| AS array | 1.4 KB | 19.9 KB | 5,738 B | 551 |
+| AS decoder | 1.5 KB | 20.8 KB | 6,469 B | 635 |
+| AS array | 1.4 KB | 19.9 KB | 5,740 B | 551 |
 | regalloc two loops | 252 B | 588 B | 461 B | 16,769 |
 | host-call-log | 171 B | 12.5 KB | 112 B | 42 |
-| aslan-fib accumulate | - | 38.4 KB | 17,985 B | 11,041 |
-| anan-as PVM interpreter | 54.6 KB | 155.7 KB | 106,820 B | - |
+| aslan-fib accumulate | - | 38.5 KB | 18,042 B | 11,044 |
+| anan-as PVM interpreter | 54.6 KB | 155.5 KB | 106,577 B | - |
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
 | Benchmark | JAM Size | Outer Gas | Direct Gas | Overhead |
 |-----------|----------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 21 B | 66,577 | - | - |
-| add(5,7) | 165 B | 1,144,273 | 28 | 40,867x |
-| host-call-log | 12.5 KB | 2,475,460 | 42 | 58,939x |
-| AS fib(10) | 631 B | 1,476,330 | 245 | 6,026x |
-| JAM-SDK fib(10)\* | 26.0 KB | 8,860,198 | - | - |
-| Jambrains fib(10)\* | 62.6 KB | 6,364,733 | - | - |
-| JADE fib(10)\* | 68.9 KB | 18,664,196 | - | - |
-| aslan-fib accumulate\* | 38.4 KB | 17,724,187 | 11,041 | 1,606x |
+| TRAP (interpreter overhead) | 21 B | 66,864 | - | - |
+| add(5,7) | 165 B | 1,145,302 | 28 | 40,904x |
+| host-call-log | 12.5 KB | 2,476,470 | 42 | 58,963x |
+| AS fib(10) | 631 B | 1,476,903 | 245 | 6,028x |
+| JAM-SDK fib(10)\* | 26.0 KB | 8,839,149 | - | - |
+| Jambrains fib(10)\* | 62.6 KB | 6,365,026 | - | - |
+| JADE fib(10)\* | 68.9 KB | 18,606,692 | - | - |
+| aslan-fib accumulate\* | 38.5 KB | 17,726,490 | 11,044 | 1,605x |
 
 \*JAM-SDK fib(10), Jambrains fib(10), JADE fib(10), and aslan-fib accumulate exit on unhandled host calls (ecalli). The gas cost reflects program parsing/loading plus partial execution up to the first unhandled ecalli.
 

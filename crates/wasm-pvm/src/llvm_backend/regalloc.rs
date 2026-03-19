@@ -67,6 +67,8 @@ struct LiveInterval {
     /// Preferred register hint. If set, the allocator tries to assign this
     /// register first (e.g., r7 for call return values to avoid MoveReg).
     preferred_reg: Option<u8>,
+    /// Whether this interval's live range contains at least one real call.
+    spans_calls: bool,
 }
 
 /// Result of register allocation for one function.
@@ -266,7 +268,7 @@ pub fn run(
     }
 
     // Phase 4: Linear scan allocation.
-    let mut result = linear_scan(intervals, &allocatable_regs);
+    let mut result = linear_scan(intervals, &allocatable_regs, is_leaf);
     stats.allocated_values = result.val_to_reg.len();
     result.stats = stats;
 
@@ -562,6 +564,7 @@ fn compute_live_intervals<'ctx>(
             expiration,
             spill_weight: adjusted_weight,
             preferred_reg,
+            spans_calls: spanning_calls > 0,
         });
     }
 
@@ -589,7 +592,16 @@ fn update_use(
 }
 
 /// Standard linear-scan register allocation with spill-weight eviction.
-fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> RegAllocResult {
+///
+/// `is_leaf` controls register class preference: in non-leaf functions,
+/// call-spanning intervals prefer callee-saved registers and non-call-spanning
+/// intervals prefer caller-saved registers. In leaf functions, all registers
+/// are equal (no calls to invalidate them).
+fn linear_scan(
+    mut intervals: Vec<LiveInterval>,
+    allocatable_regs: &[u8],
+    is_leaf: bool,
+) -> RegAllocResult {
     // Sort by start point (ascending), then by spill_weight descending (prefer
     // allocating high-weight values when two intervals start at the same point).
     intervals.sort_by(|a, b| {
@@ -626,8 +638,35 @@ fn linear_scan(mut intervals: Vec<LiveInterval>, allocatable_regs: &[u8]) -> Reg
         }
 
         // Prefer the hinted register if available (e.g., r7 for call return values).
+        // For non-leaf functions: call-spanning intervals prefer callee-saved
+        // registers (survive calls without invalidation), non-call-spanning
+        // intervals prefer caller-saved (leave callee-saved for others).
         let reg = if let Some(pref) = interval.preferred_reg {
             if let Some(pos) = free_regs.iter().position(|&r| r == pref) {
+                Some(free_regs.swap_remove(pos))
+            } else {
+                free_regs.pop()
+            }
+        } else if !is_leaf && interval.spans_calls {
+            // Call-spanning: prefer callee-saved (r9-r12 beyond call args).
+            let callee_pos = free_regs.iter().position(|&r| {
+                r >= crate::abi::FIRST_LOCAL_REG
+                    && r < crate::abi::FIRST_LOCAL_REG + crate::abi::MAX_LOCAL_REGS as u8
+            });
+            if let Some(pos) = callee_pos {
+                Some(free_regs.swap_remove(pos))
+            } else {
+                free_regs.pop()
+            }
+        } else if !is_leaf {
+            // Non-call-spanning in non-leaf: prefer caller-saved (r5-r8).
+            let caller_pos = free_regs.iter().position(|&r| {
+                r == crate::abi::SCRATCH1
+                    || r == crate::abi::SCRATCH2
+                    || r == crate::abi::RETURN_VALUE_REG
+                    || r == crate::abi::ARGS_LEN_REG
+            });
+            if let Some(pos) = caller_pos {
                 Some(free_regs.swap_remove(pos))
             } else {
                 free_regs.pop()
@@ -694,6 +733,7 @@ mod tests {
                 expiration: 1,
                 spill_weight: 3.0,
                 preferred_reg: None,
+                spans_calls: false,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -703,10 +743,11 @@ mod tests {
                 expiration: 3,
                 spill_weight: 3.0,
                 preferred_reg: None,
+                spans_calls: false,
             },
         ];
 
-        let result = linear_scan(intervals, &[9]);
+        let result = linear_scan(intervals, &[9], true);
 
         assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
         assert_eq!(result.val_to_reg.get(&ValKey(2)), Some(&9));
@@ -727,6 +768,7 @@ mod tests {
                 expiration: 10,
                 spill_weight: 2.0, // low weight — eviction candidate
                 preferred_reg: None,
+                spans_calls: false,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -736,10 +778,11 @@ mod tests {
                 expiration: 4,
                 spill_weight: 50.0, // high weight (loop-hot) — wins
                 preferred_reg: None,
+                spans_calls: false,
             },
         ];
 
-        let result = linear_scan(intervals, &[9]);
+        let result = linear_scan(intervals, &[9], true);
 
         assert!(!result.val_to_reg.contains_key(&ValKey(1)));
         assert_eq!(result.val_to_reg.get(&ValKey(2)), Some(&9));
@@ -757,6 +800,7 @@ mod tests {
                 expiration: 10,
                 spill_weight: 50.0, // high weight — should stay
                 preferred_reg: None,
+                spans_calls: false,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -766,10 +810,11 @@ mod tests {
                 expiration: 4,
                 spill_weight: 2.0, // low weight — gets spilled
                 preferred_reg: None,
+                spans_calls: false,
             },
         ];
 
-        let result = linear_scan(intervals, &[9]);
+        let result = linear_scan(intervals, &[9], true);
 
         assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
         assert!(!result.val_to_reg.contains_key(&ValKey(2)));
@@ -787,6 +832,7 @@ mod tests {
                 expiration: 10,
                 spill_weight: 5.0,
                 preferred_reg: None,
+                spans_calls: false,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -796,10 +842,11 @@ mod tests {
                 expiration: 4,
                 spill_weight: 5.0, // same weight → no eviction
                 preferred_reg: None,
+                spans_calls: false,
             },
         ];
 
-        let result = linear_scan(intervals, &[9]);
+        let result = linear_scan(intervals, &[9], true);
 
         assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
         assert!(!result.val_to_reg.contains_key(&ValKey(2)));
@@ -824,9 +871,10 @@ mod tests {
             expiration: 5,
             spill_weight: 3.0,
             preferred_reg: Some(7),
+            spans_calls: false,
         }];
 
-        let result = linear_scan(intervals, &[9, 7]);
+        let result = linear_scan(intervals, &[9, 7], true);
 
         assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&7));
     }
@@ -842,9 +890,10 @@ mod tests {
             expiration: 5,
             spill_weight: 3.0,
             preferred_reg: Some(7),
+            spans_calls: false,
         }];
 
-        let result = linear_scan(intervals, &[9]);
+        let result = linear_scan(intervals, &[9], true);
 
         assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
     }
@@ -874,6 +923,7 @@ mod tests {
                 expiration: 3, // actual last use
                 spill_weight: 10.0,
                 preferred_reg: None,
+                spans_calls: false,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -883,13 +933,14 @@ mod tests {
                 expiration: 10,
                 spill_weight: 5.0,
                 preferred_reg: None,
+                spans_calls: false,
             },
         ];
 
         // Only 1 register: without early expiration, ValKey(2) would be evicted
         // or spilled. With early expiration, ValKey(1) frees the register at 3,
         // and ValKey(2) gets it at 4.
-        let result = linear_scan(intervals, &[9]);
+        let result = linear_scan(intervals, &[9], true);
         assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
         assert_eq!(result.val_to_reg.get(&ValKey(2)), Some(&9));
     }
@@ -907,6 +958,7 @@ mod tests {
                 expiration: 10, // no early expiration
                 spill_weight: 10.0,
                 preferred_reg: None,
+                spans_calls: false,
             },
             LiveInterval {
                 val_key: ValKey(2),
@@ -916,12 +968,150 @@ mod tests {
                 expiration: 10,
                 spill_weight: 5.0,
                 preferred_reg: None,
+                spans_calls: false,
             },
         ];
 
-        let result = linear_scan(intervals, &[9]);
+        let result = linear_scan(intervals, &[9], true);
         assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
         // ValKey(2) not allocated — ValKey(1) still active (higher weight)
         assert!(!result.val_to_reg.contains_key(&ValKey(2)));
+    }
+
+    #[test]
+    fn call_spanning_prefers_callee_saved_in_nonleaf() {
+        // In a non-leaf function, a call-spanning interval should prefer
+        // callee-saved (r9) over caller-saved (r5).
+        let intervals = vec![LiveInterval {
+            val_key: ValKey(1),
+            slot: 8,
+            start: 0,
+            end: 5,
+            expiration: 5,
+            spill_weight: 3.0,
+            preferred_reg: None,
+            spans_calls: true,
+        }];
+
+        // free_regs = [9, 5]: pop() would give r5 (caller-saved), but the
+        // callee-saved preference should seek out r9 instead.
+        let result = linear_scan(intervals, &[9, 5], false);
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
+    }
+
+    #[test]
+    fn non_call_spanning_prefers_caller_saved_in_nonleaf() {
+        // In a non-leaf function, a non-call-spanning interval should prefer
+        // caller-saved (r5) over callee-saved (r9), leaving callee-saved
+        // registers available for call-spanning values.
+        let intervals = vec![LiveInterval {
+            val_key: ValKey(1),
+            slot: 8,
+            start: 0,
+            end: 5,
+            expiration: 5,
+            spill_weight: 3.0,
+            preferred_reg: None,
+            spans_calls: false,
+        }];
+
+        // free_regs = [5, 9]: pop() would give 9, but the caller-saved
+        // preference explicitly seeks r5.
+        let result = linear_scan(intervals, &[5, 9], false);
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&5));
+    }
+
+    #[test]
+    fn leaf_function_ignores_call_spanning_preference() {
+        // In a leaf function, spans_calls is always false, but even if set,
+        // no preference should apply — all registers are equal.
+        let intervals = vec![LiveInterval {
+            val_key: ValKey(1),
+            slot: 8,
+            start: 0,
+            end: 5,
+            expiration: 5,
+            spill_weight: 3.0,
+            preferred_reg: None,
+            spans_calls: true, // would be unusual in leaf, but test the guard
+        }];
+
+        // In leaf, pop() gives 9 (last element), no preference applied.
+        let result = linear_scan(intervals, &[5, 9], true);
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&9));
+    }
+
+    #[test]
+    fn call_spanning_and_non_spanning_get_complementary_classes() {
+        // Two overlapping intervals in a non-leaf function: the call-spanning
+        // one should get callee-saved (r11), the non-call-spanning one should
+        // get caller-saved (r5). Without the preference, both would use
+        // default pop() order, potentially assigning backwards.
+        let intervals = vec![
+            LiveInterval {
+                val_key: ValKey(1),
+                slot: 8,
+                start: 0,
+                end: 10,
+                expiration: 10,
+                spill_weight: 5.0,
+                preferred_reg: None,
+                spans_calls: false, // should get caller-saved (r5)
+            },
+            LiveInterval {
+                val_key: ValKey(2),
+                slot: 16,
+                start: 0,
+                end: 10,
+                expiration: 10,
+                spill_weight: 4.0,
+                preferred_reg: None,
+                spans_calls: true, // should get callee-saved (r11)
+            },
+        ];
+
+        let result = linear_scan(intervals, &[11, 5], false);
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&5));
+        assert_eq!(result.val_to_reg.get(&ValKey(2)), Some(&11));
+    }
+
+    #[test]
+    fn non_spanning_falls_back_to_callee_saved_when_no_caller_saved() {
+        // When only callee-saved registers are available, a non-call-spanning
+        // interval should still get allocated (fallback to pop()).
+        let intervals = vec![LiveInterval {
+            val_key: ValKey(1),
+            slot: 8,
+            start: 0,
+            end: 5,
+            expiration: 5,
+            spill_weight: 3.0,
+            preferred_reg: None,
+            spans_calls: false,
+        }];
+
+        // Only callee-saved available — preference can't find caller-saved,
+        // so it falls back to pop() and gets r11.
+        let result = linear_scan(intervals, &[11], false);
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&11));
+    }
+
+    #[test]
+    fn preferred_reg_overrides_callee_saved_preference() {
+        // preferred_reg (r7) takes priority over the callee-saved preference,
+        // even for call-spanning intervals in non-leaf functions.
+        let intervals = vec![LiveInterval {
+            val_key: ValKey(1),
+            slot: 8,
+            start: 0,
+            end: 5,
+            expiration: 5,
+            spill_weight: 3.0,
+            preferred_reg: Some(7),
+            spans_calls: true,
+        }];
+
+        let result = linear_scan(intervals, &[9, 7], false);
+        assert_eq!(result.val_to_reg.get(&ValKey(1)), Some(&7));
     }
 }

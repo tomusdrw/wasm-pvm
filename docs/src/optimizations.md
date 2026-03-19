@@ -181,6 +181,22 @@ Impact: fib(20) -5.1% gas, factorial(10) -7.1% gas, is_prime(25) -4.6% gas, PiP 
 
 This is a codegen-only optimization — always active when register allocation and lazy spill are enabled.
 
+## Phase 12: Callee-Saved Preference for Call-Spanning Intervals
+
+In non-leaf functions, the linear scan allocator now applies register class preferences based on whether an interval spans call instructions:
+
+- **Call-spanning intervals** (live range contains at least one real call) prefer callee-saved registers (r9-r12 beyond `max_call_args`). These registers survive calls without invalidation, eliminating post-call reload traffic.
+- **Non-call-spanning intervals** prefer caller-saved registers (r5-r8), leaving callee-saved registers available for call-spanning values.
+- **Leaf functions** use the default `pop()` behavior — all registers are equal since there are no calls.
+
+The `preferred_reg` hint (e.g., r7 for call return values) takes priority over the class preference.
+
+Implementation: `LiveInterval.spans_calls` field set during interval construction based on `count_spanning_calls() > 0`. The `linear_scan()` function receives `is_leaf` and applies class-aware register selection.
+
+Impact: Primarily benefits non-leaf functions with call-spanning values. anan-as PVM interpreter -0.2% code size (106,820→106,577 bytes).
+
+This is a codegen-only optimization — always active when register allocation is enabled.
+
 ## Adding a New Optimization
 
 1. Add a field to `OptimizationFlags` in `translate/mod.rs`
