@@ -119,9 +119,12 @@ pub fn lower_function(
     let is_leaf = !emitter.has_calls;
     let mut block_exit_cache: HashMap<BasicBlock<'_>, emitter::CacheSnapshot> = HashMap::new();
 
-    // For non-leaf functions with regalloc, build predecessor map for alloc_reg_slot
-    // intersection at multi-predecessor forward merge points.
-    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = if has_regalloc && !is_leaf {
+    // For functions with regalloc that need alloc_reg_slot propagation, build
+    // predecessor map. Needed for non-leaf functions (intersection at merge points
+    // + dominator propagation at loop headers) and leaf functions with lazy spill
+    // (dominator propagation at loop headers).
+    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> =
+        if has_regalloc && (!is_leaf || emitter.config.lazy_spill_enabled) {
         let mut map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = HashMap::new();
         for bb in function.get_basic_blocks() {
             if let Some(term) = bb.get_terminator() {
@@ -165,21 +168,59 @@ pub fn lower_function(
                 // stack is always authoritative, so alloc_reg_slot from any
                 // predecessor is safe to inherit.
                 emitter.define_label_preserving_alloc(label);
-            } else if has_regalloc && !is_leaf {
-                // Non-leaf function: use predecessor intersection for forward
-                // merge points where ALL predecessors have been processed.
+            } else if has_regalloc && (!is_leaf || emitter.config.lazy_spill_enabled) {
+                // Non-leaf function or leaf with lazy spill: use predecessor
+                // intersection for forward merge points where ALL predecessors
+                // have been processed, and dominator propagation at loop headers
+                // (where back-edge predecessors are not yet processed).
                 emitter.define_label(label);
                 if let Some(preds) = pred_map.get(&bb) {
                     let all_processed = preds.iter().all(|p| block_exit_cache.contains_key(p));
                     if all_processed && !preds.is_empty() {
+                        // All predecessors processed: intersect all alloc states.
                         let first_snap = &block_exit_cache[&preds[0]];
                         emitter.set_alloc_reg_slot_from(&first_snap.alloc_reg_slot);
                         for pred in &preds[1..] {
                             let snap = &block_exit_cache[pred];
                             emitter.intersect_alloc_reg_slot(&snap.alloc_reg_slot);
                         }
+                    } else if !preds.is_empty() {
+                        // Back-edge present: propagate alloc state from processed
+                        // predecessors (typically the dominator). For non-leaf
+                        // functions, only callee-saved registers beyond
+                        // max_call_args are safe (never clobbered by call argument
+                        // setup or caller-save convention). For leaf functions,
+                        // all registers are safe (no calls to clobber them).
+                        let mut processed = preds
+                            .iter()
+                            .filter(|p| block_exit_cache.contains_key(p));
+                        if let Some(first) = processed.next() {
+                            let first_snap = &block_exit_cache[first];
+                            if is_leaf {
+                                emitter
+                                    .set_alloc_reg_slot_from(&first_snap.alloc_reg_slot);
+                            } else {
+                                let clobbered_locals = emitter
+                                    .regalloc
+                                    .stats
+                                    .max_call_args
+                                    .min(crate::abi::MAX_LOCAL_REGS);
+                                let first_safe = crate::abi::FIRST_LOCAL_REG
+                                    + clobbered_locals as u8;
+                                let last_safe = crate::abi::FIRST_LOCAL_REG
+                                    + crate::abi::MAX_LOCAL_REGS as u8;
+                                emitter.set_alloc_reg_slot_filtered(
+                                    &first_snap.alloc_reg_slot,
+                                    |r| r >= first_safe && r < last_safe,
+                                );
+                            }
+                            for pred in processed {
+                                let snap = &block_exit_cache[pred];
+                                emitter
+                                    .intersect_alloc_reg_slot(&snap.alloc_reg_slot);
+                            }
+                        }
                     }
-                    // If any predecessor is unprocessed (back-edge), keep cleared state.
                 }
             } else {
                 emitter.define_label(label);

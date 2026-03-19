@@ -462,6 +462,14 @@ Rematerialization (reloading values with `LoadImm` instead of `LoadIndU64` from 
 - **store_to_slot safety**: When storing to a slot whose allocated register currently holds a DIFFERENT dirty slot, spill the dirty value first. Prevents data loss when multiple slots share a register via early expiration.
 - **Impact**: fib(20) -15.7% gas / -7.2% code, factorial -5.6% gas. No regressions.
 
+### Cross-Block Alloc State Propagation (Phase 11, 2026-03)
+
+- **Back-edge dominator propagation instead of clearing**: At loop headers with unprocessed predecessor back-edges, instead of clearing all `alloc_reg_slot` entries, the dominator predecessor's alloc state is propagated through `set_alloc_reg_slot_filtered()`. This avoids unnecessary reloads at loop entry for values that remain valid across the back-edge.
+- **Register class filtering for safety**: Non-leaf functions only propagate callee-saved registers beyond `max_call_args` — these are the only registers guaranteed safe across all paths (never clobbered by calls). Caller-saved registers (r5-r8) are excluded because other paths may invalidate them. Leaf functions with lazy spill propagate all registers since no calls exist.
+- **Leaf+lazy_spill intersection**: Multi-predecessor blocks in leaf functions with lazy spill now use the same intersection logic as non-leaf functions. Previously, leaf+lazy_spill blocks used `define_label` (clear all) at every block boundary. With the pred_map now available, the intersection approach keeps entries that all processed predecessors agree on.
+- **pred_map condition expanded**: The predecessor map was previously built only for non-leaf functions. It is now built whenever `has_regalloc && (!is_leaf || lazy_spill_enabled)`, enabling alloc state propagation for leaf functions with lazy spill.
+- **Impact**: fib(20) -5.1% gas, factorial(10) -7.1% gas, is_prime(25) -4.6% gas, PiP aslan-fib -0.52% gas.
+
 ### Non-Leaf r5-r8 Allocation and load_operand Reload Bug (Phase 6, 2026-03)
 
 - **Removing the leaf-only restriction for r5-r8**: Previously r5/r6 (`allocate_scratch_regs`) and r7/r8 (`allocate_caller_saved_regs`) were only available in leaf functions. Phase 6 makes them available in all functions. The existing non-leaf call lowering infrastructure (`spill_allocated_regs` before calls, `clear_reg_cache` after calls, lazy reload on next access) handles caller-saved register spill/reload automatically, so no new mechanism was needed.

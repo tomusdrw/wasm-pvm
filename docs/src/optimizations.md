@@ -165,6 +165,22 @@ Impact: fib(20) -15.7% gas / -7.2% code, factorial -5.6% gas. No regressions.
 
 This is a codegen-only optimization — always active when register allocation is enabled.
 
+## Phase 11: Cross-Block Alloc State Propagation
+
+Improves register allocation state propagation at block boundaries, particularly at loop headers with back-edges. Previously, blocks with unprocessed predecessors (back-edges) cleared `alloc_reg_slot` entirely, forcing reloads from the stack at every loop iteration start. Phase 11 instead propagates the dominator predecessor's alloc state, filtered by safety:
+
+- **Non-leaf functions**: Only callee-saved registers beyond `max_call_args` are propagated (these are never clobbered by calls). Caller-saved registers (r5-r8) are excluded because they may be invalidated after calls on other paths.
+- **Leaf functions with lazy spill**: All registers are propagated (no calls to clobber them).
+- **Multi-predecessor blocks (leaf+lazy_spill)**: The existing intersection logic (keep only entries where all processed predecessors agree) is now also applied to leaf functions with lazy spill, not just non-leaf functions.
+
+New emitter method `set_alloc_reg_slot_filtered()` selectively propagates alloc entries based on a register filter predicate, enabling the per-register-class filtering described above.
+
+The predecessor map (`pred_map`) is now built for both non-leaf functions AND leaf functions with lazy spill (condition: `has_regalloc && (!is_leaf || lazy_spill_enabled)`).
+
+Impact: fib(20) -5.1% gas, factorial(10) -7.1% gas, is_prime(25) -4.6% gas, PiP aslan-fib -0.52% gas.
+
+This is a codegen-only optimization — always active when register allocation and lazy spill are enabled.
+
 ## Adding a New Optimization
 
 1. Add a field to `OptimizationFlags` in `translate/mod.rs`

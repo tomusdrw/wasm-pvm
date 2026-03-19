@@ -957,6 +957,21 @@ impl<'ctx> PvmEmitter<'ctx> {
         }
     }
 
+    /// Set allocated register state from a snapshot, but only for registers
+    /// matching a filter predicate. Used for back-edge propagation where only
+    /// callee-saved registers not clobbered by calls are safe to propagate.
+    pub fn set_alloc_reg_slot_filtered(
+        &mut self,
+        alloc_reg_slot: &[Option<i32>; 13],
+        filter: impl Fn(u8) -> bool,
+    ) {
+        for &reg in self.regalloc.reg_to_slot.keys() {
+            if filter(reg) {
+                self.alloc_reg_slot[reg as usize] = alloc_reg_slot[reg as usize];
+            }
+        }
+    }
+
     /// Intersect allocated register state with a snapshot.
     /// Only keeps entries where both the current state and the snapshot agree.
     pub fn intersect_alloc_reg_slot(&mut self, other: &[Option<i32>; 13]) {
