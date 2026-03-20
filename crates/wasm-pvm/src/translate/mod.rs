@@ -61,12 +61,13 @@ pub struct OptimizationFlags {
     /// Captures more values (e.g. two-branch if-else patterns) at the cost of slightly
     /// more `MoveReg` traffic in small leaf functions.
     pub aggressive_register_allocation: bool,
-    /// Allocate r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) in leaf functions that don't
-    /// clobber them (no bulk memory ops, no funnel shifts).
+    /// Allocate r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) in all functions that don't
+    /// clobber them (no bulk memory ops, no funnel shifts). In non-leaf functions,
+    /// spill/reload around calls is handled automatically.
     pub allocate_scratch_regs: bool,
-    /// Allocate r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) in leaf functions.
-    /// These are caller-saved and idle after the prologue; lowering paths that
-    /// use them as scratch will invalidate and trigger lazy reload.
+    /// Allocate r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) in all functions.
+    /// These are caller-saved and idle after the prologue; in non-leaf functions,
+    /// they are invalidated after calls via arity-aware predicate.
     pub allocate_caller_saved_regs: bool,
     /// Skip stack stores at definition for register-allocated values (lazy spill).
     /// Values are only written to the stack when required (call clobber, return,

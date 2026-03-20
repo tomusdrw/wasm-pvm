@@ -99,13 +99,13 @@ enum Commands {
 
         #[arg(
             long,
-            help = "Disable r5/r6 scratch register allocation in safe leaf functions"
+            help = "Disable r5/r6 scratch register allocation in functions that don't clobber them"
         )]
         no_scratch_reg_alloc: bool,
 
         #[arg(
             long,
-            help = "Disable r7/r8 caller-saved register allocation in leaf functions"
+            help = "Disable r7/r8 caller-saved register allocation in all functions"
         )]
         no_caller_saved_alloc: bool,
 

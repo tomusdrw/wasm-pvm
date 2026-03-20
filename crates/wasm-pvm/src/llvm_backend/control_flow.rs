@@ -499,6 +499,13 @@ fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx
     } else {
         let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
         if copies.len() <= temp_regs.len() {
+            // When using SCRATCH1/SCRATCH2 as temp registers (4+ copies), spill
+            // any dirty values and invalidate alloc state so that load_operand
+            // will reload from the stack instead of using the (about to be
+            // clobbered) register.
+            if copies.len() > 3 {
+                e.reload_allocated_regs_after_scratch_clobber();
+            }
             for (i, copy) in copies.iter().enumerate() {
                 e.load_operand(copy.incoming_value, temp_regs[i])?;
             }
@@ -566,11 +573,30 @@ fn emit_phi_copies_regaware<'ctx>(
     // them to destinations. This is simple and handles all dependency cases.
     let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
 
+    // When using SCRATCH1/SCRATCH2 as temp registers (4+ active copies), we
+    // must spill any dirty values in those registers and invalidate alloc
+    // state. Additionally, any copy whose incoming_reg is SCRATCH1/SCRATCH2
+    // must be forced through load_operand (reload from stack) since the
+    // register will be clobbered by an earlier temp write.
+    let scratch_clobbered = active_copies.len() > 3;
+    if scratch_clobbered {
+        e.reload_allocated_regs_after_scratch_clobber();
+    }
+
     if active_copies.len() <= temp_regs.len() {
         // Phase 1: Load all incoming values into temp registers.
         for (ti, &ci) in active_copies.iter().enumerate() {
             let copy = &copies[ci];
-            if let Some(src_reg) = copy.incoming_reg {
+            // If SCRATCH1/SCRATCH2 are being used as temps, any copy whose
+            // incoming value was in one of those registers can no longer use
+            // it directly — force a stack reload instead.
+            let effective_incoming_reg = if scratch_clobbered {
+                copy.incoming_reg
+                    .filter(|&r| r != SCRATCH1 && r != SCRATCH2)
+            } else {
+                copy.incoming_reg
+            };
+            if let Some(src_reg) = effective_incoming_reg {
                 if src_reg != temp_regs[ti] {
                     e.emit(Instruction::MoveReg {
                         dst: temp_regs[ti],

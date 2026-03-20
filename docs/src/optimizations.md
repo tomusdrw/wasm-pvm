@@ -140,7 +140,7 @@ Three allocator improvements added in Phase 9:
 
 Values whose live ranges span real call instructions receive a penalty to their spill weight. Each spanning call costs `CALL_SPANNING_PENALTY` (2.0) weight, representing the spill+reload pair required when a register is allocated across a call boundary. The formula:
 
-```
+```text
 effective_weight = base_weight - (num_spanning_calls × 2.0)
 ```
 
