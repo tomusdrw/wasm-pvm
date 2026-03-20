@@ -98,6 +98,17 @@ jobs:
       - name: Build test artifacts
         run: cd tests && bun build.ts
 
+      - name: Debug regalloc - hash WASM and test with/without regalloc
+        if: failure() || success()
+        run: |
+          md5sum tests/build/wasm/array-value-test.wasm || true
+          cd tests
+          # Recompile with --no-register-alloc and test
+          ../target/release/wasm-pvm compile build/wasm/array-value-test.wasm --no-register-alloc -o /tmp/avt-noregalloc.jam 2>&1 | tail -5
+          bun utils/run-jam.ts /tmp/avt-noregalloc.jam --args=01 2>&1
+          # Test with default (regalloc enabled)
+          bun utils/run-jam.ts build/jam/as-array-value-test.jam --args=01 2>&1
+
       - name: Run integration tests (layers 1-3)
         run: cd tests && bun test layer1/ layer2/ layer3/
 
