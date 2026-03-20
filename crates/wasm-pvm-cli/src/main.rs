@@ -93,7 +93,7 @@ enum Commands {
 
         #[arg(
             long,
-            help = "Disable aggressive register allocation (lower min-use threshold from 3 to 2)"
+            help = "Disable aggressive register allocation (lower min-use threshold from 2 to 1)"
         )]
         no_aggressive_regalloc: bool,
 

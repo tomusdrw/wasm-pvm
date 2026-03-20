@@ -805,6 +805,9 @@ impl<'ctx> PvmEmitter<'ctx> {
         let instr = Instruction::MoveReg { dst, src };
         self.byte_offset += instr.encode().len();
         self.instructions.push(instr);
+        // Clear stale constant cache for dst — the register no longer holds
+        // a known constant after the move.
+        self.reg_to_const[dst as usize] = None;
     }
 
     /// Public wrapper for spilling a single dirty register.

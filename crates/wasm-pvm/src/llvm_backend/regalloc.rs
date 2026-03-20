@@ -107,7 +107,7 @@ pub struct RegAllocStats {
 ///
 /// `value_slots` maps `ValKey` → stack slot offset (from the pre-scan bump allocator).
 /// `num_params` is the number of function parameters (for determining available callee-saved regs).
-/// `aggressive` lowers the minimum-use threshold from 3 to 2, capturing more candidates.
+/// `aggressive` lowers the minimum-use threshold from 2 to 1, capturing more candidates.
 /// `scratch_regs_safe` indicates that this function never clobbers r5/r6
 /// (`abi::SCRATCH1`/`SCRATCH2`), making them available for allocation.
 /// `allocate_caller_saved` enables r7/r8 allocation in leaf functions.
@@ -321,11 +321,26 @@ fn linearize<'ctx>(
 }
 
 /// Returns the maximum direct call argument count used in this function.
+/// Only counts real calls (`wasm_func_*`, `__pvm_call_indirect`), not intrinsics
+/// (`__pvm_load/store/memory_*`, `llvm.*`) which don't use outgoing argument registers.
 fn max_call_args(function: FunctionValue<'_>) -> usize {
     let mut max_args = 0usize;
     for bb in function.get_basic_blocks() {
         for instr in bb.get_instructions() {
             if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
+                // Skip intrinsics — they don't use outgoing argument registers.
+                let call_site: std::result::Result<inkwell::values::CallSiteValue, _> =
+                    instr.try_into();
+                if let Ok(cs) = call_site
+                    && let Some(fn_val) = cs.get_called_fn_value()
+                {
+                    let name = fn_val.get_name().to_string_lossy();
+                    if (name.starts_with("__pvm_") && name != "__pvm_call_indirect")
+                        || name.starts_with("llvm.")
+                    {
+                        continue;
+                    }
+                }
                 // LLVM call operands include the callee as the final operand.
                 let num_args = instr.get_num_operands().saturating_sub(1) as usize;
                 if num_args > max_args {
@@ -406,12 +421,13 @@ fn collect_call_positions(
     positions
 }
 
-/// Count how many call positions fall within the range [start, end] (inclusive).
+/// Count how many call positions fall strictly within the range (start, end).
+/// Excludes the defining call (at start) and the consuming call (at end) since
+/// those don't require a spill+reload pair.
 fn count_spanning_calls(call_positions: &[usize], start: usize, end: usize) -> usize {
-    // Binary search for the first call >= start and the first call > end.
-    let lo = call_positions.partition_point(|&p| p < start);
-    let hi = call_positions.partition_point(|&p| p <= end);
-    hi - lo
+    let lo = call_positions.partition_point(|&p| p <= start); // first p > start
+    let hi = call_positions.partition_point(|&p| p < end); // first p >= end
+    hi.saturating_sub(lo)
 }
 
 /// Compute live intervals for all SSA values (parameters and instruction results).
@@ -913,11 +929,13 @@ mod tests {
     #[test]
     fn count_spanning_calls_basic() {
         let call_positions = vec![2, 5, 8, 12];
+        // Open interval (start, end) — excludes calls at exactly start or end.
         assert_eq!(count_spanning_calls(&call_positions, 0, 1), 0);
-        assert_eq!(count_spanning_calls(&call_positions, 0, 3), 1);
-        assert_eq!(count_spanning_calls(&call_positions, 0, 10), 3);
-        assert_eq!(count_spanning_calls(&call_positions, 5, 8), 2);
-        assert_eq!(count_spanning_calls(&call_positions, 0, 20), 4);
+        assert_eq!(count_spanning_calls(&call_positions, 0, 3), 1); // call at 2
+        assert_eq!(count_spanning_calls(&call_positions, 0, 10), 3); // calls at 2, 5, 8
+        assert_eq!(count_spanning_calls(&call_positions, 5, 8), 0); // endpoints excluded
+        assert_eq!(count_spanning_calls(&call_positions, 4, 9), 2); // calls at 5, 8
+        assert_eq!(count_spanning_calls(&call_positions, 0, 20), 4); // all calls
     }
 
     #[test]

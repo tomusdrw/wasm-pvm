@@ -547,10 +547,16 @@ fn emit_phi_copies_regaware<'ctx>(
     // happens when the linear scan assigns the same register to both via
     // early interval expiration for loop phi destinations. Only update the
     // emitter's alloc_reg_slot state — no data movement needed.
+    //
+    // Guard: don't treat SCRATCH1/SCRATCH2 as no-ops when the total copy
+    // count might require them as temp registers (4+ copies). The temp
+    // phase would clobber the SCRATCH register, invalidating the no-op.
+    let scratch_might_be_temps = copies.len() > 3;
     let mut active_copies: Vec<usize> = Vec::new();
     for (i, copy) in copies.iter().enumerate() {
         if let (Some(src_reg), Some(phi_reg)) = (copy.incoming_reg, copy.phi_reg)
             && src_reg == phi_reg
+            && !(scratch_might_be_temps && (src_reg == SCRATCH1 || src_reg == SCRATCH2))
         {
             let key = val_key_basic(copy.incoming_value);
             if let Some(slot) = e.get_slot(key)

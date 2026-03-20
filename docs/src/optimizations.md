@@ -60,7 +60,7 @@ Linear-scan allocator assigns SSA values to physical registers, reducing `LoadIn
 
 ## Aggressive Register Allocation (`--no-aggressive-regalloc`)
 
-Lowers the minimum-use threshold for register allocation candidates from 2 to 1, capturing single-use values when a register is free. Enabled by default.
+Lowers the minimum-use threshold for register allocation candidates from 2 to 1, capturing more values when a register is free. Enabled by default.
 
 ## Scratch Register Allocation (`--no-scratch-reg-alloc`)
 
@@ -68,7 +68,7 @@ Adds r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) to the allocatable set in all functions 
 
 ## Caller-Saved Register Allocation (`--no-caller-saved-alloc`)
 
-Adds r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) to the allocatable set in all functions. These registers are idle after the prologue. In non-leaf functions, r7/r8 are invalidated after calls via the arity-aware invalidation predicate (since calls always clobber r7 with the return value). Lowering paths that use them as scratch (signed div, NE compare, multi-phi) trigger `invalidate_reg`, forcing lazy reload from the write-through stack slot. Combined with r5/r6, gives up to 6 extra registers beyond callee-saved r9-r12.
+Adds r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) to the allocatable set in leaf functions. These registers are idle after the prologue and are never clobbered by calls in leaf functions. In non-leaf functions, r7/r8 are not allocated because every call clobbers r7 (return value) and r8 (scratch), making the constant invalidation/reload overhead a net negative. Combined with r5/r6, gives up to 4 extra registers (r5, r6, r7, r8) beyond callee-saved r9-r12 in leaf functions. The full register convention: r0=return address, r1=SP, r2-r4=temps, r5-r6=scratch, r7=return value/args ptr, r8=args len, r9-r12=callee-saved locals.
 
 ## Dead Function Elimination (`--no-dead-function-elim`)
 
