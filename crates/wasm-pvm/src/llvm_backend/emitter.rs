@@ -279,7 +279,7 @@ pub struct FusedIcmp<'ctx> {
 
 /// Wrapper key for LLVM values in the slot map.
 /// Uses the raw LLVM value pointer cast to usize for hashing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ValKey(pub(crate) usize);
 
 pub fn val_key_int(val: IntValue<'_>) -> ValKey {

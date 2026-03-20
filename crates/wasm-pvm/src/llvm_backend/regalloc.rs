@@ -221,7 +221,11 @@ pub fn run(
     // Lowering paths that use r7/r8 as scratch (alu.rs signed div, NE compare,
     // control_flow.rs multi-phi) will trigger invalidate_reg via emit(), forcing
     // a lazy reload from the write-through stack slot on next use.
-    if allocate_caller_saved {
+    // Only allocate r7/r8 in leaf functions: in non-leaf functions, every call
+    // clobbers r7 (return value) and r8 (scratch), making the constant
+    // invalidation/reload a net negative and exposing correctness edge cases
+    // in the spill/reload interaction with call lowering.
+    if allocate_caller_saved && is_leaf {
         allocatable_regs.push(crate::abi::ARGS_LEN_REG); // r8
         allocatable_regs.push(crate::abi::RETURN_VALUE_REG); // r7
     }
@@ -510,8 +514,13 @@ fn compute_live_intervals<'ctx>(
     }
 
     // Build intervals, extending for loops.
+    // Sort by key for deterministic iteration — HashMap order depends on
+    // LLVM pointer addresses which vary with ASLR, causing different register
+    // assignments across runs.
+    let mut sorted_slots: Vec<_> = value_slots.iter().map(|(&k, &v)| (k, v)).collect();
+    sorted_slots.sort_by_key(|(k, _)| *k);
     let mut intervals = Vec::new();
-    for (&vk, &slot) in value_slots {
+    for &(vk, slot) in &sorted_slots {
         let start = def_point.get(&vk).copied().unwrap_or(0);
         let mut end = last_use.get(&vk).copied().unwrap_or(start);
         let uses = use_count.get(&vk).copied().unwrap_or(0);
