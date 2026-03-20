@@ -292,14 +292,17 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
 
 ### Linear-Scan Register Allocation
 
-- Allocates long-lived SSA values (>1 use, spanning multiple blocks/loops) to available callee-saved registers (r9-r12) beyond parameter count.
+- Allocates SSA values to physical registers using spill-weight eviction (`use_count × 10^loop_depth`).
 - Operates on LLVM IR before PVM lowering; produces `ValKey` → physical register mapping
 - `load_operand` checks regalloc before slot lookup: uses `MoveReg` from allocated reg instead of `LoadIndU64` from stack
 - `store_to_slot` uses write-through: copies to allocated reg AND stores to stack; DSE removes the stack store if never loaded
-- r5/r6 are excluded from global allocation because they are heavily reused as scratch in lowering paths
+- r5/r6 allocatable in safe leaf functions (no bulk memory ops or funnel shifts); detected by `scratch_regs_safe()` LLVM IR scan
+- r7/r8 allocatable in all leaf functions; lowering paths that use them as scratch trigger `invalidate_reg` via `emit()`
 - Clobbered allocated scratch regs (when present) are handled with lazy invalidation/reload instead of eager spill+reload
-- Values with ≤1 use are skipped (not worth a register)
+- Allocates in all functions (looped and straight-line), not just loop-heavy code
+- MIN_USES default=2 (aggressive=1); values with fewer uses are skipped
 - Loop extension: back-edges detected by successor having lower block index; live ranges extended to cover the back-edge source
+- Eviction uses spill weight (sum of `10^loop_depth` per use) instead of furthest-end heuristic
 - `linear_scan` must track active assignments separately from final assignments:
   - naturally expired intervals should remain in the final `val_to_reg`/`slot_to_reg` maps (their earlier uses still benefit),
   - evicted intervals must be removed from final mapping (whole-interval mapping is no longer valid after eviction).
@@ -319,10 +322,7 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
 - Follow-up stabilization:
   - Corrective follow-up: `CacheSnapshot` now includes allocated-register slot ownership (`alloc_reg_slot`), which replaced the earlier label-boundary `alloc_reg_valid` reset approach by restoring allocation state path-sensitively across propagated edges.
   - `alloc_reg_valid` was removed; slot identity (`alloc_reg_slot == Some(slot)`) is sufficient to decide whether a lazy reload is needed.
-  - Conservative non-leaf filter currently helps avoid large regressions: skip values defined inside loop bodies and require at least 3 uses before considering allocation.
-  - Additional non-leaf gates that reduced remaining regressions:
-    - Skip regalloc when fewer than 2 non-leaf allocatable callee registers are available (1-register allocation tended to thrash on AS decoder/array workloads).
-    - Skip very small non-leaf functions (`total_values < 24`) where move/reload overhead often dominates.
+  - Non-leaf gate: skip when no allocatable registers remain (all r9-r12 used by params/call args). Previously skipped at <2 regs and <24 SSA values, but these conservative gates were removed in Phase 2 (#165).
 - Post-fix benchmark shape: consistent JAM size reductions from regalloc, but gas/time gains are workload-dependent and often near-noise on current microbenchmarks.
 - **Leaf detection fix**: PVM intrinsics (`__pvm_load_i32`, `__pvm_store_i32`, etc.) are LLVM `Call` instructions but are NOT real function calls — they're lowered inline using temp registers only. The `is_real_call()` function in `emitter.rs` distinguishes real calls (`wasm_func_*`, `__pvm_call_indirect`) from intrinsics (`__pvm_*`, `llvm.*`). Before this fix, ALL functions with memory access were classified as non-leaf, causing unnecessary callee-save prologue/epilogue overhead.
 - **Cross-block alloc_reg_slot propagation**: In leaf functions (no real calls), `alloc_reg_slot` is preserved across all block boundaries because allocated registers are never clobbered. In non-leaf functions with multi-predecessor blocks, predecessor exit snapshots are intersected — only entries where ALL processed predecessors agree are kept. Back-edges (unprocessed predecessors) are treated conservatively.
@@ -409,3 +409,77 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
   - Optimized: 1 instruction using `NegAddImm64` which computes `val = imm - src`
   - `NegAddImm64(dst, src, 0)` = `dst = 0 - src` = `-src`
   - Saves 1 instruction per boolean sign-extension
+
+### Register-Aware Phi Resolution (Phase 5, 2026-03)
+
+- **Ordering dependencies between reg→reg and reg→stack phi copies**: When phi copies include both register-to-register copies and copies involving stack, they must be treated as a single set of parallel moves. An initial implementation separated them into two independent phases, but this caused incorrect results when a reg→reg copy clobbered a source register that a reg→stack copy also needed. The fix: use a unified two-pass approach (load ALL incoming values into temp registers first, then store all to destinations).
+- **Phi destinations must be restored after `define_label`**: After `define_label` clears all alloc state at a block boundary, blocks with phi nodes must call `restore_phi_alloc_reg_slots` to re-establish `alloc_reg_slot` for phi destinations. Without this, `load_operand` falls back to stack loads, missing the values that the phi copy placed in registers.
+- **Dirty phi values and block exit**: After `restore_phi_alloc_reg_slots` marks phi destinations as dirty, the before-terminator `spill_all_dirty_regs()` writes them to the stack. This is essential: non-phi successor blocks (like loop exit blocks) clear alloc state and read from the stack. Without the spill, exit paths read stale stack values. This limits the code-size benefit of lazy spill — each iteration still writes phi values to the stack once via the before-terminator spill.
+- **`alloc_reg_slot` shared between phi destination and incoming value**: The same SSA value can be both a phi destination (in the header) and an incoming value (from the body). After mem2reg, phi incoming values from the loop body ARE the phi results from the current iteration. The regalloc may assign them the same physical register. When `phi_reg == incoming_reg`, the phi copy is a no-op (the value is already in the right register).
+
+### Load-Side Coalescing (Phase 8, 2026-03)
+
+- **Eliminating MoveReg by reading directly from allocated registers**: `operand_reg()` checks if a value is currently live in its allocated register and returns that register directly. Lowering code uses the allocated register as the instruction's source operand instead of loading into TEMP1/TEMP2, eliminating the `MoveReg` that `load_operand()` would have emitted. This complements store-side coalescing — together they eliminate moves on both sides of instructions.
+- **Dst-conflict safety**: When an operand's allocated register equals the instruction's destination register (`result_reg`), the operand must fall back to a temp register. Otherwise, `emit() → invalidate_reg(dst)` auto-spills the old value and clears alloc tracking before the instruction reads the operand. While the PVM instruction itself would execute correctly (read-before-write at hardware level), the conservative approach avoids subtle alloc-state corruption in edge cases.
+- **Div/rem excluded from coalescing**: Signed division/remainder trap code (`emit_wasm_signed_overflow_trap`) uses SCRATCH1 (r5) as scratch for sign-extending 32-bit operands. If the LHS operand is in r5, the trap code clobbers it before the div instruction can read it. Rather than adding per-operation conflict checks, div/rem operations always load into TEMP1/TEMP2.
+- **Immediate-folding paths coalesced**: The `commutative_imm_instruction` helper was parameterized to accept a `src` register instead of hardcoding TEMP1. This allows immediate-folding paths (the most common for LLVM-optimized code) to use the allocated register directly. Shift/sub immediate paths were similarly updated.
+- **Store instructions have no dst conflict**: PVM store instructions (`StoreIndU8`, etc.) write to memory, not to a register, so they have no destination register. Both address and value operands can freely use allocated registers without conflict checks.
+- **Impact**: The fib(20) benchmark dropped from 613 to 511 gas (17%), regalloc two loops from 23,334 to 16,776 gas (28%), and the anan-as PVM interpreter JAM size from 164.9 KB to 158.9 KB (3.6%).
+
+### Rematerialization — Why It Doesn't Work Here (Phase 8 investigation, 2026-03)
+
+Rematerialization (reloading values with `LoadImm` instead of `LoadIndU64` from the stack) was investigated and found to have **zero practical impact** in this architecture. Three approaches were tried and all failed for the same fundamental reason:
+
+**Approach 1: LLVM IR constant detection** — Evaluate LLVM instructions with all-constant operands (e.g., `add(3, 5)` → `8`). **Why it fails**: LLVM's `IRBuilder` constant-folds at instruction *creation* time, before any passes run. `LLVMBuildAdd(3, 5)` produces the constant `8` directly — the `add` instruction is never created. This applies to ALL pure computations (binary ops, casts). Even with `--no-llvm-passes`, no instruction with all-constant operands survives construction.
+
+**Approach 2: PVM emitter constant tracking** — Capture `reg_to_const[src_reg]` at `store_to_slot` time. **Why it fails**: `reg_to_const` is only set by `LoadImm`/`LoadImm64` instructions. All compute instructions (Add, Sub, etc.) clear it via `emit() → invalidate_reg(dst)`. So at `store_to_slot` time, `reg_to_const[alloc_reg]` is `Some` only when the last instruction was `LoadImm` — which means the original value IS an LLVM constant. But LLVM constants are caught by `get_sign_extended_constant()` at the top of `load_operand()`, before the regalloc path is entered. On reload, the same check fires again and emits `LoadImm` directly. The regalloc reload path is never reached.
+
+**Approach 3: Regalloc-level constant map** — Track `val_constants: HashMap<ValKey, u64>` and check it during reload. Same root cause: no non-constant LLVM value produces a compile-time-known PVM result.
+
+**Root cause summary**: Every value that enters the regalloc reload path is a non-constant instruction result (parameter, ALU result, memory load, phi, call return). Constants are intercepted by `get_sign_extended_constant()` before reaching the alloc code path. There is no gap between "LLVM knows it's constant" and "the emitter needs to reload it."
+
+**What WOULD make rematerialization useful**: Extending PVM-level constant propagation beyond `LoadImm`/`LoadImm64` — e.g., tracking that `AddImm32 { dst, src, value: 0 }` where `reg_to_const[src]` is known means `reg_to_const[dst]` is computable. This is a significant feature (PVM-level constant folding across all instruction types) with uncertain ROI.
+
+### Store-Side Coalescing (Phase 7, 2026-03)
+
+- **Avoiding MoveReg by computing directly into allocated registers**: `result_reg()` returns the allocated register for the current instruction's result slot, allowing ALU/memory-load/intrinsic lowering to use it as the output destination. This eliminates the `MoveReg` that `store_to_slot` would otherwise emit to copy from TEMP_RESULT into the allocated register. On the anan-as compiler, this reduced store_moves by 54% (2720 to 1262) and total instructions by 4%.
+- **`lower_select` store-side coalescing cannot be used**: Loading the default value into the allocated register via `load_operand(val, alloc_reg)` triggers `invalidate_reg(alloc_reg)` in `emit()`, which corrupts register cache state for subsequent operand loads. However, **load-side coalescing works** (Phase 9): `operand_reg()` is used for all Cmov operands so values already in their allocated registers are used directly without MoveReg copies. This is safe because all select operands are simultaneously live (the allocator guarantees different registers) and the Cmov instruction's `dst` register is only invalidated by `emit()`, not by `load_operand()` on the other operands.
+- **`result_reg_or()` needed for zext/sext/trunc**: These lowering paths use TEMP1 (not TEMP_RESULT) as the working register in the non-allocated case, because the source operand is already in TEMP1 and the in-place truncation/extension writes back to the same register. Using TEMP_RESULT would require an extra `MoveReg`. `result_reg_or(TEMP1)` returns the allocated register when available, or TEMP1 as fallback, preserving the existing efficient non-allocated codepath.
+- **Control-flow-spanning TEMP_RESULT uses cannot be coalesced**: `emit_pvm_memory_grow` and `lower_abs` both use TEMP_RESULT across branches (grow success/failure, positive/negative paths). Computing into the allocated register would corrupt it if the branch takes the alternative path. These remain uncoalesced.
+
+### Spill Weight Refinement and Call Return Hints (Phase 9, 2026-03)
+
+- **Spill weight call penalty**: Values whose live ranges span real call instructions receive a penalty of 2.0 per spanning call to their spill weight. This represents the cost of the spill+reload pair required when a register is allocated across a call boundary. Binary search on sorted call positions enables efficient counting. Trade-off: a tiny regression in very small functions with a single call (e.g., host-call-log: +3 gas) for consistent improvements in larger functions (e.g., AS fib: -2 gas, aslan-fib: -28 gas).
+- **Call return value register hints**: The linear scan allocator accepts `preferred_reg` hints on live intervals. Values defined by real call instructions get a hint for r7 (`RETURN_VALUE_REG`), since the return value is already in r7 after a call. If r7 is free, it's used; otherwise, a different register is allocated. This eliminates the `MoveReg` from r7 to the allocated register in `store_to_slot`.
+- **`is_real_call()` made `pub(super)`**: The function distinguishing real calls from PVM/LLVM intrinsics was made module-visible so `regalloc.rs` can use it for call position collection without code duplication.
+
+### Loop Phi Early Interval Expiration (Phase 10, 2026-03)
+
+- **Post-allocation coalescing doesn't work**: Three approaches were tried and all failed due to the emitter's per-register `alloc_reg_slot` tracking disagreeing with the allocator's per-value liveness model. See git history for details.
+- **Early interval expiration works**: Modifying the linear scan to expire loop phi destination intervals at their actual last use (before loop extension) frees the register earlier. The incoming back-edge value naturally gets the freed register via the free pool. Since the linear scan's `slot_to_reg` maps reflect both assignments from the start, the emitter handles transitions correctly.
+- **Pressure guard**: When `intervals.len() > allocatable_regs.len() * 2`, early expiration is disabled. Under high pressure, freed phi registers get taken by unrelated values, causing reload traffic that outweighs the MoveReg savings.
+- **Phi copy no-op**: When incoming_reg == phi_reg AND the register currently holds the incoming value (verified by `is_alloc_reg_valid`), the phi copy is skipped — just update `alloc_reg_slot`. The `is_alloc_reg_valid` check is critical: without it, a third value that overwrote the register between the incoming's store and the phi copy would cause silent data corruption.
+- **store_to_slot safety**: When storing to a slot whose allocated register currently holds a DIFFERENT dirty slot, spill the dirty value first. Prevents data loss when multiple slots share a register via early expiration.
+- **Impact**: fib(20) -15.7% gas / -7.2% code, factorial -5.6% gas. No regressions.
+
+### Cross-Block Alloc State Propagation (Phase 11, 2026-03)
+
+- **Back-edge dominator propagation instead of clearing**: At loop headers with unprocessed predecessor back-edges, instead of clearing all `alloc_reg_slot` entries, the dominator predecessor's alloc state is propagated through `set_alloc_reg_slot_filtered()`. This avoids unnecessary reloads at loop entry for values that remain valid across the back-edge.
+- **Register class filtering for safety**: Non-leaf functions only propagate callee-saved registers beyond `max_call_args` — these are the only registers guaranteed safe across all paths (never clobbered by calls). Caller-saved registers (r5-r8) are excluded because other paths may invalidate them. Leaf functions with lazy spill propagate all registers since no calls exist.
+- **Leaf+lazy_spill intersection**: Multi-predecessor blocks in leaf functions with lazy spill now use the same intersection logic as non-leaf functions. Previously, leaf+lazy_spill blocks used `define_label` (clear all) at every block boundary. With the pred_map now available, the intersection approach keeps entries that all processed predecessors agree on.
+- **pred_map condition expanded**: The predecessor map was previously built only for non-leaf functions. It is now built whenever `has_regalloc && (!is_leaf || lazy_spill_enabled)`, enabling alloc state propagation for leaf functions with lazy spill.
+- **Impact**: fib(20) -5.1% gas, factorial(10) -7.1% gas, is_prime(25) -4.6% gas, PiP aslan-fib -0.52% gas.
+
+### Callee-Saved Preference for Call-Spanning Intervals (Phase 12, 2026-03)
+
+- **Problem**: The linear scan's default `free_regs.pop()` behavior assigns callee-saved registers (added last to `allocatable_regs`) to the FIRST intervals processed. Call-spanning intervals, penalized by `CALL_SPANNING_PENALTY`, sort later and get caller-saved registers that are invalidated after every call — the opposite of what's optimal.
+- **Solution**: `LiveInterval.spans_calls` flag marks intervals whose live range contains at least one real call. In non-leaf functions, call-spanning intervals explicitly prefer callee-saved registers (r9-r12 beyond `max_call_args`), while non-call-spanning intervals prefer caller-saved (r5-r8). In leaf functions, all registers are equal (no preference applied). The `preferred_reg` hint (e.g., r7 for call return values) takes priority over the class preference.
+- **Impact**: Modest — primarily benefits non-leaf functions with call-spanning values. anan-as PVM interpreter -0.2% code size. Most benchmarks are leaf-dominated.
+
+### Non-Leaf r5-r8 Allocation and load_operand Reload Bug (Phase 6, 2026-03)
+
+- **Removing the leaf-only restriction for r5-r8**: Previously r5/r6 (`allocate_scratch_regs`) and r7/r8 (`allocate_caller_saved_regs`) were only available in leaf functions. Phase 6 makes them available in all functions. The existing non-leaf call lowering infrastructure (`spill_allocated_regs` before calls, `clear_reg_cache` after calls, lazy reload on next access) handles caller-saved register spill/reload automatically, so no new mechanism was needed.
+- **Removing the `calls_in_loops` gate**: Previously, non-leaf functions with calls inside loop bodies were skipped entirely by the register allocator (the theory being that reload traffic outweighs savings). Phase 6 removes this restriction. The lazy spill + per-call-site arity-aware invalidation makes allocation beneficial even with calls in loops, since only registers actually clobbered by a specific call's arity are invalidated rather than all registers.
+- **`load_operand` reload-into-allocated-register bug**: When an allocated register is invalidated (e.g., after a call) and `load_operand` is asked to reload the value into a *different* target register (e.g., TEMP1 for a binary operation), the original code would reload into the allocated register first, then copy to the target. This is incorrect when the allocated register is being used for call argument setup -- writing to the allocated register corrupts the argument being prepared. The fix: when the allocated register is invalidated and the target register differs, load directly from the stack into the target register, bypassing the allocated register entirely. This prevents corruption during call argument setup sequences where multiple allocated values are being moved into argument registers (r9, r10, etc.).
+- **r7/r8 invalidation after calls**: The `reload_allocated_regs_after_call_with_arity` predicate was extended to also invalidate r7/r8 after calls (not just r9-r12), since r7/r8 are now allocatable in non-leaf functions and are always clobbered by call return values.
+- **Impact**: 79 non-leaf functions now receive allocation in the anan-as compiler (up from 0), bringing the total to 205 out of 210 functions allocated.

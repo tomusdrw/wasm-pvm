@@ -115,6 +115,7 @@ pub fn eliminate_dead_stores(
     call_fixups: &mut [LlvmCallFixup],
     indirect_call_fixups: &mut [LlvmIndirectCallFixup],
     labels: &mut [Option<usize>],
+    protected_offsets: &HashSet<i32>,
 ) {
     const SP: u8 = crate::abi::STACK_PTR_REG;
 
@@ -124,7 +125,8 @@ pub fn eliminate_dead_stores(
     }
 
     // Pass 1: Collect all SP-relative load offsets (the "read" set).
-    let mut read_offsets = HashSet::new();
+    // Protected offsets (e.g., lazy-spill allocated slots) are always kept.
+    let mut read_offsets = protected_offsets.clone();
     for instr in instructions.iter() {
         match instr {
             Instruction::LoadIndU64 {
@@ -1061,6 +1063,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
+            &HashSet::new(),
         );
 
         assert_eq!(instrs.len(), 2);
@@ -1100,6 +1103,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
+            &HashSet::new(),
         );
 
         assert_eq!(instrs.len(), 2);
@@ -1127,6 +1131,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
+            &HashSet::new(),
         );
 
         assert_eq!(instrs.len(), 2);
@@ -1159,6 +1164,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
+            &HashSet::new(),
         );
 
         assert_eq!(instrs.len(), original_len);
@@ -1611,6 +1617,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
+            &HashSet::new(),
         );
 
         assert_eq!(instrs.len(), 2);

@@ -93,9 +93,27 @@ enum Commands {
 
         #[arg(
             long,
-            help = "Disable aggressive register allocation (lower min-use threshold from 3 to 2)"
+            help = "Disable aggressive register allocation (lower min-use threshold from 2 to 1)"
         )]
         no_aggressive_regalloc: bool,
+
+        #[arg(
+            long,
+            help = "Disable r5/r6 scratch register allocation in functions that don't clobber them"
+        )]
+        no_scratch_reg_alloc: bool,
+
+        #[arg(
+            long,
+            help = "Disable r7/r8 caller-saved register allocation in all functions"
+        )]
+        no_caller_saved_alloc: bool,
+
+        #[arg(
+            long,
+            help = "Disable lazy spill (skip stack stores for register-allocated values)"
+        )]
+        no_lazy_spill: bool,
 
         #[arg(
             long,
@@ -133,6 +151,9 @@ fn main() -> Result<()> {
             no_dead_function_elim,
             no_fallthrough_jumps,
             no_aggressive_regalloc,
+            no_scratch_reg_alloc,
+            no_caller_saved_alloc,
+            no_lazy_spill,
             max_memory,
         } => {
             let wasm = read_wasm(&input)?;
@@ -175,6 +196,9 @@ fn main() -> Result<()> {
                     dead_function_elimination: !no_dead_function_elim,
                     fallthrough_jumps: !no_fallthrough_jumps,
                     aggressive_register_allocation: !no_aggressive_regalloc,
+                    allocate_scratch_regs: !no_scratch_reg_alloc,
+                    allocate_caller_saved_regs: !no_caller_saved_alloc,
+                    lazy_spill: !no_lazy_spill,
                 },
                 max_memory_pages: max_memory,
             };

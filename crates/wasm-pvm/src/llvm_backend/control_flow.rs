@@ -13,14 +13,14 @@
 
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
-use inkwell::values::{BasicValueEnum, InstructionOpcode, InstructionValue, PhiValue};
+use inkwell::values::{AnyValue, BasicValueEnum, InstructionOpcode, InstructionValue, PhiValue};
 
 use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
 use super::emitter::{
-    PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, result_slot,
-    try_get_constant,
+    PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, operand_reg,
+    result_slot, try_get_constant, val_key_basic, val_key_instr,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -70,22 +70,26 @@ pub fn lower_br<'ctx>(
                 emit_fused_branch(e, &fused, then_label)?;
                 e.emit_jump_to_label(else_label);
             } else {
-                e.load_operand(cond, TEMP1)?;
-                e.emit_branch_ne_imm_to_label(TEMP1, 0, then_label);
+                // Load-side coalescing for branch condition (no dst conflict — branches have no dest).
+                let cond_reg = operand_reg(e, cond, TEMP1);
+                if cond_reg == TEMP1 {
+                    e.load_operand(cond, TEMP1)?;
+                }
+                e.emit_branch_ne_imm_to_label(cond_reg, 0, then_label);
                 e.emit_jump_to_label(else_label);
             }
         } else {
             // Need per-edge phi copies. Create trampolines.
-            // Disable fallthrough optimization: the Jump to else_label is followed
-            // by trampoline code (not the next block's define_label), so eliminating
-            // it would cause the else path to fall through into the then trampoline.
             let saved_next = e.next_block_label.take();
             let then_trampoline = e.alloc_label();
             if let Some(fused) = fused {
                 emit_fused_branch(e, &fused, then_trampoline)?;
             } else {
-                e.load_operand(cond, TEMP1)?;
-                e.emit_branch_ne_imm_to_label(TEMP1, 0, then_trampoline);
+                let cond_reg = operand_reg(e, cond, TEMP1);
+                if cond_reg == TEMP1 {
+                    e.load_operand(cond, TEMP1)?;
+                }
+                e.emit_branch_ne_imm_to_label(cond_reg, 0, then_trampoline);
             }
 
             // Else path: phi copies + jump to else.
@@ -118,7 +122,11 @@ pub fn lower_switch<'ctx>(
         .get(&default_bb)
         .ok_or_else(|| Error::Internal("switch default to unknown block".into()))?;
 
-    e.load_operand(val, TEMP1)?;
+    // Load-side coalescing for switch value (no dst conflict — branches have no dest).
+    let val_reg = operand_reg(e, val, TEMP1);
+    if val_reg == TEMP1 {
+        e.load_operand(val, TEMP1)?;
+    }
 
     // Collect cases. For each case that targets a block with phis, use a trampoline.
     let num_operands = instr.get_num_operands();
@@ -133,16 +141,15 @@ pub fn lower_switch<'ctx>(
             && let Some(c) = iv.get_zero_extended_constant()
         {
             if has_phi_from(current_bb, case_bb) {
-                // Needs a trampoline for phi copies.
                 let trampoline = e.alloc_label();
-                e.emit_branch_eq_imm_to_label(TEMP1, c as i32, trampoline);
+                e.emit_branch_eq_imm_to_label(val_reg, c as i32, trampoline);
                 trampolines.push((trampoline, case_bb));
             } else {
                 let case_label = *e
                     .block_labels
                     .get(&case_bb)
                     .ok_or_else(|| Error::Internal("switch case to unknown block".into()))?;
-                e.emit_branch_eq_imm_to_label(TEMP1, c as i32, case_label);
+                e.emit_branch_eq_imm_to_label(val_reg, c as i32, case_label);
             }
         }
         i += 2;
@@ -222,6 +229,12 @@ pub fn lower_return<'ctx>(
         }
     }
 
+    // Flush dirty callee-saved registers before epilogue restores them from stack.
+    // (The epilogue will overwrite the physical registers with saved values.)
+    if !is_main {
+        e.spill_all_dirty_regs();
+    }
+
     emit_epilogue(e, is_main);
     Ok(())
 }
@@ -287,127 +300,137 @@ fn emit_fused_branch<'a>(
     // Try immediate folding: branch-imm instructions avoid loading one operand.
     // BranchXxxImm { reg, value, offset } branches if reg <op> sign_extend(value).
 
+    // Load-side coalescing for fused branches (no dst conflict — branches have no dest register).
+
     // RHS constant → load only LHS, use branch-imm directly.
     if let Some(rhs_const) = try_get_constant(fused.rhs)
         && i32::try_from(rhs_const).is_ok()
     {
         let imm = rhs_const as i32;
-        e.load_operand(fused.lhs, TEMP1)?;
+        let lhs_reg = operand_reg(e, fused.lhs, TEMP1);
+        if lhs_reg == TEMP1 {
+            e.load_operand(fused.lhs, TEMP1)?;
+        }
         match fused.predicate {
-            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::NE => e.emit_branch_ne_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::ULT => e.emit_branch_lt_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::ULE => e.emit_branch_le_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::UGT => e.emit_branch_gt_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::UGE => e.emit_branch_ge_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SLT => e.emit_branch_lt_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SLE => e.emit_branch_le_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SGT => e.emit_branch_gt_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SGE => e.emit_branch_ge_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::NE => e.emit_branch_ne_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::ULT => e.emit_branch_lt_u_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::ULE => e.emit_branch_le_u_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::UGT => e.emit_branch_gt_u_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::UGE => e.emit_branch_ge_u_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::SLT => e.emit_branch_lt_s_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::SLE => e.emit_branch_le_s_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::SGT => e.emit_branch_gt_s_imm_to_label(lhs_reg, imm, true_label),
+            IntPredicate::SGE => e.emit_branch_ge_s_imm_to_label(lhs_reg, imm, true_label),
         }
         return Ok(());
     }
 
     // LHS constant → load only RHS, flip the predicate direction.
-    // "const <op> x" ⟺ "x <flipped_op> const"
     if let Some(lhs_const) = try_get_constant(fused.lhs)
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
-        e.load_operand(fused.rhs, TEMP1)?;
+        let rhs_reg = operand_reg(e, fused.rhs, TEMP1);
+        if rhs_reg == TEMP1 {
+            e.load_operand(fused.rhs, TEMP1)?;
+        }
         match fused.predicate {
-            // Symmetric predicates — no flip needed.
-            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::NE => e.emit_branch_ne_imm_to_label(TEMP1, imm, true_label),
-            // Flip: const < x ⟺ x > const
-            IntPredicate::ULT => e.emit_branch_gt_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::ULE => e.emit_branch_ge_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::UGT => e.emit_branch_lt_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::UGE => e.emit_branch_le_u_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SLT => e.emit_branch_gt_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SLE => e.emit_branch_ge_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SGT => e.emit_branch_lt_s_imm_to_label(TEMP1, imm, true_label),
-            IntPredicate::SGE => e.emit_branch_le_s_imm_to_label(TEMP1, imm, true_label),
+            IntPredicate::EQ => e.emit_branch_eq_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::NE => e.emit_branch_ne_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::ULT => e.emit_branch_gt_u_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::ULE => e.emit_branch_ge_u_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::UGT => e.emit_branch_lt_u_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::UGE => e.emit_branch_le_u_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::SLT => e.emit_branch_gt_s_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::SLE => e.emit_branch_ge_s_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::SGT => e.emit_branch_lt_s_imm_to_label(rhs_reg, imm, true_label),
+            IntPredicate::SGE => e.emit_branch_le_s_imm_to_label(rhs_reg, imm, true_label),
         }
         return Ok(());
     }
 
-    e.load_operand(fused.lhs, TEMP1)?;
-    e.load_operand(fused.rhs, TEMP2)?;
+    let lhs_reg = operand_reg(e, fused.lhs, TEMP1);
+    let rhs_reg = operand_reg(e, fused.rhs, TEMP2);
+    if lhs_reg == TEMP1 {
+        e.load_operand(fused.lhs, TEMP1)?;
+    }
+    if rhs_reg == TEMP2 {
+        e.load_operand(fused.rhs, TEMP2)?;
+    }
 
     // PVM convention: Branch_op { reg1: a, reg2: b } branches if b op a.
-    // So to test "TEMP1 op TEMP2" we pass reg1=TEMP2, reg2=TEMP1.
     match fused.predicate {
-        // EQ: branch if TEMP1 == TEMP2 (symmetric)
         IntPredicate::EQ => {
-            e.emit_branch_eq_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_eq_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // NE: branch if TEMP1 != TEMP2 (symmetric)
         IntPredicate::NE => {
-            e.emit_branch_ne_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_ne_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // ULT: branch if lhs < rhs → TEMP1 < TEMP2
-        // Need: reg2 < reg1, so reg2=TEMP1, reg1=TEMP2
         IntPredicate::ULT => {
-            e.emit_branch_lt_u_to_label(TEMP2, TEMP1, true_label);
+            e.emit_branch_lt_u_to_label(rhs_reg, lhs_reg, true_label);
         }
-        // UGE: branch if lhs >= rhs → TEMP1 >= TEMP2
-        // Need: reg2 >= reg1, so reg2=TEMP1, reg1=TEMP2
         IntPredicate::UGE => {
-            e.emit_branch_ge_u_to_label(TEMP2, TEMP1, true_label);
+            e.emit_branch_ge_u_to_label(rhs_reg, lhs_reg, true_label);
         }
-        // UGT: branch if lhs > rhs → TEMP2 < TEMP1
-        // Need: reg2 < reg1, so reg2=TEMP2, reg1=TEMP1
         IntPredicate::UGT => {
-            e.emit_branch_lt_u_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_lt_u_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // ULE: branch if lhs <= rhs → TEMP2 >= TEMP1
-        // Need: reg2 >= reg1, so reg2=TEMP2, reg1=TEMP1
         IntPredicate::ULE => {
-            e.emit_branch_ge_u_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_ge_u_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // SLT: branch if lhs < rhs (signed) → TEMP1 < TEMP2
         IntPredicate::SLT => {
-            e.emit_branch_lt_s_to_label(TEMP2, TEMP1, true_label);
+            e.emit_branch_lt_s_to_label(rhs_reg, lhs_reg, true_label);
         }
-        // SGE: branch if lhs >= rhs (signed) → TEMP1 >= TEMP2
         IntPredicate::SGE => {
-            e.emit_branch_ge_s_to_label(TEMP2, TEMP1, true_label);
+            e.emit_branch_ge_s_to_label(rhs_reg, lhs_reg, true_label);
         }
-        // SGT: branch if lhs > rhs (signed) → TEMP2 < TEMP1
         IntPredicate::SGT => {
-            e.emit_branch_lt_s_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_lt_s_to_label(lhs_reg, rhs_reg, true_label);
         }
-        // SLE: branch if lhs <= rhs (signed) → TEMP2 >= TEMP1
         IntPredicate::SLE => {
-            e.emit_branch_ge_s_to_label(TEMP1, TEMP2, true_label);
+            e.emit_branch_ge_s_to_label(lhs_reg, rhs_reg, true_label);
         }
     }
 
     Ok(())
 }
 
+/// Information about a phi copy with register allocation details.
+struct PhiCopy<'ctx> {
+    phi_slot: i32,
+    incoming_value: BasicValueEnum<'ctx>,
+    /// Allocated register for the phi destination (if any).
+    phi_reg: Option<u8>,
+    /// Allocated register for the incoming value (if valid — i.e., the reg
+    /// currently materializes the correct slot).
+    incoming_reg: Option<u8>,
+}
+
 /// Emit copies for phi nodes in `target_bb` that have incoming values from `current_bb`.
 ///
-/// Uses a two-pass approach to handle potential phi cycles: first loads all
-/// incoming values into temp registers (or temp stack slots), then stores them
-/// to the phi node slots.
+/// With lazy spill enabled, uses register-aware phi resolution:
+/// - reg→reg copies use `MoveReg` (or no-op if same register)
+/// - reg→stack and stack→reg copies avoid unnecessary round-trips
+/// - Parallel move resolver handles cycles in register-to-register copies
+///
+/// Without lazy spill, falls back to the two-pass temp-register approach.
 pub fn emit_phi_copies<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     current_bb: BasicBlock<'ctx>,
     target_bb: BasicBlock<'ctx>,
 ) -> Result<()> {
-    // Collect (phi_slot, incoming_value) pairs.
-    let mut copies: Vec<(i32, BasicValueEnum<'ctx>)> = Vec::new();
+    // Collect (phi_slot, incoming_value) pairs along with allocation info.
+    let mut copies: Vec<PhiCopy<'ctx>> = Vec::new();
 
     for instr in target_bb.get_instructions() {
         if instr.get_opcode() != InstructionOpcode::Phi {
-            break; // Phi nodes are always at the start of a block.
+            break;
         }
         let phi_slot = result_slot(e, instr)?;
-        // Use PhiValue API to properly access incoming (value, block) pairs.
-        // InstructionValue::get_num_operands() only counts values, not blocks,
-        // so the old `get_num_operands() / 2` approach was wrong.
+        let phi_key = val_key_instr(instr);
+        let phi_reg = e.regalloc.val_to_reg.get(&phi_key).copied();
+
         let phi: PhiValue<'ctx> = instr
             .try_into()
             .map_err(|()| Error::Internal("expected Phi instruction".into()))?;
@@ -416,7 +439,14 @@ pub fn emit_phi_copies<'ctx>(
             if let Some((value, block)) = phi.get_incoming(i)
                 && block == current_bb
             {
-                copies.push((phi_slot, value));
+                // Check if incoming value has an allocated register that's valid.
+                let incoming_reg = get_valid_alloc_reg(e, value);
+                copies.push(PhiCopy {
+                    phi_slot,
+                    incoming_value: value,
+                    phi_reg,
+                    incoming_reg,
+                });
                 break;
             }
         }
@@ -426,30 +456,183 @@ pub fn emit_phi_copies<'ctx>(
         return Ok(());
     }
 
-    if copies.len() == 1 {
-        // Single phi — no cycle possible, direct copy.
-        let (slot, value) = copies[0];
-        e.load_operand(value, TEMP1)?;
-        e.store_to_slot(slot, TEMP1);
-    } else {
-        // Multiple phis — use two-pass to avoid clobbering.
-        let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
+    // Without lazy spill, use the original two-pass approach.
+    if !e.config.lazy_spill_enabled {
+        return emit_phi_copies_legacy(e, &copies);
+    }
 
-        if copies.len() <= temp_regs.len() {
-            // All fit in temp registers: load all first, then store all.
-            for (i, (_, value)) in copies.iter().enumerate() {
-                e.load_operand(*value, temp_regs[i])?;
+    // With lazy spill: register-aware phi resolution.
+    emit_phi_copies_regaware(e, &copies)
+}
+
+/// Get the valid allocated register for an incoming value, if any.
+/// Returns None if the value is a constant, has no allocation, or the
+/// register doesn't currently hold the right slot.
+fn get_valid_alloc_reg(e: &PvmEmitter<'_>, value: BasicValueEnum<'_>) -> Option<u8> {
+    if let BasicValueEnum::IntValue(iv) = value {
+        // Constants don't have allocated registers.
+        if iv.get_sign_extended_constant().is_some() || iv.get_zero_extended_constant().is_some() {
+            return None;
+        }
+        if iv.is_poison() || iv.is_undef() {
+            return None;
+        }
+        let key = val_key_basic(value);
+        if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key) {
+            let slot = e.get_slot(key)?;
+            if e.is_alloc_reg_valid(alloc_reg, slot) {
+                return Some(alloc_reg);
             }
-            for (i, (slot, _)) in copies.iter().enumerate() {
-                e.store_to_slot(*slot, temp_regs[i]);
+        }
+    }
+    None
+}
+
+/// Legacy two-pass phi copy (used when lazy spill is disabled).
+fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx>]) -> Result<()> {
+    e.spill_all_dirty_regs();
+
+    if copies.len() == 1 {
+        let copy = &copies[0];
+        e.load_operand(copy.incoming_value, TEMP1)?;
+        e.store_to_slot(copy.phi_slot, TEMP1);
+    } else {
+        let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
+        if copies.len() <= temp_regs.len() {
+            // When using SCRATCH1/SCRATCH2 as temp registers (4+ copies), spill
+            // any dirty values and invalidate alloc state so that load_operand
+            // will reload from the stack instead of using the (about to be
+            // clobbered) register.
+            if copies.len() > 3 {
+                e.reload_allocated_regs_after_scratch_clobber();
+            }
+            for (i, copy) in copies.iter().enumerate() {
+                e.load_operand(copy.incoming_value, temp_regs[i])?;
+            }
+            for (i, copy) in copies.iter().enumerate() {
+                e.store_to_slot(copy.phi_slot, temp_regs[i]);
             }
         } else {
-            // Too many phi values to fit in temp registers.
-            // This requires spill space in the frame, which is not currently reserved.
             return Err(Error::Unsupported(
                 "too many phi values for available temp registers".to_string(),
             ));
         }
+    }
+
+    e.spill_all_dirty_regs();
+    Ok(())
+}
+
+/// Register-aware phi copy resolution with parallel move handling.
+///
+/// Uses a unified approach: ALL copies (reg→reg, reg→stack, stack→reg, stack→stack)
+/// are handled together using a two-phase strategy:
+/// 1. Load ALL incoming values into temporaries (temp regs or save allocated regs)
+/// 2. Store all values to destinations
+///
+/// This avoids ordering issues where reg→reg copies clobber sources needed by other copies.
+fn emit_phi_copies_regaware<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    copies: &[PhiCopy<'ctx>],
+) -> Result<()> {
+    // Check if any incoming value needs to be loaded from stack.
+    let needs_stack = copies.iter().any(|c| c.incoming_reg.is_none());
+    if needs_stack {
+        // Flush dirty regs so the stack is authoritative for stack loads.
+        e.spill_all_dirty_regs();
+    }
+
+    // Filter no-op copies: when incoming_reg == phi_reg AND the register
+    // currently holds the incoming value, the phi copy is a no-op. This
+    // happens when the linear scan assigns the same register to both via
+    // early interval expiration for loop phi destinations. Only update the
+    // emitter's alloc_reg_slot state — no data movement needed.
+    //
+    // Guard: don't treat SCRATCH1/SCRATCH2 as no-ops when the total copy
+    // count might require them as temp registers (4+ copies). The temp
+    // phase would clobber the SCRATCH register, invalidating the no-op.
+    let scratch_might_be_temps = copies.len() > 3;
+    let mut active_copies: Vec<usize> = Vec::new();
+    for (i, copy) in copies.iter().enumerate() {
+        if let (Some(src_reg), Some(phi_reg)) = (copy.incoming_reg, copy.phi_reg)
+            && src_reg == phi_reg
+            && !(scratch_might_be_temps && (src_reg == SCRATCH1 || src_reg == SCRATCH2))
+        {
+            let key = val_key_basic(copy.incoming_value);
+            if let Some(slot) = e.get_slot(key)
+                && e.is_alloc_reg_valid(src_reg, slot)
+            {
+                // No-op: value is already in the right register.
+                e.spill_dirty_reg_pub(phi_reg);
+                e.set_alloc_reg_for_slot(phi_reg, copy.phi_slot);
+                continue;
+            }
+        }
+        active_copies.push(i);
+    }
+
+    // Phase 1: Snapshot all ACTIVE incoming values.
+    // For incoming values in allocated registers, we need to save them before
+    // any destination writes can clobber them.
+    //
+    // Strategy: use temp registers to hold ALL incoming values, then write
+    // them to destinations. This is simple and handles all dependency cases.
+    let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
+
+    // When using SCRATCH1/SCRATCH2 as temp registers (4+ active copies), we
+    // must spill any dirty values in those registers and invalidate alloc
+    // state. Additionally, any copy whose incoming_reg is SCRATCH1/SCRATCH2
+    // must be forced through load_operand (reload from stack) since the
+    // register will be clobbered by an earlier temp write.
+    let scratch_clobbered = active_copies.len() > 3;
+    if scratch_clobbered {
+        e.reload_allocated_regs_after_scratch_clobber();
+    }
+
+    if active_copies.len() <= temp_regs.len() {
+        // Phase 1: Load all incoming values into temp registers.
+        for (ti, &ci) in active_copies.iter().enumerate() {
+            let copy = &copies[ci];
+            // If SCRATCH1/SCRATCH2 are being used as temps, any copy whose
+            // incoming value was in one of those registers can no longer use
+            // it directly — force a stack reload instead.
+            let effective_incoming_reg = if scratch_clobbered {
+                copy.incoming_reg
+                    .filter(|&r| r != SCRATCH1 && r != SCRATCH2)
+            } else {
+                copy.incoming_reg
+            };
+            if let Some(src_reg) = effective_incoming_reg {
+                if src_reg != temp_regs[ti] {
+                    e.emit(Instruction::MoveReg {
+                        dst: temp_regs[ti],
+                        src: src_reg,
+                    });
+                }
+            } else {
+                e.load_operand(copy.incoming_value, temp_regs[ti])?;
+            }
+        }
+
+        // Phase 2: Store all values to destinations.
+        for (ti, &ci) in active_copies.iter().enumerate() {
+            let copy = &copies[ci];
+            if let Some(phi_reg) = copy.phi_reg {
+                // Destination is an allocated register.
+                e.spill_dirty_reg_pub(phi_reg);
+                if phi_reg != temp_regs[ti] {
+                    e.emit_raw_move(phi_reg, temp_regs[ti]);
+                }
+                e.set_alloc_reg_for_slot(phi_reg, copy.phi_slot);
+            } else {
+                // Destination is stack only.
+                e.store_to_slot(copy.phi_slot, temp_regs[ti]);
+            }
+        }
+    } else {
+        return Err(Error::Unsupported(
+            "too many phi values for available temp registers".to_string(),
+        ));
     }
 
     Ok(())

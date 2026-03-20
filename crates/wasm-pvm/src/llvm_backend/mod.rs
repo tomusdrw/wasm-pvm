@@ -41,7 +41,7 @@ use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
 use abi::{TEMP1, TEMP2};
-use emitter::{PvmEmitter, pre_scan_function};
+use emitter::{PvmEmitter, pre_scan_function, val_key_instr};
 
 /// Lower a single LLVM function to PVM bytecode.
 pub fn lower_function(
@@ -60,6 +60,7 @@ pub fn lower_function(
         cross_block_cache_enabled: ctx.optimizations.cross_block_cache,
         register_allocation_enabled: ctx.optimizations.register_allocation,
         fallthrough_jumps_enabled: ctx.optimizations.fallthrough_jumps,
+        lazy_spill_enabled: ctx.optimizations.lazy_spill,
     };
     let mut emitter = PvmEmitter::new(config, call_return_base);
 
@@ -69,12 +70,17 @@ pub fn lower_function(
 
     // Phase 1b: Register allocation — assign long-lived values to physical registers.
     if emitter.config.register_allocation_enabled {
+        let is_leaf = !emitter.has_calls;
+        let scratch_safe =
+            ctx.optimizations.allocate_scratch_regs && emitter::scratch_regs_safe(function);
         emitter.regalloc = regalloc::run(
             function,
             &emitter.value_slots,
-            !emitter.has_calls,
+            is_leaf,
             function.count_params() as usize,
             ctx.optimizations.aggressive_register_allocation,
+            scratch_safe,
+            ctx.optimizations.allocate_caller_saved_regs,
         );
 
         // If regalloc allocated any callee-saved registers (r9-r12), mark them
@@ -98,6 +104,14 @@ pub fn lower_function(
     // Phase 2: Emit prologue.
     emit_prologue(&mut emitter, function, ctx, is_main)?;
 
+    // Flush dirty registers from the prologue's store_to_slot calls.
+    // With lazy spill, the prologue stores parameters to allocated registers
+    // without writing to the stack. We must flush before the first block so
+    // the stack is authoritative at block boundaries.
+    if emitter.config.lazy_spill_enabled {
+        emitter.spill_all_dirty_regs();
+    }
+
     // Phase 3: Lower each basic block.
     let use_cross_block_cache =
         emitter.config.register_cache_enabled && emitter.config.cross_block_cache_enabled;
@@ -105,9 +119,13 @@ pub fn lower_function(
     let is_leaf = !emitter.has_calls;
     let mut block_exit_cache: HashMap<BasicBlock<'_>, emitter::CacheSnapshot> = HashMap::new();
 
-    // For non-leaf functions with regalloc, build predecessor map for alloc_reg_slot
-    // intersection at multi-predecessor forward merge points.
-    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = if has_regalloc && !is_leaf {
+    // For functions with regalloc that need alloc_reg_slot propagation, build
+    // predecessor map. Needed for non-leaf functions (intersection at merge points
+    // + dominator propagation at loop headers) and leaf functions with lazy spill
+    // (dominator propagation at loop headers).
+    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = if has_regalloc
+        && (!is_leaf || emitter.config.lazy_spill_enabled)
+    {
         let mut map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = HashMap::new();
         for bb in function.get_basic_blocks() {
             if let Some(term) = bb.get_terminator() {
@@ -146,30 +164,74 @@ pub fn lower_function(
         }
 
         if !propagated {
-            if has_regalloc && is_leaf {
-                // Leaf function: allocated registers are never clobbered by calls,
-                // so alloc_reg_slot is always accurate. Preserve it.
+            if has_regalloc && is_leaf && !emitter.config.lazy_spill_enabled {
+                // Leaf function without lazy spill: write-through ensures the
+                // stack is always authoritative, so alloc_reg_slot from any
+                // predecessor is safe to inherit.
                 emitter.define_label_preserving_alloc(label);
-            } else if has_regalloc && !is_leaf {
-                // Non-leaf function: use predecessor intersection for forward
-                // merge points where ALL predecessors have been processed.
+            } else if has_regalloc && (!is_leaf || emitter.config.lazy_spill_enabled) {
+                // Non-leaf function or leaf with lazy spill: use predecessor
+                // intersection for forward merge points where ALL predecessors
+                // have been processed, and dominator propagation at loop headers
+                // (where back-edge predecessors are not yet processed).
                 emitter.define_label(label);
                 if let Some(preds) = pred_map.get(&bb) {
                     let all_processed = preds.iter().all(|p| block_exit_cache.contains_key(p));
                     if all_processed && !preds.is_empty() {
-                        // Start with first predecessor's alloc_reg_slot.
+                        // All predecessors processed: intersect all alloc states.
                         let first_snap = &block_exit_cache[&preds[0]];
                         emitter.set_alloc_reg_slot_from(&first_snap.alloc_reg_slot);
-                        // Intersect with remaining predecessors.
                         for pred in &preds[1..] {
                             let snap = &block_exit_cache[pred];
                             emitter.intersect_alloc_reg_slot(&snap.alloc_reg_slot);
                         }
+                    } else if !preds.is_empty() {
+                        // Back-edge present: propagate alloc state from processed
+                        // predecessors (typically the dominator). For non-leaf
+                        // functions, only callee-saved registers beyond
+                        // max_call_args are safe (never clobbered by call argument
+                        // setup or caller-save convention). For leaf functions,
+                        // all registers are safe (no calls to clobber them).
+                        let mut processed =
+                            preds.iter().filter(|p| block_exit_cache.contains_key(p));
+                        if let Some(first) = processed.next() {
+                            let first_snap = &block_exit_cache[first];
+                            if is_leaf {
+                                emitter.set_alloc_reg_slot_from(&first_snap.alloc_reg_slot);
+                            } else {
+                                let clobbered_locals = emitter
+                                    .regalloc
+                                    .stats
+                                    .max_call_args
+                                    .min(crate::abi::MAX_LOCAL_REGS);
+                                let first_safe =
+                                    crate::abi::FIRST_LOCAL_REG + clobbered_locals as u8;
+                                let last_safe =
+                                    crate::abi::FIRST_LOCAL_REG + crate::abi::MAX_LOCAL_REGS as u8;
+                                emitter
+                                    .set_alloc_reg_slot_filtered(&first_snap.alloc_reg_slot, |r| {
+                                        r >= first_safe && r < last_safe
+                                    });
+                            }
+                            for pred in processed {
+                                let snap = &block_exit_cache[pred];
+                                emitter.intersect_alloc_reg_slot(&snap.alloc_reg_slot);
+                            }
+                        }
                     }
-                    // If any predecessor is unprocessed (back-edge), keep cleared state.
                 }
             } else {
                 emitter.define_label(label);
+            }
+
+            // With lazy spill: after define_label clears alloc state, restore
+            // alloc_reg_slot for phi destinations that have allocated registers.
+            // The phi copy code (emit_phi_copies_regaware) wrote the values into
+            // these registers and marked them dirty. The define_label cleared it,
+            // so we re-establish ownership here so load_operand knows the register
+            // holds the correct value.
+            if has_regalloc && emitter.config.lazy_spill_enabled && emitter::block_has_phis(bb) {
+                restore_phi_alloc_reg_slots(&mut emitter, bb);
             }
         }
 
@@ -184,6 +246,18 @@ pub fn lower_function(
             for &instruction in &instructions[..term_idx] {
                 lower_instruction(&mut emitter, instruction, bb, ctx, is_main)?;
             }
+            // Lazy spill: flush dirty registers before snapshotting.
+            // With register-aware phi copies (Phase 5), the snapshot captures
+            // dirty state that successors will inherit. Successors with phi
+            // nodes restore alloc_reg_slot from their phi destinations.
+            // Non-phi successors restore from the snapshot (with dirty flags),
+            // and auto-spill ensures correctness if registers are clobbered.
+            // We keep the spill here for safety: non-phi successors that DON'T
+            // use cross-block cache will clear alloc state and reload from stack,
+            // requiring authoritative stack values.
+            if emitter.config.lazy_spill_enabled {
+                emitter.spill_all_dirty_regs();
+            }
             // Snapshot before terminator, then invalidate temp registers that
             // the terminator's operand loads may overwrite (TEMP1/TEMP2 for
             // branch conditions, switch values, fused ICmp operands).
@@ -193,6 +267,14 @@ pub fn lower_function(
             snap.invalidate_reg(TEMP2);
             block_exit_cache.insert(bb, snap);
             // Now lower the terminator.
+            lower_instruction(&mut emitter, instructions[term_idx], bb, ctx, is_main)?;
+        } else if !instructions.is_empty() && emitter.config.lazy_spill_enabled {
+            let term_idx = instructions.len() - 1;
+            for &instruction in &instructions[..term_idx] {
+                lower_instruction(&mut emitter, instruction, bb, ctx, is_main)?;
+            }
+            // Flush dirty registers before the terminator.
+            emitter.spill_all_dirty_regs();
             lower_instruction(&mut emitter, instructions[term_idx], bb, ctx, is_main)?;
         } else {
             for &instruction in &instructions {
@@ -206,13 +288,20 @@ pub fn lower_function(
     let pre_dse_instructions = emitter.instructions.len();
 
     // Dead store elimination: remove SP-relative stores that are never loaded from.
+    // With register-aware phi resolution (Phase 5), phi destination values are
+    // read from registers (via alloc_reg_slot), not from the stack. The spill
+    // stores from the before-terminator flush can be eliminated by DSE if no
+    // other code path loads from those slots. We no longer protect allocated
+    // slot offsets unconditionally — DSE can now remove truly dead spill stores.
     if ctx.optimizations.dead_store_elimination {
+        let protected_offsets: std::collections::HashSet<i32> = std::collections::HashSet::new();
         crate::pvm::peephole::eliminate_dead_stores(
             &mut emitter.instructions,
             &mut emitter.fixups,
             &mut emitter.call_fixups,
             &mut emitter.indirect_call_fixups,
             &mut emitter.labels,
+            &protected_offsets,
         );
     }
 
@@ -284,6 +373,26 @@ pub fn lower_function(
         num_call_returns,
         lowering_stats,
     })
+}
+
+/// Restore `alloc_reg_slot` for phi destinations at the start of a block.
+///
+/// After `define_label` clears all alloc state, this re-establishes ownership
+/// for phi destinations that have allocated registers. The phi copy code
+/// (register-aware path) wrote the values into these registers before the
+/// block boundary, so they are physically correct.
+fn restore_phi_alloc_reg_slots(e: &mut PvmEmitter<'_>, bb: BasicBlock<'_>) {
+    for instr in bb.get_instructions() {
+        if instr.get_opcode() != InstructionOpcode::Phi {
+            break;
+        }
+        let phi_key = val_key_instr(instr);
+        if let Some(&phi_reg) = e.regalloc.val_to_reg.get(&phi_key)
+            && let Some(phi_slot) = e.get_slot(phi_key)
+        {
+            e.set_alloc_reg_for_slot(phi_reg, phi_slot);
+        }
+    }
 }
 
 /// Emit function prologue.

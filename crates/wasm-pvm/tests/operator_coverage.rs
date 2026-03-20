@@ -1070,11 +1070,12 @@ fn test_global_load_store() {
     let program = compile_wat(wat).expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Globals should use StoreIndU32/StoreImmIndU32 at fixed addresses (0x30000+)
+    // Globals should use StoreIndU32/StoreImmIndU32/StoreU32 at fixed addresses (0x30000+)
     assert!(
         has_opcode(&instructions, Opcode::StoreIndU32)
             || has_opcode(&instructions, Opcode::StoreIndU64)
-            || has_opcode(&instructions, Opcode::StoreImmIndU32),
+            || has_opcode(&instructions, Opcode::StoreImmIndU32)
+            || has_opcode(&instructions, Opcode::StoreU32),
         "global.set should emit a store"
     );
     // global.get may be eliminated by LLVM GVN (forwarding store→load), in which case

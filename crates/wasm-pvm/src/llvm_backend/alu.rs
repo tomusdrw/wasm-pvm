@@ -20,8 +20,8 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, result_slot, source_bit_width,
-    try_get_constant,
+    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, operand_reg, result_reg,
+    result_reg_or, result_slot, source_bit_width, try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -116,41 +116,47 @@ fn emit_wasm_signed_overflow_trap(e: &mut PvmEmitter, lhs_reg: u8, rhs_reg: u8, 
 
 /// Build the immediate-form instruction for a commutative binary op (Add, Mul, And, Or, Xor).
 /// Returns `None` for non-commutative ops.
-fn commutative_imm_instruction(op: BinaryOp, is_32bit: bool, imm: i32) -> Option<Instruction> {
+fn commutative_imm_instruction(
+    op: BinaryOp,
+    is_32bit: bool,
+    imm: i32,
+    dst: u8,
+    src: u8,
+) -> Option<Instruction> {
     match (op, is_32bit) {
         (BinaryOp::Add, true) => Some(Instruction::AddImm32 {
-            dst: TEMP_RESULT,
-            src: TEMP1,
+            dst,
+            src,
             value: imm,
         }),
         (BinaryOp::Add, false) => Some(Instruction::AddImm64 {
-            dst: TEMP_RESULT,
-            src: TEMP1,
+            dst,
+            src,
             value: imm,
         }),
         (BinaryOp::Mul, true) => Some(Instruction::MulImm32 {
-            dst: TEMP_RESULT,
-            src: TEMP1,
+            dst,
+            src,
             value: imm,
         }),
         (BinaryOp::Mul, false) => Some(Instruction::MulImm64 {
-            dst: TEMP_RESULT,
-            src: TEMP1,
+            dst,
+            src,
             value: imm,
         }),
         (BinaryOp::And, _) => Some(Instruction::AndImm {
-            dst: TEMP_RESULT,
-            src: TEMP1,
+            dst,
+            src,
             value: imm,
         }),
         (BinaryOp::Or, _) => Some(Instruction::OrImm {
-            dst: TEMP_RESULT,
-            src: TEMP1,
+            dst,
+            src,
             value: imm,
         }),
         (BinaryOp::Xor, _) => Some(Instruction::XorImm {
-            dst: TEMP_RESULT,
-            src: TEMP1,
+            dst,
+            src,
             value: imm,
         }),
         _ => None,
@@ -241,66 +247,74 @@ pub fn lower_binary_arith<'ctx>(
     let rhs = get_operand(instr, 1)?;
     let slot = result_slot(e, instr)?;
     let bits = operand_bit_width(instr);
+    let dst = result_reg(e, instr);
 
     // Try immediate folding for operations with constant RHS.
     if let Some(rhs_const) = try_get_constant(rhs)
         && i32::try_from(rhs_const).is_ok()
     {
         let imm = rhs_const as i32;
+        // Load-side coalescing: use allocated register for the non-constant operand.
+        let mut lhs_reg = operand_reg(e, lhs, TEMP1);
+        if lhs_reg != TEMP1 && lhs_reg == dst {
+            lhs_reg = TEMP1;
+        }
         let folded = match (op, bits <= 32) {
             // Sub with constant RHS: `x - const` → `x + (-const)` (not commutative).
             (BinaryOp::Sub, true) if rhs_const != i64::from(i32::MIN) => {
                 Some(Instruction::AddImm32 {
-                    dst: TEMP_RESULT,
-                    src: TEMP1,
+                    dst,
+                    src: lhs_reg,
                     value: -imm,
                 })
             }
             (BinaryOp::Sub, false) if rhs_const != i64::from(i32::MIN) => {
                 Some(Instruction::AddImm64 {
-                    dst: TEMP_RESULT,
-                    src: TEMP1,
+                    dst,
+                    src: lhs_reg,
                     value: -imm,
                 })
             }
             // Shift/rotate with constant RHS (not commutative).
             (BinaryOp::Shl, true) => Some(Instruction::ShloLImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             (BinaryOp::Shl, false) => Some(Instruction::ShloLImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             (BinaryOp::LShr, true) => Some(Instruction::ShloRImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             (BinaryOp::LShr, false) => Some(Instruction::ShloRImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             (BinaryOp::AShr, true) => Some(Instruction::SharRImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             (BinaryOp::AShr, false) => Some(Instruction::SharRImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             // Commutative ops (Add, Mul, And, Or, Xor) and Div/Rem fallthrough.
-            _ => commutative_imm_instruction(op, bits <= 32, imm),
+            _ => commutative_imm_instruction(op, bits <= 32, imm, dst, lhs_reg),
         };
         if let Some(instr) = folded {
-            e.load_operand(lhs, TEMP1)?;
+            if lhs_reg == TEMP1 {
+                e.load_operand(lhs, TEMP1)?;
+            }
             e.emit(instr);
-            e.store_to_slot(slot, TEMP_RESULT);
+            e.store_to_slot(slot, dst);
             return Ok(());
         }
     }
@@ -311,21 +325,27 @@ pub fn lower_binary_arith<'ctx>(
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
-        e.load_operand(rhs, TEMP1)?;
+        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
+        if rhs_reg != TEMP1 && rhs_reg == dst {
+            rhs_reg = TEMP1;
+        }
+        if rhs_reg == TEMP1 {
+            e.load_operand(rhs, TEMP1)?;
+        }
         if bits <= 32 {
             e.emit(Instruction::NegAddImm32 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: rhs_reg,
                 value: imm,
             });
         } else {
             e.emit(Instruction::NegAddImm64 {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: rhs_reg,
                 value: imm,
             });
         }
-        e.store_to_slot(slot, TEMP_RESULT);
+        e.store_to_slot(slot, dst);
         return Ok(());
     }
 
@@ -336,10 +356,16 @@ pub fn lower_binary_arith<'ctx>(
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
-        if let Some(instr) = commutative_imm_instruction(op, bits <= 32, imm) {
-            e.load_operand(rhs, TEMP1)?;
+        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
+        if rhs_reg != TEMP1 && rhs_reg == dst {
+            rhs_reg = TEMP1;
+        }
+        if let Some(instr) = commutative_imm_instruction(op, bits <= 32, imm, dst, rhs_reg) {
+            if rhs_reg == TEMP1 {
+                e.load_operand(rhs, TEMP1)?;
+            }
             e.emit(instr);
-            e.store_to_slot(slot, TEMP_RESULT);
+            e.store_to_slot(slot, dst);
             return Ok(());
         }
     }
@@ -353,23 +379,35 @@ pub fn lower_binary_arith<'ctx>(
             .or_else(|| try_get_bitwise_not(lhs).map(|inner| (rhs, inner)));
 
         if let Some((plain, inv_inner)) = fused_pair {
-            e.load_operand(plain, TEMP1)?;
-            e.load_operand(inv_inner, TEMP2)?;
+            let mut plain_reg = operand_reg(e, plain, TEMP1);
+            let mut inv_reg = operand_reg(e, inv_inner, TEMP2);
+            if plain_reg != TEMP1 && plain_reg == dst {
+                plain_reg = TEMP1;
+            }
+            if inv_reg != TEMP2 && inv_reg == dst {
+                inv_reg = TEMP2;
+            }
+            if plain_reg == TEMP1 {
+                e.load_operand(plain, TEMP1)?;
+            }
+            if inv_reg == TEMP2 {
+                e.load_operand(inv_inner, TEMP2)?;
+            }
             match op {
                 BinaryOp::And => e.emit(Instruction::AndInv {
-                    dst: TEMP_RESULT,
-                    src1: TEMP1,
-                    src2: TEMP2,
+                    dst,
+                    src1: plain_reg,
+                    src2: inv_reg,
                 }),
                 BinaryOp::Or => e.emit(Instruction::OrInv {
-                    dst: TEMP_RESULT,
-                    src1: TEMP1,
-                    src2: TEMP2,
+                    dst,
+                    src1: plain_reg,
+                    src2: inv_reg,
                 }),
                 BinaryOp::Xor => e.emit(Instruction::Xnor {
-                    dst: TEMP_RESULT,
-                    src1: TEMP1,
-                    src2: TEMP2,
+                    dst,
+                    src1: plain_reg,
+                    src2: inv_reg,
                 }),
                 _ => {
                     return Err(crate::Error::Internal(
@@ -377,166 +415,184 @@ pub fn lower_binary_arith<'ctx>(
                     ));
                 }
             }
-            e.store_to_slot(slot, TEMP_RESULT);
+            e.store_to_slot(slot, dst);
             return Ok(());
         }
     }
 
-    e.load_operand(lhs, TEMP1)?;
-    e.load_operand(rhs, TEMP2)?;
+    // Load-side coalescing: use allocated registers directly as operands.
+    // Skip for div/rem which have intermediate trap code that may clobber scratch registers.
+    let is_div_rem = matches!(
+        op,
+        BinaryOp::UDiv | BinaryOp::SDiv | BinaryOp::URem | BinaryOp::SRem
+    );
+    let (lhs_reg, rhs_reg) = if is_div_rem {
+        e.load_operand(lhs, TEMP1)?;
+        e.load_operand(rhs, TEMP2)?;
+        (TEMP1, TEMP2)
+    } else {
+        let mut lhs_reg = operand_reg(e, lhs, TEMP1);
+        let mut rhs_reg = operand_reg(e, rhs, TEMP2);
+        if lhs_reg != TEMP1 && lhs_reg == dst {
+            lhs_reg = TEMP1;
+        }
+        if rhs_reg != TEMP2 && rhs_reg == dst {
+            rhs_reg = TEMP2;
+        }
+        if lhs_reg == TEMP1 {
+            e.load_operand(lhs, TEMP1)?;
+        }
+        if rhs_reg == TEMP2 {
+            e.load_operand(rhs, TEMP2)?;
+        }
+        (lhs_reg, rhs_reg)
+    };
 
     match (op, bits <= 32) {
         (BinaryOp::Add, true) => e.emit(Instruction::Add32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Add, false) => e.emit(Instruction::Add64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Sub, true) => e.emit(Instruction::Sub32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Sub, false) => e.emit(Instruction::Sub64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Mul, true) => e.emit(Instruction::Mul32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Mul, false) => e.emit(Instruction::Mul64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::UDiv, true) => {
-            emit_wasm_div_zero_trap(e, TEMP2);
+            emit_wasm_div_zero_trap(e, rhs_reg);
             e.emit(Instruction::DivU32 {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         (BinaryOp::UDiv, false) => {
-            emit_wasm_div_zero_trap(e, TEMP2);
+            emit_wasm_div_zero_trap(e, rhs_reg);
             e.emit(Instruction::DivU64 {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         (BinaryOp::SDiv, true) => {
-            emit_wasm_div_zero_trap(e, TEMP2);
-            emit_wasm_signed_overflow_trap(e, TEMP1, TEMP2, true);
+            emit_wasm_div_zero_trap(e, rhs_reg);
+            emit_wasm_signed_overflow_trap(e, lhs_reg, rhs_reg, true);
             e.emit(Instruction::DivS32 {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         (BinaryOp::SDiv, false) => {
-            emit_wasm_div_zero_trap(e, TEMP2);
-            emit_wasm_signed_overflow_trap(e, TEMP1, TEMP2, false);
+            emit_wasm_div_zero_trap(e, rhs_reg);
+            emit_wasm_signed_overflow_trap(e, lhs_reg, rhs_reg, false);
             e.emit(Instruction::DivS64 {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         (BinaryOp::URem, true) => {
-            emit_wasm_div_zero_trap(e, TEMP2);
+            emit_wasm_div_zero_trap(e, rhs_reg);
             e.emit(Instruction::RemU32 {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         (BinaryOp::URem, false) => {
-            emit_wasm_div_zero_trap(e, TEMP2);
+            emit_wasm_div_zero_trap(e, rhs_reg);
             e.emit(Instruction::RemU64 {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         (BinaryOp::SRem, true) => {
-            emit_wasm_div_zero_trap(e, TEMP2);
-            // SRem overflow check?
-            // "The sign of the result equals the sign of the dividend."
-            // "If the divisor is 0, then a trap occurs."
-            // "If the dividend is the most negative value and the divisor is -1, then the result is 0." (No trap for rem)
-            // WASM spec: "Signed remainder ... trap if divisor is 0."
-            // "Overflow: If n1 is the minimum signed integer and n2 is -1, the result is 0." (No trap)
-            // So NO signed overflow check for Rem.
+            emit_wasm_div_zero_trap(e, rhs_reg);
             e.emit(Instruction::RemS32 {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         (BinaryOp::SRem, false) => {
-            emit_wasm_div_zero_trap(e, TEMP2);
+            emit_wasm_div_zero_trap(e, rhs_reg);
             e.emit(Instruction::RemS64 {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         (BinaryOp::And, _) => e.emit(Instruction::And {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Or, _) => e.emit(Instruction::Or {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Xor, _) => e.emit(Instruction::Xor {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Shl, true) => e.emit(Instruction::ShloL32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::Shl, false) => e.emit(Instruction::ShloL64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::LShr, true) => e.emit(Instruction::ShloR32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::LShr, false) => e.emit(Instruction::ShloR64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::AShr, true) => e.emit(Instruction::SharR32 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
         (BinaryOp::AShr, false) => e.emit(Instruction::SharR64 {
-            dst: TEMP_RESULT,
-            src1: TEMP1,
-            src2: TEMP2,
+            dst,
+            src1: lhs_reg,
+            src2: rhs_reg,
         }),
     }
 
-    e.store_to_slot(slot, TEMP_RESULT);
+    e.store_to_slot(slot, dst);
     Ok(())
 }
 
@@ -578,38 +634,46 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         return Ok(());
     }
 
+    let dst = result_reg(e, instr);
+
     // Try immediate folding for comparisons with constant RHS.
     if let Some(rhs_const) = try_get_constant(rhs)
         && i32::try_from(rhs_const).is_ok()
     {
         let imm = rhs_const as i32;
+        let mut lhs_reg = operand_reg(e, lhs, TEMP1);
+        if lhs_reg != TEMP1 && lhs_reg == dst {
+            lhs_reg = TEMP1;
+        }
         let folded = match pred {
             IntPredicate::ULT => Some(Instruction::SetLtUImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             IntPredicate::SLT => Some(Instruction::SetLtSImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             IntPredicate::UGT => Some(Instruction::SetGtUImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             IntPredicate::SGT => Some(Instruction::SetGtSImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: lhs_reg,
                 value: imm,
             }),
             _ => None,
         };
         if let Some(instr) = folded {
-            e.load_operand(lhs, TEMP1)?;
+            if lhs_reg == TEMP1 {
+                e.load_operand(lhs, TEMP1)?;
+            }
             e.emit(instr);
-            e.store_to_slot(slot, TEMP_RESULT);
+            e.store_to_slot(slot, dst);
             return Ok(());
         }
     }
@@ -619,111 +683,126 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
+        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
+        if rhs_reg != TEMP1 && rhs_reg == dst {
+            rhs_reg = TEMP1;
+        }
         let folded = match pred {
             // const < x ⟺ x > const
             IntPredicate::ULT => Some(Instruction::SetGtUImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: rhs_reg,
                 value: imm,
             }),
             IntPredicate::SLT => Some(Instruction::SetGtSImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: rhs_reg,
                 value: imm,
             }),
             // const > x ⟺ x < const
             IntPredicate::UGT => Some(Instruction::SetLtUImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: rhs_reg,
                 value: imm,
             }),
             IntPredicate::SGT => Some(Instruction::SetLtSImm {
-                dst: TEMP_RESULT,
-                src: TEMP1,
+                dst,
+                src: rhs_reg,
                 value: imm,
             }),
             _ => None,
         };
         if let Some(instr) = folded {
-            e.load_operand(rhs, TEMP1)?;
+            if rhs_reg == TEMP1 {
+                e.load_operand(rhs, TEMP1)?;
+            }
             e.emit(instr);
-            e.store_to_slot(slot, TEMP_RESULT);
+            e.store_to_slot(slot, dst);
             return Ok(());
         }
     }
 
-    e.load_operand(lhs, TEMP1)?;
-    e.load_operand(rhs, TEMP2)?;
+    // Load-side coalescing for register-register comparisons.
+    let mut lhs_reg = operand_reg(e, lhs, TEMP1);
+    let mut rhs_reg = operand_reg(e, rhs, TEMP2);
+    if lhs_reg != TEMP1 && lhs_reg == dst {
+        lhs_reg = TEMP1;
+    }
+    if rhs_reg != TEMP2 && rhs_reg == dst {
+        rhs_reg = TEMP2;
+    }
+    if lhs_reg == TEMP1 {
+        e.load_operand(lhs, TEMP1)?;
+    }
+    if rhs_reg == TEMP2 {
+        e.load_operand(rhs, TEMP2)?;
+    }
 
     match pred {
         IntPredicate::EQ => {
-            // xor + setltuimm(result, 1) → (a == b)
             e.emit(Instruction::Xor {
                 dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
             e.emit(Instruction::SetLtUImm {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP_RESULT,
                 value: 1,
             });
         }
         IntPredicate::NE => {
-            // xor, then check nonzero: loadimm 0 -> SCRATCH1, setltu(SCRATCH1, result)
             e.emit(Instruction::Xor {
                 dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
             e.emit(Instruction::LoadImm {
                 reg: SCRATCH1,
                 value: 0,
             });
             e.emit(Instruction::SetLtU {
-                dst: TEMP_RESULT,
+                dst,
                 src1: SCRATCH1,
                 src2: TEMP_RESULT,
             });
         }
         IntPredicate::ULT => {
             e.emit(Instruction::SetLtU {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         IntPredicate::SLT => {
             e.emit(Instruction::SetLtS {
-                dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                dst,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
         }
         IntPredicate::UGT => {
-            // a > b ⟺ b < a
             e.emit(Instruction::SetLtU {
-                dst: TEMP_RESULT,
-                src1: TEMP2,
-                src2: TEMP1,
+                dst,
+                src1: rhs_reg,
+                src2: lhs_reg,
             });
         }
         IntPredicate::SGT => {
             e.emit(Instruction::SetLtS {
-                dst: TEMP_RESULT,
-                src1: TEMP2,
-                src2: TEMP1,
+                dst,
+                src1: rhs_reg,
+                src2: lhs_reg,
             });
         }
         IntPredicate::ULE => {
-            // a <= b ⟺ !(b < a)
             e.emit(Instruction::SetLtU {
                 dst: TEMP_RESULT,
-                src1: TEMP2,
-                src2: TEMP1,
+                src1: rhs_reg,
+                src2: lhs_reg,
             });
             e.emit(Instruction::SetLtUImm {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP_RESULT,
                 value: 1,
             });
@@ -731,24 +810,23 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         IntPredicate::SLE => {
             e.emit(Instruction::SetLtS {
                 dst: TEMP_RESULT,
-                src1: TEMP2,
-                src2: TEMP1,
+                src1: rhs_reg,
+                src2: lhs_reg,
             });
             e.emit(Instruction::SetLtUImm {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP_RESULT,
                 value: 1,
             });
         }
         IntPredicate::UGE => {
-            // a >= b ⟺ !(a < b)
             e.emit(Instruction::SetLtU {
                 dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
             e.emit(Instruction::SetLtUImm {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP_RESULT,
                 value: 1,
             });
@@ -756,18 +834,18 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         IntPredicate::SGE => {
             e.emit(Instruction::SetLtS {
                 dst: TEMP_RESULT,
-                src1: TEMP1,
-                src2: TEMP2,
+                src1: lhs_reg,
+                src2: rhs_reg,
             });
             e.emit(Instruction::SetLtUImm {
-                dst: TEMP_RESULT,
+                dst,
                 src: TEMP_RESULT,
                 value: 1,
             });
         }
     }
 
-    e.store_to_slot(slot, TEMP_RESULT);
+    e.store_to_slot(slot, dst);
     Ok(())
 }
 
@@ -775,33 +853,34 @@ pub fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
     let from_bits = source_bit_width(instr);
+    let dst = result_reg_or(e, instr, TEMP1);
 
-    e.load_operand(src, TEMP1)?;
-
-    if from_bits == 1 {
-        // i1 → i32/i64: value is already 0 or 1, just copy.
-        // (no-op, TEMP1 already has the value)
-    } else if from_bits == 32 {
-        // i32 → i64: clear upper 32 bits.
-        // shift left 32, logical shift right 32.
+    if from_bits == 32 {
+        // i32 → i64: use load-side coalescing for the shift source.
+        let src_reg = operand_reg(e, src, dst);
+        if src_reg == dst {
+            e.load_operand(src, dst)?;
+        }
         e.emit(Instruction::LoadImm {
             reg: TEMP2,
             value: 32,
         });
         e.emit(Instruction::ShloL64 {
-            dst: TEMP1,
-            src1: TEMP1,
+            dst,
+            src1: src_reg,
             src2: TEMP2,
         });
         e.emit(Instruction::ShloR64 {
-            dst: TEMP1,
-            src1: TEMP1,
+            dst,
+            src1: dst,
             src2: TEMP2,
         });
+    } else {
+        // i1 → i32/i64 (no-op copy) and other widths: load into dst as before.
+        e.load_operand(src, dst)?;
     }
-    // Other widths: just copy (the value is already in the register).
 
-    e.store_to_slot(slot, TEMP1);
+    e.store_to_slot(slot, dst);
     Ok(())
 }
 
@@ -809,53 +888,55 @@ pub fn lower_sext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
     let from_bits = source_bit_width(instr);
+    let dst = result_reg_or(e, instr, TEMP1);
 
-    e.load_operand(src, TEMP1)?;
+    // Load-side coalescing: use source's alloc reg directly in the transform instruction.
+    let src_reg = operand_reg(e, src, dst);
+    if src_reg == dst {
+        e.load_operand(src, dst)?;
+    }
 
     if from_bits == 1 {
-        // i1 → i64: 0→0, 1→-1 (all ones).
-        // negate: 0 - val using NegAddImm64
         e.emit(Instruction::NegAddImm64 {
-            dst: TEMP1,
-            src: TEMP1,
+            dst,
+            src: src_reg,
             value: 0,
         });
     } else if from_bits == 8 {
-        e.emit(Instruction::SignExtend8 {
-            dst: TEMP1,
-            src: TEMP1,
-        });
+        e.emit(Instruction::SignExtend8 { dst, src: src_reg });
     } else if from_bits == 16 {
-        e.emit(Instruction::SignExtend16 {
-            dst: TEMP1,
-            src: TEMP1,
-        });
+        e.emit(Instruction::SignExtend16 { dst, src: src_reg });
     } else if from_bits == 32 {
-        // Sign-extend from 32 to 64: AddImm32 with value 0 sign-extends in PVM.
         e.emit(Instruction::AddImm32 {
-            dst: TEMP1,
-            src: TEMP1,
+            dst,
+            src: src_reg,
             value: 0,
         });
+    } else if src_reg != dst {
+        // Fallback: no transform, just copy to dst.
+        e.emit(Instruction::MoveReg { dst, src: src_reg });
     }
 
-    e.store_to_slot(slot, TEMP1);
+    e.store_to_slot(slot, dst);
     Ok(())
 }
 
 pub fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
-
-    e.load_operand(src, TEMP1)?;
+    let dst = result_reg_or(e, instr, TEMP1);
 
     // Check the result type to determine target bit width.
-    // For trunc i64 to i32: AddImm32 truncates and sign-extends.
-    // For trunc to i1: mask with 1.
     let result_bits = match instr.as_any_value_enum() {
         AnyValueEnum::IntValue(iv) => iv.get_type().get_bit_width(),
         _ => 32, // default fallback
     };
+
+    // Load-side coalescing: use source's alloc reg directly in the transform instruction.
+    let src_reg = operand_reg(e, src, dst);
+    if src_reg == dst {
+        e.load_operand(src, dst)?;
+    }
 
     if result_bits == 1 {
         // Mask to i1: and with 1.
@@ -864,21 +945,23 @@ pub fn lower_trunc<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>
             value: 1,
         });
         e.emit(Instruction::And {
-            dst: TEMP1,
-            src1: TEMP1,
+            dst,
+            src1: src_reg,
             src2: TEMP2,
         });
     } else if result_bits <= 32 {
         // Truncate to 32 bits (sign-extends in PVM).
         e.emit(Instruction::AddImm32 {
-            dst: TEMP1,
-            src: TEMP1,
+            dst,
+            src: src_reg,
             value: 0,
         });
+    } else if src_reg != dst {
+        // i64 → i64 is a no-op, but if src is in a different register, copy it.
+        e.emit(Instruction::MoveReg { dst, src: src_reg });
     }
-    // i64 → i64 would be a no-op.
 
-    e.store_to_slot(slot, TEMP1);
+    e.store_to_slot(slot, dst);
     Ok(())
 }
 
@@ -929,6 +1012,12 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
     let false_val = get_operand(instr, 2)?;
     let slot = result_slot(e, instr)?;
 
+    // Load-side coalescing: use allocated registers directly as Cmov operands.
+    // Safe because all select operands are simultaneously live (different alloc
+    // regs guaranteed by the allocator). Store-side coalescing (result_reg) is
+    // NOT applied because loading into the alloc reg triggers invalidate_reg
+    // which can corrupt cache state for subsequent operand loads.
+
     // Try to use CmovNzImm/CmovIzImm when one operand is a constant that fits i32.
     // CmovNzImm: if cond != 0, dst = imm (keeps dst otherwise)
     // CmovIzImm: if cond == 0, dst = imm (keeps dst otherwise)
@@ -937,45 +1026,57 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
 
     if let Some(tv) = true_const {
         // true_val is constant: load false_val as default, CmovNzImm overwrites if cond != 0
-        e.load_operand(false_val, TEMP_RESULT)?;
-        e.load_operand(cond, TEMP1)?;
+        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        e.load_operand(false_val, def_reg)?;
+        let cond_reg = operand_reg(e, cond, TEMP1);
+        e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovNzImm {
-            dst: TEMP_RESULT,
-            cond: TEMP1,
+            dst: def_reg,
+            cond: cond_reg,
             value: tv as i32,
         });
+        e.store_to_slot(slot, def_reg);
     } else if let Some(fv) = false_const {
         // false_val is constant: load true_val as default, CmovIzImm overwrites if cond == 0
-        e.load_operand(true_val, TEMP_RESULT)?;
-        e.load_operand(cond, TEMP1)?;
+        let def_reg = operand_reg(e, true_val, TEMP_RESULT);
+        e.load_operand(true_val, def_reg)?;
+        let cond_reg = operand_reg(e, cond, TEMP1);
+        e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovIzImm {
-            dst: TEMP_RESULT,
-            cond: TEMP1,
+            dst: def_reg,
+            cond: cond_reg,
             value: fv as i32,
         });
+        e.store_to_slot(slot, def_reg);
     } else if let Some(inner_cond) = try_get_inverted_condition(cond) {
         // Inverted condition: select(!c, tv, fv) ≡ select(c, fv, tv)
         // Use CmovIz: load false_val as default, overwrite with true_val when inner_cond==0
-        e.load_operand(false_val, TEMP_RESULT)?;
-        e.load_operand(true_val, TEMP2)?;
-        e.load_operand(inner_cond, TEMP1)?;
+        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        e.load_operand(false_val, def_reg)?;
+        let src_reg = operand_reg(e, true_val, TEMP2);
+        e.load_operand(true_val, src_reg)?;
+        let cond_reg = operand_reg(e, inner_cond, TEMP1);
+        e.load_operand(inner_cond, cond_reg)?;
         e.emit(Instruction::CmovIz {
-            dst: TEMP_RESULT,
-            src: TEMP2,
-            cond: TEMP1,
+            dst: def_reg,
+            src: src_reg,
+            cond: cond_reg,
         });
+        e.store_to_slot(slot, def_reg);
     } else {
         // Neither is a small constant: use register CmovNz
-        e.load_operand(false_val, TEMP_RESULT)?;
-        e.load_operand(true_val, TEMP2)?;
-        e.load_operand(cond, TEMP1)?;
+        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        e.load_operand(false_val, def_reg)?;
+        let src_reg = operand_reg(e, true_val, TEMP2);
+        e.load_operand(true_val, src_reg)?;
+        let cond_reg = operand_reg(e, cond, TEMP1);
+        e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovNz {
-            dst: TEMP_RESULT,
-            src: TEMP2,
-            cond: TEMP1,
+            dst: def_reg,
+            src: src_reg,
+            cond: cond_reg,
         });
+        e.store_to_slot(slot, def_reg);
     }
-
-    e.store_to_slot(slot, TEMP_RESULT);
     Ok(())
 }
