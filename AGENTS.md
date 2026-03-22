@@ -183,7 +183,7 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 - **Cross-block register cache**: When a block has exactly one predecessor and no phi nodes, the predecessor's cache snapshot is propagated instead of clearing. The snapshot is taken before the terminator instruction with TEMP1/TEMP2 invalidated (since terminators load operands into those registers). Predecessor map is computed in `pre_scan_function` by scanning terminator successors.
 - **Indirect-call fusion**: `call_indirect` emits `LoadImmJumpInd` (opcode 180) to combine return-address setup and `JumpInd` in one instruction; return jump-table refs are still pre-assigned at emission time for size-stable fixups.
 - **Trimmed RW data**: `build_rw_data()` trims trailing zero bytes before SPI encoding. Heap pages are zero-initialized, so omitted high-address zero tails are semantically equivalent and reduce blob size.
-- **heap_pages computed after rw_data**: SPI `heap_pages` is calculated in `compile_via_llvm()` **after** `build_rw_data()`, using the actual trimmed `rw_data.len()`. The formula: `total_pages - rw_pages`, where `total_pages` covers from `0x30000` to the end of initial WASM memory (using `initial_pages`, min 16). Additional memory is allocated on demand via `sbrk`/`memory.grow`.
+- **heap_pages computed after rw_data**: SPI `heap_pages` is calculated in `compile_via_llvm()` **after** `build_rw_data()`, using the actual trimmed `rw_data.len()`. The formula: `total_pages - rw_pages`, where `total_pages` covers from `0x30000` to the end of initial WASM memory (using `initial_pages`, min 16). The compact memory layout (param overflow placed right after globals) means rw_data is typically smaller, yielding more heap pages. Additional memory is allocated on demand via `sbrk`/`memory.grow`.
 - **All values as i64**: PVM registers are 64-bit; simplifies translation
 - **LLVM backend**: inkwell (LLVM 18 bindings) is a required dependency
 - **Leaf function detection**: `is_real_call()` in `emitter.rs` distinguishes real function calls (`wasm_func_*`, `__pvm_call_indirect`) from PVM intrinsics (`__pvm_load_*`, `__pvm_store_*`, etc.) and LLVM intrinsics (`llvm.*`). PVM intrinsics are lowered inline with temp registers only and don't use the calling convention, so functions containing only these are classified as leaf (no callee-save prologue/epilogue needed). This was a major optimization — previously ALL functions with memory access were non-leaf.
@@ -207,6 +207,9 @@ wasm-pvm = { version = "0.5.2", default-features = false }
   - `anan-as-compiler-replay.adapter.wat` (trace replay): Uses a scratch buffer protocol. Adapter calls outer ecalli 0 ("forward") with scratch PVM addr + inner ecalli index. Outer handler writes response `[8:new_r7][8:new_r8][4:num_memwrites][8:new_gas][entries...]` to the buffer. Adapter applies memwrites via `host_write_memory` and returns new_r7. Outer ecalli 1 ("get r8") returns the last r8 value.
 - **Adapter import resolution against main exports**: `adapter_merge.rs` now resolves adapter imports that match main module export names internally, with type signature validation, instead of carrying them through as retained imports. This allows the adapter to call compiler functions like `host_read_memory` and `host_write_memory` directly.
 - **Dynamic ecalli limitation**: PVM `ecalli` instruction requires a static (compile-time constant) index. The regular adapter handles only ecalli 100; other ecalli types would need individual handlers or a dispatch table. The replay adapter avoids this by using fixed outer ecalli indices (0 and 1) for the forwarding protocol.
+- **Inline threshold**: `OptimizationFlags.inline_threshold: Option<u32>` (CLI `--inline-threshold N`) controls inlining aggressiveness. Functions with more than N LLVM IR instructions are marked `noinline`. Lower values = less inlining = smaller code. When unset (default), LLVM's default threshold (225) is used.
+- **ecalli:N in import maps**: Import map files (`.imports`) support `name = ecalli:N` syntax in addition to `trap` and `nop`. This generates PVM `Ecalli` instructions directly from named imports, loading WASM call arguments into data registers (r7-r12) before invoking ecalli index N.
+- **Non-leaf r7/r8 allocation is not feasible** (investigated, not implemented): Same root cause as callee-saved state preservation after calls — `operand_reg()` returns the allocated register directly as a source operand for memory lowering, where it may be used as both source and destination for address calculations, clobbering the preserved value. See `docs/src/learnings.md` "Non-Leaf r7/r8 Allocation" for details.
 
 ---
 
@@ -253,7 +256,7 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 | Add emitter unit test | `crates/wasm-pvm/tests/emitter_unit.rs` | Slot allocation, labels, fixups, frame layout (19 tests) |
 | Add stack spill test | `crates/wasm-pvm/tests/deep_stack_spill.rs` | Deep stack, spill across calls (8 tests) |
 | Add/modify import adapter | `tests/fixtures/imports/*.adapter.wat` | WAT adapter files for complex import resolution |
-| Add/modify import map | `tests/fixtures/imports/*.imports` | Text-based import maps (simple: trap, nop) |
+| Add/modify import map | `tests/fixtures/imports/*.imports` | Text-based import maps (trap, nop, ecalli:N) |
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` |
 | Fix test build | `tests/build.ts` + `tests/helpers/compile.ts` | Build orchestrator + compilation helpers |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
@@ -292,8 +295,9 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | `allocate_scratch_regs` | `--no-scratch-reg-alloc` | Allocate r5/r6 in all functions that don't clobber them (no bulk memory/funnel shifts). In non-leaf, spill/reload around calls handled automatically. | `llvm_backend/mod.rs` → `regalloc.rs` |
 | `allocate_caller_saved_regs` | `--no-caller-saved-alloc` | Allocate r7/r8 in all functions. In non-leaf, invalidated after calls via arity-aware predicate. | `llvm_backend/mod.rs` → `regalloc.rs` |
 | `lazy_spill` | `--no-lazy-spill` | Skip stack stores for register-allocated values; spill only when required (calls, return, phi reads, register clobber) | `llvm_backend/emitter.rs`, `llvm_backend/mod.rs`, `llvm_backend/control_flow.rs` |
+| `inline_threshold` | `--inline-threshold N` | Functions with more than N LLVM IR instructions are marked `noinline`. Lower = less inlining = smaller code. Default: None (uses LLVM default of 225). Type: `Option<u32>` | `llvm_frontend/function_builder.rs` |
 
-**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`, `cross_block_cache_enabled`, `register_allocation_enabled`, `fallthrough_jumps_enabled`, `lazy_spill_enabled`) → `PvmEmitter.config`. LLVM passes and inlining flags are passed directly to `translate_wasm_to_llvm()`. The `aggressive_register_allocation`, `allocate_scratch_regs`, and `allocate_caller_saved_regs` flags are passed directly from `LoweringContext.optimizations` to `regalloc::run()` (not through `EmitterConfig`).
+**Threading path**: `CompileOptions.optimizations` → `LoweringContext.optimizations` → `EmitterConfig` fields (`register_cache_enabled`, `icmp_fusion_enabled`, `shrink_wrap_enabled`, `constant_propagation_enabled`, `cross_block_cache_enabled`, `register_allocation_enabled`, `fallthrough_jumps_enabled`, `lazy_spill_enabled`) → `PvmEmitter.config`. LLVM passes, inlining, and `inline_threshold` flags are passed directly to `translate_wasm_to_llvm()`. The `aggressive_register_allocation`, `allocate_scratch_regs`, and `allocate_caller_saved_regs` flags are passed directly from `LoweringContext.optimizations` to `regalloc::run()` (not through `EmitterConfig`).
 
 **Adding a new optimization**: Add a field to `OptimizationFlags`, thread it through `LoweringContext` → `EmitterConfig`, guard the optimization with `e.config.<flag>`, add a `--no-*` CLI flag.
 
@@ -314,10 +318,8 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data (dispatch table, passive segments) |
-| `0x30000` | Globals storage (each global = 4 bytes). The heap base is computed via `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)`, which aligns the heap after the actual globals/passive-length region to the next 4KB (PVM page) boundary. |
-| `0x32000` | Parameter overflow area (5th+ args for call_indirect) |
-| `0x32100+` | Spilled locals base (per-function, usually empty because spills go on the stack) |
-| `≈0x33000+` | WASM linear memory (4KB-aligned; actual base varies, computed via `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)`) |
+| `0x30000` | Globals storage (each global = 4 bytes), followed immediately by parameter overflow area (5th+ args for call_indirect). The overflow area is placed dynamically right after globals, not at a fixed address. |
+| `≈0x31000+` | WASM linear memory (4KB-aligned; actual base computed via `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)`, which aligns after the globals + overflow region to the next 4KB page boundary. Typical base for a program with 5 globals is 0x31000, saving ~8KB RW data vs the previous fixed 0x33000 layout.) |
 | `0xFEFE0000` | Stack segment end (stack grows downward) |
 | `0xFEFF0000` | Arguments (`args_ptr`) |
 | `0xFFFF0000` | EXIT address (HALT) |
