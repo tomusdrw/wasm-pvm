@@ -634,9 +634,18 @@ fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
             ImportAction::Trap
         } else if action_str == "nop" {
             ImportAction::Nop
+        } else if let Some(idx_str) = action_str.strip_prefix("ecalli:") {
+            let idx: u32 = idx_str.parse().map_err(|_| {
+                anyhow::anyhow!(
+                    "{}:{}: invalid ecalli index '{idx_str}', expected a number",
+                    path.display(),
+                    line_num + 1
+                )
+            })?;
+            ImportAction::Ecalli(idx)
         } else {
             anyhow::bail!(
-                "{}:{}: unknown action '{action_str}', expected 'trap' or 'nop'",
+                "{}:{}: unknown action '{action_str}', expected 'trap', 'nop', or 'ecalli:N'",
                 path.display(),
                 line_num + 1
             );

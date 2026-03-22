@@ -218,6 +218,35 @@ fn lower_mapped_import<'ctx>(
                 e.store_to_slot(slot, TEMP_RESULT);
             }
         }
+        ImportAction::Ecalli(index) => {
+            let num_args = (instr.get_num_operands() - 1) as usize;
+
+            // Spill register-allocated values before ecalli.
+            e.spill_allocated_regs();
+
+            // Load all arguments into data registers r7..r7+N-1.
+            // Maximum 6 data args (r7-r12).
+            let data_args = num_args.min(abi::MAX_HOST_CALL_DATA_ARGS as usize);
+            for i in 0..data_args {
+                let arg = get_operand(instr, i as u32)?;
+                let target_reg = abi::RETURN_VALUE_REG + i as u8;
+                e.load_operand(arg, target_reg)?;
+            }
+
+            e.emit(Instruction::Ecalli { index: *index });
+
+            // Ecalli clobbers registers externally.
+            e.clear_reg_cache();
+
+            // Reload register-allocated values after ecalli.
+            e.reload_allocated_regs_after_call();
+
+            // Return value from r7 (if function returns a value).
+            if has_return {
+                let slot = result_slot(e, instr)?;
+                e.store_to_slot(slot, abi::RETURN_VALUE_REG);
+            }
+        }
     }
 
     Ok(())

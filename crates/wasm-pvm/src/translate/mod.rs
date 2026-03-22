@@ -25,6 +25,9 @@ pub enum ImportAction {
     Trap,
     /// Emit a no-op (return 0 for functions with return values).
     Nop,
+    /// Emit a PVM `ecalli` instruction with the given index.
+    /// Arguments are loaded into data registers (r7-r12), return value from r7.
+    Ecalli(u32),
 }
 
 /// Flags to enable/disable individual compiler optimizations.
@@ -200,12 +203,13 @@ pub fn compile_with_stats(
         if let Some(import_map) = &options.import_map {
             if let Some(action) = import_map.get(name) {
                 let action_str = match action {
-                    ImportAction::Trap => "trap",
-                    ImportAction::Nop => "nop",
+                    ImportAction::Trap => "trap".to_string(),
+                    ImportAction::Nop => "nop".to_string(),
+                    ImportAction::Ecalli(idx) => format!("ecalli:{idx}"),
                 };
                 import_resolutions.push(stats::ImportResolution {
                     name: name.clone(),
-                    action: action_str.to_string(),
+                    action: action_str,
                 });
                 continue;
             }
