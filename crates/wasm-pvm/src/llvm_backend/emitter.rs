@@ -34,6 +34,8 @@ use super::regalloc::RegAllocResult;
 pub struct LoweringContext {
     pub wasm_memory_base: i32,
     pub num_globals: usize,
+    /// Base address for the parameter overflow area (5th+ args for `call_indirect`).
+    pub param_overflow_base: i32,
     pub function_signatures: Vec<(usize, bool)>,
     pub type_signatures: Vec<(usize, usize)>,
     pub function_table: Vec<u32>,
@@ -112,6 +114,9 @@ pub struct LlvmIndirectCallFixup {
 pub struct EmitterConfig {
     /// WASM memory base address (for converting WASM addresses to PVM addresses).
     pub wasm_memory_base: i32,
+
+    /// Base address for the parameter overflow area (5th+ args for `call_indirect`).
+    pub param_overflow_base: i32,
 
     /// Whether the register cache (store-load forwarding) is enabled.
     pub register_cache_enabled: bool,

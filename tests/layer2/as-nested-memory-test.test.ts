@@ -1,7 +1,7 @@
 import { defineSuite } from "../helpers/suite";
 
 const tests = [
-  { args: "0400000002000000deadbeef1234", expected: 4277915648, description: "AS: nested memory test - args_ptr check" },
+  { args: "0400000002000000deadbeef1234", expected: 4277923840, description: "AS: nested memory test - args_ptr check" },
 ];
 
 defineSuite({

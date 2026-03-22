@@ -53,7 +53,7 @@ pub fn lower_wasm_call<'ctx>(
     e.spill_allocated_regs();
 
     // Load arguments from LLVM call operands into r9-r12 (first 4) and
-    // PARAM_OVERFLOW_BASE (5th+). The last operand is the function pointer.
+    // param overflow area (5th+). The last operand is the function pointer.
     let num_args = (instr.get_num_operands() - 1) as usize;
 
     for i in 0..num_args {
@@ -62,7 +62,7 @@ pub fn lower_wasm_call<'ctx>(
             e.load_operand(arg, abi::FIRST_LOCAL_REG + i as u8)?;
         } else {
             e.load_operand(arg, TEMP1)?;
-            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = e.config.param_overflow_base + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: overflow_offset,
@@ -463,7 +463,7 @@ pub fn lower_pvm_call_indirect<'ctx>(
             e.load_operand(arg, abi::FIRST_LOCAL_REG + i as u8)?;
         } else {
             e.load_operand(arg, TEMP1)?;
-            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset = e.config.param_overflow_base + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: overflow_offset,
