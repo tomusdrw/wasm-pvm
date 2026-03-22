@@ -213,7 +213,7 @@ pub fn run(
         allocatable_regs.push(crate::abi::SCRATCH2);
     }
 
-    // Add r7/r8 (RETURN_VALUE_REG/ARGS_LEN_REG) in all functions.
+    // Add r7/r8 (RETURN_VALUE_REG/ARGS_LEN_REG) in leaf functions.
     // In leaf functions, these are idle after the prologue.
     // In non-leaf functions, r7 holds the return value after calls and r8 is
     // used as scratch in indirect call dispatch. The call lowering handles
@@ -221,10 +221,11 @@ pub fn run(
     // Lowering paths that use r7/r8 as scratch (alu.rs signed div, NE compare,
     // control_flow.rs multi-phi) will trigger invalidate_reg via emit(), forcing
     // a lazy reload from the write-through stack slot on next use.
-    // Only allocate r7/r8 in leaf functions: in non-leaf functions, every call
-    // clobbers r7 (return value) and r8 (scratch), making the constant
-    // invalidation/reload a net negative and exposing correctness edge cases
-    // in the spill/reload interaction with call lowering.
+    // Non-leaf r7/r8 allocation is not feasible: operand_reg() returns the
+    // allocated register directly as a source operand, and address computation
+    // (adding wasm_memory_base) modifies the register in-place, clobbering the
+    // value before it can be used. Same root cause as callee-saved state
+    // preservation — see docs/src/learnings.md.
     if allocate_caller_saved && is_leaf {
         allocatable_regs.push(crate::abi::ARGS_LEN_REG); // r8
         allocatable_regs.push(crate::abi::RETURN_VALUE_REG); // r7
