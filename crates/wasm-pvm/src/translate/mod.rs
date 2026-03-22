@@ -73,6 +73,10 @@ pub struct OptimizationFlags {
     /// Values are only written to the stack when required (call clobber, return,
     /// phi reads, eviction). Requires `register_allocation` to be effective.
     pub lazy_spill: bool,
+    /// Custom LLVM inline threshold. `None` uses LLVM's default (225).
+    /// Lower values reduce code size by inlining fewer functions.
+    /// Only effective when `inlining` is `true`.
+    pub inline_threshold: Option<u32>,
 }
 
 impl Default for OptimizationFlags {
@@ -94,6 +98,7 @@ impl Default for OptimizationFlags {
             allocate_scratch_regs: true,
             allocate_caller_saved_regs: true,
             lazy_spill: true,
+            inline_threshold: None,
         }
     }
 }
@@ -290,6 +295,7 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         module,
         options.optimizations.llvm_passes,
         options.optimizations.inlining,
+        options.optimizations.inline_threshold,
         reachable_locals.as_ref(),
     )?;
 

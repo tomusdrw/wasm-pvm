@@ -76,6 +76,12 @@ enum Commands {
         #[arg(long, help = "Disable LLVM function inlining")]
         no_inline: bool,
 
+        #[arg(
+            long,
+            help = "Set LLVM inline threshold (default: 225). Lower = less inlining, smaller code"
+        )]
+        inline_threshold: Option<u32>,
+
         #[arg(long, help = "Disable cross-block register cache propagation")]
         no_cross_block_cache: bool,
 
@@ -146,6 +152,7 @@ fn main() -> Result<()> {
             no_dead_store_elim,
             no_const_prop,
             no_inline,
+            inline_threshold,
             no_cross_block_cache,
             no_register_alloc,
             no_dead_function_elim,
@@ -199,6 +206,7 @@ fn main() -> Result<()> {
                     allocate_scratch_regs: !no_scratch_reg_alloc,
                     allocate_caller_saved_regs: !no_caller_saved_alloc,
                     lazy_spill: !no_lazy_spill,
+                    inline_threshold,
                 },
                 max_memory_pages: max_memory,
             };
