@@ -323,22 +323,34 @@ fn linearize<'ctx>(
 
 /// Returns the maximum direct call argument count used in this function.
 /// Only counts real calls (`wasm_func_*`, `__pvm_call_indirect`), not intrinsics
-/// (`__pvm_load/store/memory_*`, `llvm.*`) which don't use outgoing argument registers.
+/// (`__pvm_load/store/memory_*`, `llvm.*`) and import function declarations
+/// (`host_call_N`, `ecalli:N`, etc.) which don't use outgoing argument registers
+/// (r9+). Import calls are lowered by `lower_import_call` which loads args
+/// into r7+ independently.
 fn max_call_args(function: FunctionValue<'_>) -> usize {
     let mut max_args = 0usize;
     for bb in function.get_basic_blocks() {
         for instr in bb.get_instructions() {
             if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
-                // Skip intrinsics — they don't use outgoing argument registers.
                 let call_site: std::result::Result<inkwell::values::CallSiteValue, _> =
                     instr.try_into();
                 if let Ok(cs) = call_site
                     && let Some(fn_val) = cs.get_called_fn_value()
                 {
                     let name = fn_val.get_name().to_string_lossy();
+                    // Skip PVM intrinsics (except call_indirect) and LLVM intrinsics.
                     if (name.starts_with("__pvm_") && name != "__pvm_call_indirect")
                         || name.starts_with("llvm.")
                     {
+                        continue;
+                    }
+                    // Skip import function declarations (no body). These are
+                    // lowered by lower_import_call which handles register
+                    // loading into r7+ (host_call_N, ecalli:N, trap, nop),
+                    // NOT via the standard r9+ calling convention.
+                    // __pvm_call_indirect is also a declaration but uses the
+                    // standard convention, so exclude it from this check.
+                    if fn_val.count_basic_blocks() == 0 && !name.starts_with("__pvm_") {
                         continue;
                     }
                 }

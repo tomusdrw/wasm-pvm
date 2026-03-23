@@ -32,7 +32,7 @@ enum Commands {
         #[arg(
             short,
             long,
-            help = "Import map file mapping import names to actions (trap, nop)"
+            help = "Import map file mapping import names to actions (trap, nop, ecalli:N)"
         )]
         imports: Option<PathBuf>,
 
@@ -78,7 +78,8 @@ enum Commands {
 
         #[arg(
             long,
-            help = "Max LLVM IR instructions for inlining (functions above this are marked noinline). Lower = less inlining, smaller code. Try 5-10 for size-sensitive programs"
+            default_value = "5",
+            help = "Max LLVM IR instructions for inlining (functions above this are marked noinline). Lower = less inlining, smaller code. Use 0 to disable inlining, 225 for LLVM default"
         )]
         inline_threshold: Option<u32>,
 
