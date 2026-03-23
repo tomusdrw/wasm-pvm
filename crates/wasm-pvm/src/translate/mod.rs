@@ -339,10 +339,8 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     }
 
     // Phase 2: Build lowering context
-    let param_overflow_base = memory_layout::compute_param_overflow_base(
-        module.globals.len(),
-        passive_ordinal,
-    );
+    let param_overflow_base =
+        memory_layout::compute_param_overflow_base(module.globals.len(), passive_ordinal);
     let ctx = LoweringContext {
         wasm_memory_base: module.wasm_memory_base,
         num_globals: module.globals.len(),

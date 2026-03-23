@@ -488,7 +488,8 @@ fn emit_prologue<'ctx>(
             e.store_to_slot(slot, abi::FIRST_LOCAL_REG + i as u8);
         } else {
             // Overflow params from the parameter overflow area.
-            let overflow_offset = e.config.param_overflow_base + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset =
+                e.config.param_overflow_base + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP1,
                 value: overflow_offset,

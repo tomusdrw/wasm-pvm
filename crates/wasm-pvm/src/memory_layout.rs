@@ -81,13 +81,10 @@ pub fn stack_limit(stack_size: u32) -> i32 {
 /// - Using 4KB alignment saves ~52KB per program (the old 64KB alignment
 ///   wasted up to 60KB of padding between `globals_end` and the heap start).
 #[must_use]
-pub fn compute_wasm_memory_base(
-    num_globals: usize,
-    num_passive_segments: usize,
-) -> i32 {
-    let param_overflow_end =
-        compute_param_overflow_base(num_globals, num_passive_segments) as usize
-            + PARAM_OVERFLOW_SIZE;
+pub fn compute_wasm_memory_base(num_globals: usize, num_passive_segments: usize) -> i32 {
+    let param_overflow_end = compute_param_overflow_base(num_globals, num_passive_segments)
+        as usize
+        + PARAM_OVERFLOW_SIZE;
     // Align to PVM page size (4KB = 0x1000).
     ((param_overflow_end + 0xFFF) & !0xFFF) as i32
 }

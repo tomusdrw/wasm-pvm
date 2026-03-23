@@ -329,10 +329,8 @@ impl<'a> WasmModule<'a> {
             .filter(|seg| seg.offset.is_none())
             .count();
         // Compute WASM memory base
-        let wasm_memory_base = memory_layout::compute_wasm_memory_base(
-            globals.len(),
-            num_passive_segments,
-        );
+        let wasm_memory_base =
+            memory_layout::compute_wasm_memory_base(globals.len(), num_passive_segments);
 
         // max_memory_pages is the runtime limit for memory.grow (hardcoded in PVM code).
         // When the WASM module doesn't declare a max, use DEFAULT_MAX_PAGES (1 MB).

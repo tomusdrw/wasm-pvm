@@ -1649,10 +1649,10 @@ impl<'ctx> WasmToLlvm<'ctx> {
             // from inlining large callees while still allowing tiny helpers
             // (setters, getters) to be inlined.
             if let Some(threshold) = inline_threshold {
-                let noinline_attr = self
-                    .module
-                    .get_context()
-                    .create_enum_attribute(inkwell::attributes::Attribute::get_named_enum_kind_id("noinline"), 0);
+                let noinline_attr = self.module.get_context().create_enum_attribute(
+                    inkwell::attributes::Attribute::get_named_enum_kind_id("noinline"),
+                    0,
+                );
                 for func in self.module.get_functions() {
                     if func.count_basic_blocks() == 0 {
                         continue;
