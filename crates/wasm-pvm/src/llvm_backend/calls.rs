@@ -221,12 +221,18 @@ fn lower_mapped_import<'ctx>(
         ImportAction::Ecalli(index) => {
             let num_args = (instr.get_num_operands() - 1) as usize;
 
+            if num_args > abi::MAX_HOST_CALL_DATA_ARGS as usize {
+                return Err(Error::Unsupported(format!(
+                    "ecalli:{index} import has {num_args} arguments, maximum is {}",
+                    abi::MAX_HOST_CALL_DATA_ARGS,
+                )));
+            }
+
             // Spill register-allocated values before ecalli.
             e.spill_allocated_regs();
 
             // Load all arguments into data registers r7..r7+N-1.
-            // Maximum 6 data args (r7-r12).
-            let data_args = num_args.min(abi::MAX_HOST_CALL_DATA_ARGS as usize);
+            let data_args = num_args;
             for i in 0..data_args {
                 let arg = get_operand(instr, i as u32)?;
                 let target_reg = abi::RETURN_VALUE_REG + i as u8;

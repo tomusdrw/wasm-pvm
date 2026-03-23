@@ -177,6 +177,20 @@ mod tests {
         assert_eq!(compute_param_overflow_base(5, 0), 0x30018);
         // 0 globals → globals_end = 0x30004, 8-aligned = 0x30008
         assert_eq!(compute_param_overflow_base(0, 0), 0x30008);
+        // 5 globals + 3 passive → globals_end = 0x30000 + 36 = 0x30024, 8-aligned = 0x30028
+        assert_eq!(compute_param_overflow_base(5, 3), 0x30028);
+    }
+
+    #[test]
+    fn param_overflow_does_not_overlap_globals() {
+        // With many globals, the overflow area must start after all of them.
+        let globals = 1000;
+        let globals_end = GLOBAL_MEMORY_BASE as usize + globals_region_size(globals, 0);
+        let overflow_base = compute_param_overflow_base(globals, 0) as usize;
+        assert!(
+            overflow_base >= globals_end,
+            "overflow base 0x{overflow_base:X} overlaps globals_end 0x{globals_end:X}"
+        );
     }
 
     #[test]

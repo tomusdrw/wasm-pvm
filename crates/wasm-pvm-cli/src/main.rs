@@ -78,7 +78,7 @@ enum Commands {
 
         #[arg(
             long,
-            help = "Set LLVM inline threshold (default: 225). Lower = less inlining, smaller code"
+            help = "Max LLVM IR instructions for inlining (functions above this are marked noinline). Lower = less inlining, smaller code. Try 5-10 for size-sensitive programs"
         )]
         inline_threshold: Option<u32>,
 
@@ -606,7 +606,10 @@ fn read_wasm(path: &PathBuf) -> Result<Vec<u8>> {
 /// # Comments start with #
 /// abort = trap
 /// console.log = nop
+/// read = ecalli:5
 /// ```
+///
+/// Actions: `trap` (emit unreachable), `nop` (return 0), `ecalli:N` (emit PVM ecalli N).
 fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
     let contents =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;

@@ -319,7 +319,7 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 |---------|---------|
 | `0x10000` | Read-only data (dispatch table, passive segments) |
 | `0x30000` | Globals storage (each global = 4 bytes), followed immediately by parameter overflow area (5th+ args for call_indirect). The overflow area is placed dynamically right after globals, not at a fixed address. |
-| `≈0x31000+` | WASM linear memory (4KB-aligned; actual base computed via `compute_wasm_memory_base(num_funcs, num_globals, num_passive_segments)`, which aligns after the globals + overflow region to the next 4KB page boundary. Typical base for a program with 5 globals is 0x31000, saving ~8KB RW data vs the previous fixed 0x33000 layout.) |
+| `≈0x31000+` | WASM linear memory (4KB-aligned; actual base computed via `compute_wasm_memory_base(num_globals, num_passive_segments)`, which aligns after the globals + overflow region to the next 4KB page boundary. Typical base for a program with 5 globals is 0x31000, saving ~8KB RW data vs the previous fixed 0x33000 layout.) |
 | `0xFEFE0000` | Stack segment end (stack grows downward) |
 | `0xFEFF0000` | Arguments (`args_ptr`) |
 | `0xFFFF0000` | EXIT address (HALT) |
