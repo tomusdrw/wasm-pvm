@@ -1,0 +1,32 @@
+# aslan-ecalli import map
+# Maps named ecalli imports to PVM ecalli instruction indices.
+# These match the JAM GP ecalli numbering.
+abort = trap
+log = ecalli:100
+fetch = ecalli:101
+gas = ecalli:3
+lookup = ecalli:4
+read = ecalli:5
+write = ecalli:6
+info = ecalli:7
+bless = ecalli:10
+assign = ecalli:11
+designate = ecalli:12
+checkpoint = ecalli:13
+new_service = ecalli:14
+upgrade = ecalli:15
+transfer = ecalli:16
+eject = ecalli:17
+query = ecalli:18
+solicit = ecalli:19
+forget = ecalli:20
+yield_result = ecalli:21
+provide = ecalli:22
+historical_lookup = ecalli:30
+export = ecalli:31
+machine = ecalli:32
+peek = ecalli:33
+poke = ecalli:34
+pages = ecalli:35
+invoke = ecalli:36
+expunge = ecalli:37

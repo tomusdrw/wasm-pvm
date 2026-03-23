@@ -58,6 +58,7 @@ BENCHMARKS=(
   "aslan-fib|2a0000|5|aslan-fib accumulate|wat:tests/fixtures/wat/aslan-fib.jam.wat"
   "host-call-log|00000000|0|host-call-log|wat:tests/fixtures/wat/host-call-log.jam.wat"
   "anan-as-compiler||0|anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
+  "aslan-ecalli|00|0|aslan-ecalli accumulate|wat:tests/fixtures/wat/aslan-ecalli.jam.wat"
 )
 
 # Return "imports_path|adapter_path" for benchmarks that need them, or empty.
@@ -69,6 +70,9 @@ benchmark_imports_for() {
       ;;
     aslan-fib)
       echo "|tests/fixtures/imports/aslan-fib.adapter.wat"
+      ;;
+    aslan-ecalli)
+      echo "tests/fixtures/imports/aslan-ecalli.imports|"
       ;;
     *)
       echo ""
