@@ -241,6 +241,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         wasm_module: &WasmModule,
         run_llvm_passes: bool,
         run_inlining: bool,
+        inline_threshold: Option<u32>,
         reachable_locals: Option<&std::collections::HashSet<usize>>,
     ) -> Result<Module<'ctx>> {
         self.declare_functions(wasm_module);
@@ -264,7 +265,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         }
 
         if run_llvm_passes {
-            self.run_optimization_passes(run_inlining)?;
+            self.run_optimization_passes(run_inlining, inline_threshold)?;
         }
 
         self.module
@@ -1602,7 +1603,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
     // ── Optimization passes ──
 
-    fn run_optimization_passes(&self, run_inlining: bool) -> Result<()> {
+    fn run_optimization_passes(
+        &self,
+        run_inlining: bool,
+        inline_threshold: Option<u32>,
+    ) -> Result<()> {
         use inkwell::passes::PassBuilderOptions;
         use inkwell::targets::{InitializationConfig, Target, TargetMachine};
 
@@ -1637,8 +1642,44 @@ impl<'ctx> WasmToLlvm<'ctx> {
         // Phase 2 (optional): Inline small functions at the CGSCC level.
         // This must run as a separate pass invocation because `inline` is a CGSCC pass
         // and cannot be mixed with function passes in the new pass manager pipeline.
-        // Uses LLVM's default inline threshold (225, same as -O2).
+        // Default threshold is 225 (same as -O2). Custom threshold via --inline-threshold.
         if run_inlining {
+            // If a custom threshold is set, mark functions whose instruction
+            // count exceeds the threshold as `noinline`. This prevents LLVM
+            // from inlining large callees while still allowing tiny helpers
+            // (setters, getters) to be inlined.
+            if let Some(threshold) = inline_threshold {
+                let noinline_id =
+                    inkwell::attributes::Attribute::get_named_enum_kind_id("noinline");
+                debug_assert!(
+                    noinline_id != 0,
+                    "LLVM does not recognize 'noinline' attribute"
+                );
+                let noinline_attr = self
+                    .module
+                    .get_context()
+                    .create_enum_attribute(noinline_id, 0);
+                for func in self.module.get_functions() {
+                    if func.count_basic_blocks() == 0 {
+                        continue;
+                    }
+                    let mut instr_count: u32 = 0;
+                    for bb in func.get_basic_blocks() {
+                        let mut instr = bb.get_first_instruction();
+                        while let Some(i) = instr {
+                            instr_count += 1;
+                            instr = i.get_next_instruction();
+                        }
+                    }
+                    if instr_count > threshold {
+                        func.add_attribute(
+                            inkwell::attributes::AttributeLoc::Function,
+                            noinline_attr,
+                        );
+                    }
+                }
+            }
+
             let opts = PassBuilderOptions::create();
             self.module
                 .run_passes("cgscc(inline)", &machine, opts)

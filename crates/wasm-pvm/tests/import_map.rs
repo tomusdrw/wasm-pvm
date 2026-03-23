@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use wasm_pvm::pvm::Opcode;
+use wasm_pvm::pvm::{Instruction, Opcode};
 use wasm_pvm::test_harness::*;
 use wasm_pvm::{CompileOptions, ImportAction};
 
@@ -143,5 +143,59 @@ fn test_no_import_map_unknown_import_fails() {
     assert!(
         err.to_string().contains("console.log"),
         "Error should mention the unresolved import name: {err}"
+    );
+}
+
+#[test]
+fn test_import_map_ecalli() {
+    let wat = r#"
+        (module
+            (import "env" "read" (func $read (param i32 i32) (result i64)))
+            (memory (export "memory") 1)
+            (func (export "main") (param i32 i32) (result i32)
+                (drop (call $read (i32.const 100) (i32.const 200)))
+                (i32.const 0)
+            )
+        )
+    "#;
+
+    let mut map = HashMap::new();
+    map.insert("read".to_string(), ImportAction::Ecalli(5));
+
+    let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
+    let instructions = extract_instructions(&program);
+
+    // Should have an Ecalli instruction with index 5.
+    let ecalli = instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Ecalli { index: 5 }));
+    assert!(ecalli.is_some(), "Expected Ecalli {{ index: 5 }} in output");
+}
+
+#[test]
+fn test_import_map_ecalli_zero_args() {
+    let wat = r#"
+        (module
+            (import "env" "gas" (func $gas (result i64)))
+            (memory (export "memory") 1)
+            (func (export "main") (param i32 i32) (result i32)
+                (drop (call $gas))
+                (i32.const 0)
+            )
+        )
+    "#;
+
+    let mut map = HashMap::new();
+    map.insert("gas".to_string(), ImportAction::Ecalli(3));
+
+    let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
+    let instructions = extract_instructions(&program);
+
+    let ecalli = instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Ecalli { index: 3 }));
+    assert!(
+        ecalli.is_some(),
+        "Expected Ecalli {{ index: 3 }} for zero-arg import"
     );
 }

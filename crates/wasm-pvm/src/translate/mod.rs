@@ -25,6 +25,9 @@ pub enum ImportAction {
     Trap,
     /// Emit a no-op (return 0 for functions with return values).
     Nop,
+    /// Emit a PVM `ecalli` instruction with the given index.
+    /// Arguments are loaded into data registers (r7-r12), return value from r7.
+    Ecalli(u32),
 }
 
 /// Flags to enable/disable individual compiler optimizations.
@@ -73,6 +76,11 @@ pub struct OptimizationFlags {
     /// Values are only written to the stack when required (call clobber, return,
     /// phi reads, eviction). Requires `register_allocation` to be effective.
     pub lazy_spill: bool,
+    /// Max LLVM IR instructions for a function to be inlineable.
+    /// Functions exceeding this are marked `noinline`. `None` uses LLVM's
+    /// default (225). Default: `Some(5)` — only tiny helpers are inlined.
+    /// Only effective when `inlining` is `true`.
+    pub inline_threshold: Option<u32>,
 }
 
 impl Default for OptimizationFlags {
@@ -94,6 +102,7 @@ impl Default for OptimizationFlags {
             allocate_scratch_regs: true,
             allocate_caller_saved_regs: true,
             lazy_spill: true,
+            inline_threshold: Some(5),
         }
     }
 }
@@ -195,12 +204,13 @@ pub fn compile_with_stats(
         if let Some(import_map) = &options.import_map {
             if let Some(action) = import_map.get(name) {
                 let action_str = match action {
-                    ImportAction::Trap => "trap",
-                    ImportAction::Nop => "nop",
+                    ImportAction::Trap => "trap".to_string(),
+                    ImportAction::Nop => "nop".to_string(),
+                    ImportAction::Ecalli(idx) => format!("ecalli:{idx}"),
                 };
                 import_resolutions.push(stats::ImportResolution {
                     name: name.clone(),
-                    action: action_str.to_string(),
+                    action: action_str,
                 });
                 continue;
             }
@@ -290,6 +300,7 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         module,
         options.optimizations.llvm_passes,
         options.optimizations.inlining,
+        options.optimizations.inline_threshold,
         reachable_locals.as_ref(),
     )?;
 
@@ -329,9 +340,12 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     }
 
     // Phase 2: Build lowering context
+    let param_overflow_base =
+        memory_layout::compute_param_overflow_base(module.globals.len(), passive_ordinal);
     let ctx = LoweringContext {
         wasm_memory_base: module.wasm_memory_base,
         num_globals: module.globals.len(),
+        param_overflow_base,
         function_signatures: module.function_signatures.clone(),
         type_signatures: module.type_signatures.clone(),
         function_table: module.function_table.clone(),
@@ -607,7 +621,6 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         rw_data_section.len(),
         module.wasm_memory_base,
         module.memory_limits.initial_pages,
-        module.functions.len(),
     )?;
 
     let program = SpiProgram::new(blob)
@@ -644,18 +657,13 @@ fn calculate_heap_pages(
     rw_data_len: usize,
     wasm_memory_base: i32,
     initial_pages: u32,
-    num_functions: usize,
 ) -> Result<u16> {
     use wasm_module::MIN_INITIAL_WASM_PAGES;
 
     let initial_pages = initial_pages.max(MIN_INITIAL_WASM_PAGES);
     let wasm_memory_initial_end = wasm_memory_base as usize + (initial_pages as usize) * 64 * 1024;
 
-    let spilled_locals_end = memory_layout::SPILLED_LOCALS_BASE as usize
-        + num_functions * memory_layout::SPILLED_LOCALS_PER_FUNC as usize;
-
-    let end = spilled_locals_end.max(wasm_memory_initial_end);
-    let total_bytes = end - memory_layout::GLOBAL_MEMORY_BASE as usize;
+    let total_bytes = wasm_memory_initial_end - memory_layout::GLOBAL_MEMORY_BASE as usize;
     let rw_pages = rw_data_len.div_ceil(4096);
     let total_pages = total_bytes.div_ceil(4096);
     let heap_pages = total_pages.saturating_sub(rw_pages) + 1;
@@ -913,38 +921,38 @@ mod tests {
 
     #[test]
     fn heap_pages_with_empty_rw_data_equals_total_pages_plus_one() {
-        // wasm_memory_base = 0x33000 (typical), initial_pages = 0 (clamped to 16)
-        // end = 0x33000 + 16*64*1024 = 0x33000 + 0x100000 = 0x133000
-        // total_bytes = 0x133000 - 0x30000 = 0x103000 = 1060864
-        // total_pages = ceil(1060864 / 4096) = 259
-        // rw_pages = 0, heap_pages = 259 + 1 = 260
-        let pages = super::calculate_heap_pages(0, 0x33000, 0, 10).unwrap();
-        assert_eq!(pages, 260);
+        // wasm_memory_base = 0x31000 (typical with few globals), initial_pages = 0 (clamped to 16)
+        // end = 0x31000 + 16*64*1024 = 0x31000 + 0x100000 = 0x131000
+        // total_bytes = 0x131000 - 0x30000 = 0x101000 = 1052672
+        // total_pages = ceil(1052672 / 4096) = 257
+        // rw_pages = 0, heap_pages = 257 + 1 = 258
+        let pages = super::calculate_heap_pages(0, 0x31000, 0).unwrap();
+        assert_eq!(pages, 258);
     }
 
     #[test]
     fn heap_pages_reduced_by_rw_data_pages() {
         // Same scenario but with 8192 bytes of rw_data (2 pages)
-        let pages_no_rw = super::calculate_heap_pages(0, 0x33000, 0, 10).unwrap();
-        let pages_with_rw = super::calculate_heap_pages(8192, 0x33000, 0, 10).unwrap();
+        let pages_no_rw = super::calculate_heap_pages(0, 0x31000, 0).unwrap();
+        let pages_with_rw = super::calculate_heap_pages(8192, 0x31000, 0).unwrap();
         assert_eq!(pages_no_rw - pages_with_rw, 2);
     }
 
     #[test]
     fn heap_pages_saturates_at_one_for_large_rw_data() {
         // rw_data that covers more than total_pages still gets +1 headroom
-        let pages = super::calculate_heap_pages(2 * 1024 * 1024, 0x33000, 0, 10).unwrap();
+        let pages = super::calculate_heap_pages(2 * 1024 * 1024, 0x31000, 0).unwrap();
         assert_eq!(pages, 1);
     }
 
     #[test]
     fn heap_pages_respects_initial_pages() {
         // initial_pages = 32 (larger than MIN_INITIAL_WASM_PAGES=16)
-        // end = 0x33000 + 32*64*1024 = 0x33000 + 0x200000 = 0x233000
-        // total_bytes = 0x233000 - 0x30000 = 0x203000
-        // total_pages = ceil(0x203000 / 4096) = 515
-        // heap_pages = 515 + 1 = 516
-        let pages = super::calculate_heap_pages(0, 0x33000, 32, 10).unwrap();
-        assert_eq!(pages, 516);
+        // end = 0x31000 + 32*64*1024 = 0x31000 + 0x200000 = 0x231000
+        // total_bytes = 0x231000 - 0x30000 = 0x201000
+        // total_pages = ceil(0x201000 / 4096) = 513
+        // heap_pages = 513 + 1 = 514
+        let pages = super::calculate_heap_pages(0, 0x31000, 32).unwrap();
+        assert_eq!(pages, 514);
     }
 }

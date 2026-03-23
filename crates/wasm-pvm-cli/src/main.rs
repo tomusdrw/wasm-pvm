@@ -32,7 +32,7 @@ enum Commands {
         #[arg(
             short,
             long,
-            help = "Import map file mapping import names to actions (trap, nop)"
+            help = "Import map file mapping import names to actions (trap, nop, ecalli:N)"
         )]
         imports: Option<PathBuf>,
 
@@ -75,6 +75,12 @@ enum Commands {
 
         #[arg(long, help = "Disable LLVM function inlining")]
         no_inline: bool,
+
+        #[arg(
+            long,
+            help = "Max LLVM IR instructions for inlining (functions above this are marked noinline). Default: 5. Use 225 for LLVM default"
+        )]
+        inline_threshold: Option<u32>,
 
         #[arg(long, help = "Disable cross-block register cache propagation")]
         no_cross_block_cache: bool,
@@ -146,6 +152,7 @@ fn main() -> Result<()> {
             no_dead_store_elim,
             no_const_prop,
             no_inline,
+            inline_threshold,
             no_cross_block_cache,
             no_register_alloc,
             no_dead_function_elim,
@@ -199,6 +206,8 @@ fn main() -> Result<()> {
                     allocate_scratch_regs: !no_scratch_reg_alloc,
                     allocate_caller_saved_regs: !no_caller_saved_alloc,
                     lazy_spill: !no_lazy_spill,
+                    inline_threshold: inline_threshold
+                        .or(OptimizationFlags::default().inline_threshold),
                 },
                 max_memory_pages: max_memory,
             };
@@ -598,7 +607,10 @@ fn read_wasm(path: &PathBuf) -> Result<Vec<u8>> {
 /// # Comments start with #
 /// abort = trap
 /// console.log = nop
+/// read = ecalli:5
 /// ```
+///
+/// Actions: `trap` (emit unreachable), `nop` (return 0), `ecalli:N` (emit PVM ecalli N).
 fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
     let contents =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
@@ -626,9 +638,18 @@ fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
             ImportAction::Trap
         } else if action_str == "nop" {
             ImportAction::Nop
+        } else if let Some(idx_str) = action_str.strip_prefix("ecalli:") {
+            let idx: u32 = idx_str.parse().map_err(|_| {
+                anyhow::anyhow!(
+                    "{}:{}: invalid ecalli index '{idx_str}', expected a number",
+                    path.display(),
+                    line_num + 1
+                )
+            })?;
+            ImportAction::Ecalli(idx)
         } else {
             anyhow::bail!(
-                "{}:{}: unknown action '{action_str}', expected 'trap' or 'nop'",
+                "{}:{}: unknown action '{action_str}', expected 'trap', 'nop', or 'ecalli:N'",
                 path.display(),
                 line_num + 1
             );

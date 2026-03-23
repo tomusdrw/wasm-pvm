@@ -29,8 +29,15 @@ pub fn translate_wasm_to_llvm<'ctx>(
     wasm_module: &WasmModule,
     run_llvm_passes: bool,
     run_inlining: bool,
+    inline_threshold: Option<u32>,
     reachable_locals: Option<&HashSet<usize>>,
 ) -> Result<Module<'ctx>> {
     let translator = WasmToLlvm::new(context, "wasm_module");
-    translator.translate_module(wasm_module, run_llvm_passes, run_inlining, reachable_locals)
+    translator.translate_module(
+        wasm_module,
+        run_llvm_passes,
+        run_inlining,
+        inline_threshold,
+        reachable_locals,
+    )
 }

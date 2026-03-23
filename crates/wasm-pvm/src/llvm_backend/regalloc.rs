@@ -213,7 +213,7 @@ pub fn run(
         allocatable_regs.push(crate::abi::SCRATCH2);
     }
 
-    // Add r7/r8 (RETURN_VALUE_REG/ARGS_LEN_REG) in all functions.
+    // Add r7/r8 (RETURN_VALUE_REG/ARGS_LEN_REG) in leaf functions.
     // In leaf functions, these are idle after the prologue.
     // In non-leaf functions, r7 holds the return value after calls and r8 is
     // used as scratch in indirect call dispatch. The call lowering handles
@@ -221,10 +221,11 @@ pub fn run(
     // Lowering paths that use r7/r8 as scratch (alu.rs signed div, NE compare,
     // control_flow.rs multi-phi) will trigger invalidate_reg via emit(), forcing
     // a lazy reload from the write-through stack slot on next use.
-    // Only allocate r7/r8 in leaf functions: in non-leaf functions, every call
-    // clobbers r7 (return value) and r8 (scratch), making the constant
-    // invalidation/reload a net negative and exposing correctness edge cases
-    // in the spill/reload interaction with call lowering.
+    // Non-leaf r7/r8 allocation is not feasible: operand_reg() returns the
+    // allocated register directly as a source operand, and address computation
+    // (adding wasm_memory_base) modifies the register in-place, clobbering the
+    // value before it can be used. Same root cause as callee-saved state
+    // preservation — see docs/src/learnings.md.
     if allocate_caller_saved && is_leaf {
         allocatable_regs.push(crate::abi::ARGS_LEN_REG); // r8
         allocatable_regs.push(crate::abi::RETURN_VALUE_REG); // r7
@@ -322,22 +323,34 @@ fn linearize<'ctx>(
 
 /// Returns the maximum direct call argument count used in this function.
 /// Only counts real calls (`wasm_func_*`, `__pvm_call_indirect`), not intrinsics
-/// (`__pvm_load/store/memory_*`, `llvm.*`) which don't use outgoing argument registers.
+/// (`__pvm_load/store/memory_*`, `llvm.*`) and import function declarations
+/// (`host_call_N`, `ecalli:N`, etc.) which don't use outgoing argument registers
+/// (r9+). Import calls are lowered by `lower_import_call` which loads args
+/// into r7+ independently.
 fn max_call_args(function: FunctionValue<'_>) -> usize {
     let mut max_args = 0usize;
     for bb in function.get_basic_blocks() {
         for instr in bb.get_instructions() {
             if instr.get_opcode() == inkwell::values::InstructionOpcode::Call {
-                // Skip intrinsics — they don't use outgoing argument registers.
                 let call_site: std::result::Result<inkwell::values::CallSiteValue, _> =
                     instr.try_into();
                 if let Ok(cs) = call_site
                     && let Some(fn_val) = cs.get_called_fn_value()
                 {
                     let name = fn_val.get_name().to_string_lossy();
+                    // Skip PVM intrinsics (except call_indirect) and LLVM intrinsics.
                     if (name.starts_with("__pvm_") && name != "__pvm_call_indirect")
                         || name.starts_with("llvm.")
                     {
+                        continue;
+                    }
+                    // Skip import function declarations (no body). These are
+                    // lowered by lower_import_call which handles register
+                    // loading into r7+ (host_call_N, ecalli:N, trap, nop),
+                    // NOT via the standard r9+ calling convention.
+                    // __pvm_call_indirect is also a declaration but uses the
+                    // standard convention, so exclude it from this check.
+                    if fn_val.count_basic_blocks() == 0 && !name.starts_with("__pvm_") {
                         continue;
                     }
                 }

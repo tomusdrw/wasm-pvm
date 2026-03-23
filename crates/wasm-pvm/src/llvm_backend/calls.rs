@@ -53,7 +53,7 @@ pub fn lower_wasm_call<'ctx>(
     e.spill_allocated_regs();
 
     // Load arguments from LLVM call operands into r9-r12 (first 4) and
-    // PARAM_OVERFLOW_BASE (5th+). The last operand is the function pointer.
+    // param overflow area (5th+). The last operand is the function pointer.
     let num_args = (instr.get_num_operands() - 1) as usize;
 
     for i in 0..num_args {
@@ -62,7 +62,8 @@ pub fn lower_wasm_call<'ctx>(
             e.load_operand(arg, abi::FIRST_LOCAL_REG + i as u8)?;
         } else {
             e.load_operand(arg, TEMP1)?;
-            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset =
+                e.config.param_overflow_base + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: overflow_offset,
@@ -216,6 +217,41 @@ fn lower_mapped_import<'ctx>(
                     value: 0,
                 });
                 e.store_to_slot(slot, TEMP_RESULT);
+            }
+        }
+        ImportAction::Ecalli(index) => {
+            let num_args = (instr.get_num_operands() - 1) as usize;
+
+            if num_args > abi::MAX_HOST_CALL_DATA_ARGS as usize {
+                return Err(Error::Unsupported(format!(
+                    "ecalli:{index} import has {num_args} arguments, maximum is {}",
+                    abi::MAX_HOST_CALL_DATA_ARGS,
+                )));
+            }
+
+            // Spill register-allocated values before ecalli.
+            e.spill_allocated_regs();
+
+            // Load all arguments into data registers r7..r7+N-1.
+            let data_args = num_args;
+            for i in 0..data_args {
+                let arg = get_operand(instr, i as u32)?;
+                let target_reg = abi::RETURN_VALUE_REG + i as u8;
+                e.load_operand(arg, target_reg)?;
+            }
+
+            e.emit(Instruction::Ecalli { index: *index });
+
+            // Ecalli clobbers registers externally.
+            e.clear_reg_cache();
+
+            // Reload register-allocated values after ecalli.
+            e.reload_allocated_regs_after_call();
+
+            // Return value from r7 (if function returns a value).
+            if has_return {
+                let slot = result_slot(e, instr)?;
+                e.store_to_slot(slot, abi::RETURN_VALUE_REG);
             }
         }
     }
@@ -463,7 +499,8 @@ pub fn lower_pvm_call_indirect<'ctx>(
             e.load_operand(arg, abi::FIRST_LOCAL_REG + i as u8)?;
         } else {
             e.load_operand(arg, TEMP1)?;
-            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
+            let overflow_offset =
+                e.config.param_overflow_base + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP2,
                 value: overflow_offset,

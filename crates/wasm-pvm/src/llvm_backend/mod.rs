@@ -53,6 +53,7 @@ pub fn lower_function(
 ) -> Result<LlvmFunctionTranslation> {
     let config = EmitterConfig {
         wasm_memory_base: ctx.wasm_memory_base,
+        param_overflow_base: ctx.param_overflow_base,
         register_cache_enabled: ctx.optimizations.register_cache,
         icmp_fusion_enabled: ctx.optimizations.icmp_branch_fusion,
         shrink_wrap_enabled: ctx.optimizations.shrink_wrap_callee_saves,
@@ -486,8 +487,9 @@ fn emit_prologue<'ctx>(
             // First 4 params come in r9-r12.
             e.store_to_slot(slot, abi::FIRST_LOCAL_REG + i as u8);
         } else {
-            // Overflow params from PARAM_OVERFLOW_BASE.
-            let overflow_offset = abi::PARAM_OVERFLOW_BASE + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
+            // Overflow params from the parameter overflow area.
+            let overflow_offset =
+                e.config.param_overflow_base + ((i - abi::MAX_LOCAL_REGS) * 8) as i32;
             e.emit(Instruction::LoadImm {
                 reg: TEMP1,
                 value: overflow_offset,
