@@ -78,8 +78,7 @@ enum Commands {
 
         #[arg(
             long,
-            default_value = "5",
-            help = "Max LLVM IR instructions for inlining (functions above this are marked noinline). Lower = less inlining, smaller code. Use 0 to disable inlining, 225 for LLVM default"
+            help = "Max LLVM IR instructions for inlining (functions above this are marked noinline). Default: 5. Use 225 for LLVM default"
         )]
         inline_threshold: Option<u32>,
 
@@ -207,7 +206,8 @@ fn main() -> Result<()> {
                     allocate_scratch_regs: !no_scratch_reg_alloc,
                     allocate_caller_saved_regs: !no_caller_saved_alloc,
                     lazy_spill: !no_lazy_spill,
-                    inline_threshold,
+                    inline_threshold: inline_threshold
+                        .or(OptimizationFlags::default().inline_threshold),
                 },
                 max_memory_pages: max_memory,
             };
