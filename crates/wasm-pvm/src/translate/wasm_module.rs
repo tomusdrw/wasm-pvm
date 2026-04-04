@@ -198,8 +198,14 @@ impl<'a> WasmModule<'a> {
                         if export.kind == wasmparser::ExternalKind::Func {
                             exported_wasm_func_indices.push(export.index);
                             let is_imported = export.index < num_imported_funcs;
-                            let is_main_name =
-                                matches!(export.name, "main" | "refine" | "refine_ext");
+                            let is_main_name = matches!(
+                                export.name,
+                                "main"
+                                    | "refine"
+                                    | "refine_ext"
+                                    | "is_authorized"
+                                    | "is_authorized_ext"
+                            );
                             let is_secondary_name =
                                 matches!(export.name, "main2" | "accumulate" | "accumulate_ext");
                             if is_imported && (is_main_name || is_secondary_name) {
@@ -212,7 +218,10 @@ impl<'a> WasmModule<'a> {
                                 "main" => {
                                     main_func_idx = Some(export.index);
                                 }
-                                "refine" | "refine_ext" if main_func_idx.is_none() => {
+                                "refine" | "refine_ext" | "is_authorized"
+                                | "is_authorized_ext"
+                                    if main_func_idx.is_none() =>
+                                {
                                     main_func_idx = Some(export.index);
                                 }
                                 "main2" => {
