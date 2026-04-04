@@ -218,8 +218,7 @@ impl<'a> WasmModule<'a> {
                                 "main" => {
                                     main_func_idx = Some(export.index);
                                 }
-                                "refine" | "refine_ext" | "is_authorized"
-                                | "is_authorized_ext"
+                                "refine" | "refine_ext" | "is_authorized" | "is_authorized_ext"
                                     if main_func_idx.is_none() =>
                                 {
                                     main_func_idx = Some(export.index);
