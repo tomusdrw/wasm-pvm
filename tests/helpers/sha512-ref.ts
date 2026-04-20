@@ -15,7 +15,7 @@ export function sha512Ref(args: Sha512Args): Uint8Array {
  * has a fixed 64-byte output, so there is nothing to parameterize.
  */
 export function encodeSha512Args(args: Sha512Args): Uint8Array {
-  // Return a copy so callers can mutate the input without affecting the args.
+  // Return a copy so the caller can mutate the encoded buffer without affecting args.input.
   return new Uint8Array(args.input);
 }
 
