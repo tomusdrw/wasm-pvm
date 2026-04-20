@@ -379,7 +379,7 @@ fn print_verbose_text(stats: &CompileStats) {
     section("Functions");
     for f in &stats.functions {
         if f.is_dead {
-            println!("  #{:<4} {:<20} DEAD", f.index, truncate(&f.name, 20),);
+            println!("  #{:<4} {:<20} DEAD", f.index, truncate(&f.name, 20));
             continue;
         }
         let kind = if f.is_leaf { "leaf" } else { "calls" };
