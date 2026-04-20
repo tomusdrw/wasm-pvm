@@ -109,6 +109,31 @@
     "\ec\fa\d6\3a\ab\6f\cb\5f"  ;; K[78] = 0x5fcb6fab3ad6faec
     "\17\58\47\4a\8c\19\44\6c") ;; K[79] = 0x6c44198c4a475817
 
+  ;; --- Helper: byte-swap an i64 (LE ↔ BE) ---
+  ;; WAT has no native bswap. Implemented via shifts + masks.
+  (func $bswap64 (param $x i64) (result i64)
+    (i64.or
+      (i64.or
+        (i64.or
+          (i64.shl (local.get $x) (i64.const 56))
+          (i64.shl (i64.and (local.get $x) (i64.const 0x000000000000FF00))
+                   (i64.const 40)))
+        (i64.or
+          (i64.shl (i64.and (local.get $x) (i64.const 0x0000000000FF0000))
+                   (i64.const 24))
+          (i64.shl (i64.and (local.get $x) (i64.const 0x00000000FF000000))
+                   (i64.const  8))))
+      (i64.or
+        (i64.or
+          (i64.and (i64.shr_u (local.get $x) (i64.const  8))
+                   (i64.const 0x00000000FF000000))
+          (i64.and (i64.shr_u (local.get $x) (i64.const 24))
+                   (i64.const 0x0000000000FF0000)))
+        (i64.or
+          (i64.and (i64.shr_u (local.get $x) (i64.const 40))
+                   (i64.const 0x000000000000FF00))
+          (i64.shr_u (local.get $x) (i64.const 56))))))
+
   ;; Placeholder — full compress follows in 3.3.
   (func $compress)
 
