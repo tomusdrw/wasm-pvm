@@ -134,8 +134,145 @@
                    (i64.const 0x000000000000FF00))
           (i64.shr_u (local.get $x) (i64.const 56))))))
 
-  ;; Placeholder — full compress follows in 3.3.
-  (func $compress)
+  ;; --- compress(block_ptr: i32) ---
+  ;;
+  ;; Consumes one 128-byte block at $block_ptr, mutates h[].
+  (func $compress (param $block_ptr i32)
+    (local $a i64) (local $b i64) (local $c i64) (local $d i64)
+    (local $e i64) (local $f i64) (local $g i64) (local $hh i64)
+    (local $t1 i64) (local $t2 i64)
+    (local $i i32) (local $w_ptr i32)
+
+    ;; --- Build W[0..15] from the block: load LE then bswap to BE ---
+    (local.set $i (i32.const 0))
+    (block $w_load_exit
+      (loop $w_load
+        (br_if $w_load_exit (i32.ge_u (local.get $i) (i32.const 128)))
+        (i64.store
+          (i32.add (i32.const 0x340) (local.get $i))
+          (call $bswap64
+            (i64.load (i32.add (local.get $block_ptr) (local.get $i)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 8)))
+        (br $w_load)))
+
+    ;; --- Extend W[16..79] using SSIG0/SSIG1 ---
+    ;; W[t] = SSIG1(W[t-2]) + W[t-7] + SSIG0(W[t-15]) + W[t-16]
+    ;; SSIG0(x) = rotr(x,1) ^ rotr(x,8) ^ (x >> 7)
+    ;; SSIG1(x) = rotr(x,19) ^ rotr(x,61) ^ (x >> 6)
+    ;; We index W[] in memory: byte offset = t*8, from 0x340.
+    (local.set $i (i32.const 16))
+    (block $w_ext_exit
+      (loop $w_ext
+        (br_if $w_ext_exit (i32.ge_u (local.get $i) (i32.const 80)))
+        ;; w_ptr = 0x340 + i*8
+        (local.set $w_ptr
+          (i32.add (i32.const 0x340)
+            (i32.shl (local.get $i) (i32.const 3))))
+        (i64.store (local.get $w_ptr)
+          (i64.add
+            (i64.add
+              ;; SSIG1(W[i-2])
+              (i64.xor
+                (i64.xor
+                  (i64.rotr (i64.load offset=-16 (local.get $w_ptr)) (i64.const 19))
+                  (i64.rotr (i64.load offset=-16 (local.get $w_ptr)) (i64.const 61)))
+                (i64.shr_u (i64.load offset=-16 (local.get $w_ptr)) (i64.const 6)))
+              ;; W[i-7]
+              (i64.load offset=-56 (local.get $w_ptr)))
+            (i64.add
+              ;; SSIG0(W[i-15])
+              (i64.xor
+                (i64.xor
+                  (i64.rotr (i64.load offset=-120 (local.get $w_ptr)) (i64.const 1))
+                  (i64.rotr (i64.load offset=-120 (local.get $w_ptr)) (i64.const 8)))
+                (i64.shr_u (i64.load offset=-120 (local.get $w_ptr)) (i64.const 7)))
+              ;; W[i-16]
+              (i64.load offset=-128 (local.get $w_ptr)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $w_ext)))
+
+    ;; --- Initialize working variables from h[] ---
+    (local.set $a  (i64.load offset=0  (i32.const 0x040)))
+    (local.set $b  (i64.load offset=8  (i32.const 0x040)))
+    (local.set $c  (i64.load offset=16 (i32.const 0x040)))
+    (local.set $d  (i64.load offset=24 (i32.const 0x040)))
+    (local.set $e  (i64.load offset=32 (i32.const 0x040)))
+    (local.set $f  (i64.load offset=40 (i32.const 0x040)))
+    (local.set $g  (i64.load offset=48 (i32.const 0x040)))
+    (local.set $hh (i64.load offset=56 (i32.const 0x040)))
+
+    ;; --- 80 rounds ---
+    ;; T1 = hh + BSIG1(e) + Ch(e,f,g) + K[t] + W[t]
+    ;; T2 = BSIG0(a) + Maj(a,b,c)
+    ;; BSIG0(x) = rotr(x,28) ^ rotr(x,34) ^ rotr(x,39)
+    ;; BSIG1(x) = rotr(x,14) ^ rotr(x,18) ^ rotr(x,41)
+    ;; Ch(x,y,z)  = (x & y) ^ (~x & z)
+    ;; Maj(x,y,z) = (x & y) ^ (x & z) ^ (y & z)
+    ;;
+    ;; K and W are 8-byte-indexed; we keep a byte-offset counter $i and read
+    ;; K[t] from 0xC0 + i, W[t] from 0x340 + i.
+    (local.set $i (i32.const 0))
+    (block $rounds_exit
+      (loop $rounds
+        (br_if $rounds_exit (i32.ge_u (local.get $i) (i32.const 640))) ;; 80*8
+
+        ;; T1 = hh + BSIG1(e) + Ch(e,f,g) + K[t] + W[t]
+        (local.set $t1
+          (i64.add
+            (i64.add
+              (i64.add (local.get $hh)
+                ;; BSIG1(e)
+                (i64.xor
+                  (i64.xor
+                    (i64.rotr (local.get $e) (i64.const 14))
+                    (i64.rotr (local.get $e) (i64.const 18)))
+                  (i64.rotr (local.get $e) (i64.const 41))))
+              ;; Ch(e,f,g) = (e & f) ^ (~e & g)
+              (i64.xor
+                (i64.and (local.get $e) (local.get $f))
+                (i64.and (i64.xor (local.get $e) (i64.const -1)) (local.get $g))))
+            (i64.add
+              (i64.load (i32.add (i32.const 0x0c0) (local.get $i))) ;; K[t]
+              (i64.load (i32.add (i32.const 0x340) (local.get $i)))))) ;; W[t]
+
+        ;; T2 = BSIG0(a) + Maj(a,b,c)
+        (local.set $t2
+          (i64.add
+            ;; BSIG0(a)
+            (i64.xor
+              (i64.xor
+                (i64.rotr (local.get $a) (i64.const 28))
+                (i64.rotr (local.get $a) (i64.const 34)))
+              (i64.rotr (local.get $a) (i64.const 39)))
+            ;; Maj(a,b,c) = (a & b) ^ (a & c) ^ (b & c)
+            (i64.xor
+              (i64.xor
+                (i64.and (local.get $a) (local.get $b))
+                (i64.and (local.get $a) (local.get $c)))
+              (i64.and (local.get $b) (local.get $c)))))
+
+        ;; Shift state: hh = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2.
+        (local.set $hh (local.get $g))
+        (local.set $g (local.get $f))
+        (local.set $f (local.get $e))
+        (local.set $e (i64.add (local.get $d) (local.get $t1)))
+        (local.set $d (local.get $c))
+        (local.set $c (local.get $b))
+        (local.set $b (local.get $a))
+        (local.set $a (i64.add (local.get $t1) (local.get $t2)))
+
+        (local.set $i (i32.add (local.get $i) (i32.const 8)))
+        (br $rounds)))
+
+    ;; --- Add the compressed chunk to the current h[] ---
+    (i64.store offset=0  (i32.const 0x040) (i64.add (i64.load offset=0  (i32.const 0x040)) (local.get $a)))
+    (i64.store offset=8  (i32.const 0x040) (i64.add (i64.load offset=8  (i32.const 0x040)) (local.get $b)))
+    (i64.store offset=16 (i32.const 0x040) (i64.add (i64.load offset=16 (i32.const 0x040)) (local.get $c)))
+    (i64.store offset=24 (i32.const 0x040) (i64.add (i64.load offset=24 (i32.const 0x040)) (local.get $d)))
+    (i64.store offset=32 (i32.const 0x040) (i64.add (i64.load offset=32 (i32.const 0x040)) (local.get $e)))
+    (i64.store offset=40 (i32.const 0x040) (i64.add (i64.load offset=40 (i32.const 0x040)) (local.get $f)))
+    (i64.store offset=48 (i32.const 0x040) (i64.add (i64.load offset=48 (i32.const 0x040)) (local.get $g)))
+    (i64.store offset=56 (i32.const 0x040) (i64.add (i64.load offset=56 (i32.const 0x040)) (local.get $hh))))
 
   (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     ;; Placeholder: copy initial H into h state, then write h to output as-is.
