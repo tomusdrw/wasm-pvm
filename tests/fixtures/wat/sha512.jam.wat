@@ -11,9 +11,12 @@
 ;;   0x0C0..0x33F  K[80] round constants (data segment, 80 x i64 LE)
 ;;   0x340..0x5BF  W[80] message schedule (mutable, 80 x i64)
 ;;   0x5C0..0x63F  final-block padding buffer (128 bytes)
+;;   0x640..0x67F  working state a..hh during rounds (8 x i64)
 
 (module
-  (memory (export "memory") 1)
+  ;; 2 pages (128 KB): enough for the internal buffers (first ~1.7 KB) plus
+  ;; input data up to 64 KB placed by the native-WASM runner at offset 0x1000.
+  (memory (export "memory") 2)
 
   ;; Initial hash values H[0..7] at 0x80 (64 bytes, 8 x i64 LE).
   (data (i32.const 0x080)
@@ -171,35 +174,31 @@
         (i64.store (local.get $w_ptr)
           (i64.add
             (i64.add
-              ;; SSIG1(W[i-2])
+              ;; SSIG1(W[i-2]) — W[i-2] is at w_ptr - 16
               (i64.xor
                 (i64.xor
-                  (i64.rotr (i64.load offset=-16 (local.get $w_ptr)) (i64.const 19))
-                  (i64.rotr (i64.load offset=-16 (local.get $w_ptr)) (i64.const 61)))
-                (i64.shr_u (i64.load offset=-16 (local.get $w_ptr)) (i64.const 6)))
-              ;; W[i-7]
-              (i64.load offset=-56 (local.get $w_ptr)))
+                  (i64.rotr (i64.load (i32.sub (local.get $w_ptr) (i32.const 16))) (i64.const 19))
+                  (i64.rotr (i64.load (i32.sub (local.get $w_ptr) (i32.const 16))) (i64.const 61)))
+                (i64.shr_u (i64.load (i32.sub (local.get $w_ptr) (i32.const 16))) (i64.const 6)))
+              ;; W[i-7] — at w_ptr - 56
+              (i64.load (i32.sub (local.get $w_ptr) (i32.const 56))))
             (i64.add
-              ;; SSIG0(W[i-15])
+              ;; SSIG0(W[i-15]) — W[i-15] is at w_ptr - 120
               (i64.xor
                 (i64.xor
-                  (i64.rotr (i64.load offset=-120 (local.get $w_ptr)) (i64.const 1))
-                  (i64.rotr (i64.load offset=-120 (local.get $w_ptr)) (i64.const 8)))
-                (i64.shr_u (i64.load offset=-120 (local.get $w_ptr)) (i64.const 7)))
-              ;; W[i-16]
-              (i64.load offset=-128 (local.get $w_ptr)))))
+                  (i64.rotr (i64.load (i32.sub (local.get $w_ptr) (i32.const 120))) (i64.const 1))
+                  (i64.rotr (i64.load (i32.sub (local.get $w_ptr) (i32.const 120))) (i64.const 8)))
+                (i64.shr_u (i64.load (i32.sub (local.get $w_ptr) (i32.const 120))) (i64.const 7)))
+              ;; W[i-16] — at w_ptr - 128
+              (i64.load (i32.sub (local.get $w_ptr) (i32.const 128))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $w_ext)))
 
-    ;; --- Initialize working variables from h[] ---
-    (local.set $a  (i64.load offset=0  (i32.const 0x040)))
-    (local.set $b  (i64.load offset=8  (i32.const 0x040)))
-    (local.set $c  (i64.load offset=16 (i32.const 0x040)))
-    (local.set $d  (i64.load offset=24 (i32.const 0x040)))
-    (local.set $e  (i64.load offset=32 (i32.const 0x040)))
-    (local.set $f  (i64.load offset=40 (i32.const 0x040)))
-    (local.set $g  (i64.load offset=48 (i32.const 0x040)))
-    (local.set $hh (i64.load offset=56 (i32.const 0x040)))
+    ;; --- Initialize working state at 0x640 from h[] at 0x040 ---
+    ;; We keep working state in memory (not WASM locals) to avoid excessive
+    ;; phi pressure at the round-loop header — the PVM backend caps loop-
+    ;; carried values at ~5 due to temp-register limits.
+    (memory.copy (i32.const 0x640) (i32.const 0x040) (i32.const 64))
 
     ;; --- 80 rounds ---
     ;; T1 = hh + BSIG1(e) + Ch(e,f,g) + K[t] + W[t]
@@ -209,18 +208,23 @@
     ;; Ch(x,y,z)  = (x & y) ^ (~x & z)
     ;; Maj(x,y,z) = (x & y) ^ (x & z) ^ (y & z)
     ;;
-    ;; K and W are 8-byte-indexed; we keep a byte-offset counter $i and read
-    ;; K[t] from 0xC0 + i, W[t] from 0x340 + i.
+    ;; Working state layout at 0x640: a,b,c,d,e,f,g,hh (each 8 bytes).
+    ;; K[t] at 0x0C0 + i, W[t] at 0x340 + i (both 8-byte indexed).
     (local.set $i (i32.const 0))
     (block $rounds_exit
       (loop $rounds
         (br_if $rounds_exit (i32.ge_u (local.get $i) (i32.const 640))) ;; 80*8
 
+        ;; Load e early (used for BSIG1 + Ch).
+        (local.set $e (i64.load offset=32 (i32.const 0x640)))
+        ;; Load a (for BSIG0 + Maj).
+        (local.set $a (i64.load offset=0 (i32.const 0x640)))
+
         ;; T1 = hh + BSIG1(e) + Ch(e,f,g) + K[t] + W[t]
         (local.set $t1
           (i64.add
             (i64.add
-              (i64.add (local.get $hh)
+              (i64.add (i64.load offset=56 (i32.const 0x640)) ;; hh
                 ;; BSIG1(e)
                 (i64.xor
                   (i64.xor
@@ -229,8 +233,9 @@
                   (i64.rotr (local.get $e) (i64.const 41))))
               ;; Ch(e,f,g) = (e & f) ^ (~e & g)
               (i64.xor
-                (i64.and (local.get $e) (local.get $f))
-                (i64.and (i64.xor (local.get $e) (i64.const -1)) (local.get $g))))
+                (i64.and (local.get $e) (i64.load offset=40 (i32.const 0x640))) ;; f
+                (i64.and (i64.xor (local.get $e) (i64.const -1))
+                         (i64.load offset=48 (i32.const 0x640))))) ;; g
             (i64.add
               (i64.load (i32.add (i32.const 0x0c0) (local.get $i))) ;; K[t]
               (i64.load (i32.add (i32.const 0x340) (local.get $i)))))) ;; W[t]
@@ -247,37 +252,110 @@
             ;; Maj(a,b,c) = (a & b) ^ (a & c) ^ (b & c)
             (i64.xor
               (i64.xor
-                (i64.and (local.get $a) (local.get $b))
-                (i64.and (local.get $a) (local.get $c)))
-              (i64.and (local.get $b) (local.get $c)))))
+                (i64.and (local.get $a) (i64.load offset=8  (i32.const 0x640))) ;; b
+                (i64.and (local.get $a) (i64.load offset=16 (i32.const 0x640)))) ;; c
+              (i64.and (i64.load offset=8  (i32.const 0x640))
+                       (i64.load offset=16 (i32.const 0x640))))))
 
         ;; Shift state: hh = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2.
-        (local.set $hh (local.get $g))
-        (local.set $g (local.get $f))
-        (local.set $f (local.get $e))
-        (local.set $e (i64.add (local.get $d) (local.get $t1)))
-        (local.set $d (local.get $c))
-        (local.set $c (local.get $b))
-        (local.set $b (local.get $a))
-        (local.set $a (i64.add (local.get $t1) (local.get $t2)))
+        ;; Write from highest-offset down so we read old values before overwriting.
+        (i64.store offset=56 (i32.const 0x640) (i64.load offset=48 (i32.const 0x640))) ;; hh = g
+        (i64.store offset=48 (i32.const 0x640) (i64.load offset=40 (i32.const 0x640))) ;; g  = f
+        (i64.store offset=40 (i32.const 0x640) (local.get $e))                          ;; f  = old e
+        (i64.store offset=32 (i32.const 0x640) (i64.add (i64.load offset=24 (i32.const 0x640)) (local.get $t1))) ;; e = d + t1
+        (i64.store offset=24 (i32.const 0x640) (i64.load offset=16 (i32.const 0x640))) ;; d  = c
+        (i64.store offset=16 (i32.const 0x640) (i64.load offset=8  (i32.const 0x640))) ;; c  = b
+        (i64.store offset=8  (i32.const 0x640) (local.get $a))                          ;; b  = old a
+        (i64.store offset=0  (i32.const 0x640) (i64.add (local.get $t1) (local.get $t2))) ;; a = t1+t2
 
         (local.set $i (i32.add (local.get $i) (i32.const 8)))
         (br $rounds)))
 
-    ;; --- Add the compressed chunk to the current h[] ---
-    (i64.store offset=0  (i32.const 0x040) (i64.add (i64.load offset=0  (i32.const 0x040)) (local.get $a)))
-    (i64.store offset=8  (i32.const 0x040) (i64.add (i64.load offset=8  (i32.const 0x040)) (local.get $b)))
-    (i64.store offset=16 (i32.const 0x040) (i64.add (i64.load offset=16 (i32.const 0x040)) (local.get $c)))
-    (i64.store offset=24 (i32.const 0x040) (i64.add (i64.load offset=24 (i32.const 0x040)) (local.get $d)))
-    (i64.store offset=32 (i32.const 0x040) (i64.add (i64.load offset=32 (i32.const 0x040)) (local.get $e)))
-    (i64.store offset=40 (i32.const 0x040) (i64.add (i64.load offset=40 (i32.const 0x040)) (local.get $f)))
-    (i64.store offset=48 (i32.const 0x040) (i64.add (i64.load offset=48 (i32.const 0x040)) (local.get $g)))
-    (i64.store offset=56 (i32.const 0x040) (i64.add (i64.load offset=56 (i32.const 0x040)) (local.get $hh))))
+    ;; --- Add the compressed chunk (working state) back into h[] ---
+    (i64.store offset=0  (i32.const 0x040) (i64.add (i64.load offset=0  (i32.const 0x040)) (i64.load offset=0  (i32.const 0x640))))
+    (i64.store offset=8  (i32.const 0x040) (i64.add (i64.load offset=8  (i32.const 0x040)) (i64.load offset=8  (i32.const 0x640))))
+    (i64.store offset=16 (i32.const 0x040) (i64.add (i64.load offset=16 (i32.const 0x040)) (i64.load offset=16 (i32.const 0x640))))
+    (i64.store offset=24 (i32.const 0x040) (i64.add (i64.load offset=24 (i32.const 0x040)) (i64.load offset=24 (i32.const 0x640))))
+    (i64.store offset=32 (i32.const 0x040) (i64.add (i64.load offset=32 (i32.const 0x040)) (i64.load offset=32 (i32.const 0x640))))
+    (i64.store offset=40 (i32.const 0x040) (i64.add (i64.load offset=40 (i32.const 0x040)) (i64.load offset=40 (i32.const 0x640))))
+    (i64.store offset=48 (i32.const 0x040) (i64.add (i64.load offset=48 (i32.const 0x040)) (i64.load offset=48 (i32.const 0x640))))
+    (i64.store offset=56 (i32.const 0x040) (i64.add (i64.load offset=56 (i32.const 0x040)) (i64.load offset=56 (i32.const 0x640)))))
 
+  ;; --- main ---
   (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
-    ;; Placeholder: copy initial H into h state, then write h to output as-is.
-    ;; Will NOT produce correct hashes — this step only verifies the module
-    ;; compiles and the memory layout is consistent.
+    (local $data_ptr i32)
+    (local $remaining i32)
+    (local $bit_len_lo i64)
+    (local $tail_len i32)
+
+    ;; h[0..7] = H[0..7] (one 64-byte copy from the initial-H data segment).
     (memory.copy (i32.const 0x040) (i32.const 0x080) (i32.const 64))
-    (memory.copy (i32.const 0)     (i32.const 0x040) (i32.const 64))
-    (i64.const 274877906944)))  ;; (0 | (64 << 32))
+
+    ;; data_ptr = args_ptr; remaining = args_len
+    (local.set $data_ptr  (local.get $args_ptr))
+    (local.set $remaining (local.get $args_len))
+
+    ;; Total bit length (for the final padding). SHA-512 uses a 128-bit big-
+    ;; endian bit-count; our cap (64 KB) keeps the value in the low 64 bits.
+    ;; Cast args_len -> i64 and << 3.
+    (local.set $bit_len_lo
+      (i64.shl (i64.extend_i32_u (local.get $args_len)) (i64.const 3)))
+
+    ;; --- Stream full 128-byte blocks while remaining >= 128 ---
+    (block $stream_exit
+      (loop $stream
+        (br_if $stream_exit (i32.lt_u (local.get $remaining) (i32.const 128)))
+        (call $compress (local.get $data_ptr))
+        (local.set $data_ptr  (i32.add (local.get $data_ptr)  (i32.const 128)))
+        (local.set $remaining (i32.sub (local.get $remaining) (i32.const 128)))
+        (br $stream)))
+
+    ;; --- Final-block padding ---
+    ;; tail_len = remaining (0..127)
+    (local.set $tail_len (local.get $remaining))
+
+    ;; Zero the padding buffer (128 bytes).
+    (memory.fill (i32.const 0x5c0) (i32.const 0) (i32.const 128))
+
+    ;; Copy tail_len bytes of input into the buffer.
+    (if (i32.gt_u (local.get $tail_len) (i32.const 0))
+      (then
+        (memory.copy (i32.const 0x5c0) (local.get $data_ptr) (local.get $tail_len))))
+
+    ;; Write the 0x80 terminator byte at [tail_len].
+    (i32.store8
+      (i32.add (i32.const 0x5c0) (local.get $tail_len))
+      (i32.const 0x80))
+
+    (if (i32.le_u (local.get $tail_len) (i32.const 111))
+      (then
+        ;; --- Single-block padding ---
+        ;; Write the 128-bit BE bit length into bytes [112..127].
+        ;; Upper 8 bytes are zero (memory.fill already zeroed them); write
+        ;; the lower 8 as big-endian (bswap).
+        (i64.store offset=120 (i32.const 0x5c0)
+          (call $bswap64 (local.get $bit_len_lo)))
+        (call $compress (i32.const 0x5c0)))
+      (else
+        ;; --- Two-block padding ---
+        ;; First block: tail + 0x80 + zeros to end-of-block. (Already
+        ;; assembled in 0x5C0..0x63F — terminator at tail_len, rest zero.)
+        (call $compress (i32.const 0x5c0))
+        ;; Second block: 112 zeros + 16-byte BE bit length.
+        (memory.fill (i32.const 0x5c0) (i32.const 0) (i32.const 128))
+        (i64.store offset=120 (i32.const 0x5c0)
+          (call $bswap64 (local.get $bit_len_lo)))
+        (call $compress (i32.const 0x5c0))))
+
+    ;; --- Output: h[] as 8 × BE i64 into the output buffer at offset 0. ---
+    (i64.store offset=0  (i32.const 0) (call $bswap64 (i64.load offset=0  (i32.const 0x040))))
+    (i64.store offset=8  (i32.const 0) (call $bswap64 (i64.load offset=8  (i32.const 0x040))))
+    (i64.store offset=16 (i32.const 0) (call $bswap64 (i64.load offset=16 (i32.const 0x040))))
+    (i64.store offset=24 (i32.const 0) (call $bswap64 (i64.load offset=24 (i32.const 0x040))))
+    (i64.store offset=32 (i32.const 0) (call $bswap64 (i64.load offset=32 (i32.const 0x040))))
+    (i64.store offset=40 (i32.const 0) (call $bswap64 (i64.load offset=40 (i32.const 0x040))))
+    (i64.store offset=48 (i32.const 0) (call $bswap64 (i64.load offset=48 (i32.const 0x040))))
+    (i64.store offset=56 (i32.const 0) (call $bswap64 (i64.load offset=56 (i32.const 0x040))))
+
+    ;; Return (0 | (64 << 32)) = 0x0000_0040_0000_0000 = 274877906944
+    (i64.const 274877906944)))
