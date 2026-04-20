@@ -85,6 +85,17 @@ pub struct WasmModule<'a> {
     pub wasm_memory_base: i32,
     /// Maximum WASM memory pages available for memory.grow.
     pub max_memory_pages: u32,
+    /// Whether the module uses `memory.size`, `memory.grow`, or `memory.init`.
+    /// These are the only ops that read/write the compiler-managed memory-size
+    /// global, so if none of them appear we skip emitting that 4-byte slot.
+    pub needs_memory_size_global: bool,
+    /// Whether the compiler must reserve a parameter-overflow area in the PVM
+    /// data region. True iff any local function type has more than
+    /// `MAX_LOCAL_REGS` (4) parameters; callers spill the 5th+ args there and
+    /// callees read them back in the prologue. When false, the 256-byte
+    /// overflow reservation (and the 4KB page alignment that follows) can be
+    /// skipped, letting `wasm_memory_base` sit at `GLOBAL_MEMORY_BASE` itself.
+    pub needs_param_overflow: bool,
 }
 
 impl<'a> WasmModule<'a> {
@@ -336,9 +347,23 @@ impl<'a> WasmModule<'a> {
             .iter()
             .filter(|seg| seg.offset.is_none())
             .count();
+
+        let needs_memory_size_global = scan_needs_memory_size_global(&functions)?;
+        let needs_param_overflow =
+            function_type_indices
+                .iter()
+                .any(|&type_idx| match func_types.get(type_idx as usize) {
+                    Some(ft) => ft.params().len() > crate::abi::MAX_LOCAL_REGS,
+                    None => false,
+                });
+
         // Compute WASM memory base
-        let wasm_memory_base =
-            memory_layout::compute_wasm_memory_base(globals.len(), num_passive_segments);
+        let wasm_memory_base = memory_layout::compute_wasm_memory_base(
+            globals.len(),
+            num_passive_segments,
+            needs_memory_size_global,
+            needs_param_overflow,
+        );
 
         // max_memory_pages is the runtime limit for memory.grow (hardcoded in PVM code).
         // When the WASM module doesn't declare a max, use DEFAULT_MAX_PAGES (1 MB).
@@ -369,8 +394,32 @@ impl<'a> WasmModule<'a> {
             exported_wasm_func_indices,
             wasm_memory_base,
             max_memory_pages,
+            needs_memory_size_global,
+            needs_param_overflow,
         })
     }
+}
+
+/// Scan function bodies for any operator that reads/writes the compiler-managed
+/// memory-size global (`memory.size`, `memory.grow`, `memory.init`).
+fn scan_needs_memory_size_global(functions: &[FunctionBody<'_>]) -> Result<bool> {
+    for body in functions {
+        let mut reader = body
+            .get_operators_reader()
+            .map_err(|e| Error::Internal(format!("operator reader: {e}")))?;
+        while !reader.eof() {
+            match reader
+                .read()
+                .map_err(|e| Error::Internal(format!("operator read: {e}")))?
+            {
+                wasmparser::Operator::MemorySize { .. }
+                | wasmparser::Operator::MemoryGrow { .. }
+                | wasmparser::Operator::MemoryInit { .. } => return Ok(true),
+                _ => {}
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn eval_const_i32(expr: &wasmparser::ConstExpr) -> Result<i32> {

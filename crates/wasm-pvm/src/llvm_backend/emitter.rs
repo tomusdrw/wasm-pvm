@@ -34,8 +34,18 @@ use super::regalloc::RegAllocResult;
 pub struct LoweringContext {
     pub wasm_memory_base: i32,
     pub num_globals: usize,
+    /// Whether the compiler-managed memory-size global slot is emitted at
+    /// `GLOBAL_MEMORY_BASE`. Determines whether user globals start at offset 0
+    /// or offset 4 inside the globals window (see `global_addr`).
+    pub has_memory_size_global: bool,
     /// Base address for the parameter overflow area (5th+ args for `call_indirect`).
+    /// Only meaningful when `param_overflow_reserved` is true; otherwise emitters
+    /// must not dereference this value — the compiler proved no function needs it.
     pub param_overflow_base: i32,
+    /// True iff some local function takes more than `MAX_LOCAL_REGS` parameters,
+    /// so the 256-byte overflow region is reserved. Emit sites that read or
+    /// write overflow slots guard on this flag.
+    pub param_overflow_reserved: bool,
     pub function_signatures: Vec<(usize, bool)>,
     pub type_signatures: Vec<(usize, usize)>,
     pub function_table: Vec<u32>,
@@ -116,7 +126,13 @@ pub struct EmitterConfig {
     pub wasm_memory_base: i32,
 
     /// Base address for the parameter overflow area (5th+ args for `call_indirect`).
+    /// Only valid when `param_overflow_reserved` is true.
     pub param_overflow_base: i32,
+
+    /// True iff the compiler reserved a parameter-overflow area. When false,
+    /// no function in this module takes more than `MAX_LOCAL_REGS` parameters
+    /// and no emit site should touch `param_overflow_base`.
+    pub param_overflow_reserved: bool,
 
     /// Whether the register cache (store-load forwarding) is enabled.
     pub register_cache_enabled: bool,

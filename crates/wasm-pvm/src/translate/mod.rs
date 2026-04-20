@@ -236,8 +236,11 @@ pub fn compile_with_stats(
         .iter()
         .filter(|s| s.offset.is_none())
         .count();
-    let globals_region_bytes =
-        memory_layout::globals_region_size(module.globals.len(), passive_data_segments);
+    let globals_region_bytes = memory_layout::globals_region_size(
+        module.globals.len(),
+        passive_data_segments,
+        module.needs_memory_size_global,
+    );
 
     let result = compile_via_llvm(&module, options)?;
 
@@ -332,7 +335,11 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
             data_segment_lengths.insert(idx as u32, seg.data.len() as u32);
             data_segment_length_addrs.insert(
                 idx as u32,
-                memory_layout::data_segment_length_offset(module.globals.len(), passive_ordinal),
+                memory_layout::data_segment_length_offset(
+                    module.globals.len(),
+                    passive_ordinal,
+                    module.needs_memory_size_global,
+                ),
             );
             current_ro_offset += seg.data.len();
             passive_ordinal += 1;
@@ -340,12 +347,17 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     }
 
     // Phase 2: Build lowering context
-    let param_overflow_base =
-        memory_layout::compute_param_overflow_base(module.globals.len(), passive_ordinal);
+    let param_overflow_base = memory_layout::compute_param_overflow_base(
+        module.globals.len(),
+        passive_ordinal,
+        module.needs_memory_size_global,
+    );
     let ctx = LoweringContext {
         wasm_memory_base: module.wasm_memory_base,
         num_globals: module.globals.len(),
+        has_memory_size_global: module.needs_memory_size_global,
         param_overflow_base,
+        param_overflow_reserved: module.needs_param_overflow,
         function_signatures: module.function_signatures.clone(),
         type_signatures: module.type_signatures.clone(),
         function_table: module.function_table.clone(),
@@ -615,6 +627,7 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         module.wasm_memory_base,
         &ctx.data_segment_length_addrs,
         &ctx.data_segment_lengths,
+        module.needs_memory_size_global,
     );
 
     let heap_pages = calculate_heap_pages(
@@ -684,12 +697,16 @@ pub(crate) fn build_rw_data(
     wasm_memory_base: i32,
     data_segment_length_addrs: &std::collections::HashMap<u32, i32>,
     data_segment_lengths: &std::collections::HashMap<u32, u32>,
+    has_memory_size_global: bool,
 ) -> Vec<u8> {
-    // Calculate the minimum size needed for globals
-    // +1 for the compiler-managed memory size global, plus passive segment lengths
+    // Calculate the minimum size needed for globals — optionally includes a
+    // compiler-managed memory-size slot plus passive segment lengths.
     let num_passive_segments = data_segment_length_addrs.len();
-    let globals_end =
-        memory_layout::globals_region_size(global_init_values.len(), num_passive_segments);
+    let globals_end = memory_layout::globals_region_size(
+        global_init_values.len(),
+        num_passive_segments,
+        has_memory_size_global,
+    );
 
     // Calculate the size needed for data segments
     let wasm_to_rw_offset = wasm_memory_base as u32 - 0x30000;
@@ -711,19 +728,20 @@ pub(crate) fn build_rw_data(
 
     let mut rw_data = vec![0u8; total_size];
 
-    // Initialize user globals
+    // Layout: [mem_size_slot?][globals...][passive_lens...][data_segments...]
+    // The mem-size slot lives at rw_data offset 0 when emitted; user globals
+    // start at offset 4. When the slot is elided, globals start at offset 0.
+    let mem_size_slot_bytes = if has_memory_size_global { 4 } else { 0 };
+
+    if has_memory_size_global && mem_size_slot_bytes <= rw_data.len() {
+        rw_data[..4].copy_from_slice(&initial_memory_pages.to_le_bytes());
+    }
+
     for (i, &value) in global_init_values.iter().enumerate() {
-        let offset = i * 4;
+        let offset = mem_size_slot_bytes + i * 4;
         if offset + 4 <= rw_data.len() {
             rw_data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         }
-    }
-
-    // Initialize compiler-managed memory size global (right after user globals)
-    let mem_size_offset = global_init_values.len() * 4;
-    if mem_size_offset + 4 <= rw_data.len() {
-        rw_data[mem_size_offset..mem_size_offset + 4]
-            .copy_from_slice(&initial_memory_pages.to_le_bytes());
     }
 
     // Initialize passive data segment effective lengths (right after memory size global).
@@ -882,8 +900,69 @@ mod tests {
 
     #[test]
     fn build_rw_data_trims_all_zero_tail_to_empty() {
-        let rw = build_rw_data(&[], &[], 0, 0x30000, &HashMap::new(), &HashMap::new());
+        let rw = build_rw_data(
+            &[],
+            &[],
+            0,
+            0x30000,
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+        );
         assert!(rw.is_empty());
+    }
+
+    #[test]
+    fn build_rw_data_skips_mem_size_slot_when_not_needed() {
+        // Program with no user globals, no passive segments, no memory ops:
+        // rw_data must be empty — no 4-byte memory-size slot emitted.
+        let rw = build_rw_data(
+            &[],
+            &[],
+            16,
+            0x31000,
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+        );
+        assert!(rw.is_empty());
+    }
+
+    #[test]
+    fn build_rw_data_emits_mem_size_slot_when_needed() {
+        // Same inputs but the module uses memory.grow: 4-byte slot carries initial pages.
+        // Trailing zeros are trimmed, leaving a single non-zero low byte.
+        let rw = build_rw_data(
+            &[],
+            &[],
+            16,
+            0x31000,
+            &HashMap::new(),
+            &HashMap::new(),
+            true,
+        );
+        assert_eq!(rw, vec![16]);
+    }
+
+    #[test]
+    fn build_rw_data_places_mem_size_before_globals() {
+        // Reorder invariant: mem-size at offset 0 (value = initial pages),
+        // user globals shift to offsets [4..4+N*4).
+        let globals = [0x11u32 as i32, 0x22];
+        let rw = build_rw_data(
+            &[],
+            &globals,
+            1, // initial_memory_pages = 1 → mem-size slot byte 0 = 0x01
+            0x3000C,
+            &HashMap::new(),
+            &HashMap::new(),
+            true,
+        );
+        // rw_data[0..4]  = mem-size (le u32 = 1)           = [0x01, 0, 0, 0]
+        // rw_data[4..8]  = globals[0] (le u32 = 0x11)      = [0x11, 0, 0, 0]
+        // rw_data[8..12] = globals[1] (le u32 = 0x22)      = [0x22, 0, 0, 0]
+        // Trailing zeros trimmed from the globals[1] tail.
+        assert_eq!(rw, vec![0x01, 0, 0, 0, 0x11, 0, 0, 0, 0x22]);
     }
 
     #[test]
@@ -900,6 +979,7 @@ mod tests {
             0x30000,
             &HashMap::new(),
             &HashMap::new(),
+            false,
         );
 
         assert_eq!(rw, vec![1, 0, 2]);
@@ -912,7 +992,7 @@ mod tests {
         let mut lengths = HashMap::new();
         lengths.insert(0u32, 7u32);
 
-        let rw = build_rw_data(&[], &[], 0, 0x30000, &addrs, &lengths);
+        let rw = build_rw_data(&[], &[], 0, 0x30000, &addrs, &lengths, true);
 
         assert_eq!(rw, vec![0, 0, 0, 0, 7]);
     }

@@ -27,7 +27,7 @@ Source: `crates/wasm-pvm/src/translate/`
 ## Key Behaviors
 
 - `calculate_heap_pages()` uses WASM `initial_pages` (not max), with a minimum of 16 WASM pages for `(memory 0)`.
-- `compute_wasm_memory_base()` compares `SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC` with `GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)`, then rounds the larger address up to the next 4KB (PVM page) boundary. This typically gives `0x33000`.
+- `compute_wasm_memory_base()` lays out (in order) the (optional) mem-size slot at `GLOBAL_MEMORY_BASE`, user globals, passive segment lengths, and (optionally) the 256-byte parameter overflow area, then places `wasm_memory_base` immediately after. **No 4KB alignment** is applied — anan-as page-aligns the rw_data tail (`heapZerosStart`) separately, so the base may sit at any byte offset. Mem-size is emitted only when the module uses `memory.size`/`memory.grow`/`memory.init`; overflow is emitted only when some local function has more than `MAX_LOCAL_REGS` (4) parameters.
 - `build_rw_data()` copies globals and active segments into a contiguous image, then trims trailing zero bytes before SPI encoding.
 - Call return addresses are pre-assigned as jump-table refs `((idx + 1) * 2)` at emission time; fixup resolution accepts direct (`LoadImmJump`) and indirect (`LoadImm` / `LoadImmJumpInd`) return-address carriers.
 - Export parsing tracks `exported_wasm_func_indices` in WASM global index space for dead-function-elimination roots; entry resolution prefers canonical names (`main`, `main2`) over aliases (`refine*`, `accumulate*`) regardless of export order.
@@ -38,10 +38,8 @@ Source: `crates/wasm-pvm/src/translate/`
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data |
-| `0x30000` | Globals window (8KB cap; actual bytes = `globals_region_size(num_globals, num_passive_segments)`). The heap starts at `compute_wasm_memory_base()`, which is the 4KB-aligned address after `max(globals_end, spills_end)`. |
-| `0x32000` | Parameter overflow area |
-| `0x32100+` | Spilled-locals base (spills are stack-based; base kept for layout/alignment) |
-| `0x33000+` | WASM linear memory (4KB-aligned, computed dynamically) |
+| `0x30000` | Mem-size slot (4 bytes, only when `memory.size`/`grow`/`init` used), then user globals, passive segment length slots, and (when any local function has >4 params) a 256-byte parameter overflow area. Total size = `globals_region_size(...) + (256 if overflow else 0)`. |
+| `region_end` | WASM linear memory — placed **without 4KB alignment** immediately after the last region. For a bare memory-only program this is `0x30004`. |
 
 ## Anti-Patterns
 
