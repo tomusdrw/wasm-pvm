@@ -257,7 +257,9 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 | Add stack spill test | `crates/wasm-pvm/tests/deep_stack_spill.rs` | Deep stack, spill across calls (8 tests) |
 | Add/modify import adapter | `tests/fixtures/imports/*.adapter.wat` | WAT adapter files for complex import resolution |
 | Add/modify import map | `tests/fixtures/imports/*.imports` | Text-based import maps (trap, nop, ecalli:N) |
-| Fix test execution | `tests/helpers/run.ts` | `runJam()` |
+| Fix test execution | `tests/helpers/run.ts` | `runJam()` (u32 result), `runJamBytes()` (raw `Uint8Array` — use for hash / multi-byte outputs) |
+| Byte-level native WASM run | `tests/helpers/wasm-runner.ts` | `runWasmNativeBytes()` — raw bytes variant of `runWasmNative` for differential tests that compare buffers |
+| Hand-crafted crypto example | `tests/fixtures/wat/blake2b.jam.wat` + `tests/layer3/blake2b.test.ts` | RFC 7693 blake2b (unkeyed, variable output 1..=64) with 3-way agreement tests vs `@noble/hashes` |
 | Fix test build | `tests/build.ts` + `tests/helpers/compile.ts` | Build orchestrator + compilation helpers |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
 | Generate execution trace | `tests/utils/generate-trace.ts` | Outputs anan-as trace format to stdout |
