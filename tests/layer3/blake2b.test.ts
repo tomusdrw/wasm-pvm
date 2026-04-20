@@ -132,6 +132,30 @@ describe("blake2b: output length endpoints", () => {
   test("out_len=64", async () => {
     await assertBlake2bAgreement({ outLen: 64, input: patternInput(17) });
   });
+  // Non-word-aligned: the WAT's byte-level output copy matters only when
+  // out_len is not a multiple of 8. 33 spills into the 5th h word and the
+  // 1st byte of the 6th — the only deterministic unit test that exercises
+  // the tail copy past a word boundary.
+  test("out_len=33 (non-word-aligned output)", async () => {
+    await assertBlake2bAgreement({ outLen: 33, input: patternInput(17) });
+  });
+});
+
+// Invalid out_len must trap on the PVM side. blake2bRef throws before
+// runJamBytes runs (so the three-way harness can't observe this), but the
+// PVM trap is still an API contract we care about — assert it directly.
+//
+// Note: runJamBytes does NOT throw on trap — anan-as exits cleanly with an
+// empty Result when a JAM traps. So we assert the result is empty bytes.
+// (If the guard were silently eliminated, the WAT would read past h[] into
+// adjacent memory and return non-empty garbage.)
+describe("blake2b: invalid out_len traps", () => {
+  test("out_len=0 (args=0x00) → empty result", () => {
+    expect(runJamBytes(JAM_FILE, "00")).toEqual(new Uint8Array(0));
+  });
+  test("out_len=65 (args=0x41) → empty result", () => {
+    expect(runJamBytes(JAM_FILE, "41")).toEqual(new Uint8Array(0));
+  });
 });
 
 // -----------------------------------------------------------------------------

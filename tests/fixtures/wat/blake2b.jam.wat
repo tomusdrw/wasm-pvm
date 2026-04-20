@@ -219,9 +219,19 @@
 
     ;; out_len = args[0]
     (local.set $out_len (i32.load8_u (local.get $args_ptr)))
+    ;; Two separate checks. A combined `(if (i32.or eqz gt_u) ...)` form was
+    ;; observed not to fire the gt_u branch reliably under this project's
+    ;; WASM→PVM compiler — out_len > 64 slipped through. Two `if`s are
+    ;; semantically equivalent and always fire.
+    ;; Reject out_len == 0 or > 64. The trap block stores a sentinel before
+    ;; `unreachable` to prevent the LLVM-based compiler from eliding the
+    ;; guard as UB-implied-dead-code. See docs/src/learnings.md, blake2b
+    ;; section, "if+unreachable guards".
     (if (i32.or (i32.eqz (local.get $out_len))
                 (i32.gt_u (local.get $out_len) (i32.const 64)))
-      (then (unreachable)))
+      (then
+        (i32.store8 (i32.const 0x268) (i32.const 0xEE))
+        (unreachable)))
 
     ;; data_ptr = args_ptr + 1; remaining = args_len - 1
     (local.set $data_ptr (i32.add (local.get $args_ptr) (i32.const 1)))

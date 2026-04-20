@@ -504,3 +504,44 @@ Rematerialization (reloading values with `LoadImm` instead of `LoadIndU64` from 
 - **Idea**: Allow r7/r8 to be allocated by the linear scan in non-leaf functions. After calls, r7/r8 are invalidated (since they hold return values), but between calls they could hold allocated values, reducing register pressure.
 - **Root cause of failure**: Same as "Callee-Saved State Preservation After Calls" above. The `operand_reg()` function (load-side coalescing) returns the allocated register directly as a source operand for memory lowering. When this register is used in address computations (e.g., adding `wasm_memory_base`), the lowering code may use it as both source and destination, clobbering the value. This is the fundamental `operand_reg()` hazard: any register that participates in address calculation can be corrupted when the emitter uses in-place arithmetic on the base register.
 - **Conclusion**: Not feasible without reworking how memory address calculations interact with allocated registers. The `operand_reg()` function would need to distinguish between "use as data operand" (safe) and "use as address base" (unsafe, may be clobbered by in-place add of `wasm_memory_base`). This is the same architectural limitation that blocks callee-saved state preservation after calls.
+
+---
+
+## Hand-Crafted Blake2b WAT (2026-04)
+
+### WAT memarg attribute order: `offset` must come before `align`
+
+Writing `(i64.load align=1 offset=8 ...)` fails to parse in this project's WAT frontend with "unknown operator or unexpected token". Writing `(i64.load offset=8 align=1 ...)` parses cleanly. The WebAssembly text format spec permits either order, so this is a tooling quirk (likely `wat-parser` / `wasmparser`). If you're hand-writing WAT and see unexplained parse errors on `i64.load` / `i64.store` with memargs, swap the attribute order first. Example from `tests/fixtures/wat/blake2b.jam.wat`.
+
+### Gas/size characteristics of a typical cryptographic hash on PVM
+
+For reference when sizing new crypto workloads on PVM:
+
+- Blake2b ("abc", 32 B output): JAM = 8269 B, PVM code = 3076 B, gas = 17,749, time ≈ 71 ms single-run.
+- Blake2b (1024 B input, 32 B output): gas = 138,478 (~15k gas per 128-byte compression block, roughly 9 blocks).
+- In PVM-in-PVM, the same 3-byte input costs ~16.7M outer gas — a ~944× multiplier over direct PVM execution, consistent with what other compute-heavy fixtures show.
+
+Per-compression-block gas is dominated by the 12 rounds × 8 G calls × ~18 i64 ops. No specific compiler optimization was needed to land this — the default pipeline (mem2reg, instcombine, GVN, peephole, register allocation) produced a correct, reasonably compact output on the first run.
+
+### Output-pointer convention for fixtures: don't rely on WASM offset 0
+
+`blake2b.jam.wat` currently writes its hash output to WASM-relative offset 0 and returns `(ptr=0, len=out_len)`. This works today because the WAT has no globals, no prologue, and no data segments below 0x80. But this is fragile — if a future compiler change puts anything at offset 0, the hash would be silently corrupted. When writing new fixtures, prefer an explicit offset ≥ 0x100 for output buffers. Retrofitting blake2b to this convention is a cheap follow-up but was not done in the initial PR since the tests cover the output end-to-end.
+
+### `(if COND (then (unreachable)))` guards can be silently eliminated
+
+While adding invalid-`out_len` trap tests for blake2b, we discovered that a bare `(if COND (then (unreachable)))` guard can be **elided by the LLVM-based compiler** even when `COND` is a runtime value. The trap appeared to fire for some inputs (e.g. `out_len=0` via `i32.eqz`) but not others (`out_len > 64` via `i32.gt_u`). Adding any side-effecting instruction before `unreachable` — e.g. `(i32.store8 ...)` — restores the guard.
+
+**Mechanism (hypothesized):** LLVM treats `unreachable` as a UB hint — "control never reaches here." The optimizer can legally conclude "if this path is UB, then COND is always false" and delete the check entirely. Which specific patterns get eliminated depends on how `instcombine` / `simplifycfg` / GVN canonicalize the condition. `i32.eqz` apparently canonicalizes into a form the optimizer preserves; `i32.gt_u` into a form it doesn't.
+
+**Workaround:** Put at least one side-effecting operation in the `then` block. A sentinel store to an unused memory byte is sufficient:
+
+```wat
+(if (some-condition)
+  (then
+    (i32.store8 (i32.const 0x268) (i32.const 0xEE))
+    (unreachable)))
+```
+
+**Runtime trap observation from anan-as / SPI mode:** a trapped program exits with OS exit code 0 (not an error), prints `STATUS = -1` in debug output, and produces an **empty Result: [0x]**. `runJamBytes` therefore does **not** throw on trap — it returns an empty `Uint8Array`. Test assertions for trap behavior should check `result.length === 0` rather than `expect(...).toThrow()`.
+
+**Follow-up:** a proper compiler-level fix would be to mark `unreachable` as a true trap (non-UB) in the PVM lowering, or emit an explicit trap instruction that the optimizer can't eliminate. Until then, the sentinel-store workaround is the portable fix for WAT-level fixtures.
