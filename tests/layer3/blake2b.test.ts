@@ -1,9 +1,8 @@
 import { test, expect, describe } from "bun:test";
-import fs from "node:fs";
 import path from "node:path";
 import { JAM_DIR, WAT_DIR } from "../helpers/paths";
 import { runJamBytes } from "../helpers/run";
-import { runWasmNativeBytes } from "../helpers/wasm-runner";
+import { runWasmNativeBytes, watToWasm } from "../helpers/wasm-runner";
 import {
   blake2bRef,
   encodeBlake2bArgs,
@@ -17,29 +16,6 @@ import {
 
 const JAM_FILE = path.join(JAM_DIR, "blake2b.jam");
 const WAT_FILE = path.join(WAT_DIR, "blake2b.jam.wat");
-
-// -----------------------------------------------------------------------------
-// WAT -> WASM (cached at module load)
-// -----------------------------------------------------------------------------
-
-let wasmBinary: Uint8Array | null = null;
-
-async function getWasm(): Promise<Uint8Array> {
-  if (wasmBinary) return wasmBinary;
-  const watSource = fs.readFileSync(WAT_FILE, "utf8");
-  const wabt = await import("wabt");
-  const wabtModule = await wabt.default();
-  const parsed = wabtModule.parseWat(WAT_FILE, watSource, {
-    multi_value: true,
-    mutable_globals: true,
-    bulk_memory: true,
-    sign_extension: true,
-  });
-  parsed.validate();
-  const { buffer } = parsed.toBinary({});
-  wasmBinary = new Uint8Array(buffer);
-  return wasmBinary;
-}
 
 // -----------------------------------------------------------------------------
 // Three-way agreement: PVM == native WASM == @noble/hashes reference
@@ -57,7 +33,7 @@ async function assertBlake2bAgreement(args: Blake2bArgs, expected?: Uint8Array) 
   const pvm = runJamBytes(JAM_FILE, argsHex);
   expect(bytesToHex(pvm)).toBe(bytesToHex(ref));
 
-  const wasm = await runWasmNativeBytes(await getWasm(), argsHex);
+  const wasm = await runWasmNativeBytes(await watToWasm(WAT_FILE), argsHex);
   expect(wasm.trapped).toBe(false);
   expect(bytesToHex(wasm.bytes!)).toBe(bytesToHex(ref));
 }

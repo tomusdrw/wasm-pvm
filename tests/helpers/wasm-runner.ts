@@ -19,7 +19,7 @@ const ARGS_OFFSET = 0x1000;
  */
 const watCache = new Map<string, Uint8Array>();
 
-async function watToWasm(watPath: string): Promise<Uint8Array> {
+export async function watToWasm(watPath: string): Promise<Uint8Array> {
   const cached = watCache.get(watPath);
   if (cached) return cached;
 
