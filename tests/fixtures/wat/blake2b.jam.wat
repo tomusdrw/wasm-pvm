@@ -98,25 +98,10 @@
     (local $sigma_base i32) ;; pointer into sigma[round % 10]
     (local $t i64)
 
-    ;; v[0..7] = h[0..7]
-    (i64.store offset=0    (i32.const 0x0c0) (i64.load offset=0    (i32.const 0x040)))
-    (i64.store offset=8    (i32.const 0x0c0) (i64.load offset=8    (i32.const 0x040)))
-    (i64.store offset=16   (i32.const 0x0c0) (i64.load offset=16   (i32.const 0x040)))
-    (i64.store offset=24   (i32.const 0x0c0) (i64.load offset=24   (i32.const 0x040)))
-    (i64.store offset=32   (i32.const 0x0c0) (i64.load offset=32   (i32.const 0x040)))
-    (i64.store offset=40   (i32.const 0x0c0) (i64.load offset=40   (i32.const 0x040)))
-    (i64.store offset=48   (i32.const 0x0c0) (i64.load offset=48   (i32.const 0x040)))
-    (i64.store offset=56   (i32.const 0x0c0) (i64.load offset=56   (i32.const 0x040)))
-
-    ;; v[8..15] = IV[0..7]
-    (i64.store offset=64   (i32.const 0x0c0) (i64.load offset=0    (i32.const 0x080)))
-    (i64.store offset=72   (i32.const 0x0c0) (i64.load offset=8    (i32.const 0x080)))
-    (i64.store offset=80   (i32.const 0x0c0) (i64.load offset=16   (i32.const 0x080)))
-    (i64.store offset=88   (i32.const 0x0c0) (i64.load offset=24   (i32.const 0x080)))
-    (i64.store offset=96   (i32.const 0x0c0) (i64.load offset=32   (i32.const 0x080)))
-    (i64.store offset=104  (i32.const 0x0c0) (i64.load offset=40   (i32.const 0x080)))
-    (i64.store offset=112  (i32.const 0x0c0) (i64.load offset=48   (i32.const 0x080)))
-    (i64.store offset=120  (i32.const 0x0c0) (i64.load offset=56   (i32.const 0x080)))
+    ;; v[0..15] = h[0..7] || IV[0..7] (one contiguous 128-byte copy).
+    ;; h is at 0x40..0x7F and IV at 0x80..0xBF, so a single memory.copy from
+    ;; 0x40 of length 128 reads h followed by IV directly into v at 0xC0.
+    (memory.copy (i32.const 0x0c0) (i32.const 0x040) (i32.const 128))
 
     ;; v[12] ^= t_low
     (local.set $t (i64.load (i32.const 0x260)))
@@ -175,47 +160,27 @@
         (local.set $r (i32.add (local.get $r) (i32.const 1)))
         (br $rounds)))
 
-    ;; h[i] ^= v[i] ^ v[i+8] for i in 0..7
-    (i64.store offset=0  (i32.const 0x040)
-      (i64.xor (i64.load offset=0  (i32.const 0x040))
-               (i64.xor (i64.load offset=0  (i32.const 0x0c0))
-                        (i64.load offset=64 (i32.const 0x0c0)))))
-    (i64.store offset=8  (i32.const 0x040)
-      (i64.xor (i64.load offset=8  (i32.const 0x040))
-               (i64.xor (i64.load offset=8  (i32.const 0x0c0))
-                        (i64.load offset=72 (i32.const 0x0c0)))))
-    (i64.store offset=16 (i32.const 0x040)
-      (i64.xor (i64.load offset=16 (i32.const 0x040))
-               (i64.xor (i64.load offset=16 (i32.const 0x0c0))
-                        (i64.load offset=80 (i32.const 0x0c0)))))
-    (i64.store offset=24 (i32.const 0x040)
-      (i64.xor (i64.load offset=24 (i32.const 0x040))
-               (i64.xor (i64.load offset=24 (i32.const 0x0c0))
-                        (i64.load offset=88 (i32.const 0x0c0)))))
-    (i64.store offset=32 (i32.const 0x040)
-      (i64.xor (i64.load offset=32 (i32.const 0x040))
-               (i64.xor (i64.load offset=32 (i32.const 0x0c0))
-                        (i64.load offset=96 (i32.const 0x0c0)))))
-    (i64.store offset=40 (i32.const 0x040)
-      (i64.xor (i64.load offset=40 (i32.const 0x040))
-               (i64.xor (i64.load offset=40  (i32.const 0x0c0))
-                        (i64.load offset=104 (i32.const 0x0c0)))))
-    (i64.store offset=48 (i32.const 0x040)
-      (i64.xor (i64.load offset=48 (i32.const 0x040))
-               (i64.xor (i64.load offset=48  (i32.const 0x0c0))
-                        (i64.load offset=112 (i32.const 0x0c0)))))
-    (i64.store offset=56 (i32.const 0x040)
-      (i64.xor (i64.load offset=56 (i32.const 0x040))
-               (i64.xor (i64.load offset=56  (i32.const 0x0c0))
-                        (i64.load offset=120 (i32.const 0x0c0))))))
+    ;; h[i] ^= v[i] ^ v[i+8] for i in 0..7 (loop over byte offset 0..=56 step 8).
+    ;; Reuses $r (the rounds counter is done by this point).
+    (local.set $r (i32.const 0))
+    (block $h_xor_exit
+      (loop $h_xor
+        (br_if $h_xor_exit (i32.ge_u (local.get $r) (i32.const 64)))
+        (i64.store
+          (i32.add (i32.const 0x040) (local.get $r))
+          (i64.xor
+            (i64.load (i32.add (i32.const 0x040) (local.get $r)))
+            (i64.xor
+              (i64.load (i32.add (i32.const 0x0c0) (local.get $r)))
+              (i64.load (i32.add (i32.const 0x100) (local.get $r))))))
+        (local.set $r (i32.add (local.get $r) (i32.const 8)))
+        (br $h_xor)))) ;; close loop, block, func $compress
 
   ;; --- main ---
   (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
     (local $out_len i32)
     (local $data_ptr i32)
     (local $remaining i32)   ;; bytes of input not yet consumed
-    (local $i i32)           ;; generic loop counter
-    (local $t i64)           ;; cumulative input bytes processed
 
     ;; out_len = args[0]
     (local.set $out_len (i32.load8_u (local.get $args_ptr)))
@@ -264,41 +229,10 @@
       (loop $stream
         (br_if $stream_exit (i32.le_u (local.get $remaining) (i32.const 128)))
 
-        ;; Copy 128 bytes from data_ptr into m (m is 16 x i64 = 128 bytes).
-        ;; Use i64.load with 1-byte alignment (WAT defaults to natural alignment
-        ;; but the compiler tolerates unaligned loads via sub-byte load lowering).
-        (i64.store offset=0   (i32.const 0x140)
-          (i64.load offset=0 align=1   (local.get $data_ptr)))
-        (i64.store offset=8   (i32.const 0x140)
-          (i64.load offset=8 align=1   (local.get $data_ptr)))
-        (i64.store offset=16  (i32.const 0x140)
-          (i64.load offset=16 align=1  (local.get $data_ptr)))
-        (i64.store offset=24  (i32.const 0x140)
-          (i64.load offset=24 align=1  (local.get $data_ptr)))
-        (i64.store offset=32  (i32.const 0x140)
-          (i64.load offset=32 align=1  (local.get $data_ptr)))
-        (i64.store offset=40  (i32.const 0x140)
-          (i64.load offset=40 align=1  (local.get $data_ptr)))
-        (i64.store offset=48  (i32.const 0x140)
-          (i64.load offset=48 align=1  (local.get $data_ptr)))
-        (i64.store offset=56  (i32.const 0x140)
-          (i64.load offset=56 align=1  (local.get $data_ptr)))
-        (i64.store offset=64  (i32.const 0x140)
-          (i64.load offset=64 align=1  (local.get $data_ptr)))
-        (i64.store offset=72  (i32.const 0x140)
-          (i64.load offset=72 align=1  (local.get $data_ptr)))
-        (i64.store offset=80  (i32.const 0x140)
-          (i64.load offset=80 align=1  (local.get $data_ptr)))
-        (i64.store offset=88  (i32.const 0x140)
-          (i64.load offset=88 align=1  (local.get $data_ptr)))
-        (i64.store offset=96  (i32.const 0x140)
-          (i64.load offset=96 align=1  (local.get $data_ptr)))
-        (i64.store offset=104 (i32.const 0x140)
-          (i64.load offset=104 align=1 (local.get $data_ptr)))
-        (i64.store offset=112 (i32.const 0x140)
-          (i64.load offset=112 align=1 (local.get $data_ptr)))
-        (i64.store offset=120 (i32.const 0x140)
-          (i64.load offset=120 align=1 (local.get $data_ptr)))
+        ;; Copy 128 bytes from data_ptr into m. memory.copy lowers to word-sized
+        ;; loops in the compiler's memory backend, far smaller than 16 explicit
+        ;; i64.load/store pairs.
+        (memory.copy (i32.const 0x140) (local.get $data_ptr) (i32.const 128))
 
         ;; t += 128
         (i64.store (i32.const 0x260)
@@ -311,26 +245,9 @@
         (local.set $remaining (i32.sub (local.get $remaining) (i32.const 128)))
         (br $stream)))
 
-    ;; Final block: remaining is in 0..=128. Zero m[], then copy remaining bytes.
-    (local.set $i (i32.const 0))
-    (block $zero_exit
-      (loop $zero_m
-        (br_if $zero_exit (i32.ge_u (local.get $i) (i32.const 16)))
-        (i64.store
-          (i32.add (i32.const 0x140) (i32.shl (local.get $i) (i32.const 3)))
-          (i64.const 0))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $zero_m)))
-
-    (local.set $i (i32.const 0))
-    (block $copy_exit
-      (loop $copy_final
-        (br_if $copy_exit (i32.ge_u (local.get $i) (local.get $remaining)))
-        (i32.store8
-          (i32.add (i32.const 0x140) (local.get $i))
-          (i32.load8_u (i32.add (local.get $data_ptr) (local.get $i))))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $copy_final)))
+    ;; Final block: zero m[], then copy `remaining` bytes of trailing input.
+    (memory.fill (i32.const 0x140) (i32.const 0) (i32.const 128))
+    (memory.copy (i32.const 0x140) (local.get $data_ptr) (local.get $remaining))
 
     ;; t += remaining
     (i64.store (i32.const 0x260)
@@ -339,17 +256,10 @@
     ;; compress(last=1)
     (call $compress (i32.const 1))
 
-    ;; Copy h[0..out_len] bytes to output at offset 0 (byte-level to handle
-    ;; non-multiple-of-8 out_len and to respect little-endian h word encoding).
-    (local.set $i (i32.const 0))
-    (block $out_exit
-      (loop $out_copy
-        (br_if $out_exit (i32.ge_u (local.get $i) (local.get $out_len)))
-        (i32.store8
-          (local.get $i)
-          (i32.load8_u (i32.add (i32.const 0x040) (local.get $i))))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $out_copy)))
+    ;; Copy h[0..out_len] bytes to output at offset 0. h is stored as 8 × i64 LE,
+    ;; so a byte-level copy correctly extracts the low-endian hash for any
+    ;; out_len (including non-multiples of 8).
+    (memory.copy (i32.const 0) (i32.const 0x040) (local.get $out_len))
 
     ;; Return (0 | (out_len << 32))
     (i64.shl (i64.extend_i32_u (local.get $out_len)) (i64.const 32))))
