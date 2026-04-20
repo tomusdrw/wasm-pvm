@@ -8,7 +8,15 @@ export interface RunResult {
   stderr: string;
 }
 
-function buildRunCmd(jamFile: string, args: string, pc?: number, logs = false): string {
+const DEFAULT_GAS = 100_000_000;
+
+function buildRunCmd(
+  jamFile: string,
+  args: string,
+  pc?: number,
+  logs = false,
+  gas: number = DEFAULT_GAS,
+): string {
   let cmd = `node ${ANAN_AS_CLI} run --spi`;
 
   if (!logs) {
@@ -19,9 +27,25 @@ function buildRunCmd(jamFile: string, args: string, pc?: number, logs = false): 
     cmd += ` --pc=${pc}`;
   }
 
-  cmd += ` --gas=100000000`;
+  cmd += ` --gas=${gas}`;
   cmd += ` ${jamFile} 0x${args}`;
   return cmd;
+}
+
+function execAnanAs(cmd: string): string {
+  try {
+    return execSync(cmd, {
+      cwd: PROJECT_ROOT,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (error: any) {
+    if (error.stdout) console.log(error.stdout.toString());
+    if (error.stderr) console.error(error.stderr.toString());
+    throw new Error(`Execution failed: ${error.message.split("\n")[0]}`, {
+      cause: error,
+    });
+  }
 }
 
 function parseExitValue(output: string): number {
@@ -48,24 +72,49 @@ function parseExitValue(output: string): number {
   throw new Error(`Could not parse result from output: ${output}`);
 }
 
+/**
+ * Parse the full raw result bytes from anan-as `Result: [0x...]` output.
+ * Unlike `parseExitValue`, returns the complete byte string without truncation.
+ */
+function parseResultBytes(output: string): Uint8Array {
+  const resultMatch = output.match(/Result:\s*\[0x([0-9a-fA-F]*)\]/);
+  if (!resultMatch) {
+    throw new Error(`Could not parse result from output: ${output}`);
+  }
+  let hex = resultMatch[1];
+  if (hex.length % 2 !== 0) {
+    hex = "0" + hex;
+  }
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+/**
+ * Run a JAM file and return the raw result bytes (no truncation).
+ *
+ * Unlike `runJam` which collapses to a u32, this preserves the full output.
+ * Use for fixtures that return more than 4 bytes (e.g. hash functions).
+ *
+ * @param gas optional gas override. Defaults to 100_000_000 (matches `runJam`).
+ */
+export function runJamBytes(
+  jamFile: string,
+  args: string,
+  pc?: number,
+  gas: number = DEFAULT_GAS,
+): Uint8Array {
+  const cmd = buildRunCmd(jamFile, args, pc, false, gas);
+  const output = execAnanAs(cmd);
+  return parseResultBytes(output);
+}
+
 export function runJam(jamFile: string, args: string, pc?: number): number {
   const cmd = buildRunCmd(jamFile, args, pc);
-
-  try {
-    const output = execSync(cmd, {
-      cwd: PROJECT_ROOT,
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    return parseExitValue(output);
-  } catch (error: any) {
-    if (error.stdout) console.log(error.stdout.toString());
-    if (error.stderr) console.error(error.stderr.toString());
-    throw new Error(`Execution failed: ${error.message.split("\n")[0]}`, {
-      cause: error,
-    });
-  }
+  const output = execAnanAs(cmd);
+  return parseExitValue(output);
 }
 
 export function runJamWithOutput(jamFile: string, args: string, pc?: number): RunResult {

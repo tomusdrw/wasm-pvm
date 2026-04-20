@@ -395,10 +395,10 @@ impl<'ctx> PvmEmitter<'ctx> {
                         return; // Already holds this constant.
                     }
                 }
-                Instruction::LoadImm64 { reg, value } => {
-                    if self.reg_to_const[*reg as usize] == Some(*value) {
-                        return; // Already holds this constant.
-                    }
+                Instruction::LoadImm64 { reg, value }
+                    if self.reg_to_const[*reg as usize] == Some(*value) =>
+                {
+                    return; // Already holds this constant.
                 }
                 _ => {}
             }

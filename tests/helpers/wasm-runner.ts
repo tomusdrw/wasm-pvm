@@ -19,7 +19,7 @@ const ARGS_OFFSET = 0x1000;
  */
 const watCache = new Map<string, Uint8Array>();
 
-async function watToWasm(watPath: string): Promise<Uint8Array> {
+export async function watToWasm(watPath: string): Promise<Uint8Array> {
   const cached = watCache.get(watPath);
   if (cached) return cached;
 
@@ -184,6 +184,83 @@ export async function runWasmNative(
     const msg = err?.message ?? String(err);
     // All errors during WASM execution are treated as traps
     return { value: null, trapped: true, error: msg };
+  }
+}
+
+export interface WasmRunBytesResult {
+  /** The raw result bytes from linear memory, or null if execution trapped. */
+  bytes: Uint8Array | null;
+  /** True if the module trapped. */
+  trapped: boolean;
+  /** Error message if trapped. */
+  error?: string;
+}
+
+/**
+ * Run a WASM module natively and return the full raw result bytes.
+ *
+ * Identical to `runWasmNative` but preserves the full byte string instead
+ * of collapsing it to a u32.
+ */
+export async function runWasmNativeBytes(
+  wasmBinary: Uint8Array,
+  argsHex: string,
+): Promise<WasmRunBytesResult> {
+  const argsBytes = hexToBytes(argsHex);
+
+  try {
+    const module = new WebAssembly.Module(wasmBinary as BufferSource);
+    const memory = new WebAssembly.Memory({ initial: 2 });
+    const importObject: WebAssembly.Imports = {};
+
+    const moduleImports = WebAssembly.Module.imports(module);
+    for (const imp of moduleImports) {
+      if (imp.kind === "memory") {
+        if (!importObject[imp.module]) importObject[imp.module] = {};
+        (importObject[imp.module] as Record<string, unknown>)[imp.name] = memory;
+      }
+    }
+
+    const instance = new WebAssembly.Instance(module, importObject);
+    const mainFn = instance.exports.main as (
+      ptr: number,
+      len: number,
+    ) => bigint | number;
+    if (!mainFn) {
+      return { bytes: null, trapped: true, error: "No 'main' export found" };
+    }
+
+    const mem = (instance.exports.memory as WebAssembly.Memory) ?? memory;
+    const memView = new Uint8Array(mem.buffer);
+    memView.set(argsBytes, ARGS_OFFSET);
+
+    const result = mainFn(ARGS_OFFSET, argsBytes.length);
+
+    if (typeof result === "bigint") {
+      const resultPtr = Number(result & 0xffffffffn);
+      const resultLen = Number((result >> 32n) & 0xffffffffn);
+      if (resultLen === 0) {
+        return { bytes: new Uint8Array(0), trapped: false };
+      }
+      // Re-acquire view: memory may have grown during execution.
+      const resultView = new Uint8Array(mem.buffer);
+      const bytes = resultView.slice(resultPtr, resultPtr + resultLen);
+      return { bytes, trapped: false };
+    } else if (typeof result === "number") {
+      // Legacy single-i32: pack as 4 little-endian bytes for consistency.
+      const bytes = new Uint8Array(4);
+      new DataView(bytes.buffer).setInt32(0, result, true);
+      return { bytes, trapped: false };
+    }
+
+    return {
+      bytes: null,
+      trapped: true,
+      error: `Unexpected return type: ${typeof result}`,
+    };
+  } catch (err: any) {
+    const msg = err?.message ?? String(err);
+    return { bytes: null, trapped: true, error: msg };
   }
 }
 
