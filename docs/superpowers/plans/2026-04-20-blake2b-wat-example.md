@@ -38,10 +38,10 @@
 From the `tests/` directory:
 
 - **Build artifacts:** `bun build.ts` (compiles Rust CLI + all WATs→JAMs + AS→WASM)
-- **Force rebuild:** `rm -f tests/build/wasm/*.wasm && bun build.ts` (for stale AS caches)
-- **Run layer3 only:** `bun test layer3/blake2b.test.ts`
+- **Force rebuild:** `rm -f build/wasm/*.wasm && bun build.ts` (for stale AS caches)
+- **Run layer3 only:** `bun run build && bun test layer3/blake2b.test.ts`
 - **Run full suite:** `bun run test`
-- **Run one test by name:** `bun test layer3/blake2b.test.ts -t "abc"`
+- **Run one test by name:** `bun run build && bun test layer3/blake2b.test.ts -t "abc"`
 
 From the repo root:
 
@@ -132,6 +132,7 @@ test("runJamBytes returns raw result bytes for add.jam", () => {
 
 Run: `cd tests && bun test helpers/run-bytes.test.ts`
 Expected: FAIL with "Export named 'runJamBytes' not found" (or similar import error).
+(No build needed here — the failure is at import resolution, before any JAM is loaded.)
 
 - [ ] **Step 3: Add `runJamBytes` implementation**
 
@@ -193,10 +194,8 @@ export function runJamBytes(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd tests && bun test helpers/run-bytes.test.ts`
-Expected: PASS.
-
-If the test fails because `add.jam` doesn't exist, run `bun build.ts` in the `tests/` dir first, then retry.
+Run: `cd tests && bun run build && bun test helpers/run-bytes.test.ts`
+Expected: PASS. The `bun run build` prefix ensures `add.jam` is present before the test invokes the runner.
 
 - [ ] **Step 5: Remove the temporary test file**
 
@@ -317,8 +316,8 @@ export async function runWasmNativeBytes(
 
 The existing `defineDifferentialSuite` tests import `runWasmForSuite`, not `runWasmNative` directly. We haven't changed behavior — only added a new export. Sanity-check nothing broke:
 
-Run: `cd tests && bun test layer1/`
-Expected: PASS (all layer1 tests).
+Run: `cd tests && bun run test:layer1`
+Expected: PASS (all layer1 tests). `test:layer1` runs `bun run build && bun test layer1/` — the build prefix guards against stale JAMs if this step is run in isolation.
 
 - [ ] **Step 3: Commit**
 
@@ -383,7 +382,7 @@ test("encodeBlake2bArgs produces [out_len:u8][input]", () => {
 ```
 
 Run: `cd tests && bun test helpers/blake2b-ref.test.ts`
-Expected: FAIL — module does not exist.
+Expected: FAIL — module does not exist. (No build needed — the helper test is pure JS, not PVM-backed.)
 
 - [ ] **Step 3: Implement the wrapper**
 
@@ -423,7 +422,7 @@ export function bytesToHex(bytes: Uint8Array): string {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd tests && bun test helpers/blake2b-ref.test.ts`
-Expected: PASS (both tests).
+Expected: PASS (both tests). (Pure-JS test — no `bun run build` prefix needed.)
 
 - [ ] **Step 5: Remove the temporary test file**
 
@@ -707,7 +706,7 @@ describe("blake2b: seeded random differential", () => {
 
 - [ ] **Step 4: Verify tests RUN (and fail correctly, since the WAT is a stub)**
 
-Run: `cd tests && bun test layer3/blake2b.test.ts`
+Run: `cd tests && bun run build && bun test layer3/blake2b.test.ts`
 Expected: all tests in the suite FAIL with hash mismatch (the stub returns zeros; reference returns real hashes). **Crucially:** the failures should be `expect(...).toBe(...)` assertion failures on hash bytes — NOT runtime errors about missing helpers or WASM parse errors. If you see runtime errors, fix the scaffolding before moving on.
 
 - [ ] **Step 5: Commit the stub + test file**
@@ -1115,7 +1114,7 @@ Common mistakes (worth checking first):
 Per the spec's success criteria:
 
 ```bash
-cd tests && BLAKE2B_RANDOM_COUNT=1000 bun test layer3/blake2b.test.ts -t "random"
+cd tests && bun run build && BLAKE2B_RANDOM_COUNT=1000 bun test layer3/blake2b.test.ts -t "random"
 ```
 
 Expected: PASS. Note gas/time usage — if any iteration hits the 2-minute test timeout, the bun timeout in the test file may need tuning (currently `120_000` ms).
@@ -1219,7 +1218,7 @@ gh pr create --title "feat: hand-crafted blake2b WAT example with differential t
 ## Test plan
 
 - [ ] `bun run test` passes
-- [ ] `BLAKE2B_RANDOM_COUNT=1000 bun test layer3/blake2b.test.ts -t "random"` passes
+- [ ] `bun run build && BLAKE2B_RANDOM_COUNT=1000 bun test layer3/blake2b.test.ts -t "random"` passes
 - [ ] Benchmark table populated above
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
