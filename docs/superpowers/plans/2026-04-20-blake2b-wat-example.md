@@ -53,7 +53,7 @@ From the repo root:
 ## Key Constants (hardcode these — they are the algorithm)
 
 **Blake2b IV** (RFC 7693 §2.6, same as SHA-512's IV):
-```
+```text
 IV[0] = 0x6A09E667F3BCC908
 IV[1] = 0xBB67AE8584CAA73B
 IV[2] = 0x3C6EF372FE94F82B
@@ -65,7 +65,7 @@ IV[7] = 0x5BE0CD19137E2179
 ```
 
 **Sigma permutation table** (RFC 7693 §2.7, 10 rows × 16 bytes):
-```
+```text
 Row 0:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
 Row 1: 14 10  4  8  9 15 13  6  1 12  0  2 11  7  5  3
 Row 2: 11  8 12  0  5  2 15 13 10 14  3  6  7  1  9  4
@@ -89,7 +89,7 @@ For rounds 10 and 11 (indexed 0..11), use rows 0 and 1 respectively (`round mod 
 | `0x080` | 64 B  | IV[8] constants (data segment) |
 | `0x0C0` | 128 B | v[16] working state (mutable, 16 × i64) |
 | `0x140` | 128 B | m[16] current message block (mutable, 16 × i64) |
-| `0x1C0` | 160 B | sigma[10][16] permutation table (data segment, u8) |
+| `0x1C0` | 160 B | sigma table (10 × 16 u8, data segment) |
 | `0x260` | 16 B  | t counter (i64 at 0x260) + scratch |
 
 ---

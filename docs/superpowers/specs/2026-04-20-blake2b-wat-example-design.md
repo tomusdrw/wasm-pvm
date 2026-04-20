@@ -42,7 +42,7 @@ The existing `defineSuite()` / `defineDifferentialSuite()` contract takes `expec
 
 ## WAT module structure
 
-```
+```wat
 (module
   (memory (export "memory") 1)
   (data (i32.const OFF_IV)    "<8 × u64 IV constants, little-endian>")
@@ -67,7 +67,7 @@ The existing `defineSuite()` / `defineDifferentialSuite()` contract takes `expec
 | `0x080` | 64 B | IV[8] constants (data segment) |
 | `0x0C0` | 128 B | v[16] working state |
 | `0x140` | 128 B | m[16] current message block |
-| `0x1C0` | 160 B | sigma[10][16] permutation table (data segment) |
+| `0x1C0` | 160 B | sigma table (10 × 16 bytes, data segment) |
 | `0x260` | 16 B | t counter (i64) + last flag scratch |
 
 Offsets are WASM-relative; the PVM harness adds `wasm_memory_base` at runtime.
@@ -98,7 +98,7 @@ The round loop selects the active sigma row by `round mod 10`, so sigma is store
 
 Standard blake2b G, 64-bit word mixing with rotation constants (32, 24, 16, 63):
 
-```
+```text
 v[a] = v[a] + v[b] + m[x]
 v[d] = rotr(v[d] ^ v[a], 32)
 v[c] = v[c] + v[d]
