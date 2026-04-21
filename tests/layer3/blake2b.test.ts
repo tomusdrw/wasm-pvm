@@ -150,11 +150,18 @@ describe("blake2b: output length endpoints", () => {
 // (If the guard were silently eliminated, the WAT would read past h[] into
 // adjacent memory and return non-empty garbage.)
 describe("blake2b: invalid out_len traps", () => {
-  test("out_len=0 (args=0x00) → empty result", () => {
-    expect(runJamBytes(JAM_FILE, "00")).toEqual(new Uint8Array(0));
+  // args = [outLen:u8][7 bytes zero pad][input]; the 7-byte pad is required
+  // so the WAT's args_len >= 8 guard passes and it can reach the out_len
+  // validation. The hex below is the full 8-byte header with input_len=0.
+  test("out_len=0 (args=0x00 + pad) → empty result", () => {
+    expect(runJamBytes(JAM_FILE, "00000000000000" + "00")).toEqual(
+      new Uint8Array(0),
+    );
   });
-  test("out_len=65 (args=0x41) → empty result", () => {
-    expect(runJamBytes(JAM_FILE, "41")).toEqual(new Uint8Array(0));
+  test("out_len=65 (args=0x41 + pad) → empty result", () => {
+    expect(runJamBytes(JAM_FILE, "41000000000000" + "00")).toEqual(
+      new Uint8Array(0),
+    );
   });
 });
 
@@ -172,7 +179,7 @@ describe("blake2b: seeded random differential", () => {
     const next = splitmix64(seed);
     for (let i = 0; i < count; i++) {
       const outLen = randInt(next, 1, 64);
-      const inputLen = randInt(next, 0, 2048);
+      const inputLen = randInt(next, 0, 32768);
       const input = randomBytes(next, inputLen);
       try {
         await assertBlake2bAgreement({ outLen, input });
