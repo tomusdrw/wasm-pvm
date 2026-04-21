@@ -1,8 +1,20 @@
 ;; blake2b, unkeyed, variable output length 1..=64 (RFC 7693).
 ;;
 ;; Entry: main(args_ptr: i32, args_len: i32) -> i64
-;;   args = [out_len: u8][input: bytes]
+;;   args = [out_len: u8][7 bytes zero pad][input: bytes]
+;;   args_len = 8 + input_len, input may be 0..=32768 bytes
 ;;   returns (out_ptr: i32) | ((out_len: i32) << 32)
+;;
+;; The 8-byte header (out_len + pad) keeps the input portion of args
+;; 8-byte-aligned from args_ptr. Combined with an 8-byte-aligned destination
+;; (0x1008), the bulk memory.copy at entry and the per-block stream reads
+;; never cross PVM page boundaries mid-u64-load, which is what capped the
+;; original format (unpadded [out_len][input]) at ~4 KB inputs. Same
+;; alignment trick is used in the SHA-512 fixture (PR #199).
+;;
+;; The 32 KB input cap is a test-harness constraint: anan-as receives args as
+;; a hex CLI argument, and Linux's MAX_ARG_STRLEN (128 KB per argv string)
+;; rejects anything larger. The streaming algorithm itself is size-independent.
 ;;
 ;; WASM memory layout (all offsets WASM-relative):
 ;;   0x000..0x03F  output hash buffer (64 bytes)
@@ -12,6 +24,9 @@
 ;;   0x140..0x1BF  m[16] current message block (mutable, 16 x i64 LE)
 ;;   0x1C0..0x25F  sigma[10][16] permutation table (data segment, u8)
 ;;   0x260..0x267  t counter (i64)
+;;   0x1000..0x9008  args buffer (8-byte header at 0x1000..0x1007, then up to
+;;                   32 KB input at 0x1008..0x9008; args are copied here once
+;;                   at entry, all stream/tail reads go through this region)
 
 (module
   (memory (export "memory") 1)
@@ -182,7 +197,19 @@
     (local $data_ptr i32)
     (local $remaining i32)   ;; bytes of input not yet consumed
 
-    ;; out_len = args[0]
+    ;; Reject args_len < 8 (header missing) or > 32776 (8-byte header +
+    ;; 32768-byte input cap). Beyond the cap the args buffer at
+    ;; 0x1000..0x9008 would overflow; below 8 the header can't be read.
+    ;; Hard correctness guards, not soft limits.
+    (if (i32.or
+          (i32.lt_u (local.get $args_len) (i32.const 8))
+          (i32.gt_u (local.get $args_len) (i32.const 32776)))
+      (then
+        (i32.store8 (i32.const 0x268) (i32.const 0xEE))
+        (unreachable)))
+
+    ;; out_len = args[0]. Read before the bulk copy — this is a single byte
+    ;; read from the args region, fine even without buffering.
     (local.set $out_len (i32.load8_u (local.get $args_ptr)))
     ;; Two separate checks. A combined `(if (i32.or eqz gt_u) ...)` form was
     ;; observed not to fire the gt_u branch reliably under this project's
@@ -198,9 +225,26 @@
         (i32.store8 (i32.const 0x268) (i32.const 0xEE))
         (unreachable)))
 
-    ;; data_ptr = args_ptr + 1; remaining = args_len - 1
-    (local.set $data_ptr (i32.add (local.get $args_ptr) (i32.const 1)))
-    (local.set $remaining (i32.sub (local.get $args_len) (i32.const 1)))
+    ;; Copy the whole args blob (8-byte header + input) into WASM memory at
+    ;; 0x1000 in one shot, then do all stream/tail reads from WASM memory.
+    ;; Under PVM this pulls args out of the args region (0xFEFF0000) into the
+    ;; pre-allocated WASM region once, avoiding scattered stream-loop reads
+    ;; that cross PVM page boundaries (which were unreliable — see the SHA-512
+    ;; fixture commentary and PR #199 for background). Under native WASM,
+    ;; args are already at 0x1000, so this is effectively a no-op self-copy.
+    ;;
+    ;; Both source (args_ptr, 4 KB-aligned at 0xFEFF0000) and destination
+    ;; (0x1000, 8-byte aligned) are word-aligned. Combined with the 8-byte
+    ;; header that keeps the input portion at args_ptr+8 (still aligned), no
+    ;; u64 load in this copy or in the per-block stream loop straddles a PVM
+    ;; page boundary. Misaligning either side made cross-page u64 loads
+    ;; extremely expensive in anan-as and caused out-of-gas at ~4 KB inputs.
+    (memory.copy (i32.const 0x1000) (local.get $args_ptr) (local.get $args_len))
+
+    ;; data_ptr = 0x1008 (input starts after the 8-byte header; word-aligned).
+    ;; remaining = args_len - 8 (input byte count)
+    (local.set $data_ptr (i32.const 0x1008))
+    (local.set $remaining (i32.sub (local.get $args_len) (i32.const 8)))
 
     ;; h[0..7] = IV[0..7]
     (i64.store offset=0  (i32.const 0x040) (i64.load offset=0  (i32.const 0x080)))

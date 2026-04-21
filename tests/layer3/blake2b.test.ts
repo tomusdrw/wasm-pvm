@@ -150,12 +150,16 @@ describe("blake2b: output length endpoints", () => {
 // (If the guard were silently eliminated, the WAT would read past h[] into
 // adjacent memory and return non-empty garbage.)
 describe("blake2b: invalid out_len traps", () => {
-  test("out_len=0 (args=0x00) → empty result", () => {
-    expect(runJamBytes(JAM_FILE, "00")).toEqual(new Uint8Array(0));
-  });
-  test("out_len=65 (args=0x41) → empty result", () => {
-    expect(runJamBytes(JAM_FILE, "41")).toEqual(new Uint8Array(0));
-  });
+  // Uses the shared `encodeBlake2bArgs` helper so the [outLen][7-byte pad][input]
+  // layout stays in one place if the ABI ever changes again.
+  for (const outLen of [0, 65]) {
+    test(`out_len=${outLen} → empty result`, () => {
+      const argsHex = bytesToHex(
+        encodeBlake2bArgs({ outLen, input: new Uint8Array(0) }),
+      );
+      expect(runJamBytes(JAM_FILE, argsHex)).toEqual(new Uint8Array(0));
+    });
+  }
 });
 
 // -----------------------------------------------------------------------------
@@ -172,7 +176,7 @@ describe("blake2b: seeded random differential", () => {
     const next = splitmix64(seed);
     for (let i = 0; i < count; i++) {
       const outLen = randInt(next, 1, 64);
-      const inputLen = randInt(next, 0, 2048);
+      const inputLen = randInt(next, 0, 32768);
       const input = randomBytes(next, inputLen);
       try {
         await assertBlake2bAgreement({ outLen, input });

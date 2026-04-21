@@ -563,3 +563,20 @@ This is a non-deterministic issue in the anan-as runtime itself, not a PVM compi
 **Repro (against the original SHA-512 WAT):** seed `0x0123456789abcdef`, iteration 9 (inputLen 14439), run under `bun test layer3/sha512.test.ts` with `SHA512_RANDOM_COUNT=1000`.
 
 **WAT-level mitigation that correlated with a fix in the SHA-512 case:** copy the entire input from the PVM args region (`args_ptr`, at `0xFEFF0000`) into WASM memory in one upfront `memory.copy`, then stream from there. The hot compress loop now reads only from the pre-allocated WASM region. After this change, 1000-iter run went from 999/1000 pass in 1023 s to 1000/1000 pass in 506 s. We have only the observed correlation — the exact trigger inside anan-as remains unclear — but the scattered args-region reads are a plausible contributor to both the failure and the wall-clock overhead, and consolidating them into one contiguous read is defensible on design grounds regardless. The `+143 B` JAM-size / `~4%` gas cost is cheap for the apparent stability and speed gains.
+
+The blake2b follow-up (see next section) gives a more mechanical explanation for the wall-clock component — misaligned cross-page u64 loads — which is very likely the same root cause.
+
+### Cross-PVM-page `memory.copy` reads from a misaligned source blow up gas
+
+`memory.copy`'s word loop issues one `LoadIndU64` per iteration. When the source address is 8-byte-aligned, each load sits entirely inside one PVM page (pages are 4 KB). When the source is *misaligned*, one u64 read per page will straddle two pages — and that cross-page u64 read is extremely expensive in anan-as (orders of magnitude slower than aligned reads). A WAT that streams from the PVM args region (`0xFEFF0000`, always 4 KB-aligned) via a pointer like `args_ptr + 1` (misaligned by 1) will OOG well before finishing a 32 KB input; the inflection point is around ~4 KB, right where the first cross-page straddle happens.
+
+**Observed with `tests/fixtures/wat/blake2b.jam.wat`** while raising its differential input cap from 2 KB to 32 KB (issue #197):
+
+- Original `[out_len: u8][input: bytes]` format placed the input at `args_ptr + 1` — misaligned, cliff at ~4 KB inputs.
+- Any WAT-level "copy-into-WASM-memory-first" fix had to keep *both* the bulk copy's source and destination 8-byte-aligned, or the same cross-page cost reappeared during the upfront copy (only now hidden from the naïve "stream from WASM memory" mental model).
+- Final shape: pad the header to 8 bytes (`[out_len: u8][7 zero bytes][input: bytes]`). With `args_ptr` always 4 KB-aligned and the destination at `0x1000`, the bulk copy is fully aligned, the input lands at `args_ptr + 8` (still aligned), and `data_ptr = 0x1008` keeps every downstream 128-byte stream copy aligned in WASM memory. Test-harness only sees the new 8-byte args envelope via `encodeBlake2bArgs()`.
+- Gas at 32 KB went from "OOG past 1 B gas" to ~4.6 M gas. Linear scaling restored.
+
+**Heuristic for new WAT fixtures that read args in bulk:** make the input portion of args start at an 8-byte offset from `args_ptr` (either by having *no* prefix, like SHA-512, or by padding any prefix out to 8 bytes, like the blake2b fix above). Keeping every downstream `data_ptr` / stream-`memory.copy` source 8-byte-aligned avoids the cliff regardless of which page of the args region the tail falls in.
+
+The SHA-512 WAT happens to have no prefix (input starts at `args_ptr + 0`), which is why the earlier SHA-512 fix was sufficient for that fixture — it stayed aligned by accident of format. Blake2b needed the padding change to benefit from the same pattern.

@@ -15,11 +15,21 @@ export function blake2bRef(args: Blake2bArgs): Uint8Array {
   return blake2b(args.input, { dkLen: args.outLen });
 }
 
-/** Encode `(outLen, input)` into the WAT entry-point's args bytes: [outLen:u8][input]. */
+/**
+ * Encode `(outLen, input)` into the WAT entry-point's args bytes:
+ * `[outLen:u8][7 bytes zero pad][input]`.
+ *
+ * The 7-byte pad keeps the input portion 8-byte-aligned from `args_ptr`, which
+ * lets the WAT's bulk memory.copy and per-block stream reads stay word-aligned
+ * (avoiding cross-PVM-page u64 loads that made the unpadded format blow up on
+ * inputs above ~4 KB). Matches the alignment pattern used by the SHA-512
+ * fixture.
+ */
 export function encodeBlake2bArgs(args: Blake2bArgs): Uint8Array {
-  const out = new Uint8Array(1 + args.input.length);
+  const out = new Uint8Array(8 + args.input.length);
   out[0] = args.outLen;
-  out.set(args.input, 1);
+  // bytes 1..7 stay zero (implicit with Uint8Array default).
+  out.set(args.input, 8);
   return out;
 }
 
