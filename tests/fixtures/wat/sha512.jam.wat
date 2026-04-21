@@ -12,6 +12,8 @@
 ;;   0x340..0x5BF  W[80] message schedule (mutable, 80 x i64)
 ;;   0x5C0..0x63F  final-block padding buffer (128 bytes)
 ;;   0x640..0x67F  working state a..hh during rounds (8 x i64)
+;;   0x1000..0x11000  input buffer (up to 64 KB; args are copied here once
+;;                    at entry, all stream/tail reads go through this region)
 
 (module
   ;; 2 pages (128 KB): enough for the internal buffers (first ~1.7 KB) plus
@@ -291,8 +293,15 @@
     ;; h[0..7] = H[0..7] (one 64-byte copy from the initial-H data segment).
     (memory.copy (i32.const 0x040) (i32.const 0x080) (i32.const 64))
 
-    ;; data_ptr = args_ptr; remaining = args_len
-    (local.set $data_ptr  (local.get $args_ptr))
+    ;; Copy the whole input into WASM memory at 0x1000 in one shot, then do
+    ;; all stream/tail reads from WASM memory. This keeps the hot compress
+    ;; loop's reads within the pre-allocated 2-page WASM region and avoids
+    ;; any interleaved reads from the PVM args region (0xFEFF0000) during
+    ;; computation. Under native WASM, args are already at 0x1000, so this
+    ;; is effectively a no-op self-copy; under PVM, it pulls args into
+    ;; WASM memory once up-front.
+    (memory.copy (i32.const 0x1000) (local.get $args_ptr) (local.get $args_len))
+    (local.set $data_ptr  (i32.const 0x1000))
     (local.set $remaining (local.get $args_len))
 
     ;; Total bit length (for the final padding). SHA-512 uses a 128-bit big-
