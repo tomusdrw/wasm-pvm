@@ -18,7 +18,7 @@
 //!   0x30000             Mem-size slot (4 bytes, only when memory.size/grow/init used)
 //!   0x30000 / 0x30004+  User globals (4 bytes each; offset by 4 when mem-size slot present)
 //!   globals_end+        Passive data segment effective-length slots (4 bytes each)
-//!   passive_lens_end+   Parameter overflow area (256 bytes, 8-byte aligned, only when any local function has >4 params)
+//!   passive_lens_end+   Parameter overflow area (256 bytes, 8-byte aligned, only when any module type signature has >4 params — gated by `needs_param_overflow`, which covers both local functions and `call_indirect` types)
 //!   region_end          WASM linear memory (no 4KB alignment; sits immediately after last region)
 //!   ...
 //!   0xFEFE0000          Stack segment end (stack grows downward)
@@ -75,8 +75,9 @@ pub fn stack_limit(stack_size: u32) -> i32 {
 ///    uses `memory.size`/`memory.grow`/`memory.init`.
 /// 2. User globals (4 bytes each).
 /// 3. Passive data segment effective-length slots (4 bytes each).
-/// 4. Parameter overflow area (256 bytes) — only when some local function has
-///    more than `MAX_LOCAL_REGS` parameters.
+/// 4. Parameter overflow area (256 bytes) — only when any module type
+///    signature (local function or `call_indirect` target) has more than
+///    `MAX_LOCAL_REGS` parameters (tracked by `needs_param_overflow`).
 ///
 /// `wasm_memory_base` sits immediately after region 4 (or the last present
 /// region). It is **not** 4KB-aligned: anan-as allocates `rw_data` one PVM page

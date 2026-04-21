@@ -114,12 +114,15 @@ Impact: ~50% gas reduction, ~15-40% code size reduction across benchmarks.
 | 1st–4th | r9–r12 |
 | 5th+ | `param_overflow_base + (i-4)*8` in global memory (dynamic) |
 
-The param-overflow base is computed per-module by `compute_wasm_memory_base`
-(see `memory_layout.rs`). It sits right after the globals/passive-length region
-(8-byte aligned), and the 256-byte reservation is only present when some
-signature in the module has more than `MAX_LOCAL_REGS` params — tracked via
-`WasmModule::needs_param_overflow`. For a typical AS program the base lands
-around `0x30010`–`0x30020`; the old fixed `0x32000` location is gone.
+The param-overflow base is computed per-module by `compute_param_overflow_base`
+(see `memory_layout.rs`). It sits right after the globals/passive-length region,
+8-byte aligned. The complementary helper `compute_wasm_memory_base` returns the
+start of WASM linear memory, which lands immediately after the overflow
+reservation when one is present. The 256-byte reservation is only emitted when
+any module type signature — local function or `call_indirect` target — has more
+than `MAX_LOCAL_REGS` params, tracked via `WasmModule::needs_param_overflow`.
+For a typical AS program the base lands around `0x30010`–`0x30020`; the old
+fixed `0x32000` location is gone.
 
 Return value: **r7** (single i64).
 
@@ -305,7 +308,7 @@ PVM Address Space:
   0x30000             Mem-size slot (4 bytes, only when memory.size/grow/init used)
   0x30000 / 0x30004+  User globals (4 bytes each; offset by 4 when mem-size slot present)
   after globals       Passive data segment length slots (4 bytes each)
-  after lengths       Parameter overflow area (256 bytes, 8-byte aligned, only when any local function has >4 params)
+  after lengths       Parameter overflow area (256 bytes, 8-byte aligned, only when any module type signature has >`MAX_LOCAL_REGS` params — covers both local functions and `call_indirect` targets)
   region_end          WASM linear memory (sits immediately after last region — no 4KB alignment)
   ...                 (unmapped gap until stack)
   0xFEFE0000          STACK_SEGMENT_END (initial SP)
