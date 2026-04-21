@@ -260,7 +260,7 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 | Fix test execution | `tests/helpers/run.ts` | `runJam()` (u32 result), `runJamBytes()` (raw `Uint8Array` — use for hash / multi-byte outputs) |
 | Byte-level native WASM run | `tests/helpers/wasm-runner.ts` | `runWasmNativeBytes()` — raw bytes variant of `runWasmNative` for differential tests that compare buffers |
 | Hand-crafted crypto example | `tests/fixtures/wat/blake2b.jam.wat` + `tests/layer3/blake2b.test.ts` | RFC 7693 blake2b (unkeyed, variable output 1..=64) with 3-way agreement tests vs `@noble/hashes` |
-| Hand-crafted hash example (SHA-2) | `tests/fixtures/wat/sha512.jam.wat` + `tests/layer3/sha512.test.ts` | FIPS 180-4 SHA-512 (fixed 64-byte output) with 3-way agreement tests vs `@noble/hashes/sha2`. Input cap 64 KB. |
+| Hand-crafted hash example (SHA-2) | `tests/fixtures/wat/sha512.jam.wat` + `tests/layer3/sha512.test.ts` | FIPS 180-4 SHA-512 (fixed 64-byte output) with 3-way agreement tests vs `@noble/hashes/sha2`. Input cap 32 KB (capped to keep the hex CLI encoding under Linux's 128 KB per-argv-string limit). |
 | Fix test build | `tests/build.ts` + `tests/helpers/compile.ts` | Build orchestrator + compilation helpers |
 | Debug execution | `tests/utils/trace-steps.ts` | Shows PC, gas, registers per step |
 | Generate execution trace | `tests/utils/generate-trace.ts` | Outputs anan-as trace format to stdout |

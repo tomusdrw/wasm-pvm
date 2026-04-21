@@ -105,7 +105,7 @@ SHA-512 padding is "append 0x80, zero-pad to 112 mod 128, append 128-bit BE bit-
 
 This split is ~50 lines of WAT but makes the padding logic obvious and testable. The alternative (always conditionally pad-then-maybe-compress-twice) is more compact but mixes the two paths — more room for a padding bug to hide.
 
-**Input size cap** is 64 KB (vs blake2b's 2 KB), so the bit length fits in a u32; the WAT still writes the full 128-bit length field (most bytes zero) for structural correctness.
+**Input size cap** is 32 KB (vs blake2b's 2 KB), so the bit length fits in a u32; the WAT still writes the full 128-bit length field (most bytes zero) for structural correctness. The cap is set at 32 KB — not the more intuitive 64 KB — because Linux's `posix_spawn` caps a single argv string at 128 KB (`MAX_ARG_STRLEN`); args travel to anan-as as a hex argument (`2 × args_len + 2` chars) and a 64 KB input would overflow the single-string limit. The cap is enforced in the WAT: inputs above it return `(ptr=0, len=0)`.
 
 ### Bswap helper
 
@@ -147,13 +147,15 @@ Called 16 times per block from the W[0..15] load. Implemented as a real `$bswap6
     - `119` / `120` / `127` / `128` / `129`: mid-second-block and two-block transitions.
   - `255, 256, 257` — general block-boundary sanity (matching blake2b's pattern).
 - **Boundary checks on cap**:
-  - `65535`, `65536` — upper end of the differential range, ensures no unexpected truncation.
+  - `32767`, `32768` — upper end of the differential range, ensures no unexpected truncation.
+- **Cap rejection**:
+  - `32769` — verifies the WAT's `args_len > cap` guard returns an empty result via PVM and native WASM.
 
 ### Seeded random differential (one test, N iterations)
 
 - **Seeded PRNG**: `SHA512_RANDOM_SEED` env var (hex), default `0123456789abcdef`. Uses the same splitmix64 helper pattern as blake2b.
 - **Iteration count** from `SHA512_RANDOM_COUNT`, default **50**.
-- **Per iteration**: input length `∈ [0, 65536]`, random bytes.
+- **Per iteration**: input length `∈ [0, 32768]`, random bytes.
 - **Check**: three-way byte agreement (PVM, native WASM, `@noble/hashes/sha2`).
 - **Failure output**: prints `seed`, `iteration`, `inputLen`, `input_hex` (truncated if >4 KB for readability). Re-run reproducible via the env vars.
 
@@ -170,13 +172,13 @@ assertSha512Agreement(input: Uint8Array, expected?: Uint8Array)
 
 80 rounds × ~10 64-bit ops per round + bswap overhead + schedule extension. Per-block cost is in the same order of magnitude as one blake2b block (blake2b: 12 rounds × 8 G calls × ~15 ops = ~1440 ops; SHA-512: 80 rounds × ~10 ops = ~800 ops — SHA-512 is lighter per block).
 
-For a 64 KB input (512 blocks) that's roughly 400k PVM instructions per iteration. At 50 iterations plus the unit tests, total budget is ~20M instructions. Well within `runJamBytes`'s default 100M gas.
+For a 32 KB input (256 blocks) that's roughly 200k PVM instructions per iteration. At 50 iterations plus the unit tests, total budget is ~10M instructions. Well within `runJamBytes`'s default 100M gas.
 
 If tests need more, extend `runJamBytes` with an optional `gas?: number` param (already done for blake2b).
 
 ## Risks
 
-1. **Hand-crafted SHA-512 is error-prone.** The padding split, big-endian loads, and 80-round schedule are all places for subtle off-by-one bugs. Mitigations: FIPS vectors as the spec backstop, size-edge tests on every padding-boundary byte in `[108, 132]`, and 50-iteration seeded random differential at 64 KB cap.
+1. **Hand-crafted SHA-512 is error-prone.** The padding split, big-endian loads, and 80-round schedule are all places for subtle off-by-one bugs. Mitigations: FIPS vectors as the spec backstop, size-edge tests on every padding-boundary byte in `[108, 132]`, and 50-iteration seeded random differential at 32 KB cap.
 2. **Big-endian loads must go through `$bswap64`.** Forgetting a bswap shifts the entire hash output — obvious failure, easy to catch.
 3. **Gas tuning** per test may be needed; if so, keep it per-call, not global. (Same policy as blake2b.)
 4. **`@noble/hashes/sha2` API drift.** `@noble/hashes` is pinned via `package.json`; path is already stable (blake2b uses `/blake2b`, we use `/sha2`'s `sha512` export).

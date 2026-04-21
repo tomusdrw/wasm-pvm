@@ -1,8 +1,13 @@
 ;; SHA-512 (FIPS 180-4), fixed 64-byte output.
 ;;
 ;; Entry: main(args_ptr: i32, args_len: i32) -> i64
-;;   args = [input: bytes]  (input may be 0..=65536 bytes; no prefix)
+;;   args = [input: bytes]  (input may be 0..=32768 bytes; no prefix)
 ;;   returns (out_ptr: i32) | ((64: i32) << 32)
+;;   on inputs above the cap the function returns 0 (ptr=0, len=0).
+;;
+;; The 32 KB cap is a test-harness constraint: anan-as receives args as a hex
+;; CLI argument, and Linux's MAX_ARG_STRLEN (128 KB per argv string) rejects
+;; anything larger. The streaming algorithm itself is size-independent.
 ;;
 ;; WASM memory layout (all offsets WASM-relative):
 ;;   0x000..0x03F  output hash buffer (64 bytes)
@@ -12,13 +17,14 @@
 ;;   0x340..0x5BF  W[80] message schedule (mutable, 80 x i64)
 ;;   0x5C0..0x63F  final-block padding buffer (128 bytes)
 ;;   0x640..0x67F  working state a..hh during rounds (8 x i64)
-;;   0x1000..0x11000  input buffer (up to 64 KB; args are copied here once
-;;                    at entry, all stream/tail reads go through this region)
+;;   0x1000..0x9000  input buffer (up to 32 KB; args are copied here once
+;;                   at entry, all stream/tail reads go through this region)
 
 (module
-  ;; 2 pages (128 KB): enough for the internal buffers (first ~1.7 KB) plus
-  ;; input data up to 64 KB placed by the native-WASM runner at offset 0x1000.
-  (memory (export "memory") 2)
+  ;; 1 page (64 KB): enough for internal buffers (first ~1.7 KB) plus the
+  ;; 32 KB input buffer at 0x1000..0x9000. The native-WASM runner also places
+  ;; args at 0x1000 within a single page.
+  (memory (export "memory") 1)
 
   ;; Initial hash values H[0..7] at 0x80 (64 bytes, 8 x i64 LE).
   (data (i32.const 0x080)
@@ -290,13 +296,20 @@
     (local $bit_len_lo i64)
     (local $tail_len i32)
 
+    ;; Reject inputs above the documented 32 KB cap. Beyond the cap the input
+    ;; buffer at 0x1000..0x9000 would overflow into later memory, so this is
+    ;; a hard correctness guard, not a soft limit.
+    (if (i32.gt_u (local.get $args_len) (i32.const 32768))
+      (then
+        (return (i64.const 0))))
+
     ;; h[0..7] = H[0..7] (one 64-byte copy from the initial-H data segment).
     (memory.copy (i32.const 0x040) (i32.const 0x080) (i32.const 64))
 
     ;; Copy the whole input into WASM memory at 0x1000 in one shot, then do
     ;; all stream/tail reads from WASM memory. This keeps the hot compress
-    ;; loop's reads within the pre-allocated 2-page WASM region and avoids
-    ;; any interleaved reads from the PVM args region (0xFEFF0000) during
+    ;; loop's reads within the pre-allocated WASM region and avoids any
+    ;; interleaved reads from the PVM args region (0xFEFF0000) during
     ;; computation. Under native WASM, args are already at 0x1000, so this
     ;; is effectively a no-op self-copy; under PVM, it pulls args into
     ;; WASM memory once up-front.

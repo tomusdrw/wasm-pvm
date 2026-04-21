@@ -143,11 +143,35 @@ describe("sha512: block boundaries", () => {
 describe("sha512: cap endpoints", () => {
   // Upper end of the seeded-random differential range. Ensures nothing
   // unexpected happens at the max supported input size.
-  test("input len = 65535", async () => {
-    await assertSha512Agreement({ input: patternInput(65535) });
+  //
+  // The cap is 32 KB rather than the algorithm-friendly 64 KB because Linux's
+  // MAX_ARG_STRLEN caps a single argv string at 128 KB (131072 bytes), and
+  // args are delivered to anan-as as a hex CLI argument (2x the byte length
+  // plus the "0x" prefix). At 32768 bytes the hex payload is 65538 chars —
+  // well within the limit on every platform.
+  test("input len = 32767", async () => {
+    await assertSha512Agreement({ input: patternInput(32767) });
   });
-  test("input len = 65536", async () => {
-    await assertSha512Agreement({ input: patternInput(65536) });
+  test("input len = 32768", async () => {
+    await assertSha512Agreement({ input: patternInput(32768) });
+  });
+});
+
+// The WAT rejects input_len > 32768 by returning (ptr=0, len=0). That
+// produces an empty result from runJamBytes and an empty `bytes` from the
+// native WASM runner, analogous to blake2b's invalid-out_len rejection.
+describe("sha512: cap rejection", () => {
+  test("input len = 32769 → empty result from PVM", () => {
+    const input = patternInput(32769);
+    const argsHex = bytesToHex(input);
+    expect(runJamBytes(JAM_FILE, argsHex)).toEqual(new Uint8Array(0));
+  });
+  test("input len = 32769 → empty bytes from native WASM", async () => {
+    const input = patternInput(32769);
+    const argsHex = bytesToHex(input);
+    const wasm = await runWasmNativeBytes(await watToWasm(WAT_FILE), argsHex);
+    expect(wasm.trapped).toBe(false);
+    expect(wasm.bytes).toEqual(new Uint8Array(0));
   });
 });
 
@@ -163,7 +187,7 @@ describe("sha512: seeded random differential", () => {
   test(`${count} random inputs (seed=${seedHex})`, async () => {
     const next = splitmix64(seed);
     for (let i = 0; i < count; i++) {
-      const inputLen = randInt(next, 0, 65536);
+      const inputLen = randInt(next, 0, 32768);
       const input = randomBytes(next, inputLen);
       try {
         await assertSha512Agreement({ input });
@@ -178,5 +202,5 @@ describe("sha512: seeded random differential", () => {
         throw err;
       }
     }
-  }, 600_000); // 10 minutes: 50 iterations at up to 65 KB each can be slow under PVM.
+  }, 600_000); // 10 minutes: 50 iterations at up to 32 KB each can be slow under PVM.
 });

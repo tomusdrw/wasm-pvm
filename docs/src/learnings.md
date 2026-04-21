@@ -551,7 +551,7 @@ While adding invalid-`out_len` trap tests for blake2b, we discovered that a bare
 
 Under rapid back-to-back `bun test` runs at high iteration counts (e.g. `SHA512_RANDOM_COUNT=1000`), the anan-as PVM runtime in `--spi` mode occasionally prints:
 
-```
+```text
 Warning: Run out of pages! Allocating.
 Unhandled host call: ecalli 0. Finishing.
 ```
@@ -562,4 +562,4 @@ This is a non-deterministic issue in the anan-as runtime itself, not a PVM compi
 
 **Repro (against the original SHA-512 WAT):** seed `0x0123456789abcdef`, iteration 9 (inputLen 14439), run under `bun test layer3/sha512.test.ts` with `SHA512_RANDOM_COUNT=1000`.
 
-**WAT-level mitigation that fixed the SHA-512 case:** copy the entire input from the PVM args region (`args_ptr`, at `0xFEFF0000`) into WASM memory in one upfront `memory.copy`, then stream from there. The hot compress loop now reads only from the pre-allocated WASM region. 1000-iter run went from 999/1000 pass in 1023 s to 1000/1000 pass in 506 s — the scattered args-region reads were both unsafe under load and slow when they did succeed. The `+143 B` JAM-size / `~4%` gas cost for 64 KB inputs is cheap for the stability and speed gains.
+**WAT-level mitigation that fixed the SHA-512 case:** copy the entire input from the PVM args region (`args_ptr`, at `0xFEFF0000`) into WASM memory in one upfront `memory.copy`, then stream from there. The hot compress loop now reads only from the pre-allocated WASM region. 1000-iter run went from 999/1000 pass in 1023 s to 1000/1000 pass in 506 s — the scattered args-region reads were both unsafe under load and slow when they did succeed. The `+143 B` JAM-size / `~4%` gas cost is cheap for the stability and speed gains.
