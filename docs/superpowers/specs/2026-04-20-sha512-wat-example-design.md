@@ -1,8 +1,15 @@
 # SHA-512 hand-crafted WAT example — design
 
-**Status:** approved, pending implementation
+**Status:** implemented (see `tests/fixtures/wat/sha512.jam.wat`, PR #199)
 **Date:** 2026-04-20
 **Scope:** new example program + test coverage (PR A in a two-PR stack; PR B will be ed25519 verify reusing the SHA-512 implementation internally).
+
+## Implementation deltas vs this spec
+
+The landed WAT diverges from this design in two places; both decisions were made during implementation to address load/phi-pressure issues discovered only at build-and-test time:
+
+1. **Memory-backed round state** — the round function keeps `a..h` in memory at `0x640..0x67F`, not purely in WASM locals. Keeping 8 loop-carried i64 locals across 80 iterations produced phi-header pressure that degraded the round loop; the memory-backed form was cheaper overall. `$a` and `$e` are still `local`s used as temporaries within each round, but the state array is read from / written to memory. See the round function section below.
+2. **32 KB input cap (not 64 KB)** — `posix_spawn` / Linux `MAX_ARG_STRLEN` is 128 KB per argv string, and the hex encoding of a 64 KB input overflows it. Cap is 32 KB and enforced in the WAT (`args_len > 32768` returns `(ptr=0, len=0)`).
 
 ## Goal
 
@@ -57,7 +64,7 @@ Same as blake2b: `defineSuite()` clips to a u32 result. SHA-512 is 64-byte outpu
 
 **Rationale for LE-stored constants**: WAT data segments are bytes, and `i64.load` is LE. Storing `H[0] = 0x6a09e667f3bcc908` in LE order on disk makes `i64.load` return the correct value directly, no bswap on constant access. The bswap cost is only on input bytes (which arrive in BE from the message).
 
-### Memory layout (WASM-relative, 1600 B — fits one 64 KB page)
+### Memory layout (WASM-relative, ~37 KB — fits one 64 KB page)
 
 | Offset | Size | Purpose |
 |---|---|---|
@@ -67,6 +74,8 @@ Same as blake2b: `defineSuite()` clips to a u32 result. SHA-512 is 64-byte outpu
 | `0x0C0` | 640 B | K[80] round constants (data segment) |
 | `0x340` | 640 B | W[80] message schedule (mutable) |
 | `0x5C0` | 128 B | final-block padding buffer (used only on the tail) |
+| `0x640` | 64 B | round-function working state a..h (memory-backed — see implementation deltas) |
+| `0x1000` | 32 KB | input buffer (args copied here once at entry) |
 
 Offsets are WASM-relative; the PVM harness adds `wasm_memory_base` at runtime.
 
@@ -83,7 +92,9 @@ d  = c; c = b; b = a
 a  = T1 + T2
 ```
 
-where `ch`, `maj`, `bsig0`, `bsig1` are the standard 64-bit sigma functions. We use 8 `i64` locals `$a..$h` and shift them in the loop body. The assignments compile to SSA phi nodes — cleaner than 16 memory loads/stores per round.
+where `ch`, `maj`, `bsig0`, `bsig1` are the standard 64-bit sigma functions.
+
+The initial design had the round function carry `a..h` as 8 `i64` locals across the 80-iteration loop, relying on SSA phi nodes. The landed implementation instead keeps the state array in memory at `0x640..0x67F` and uses a small number of `i64` locals (primarily `$a`, `$e`, `$t1`, `$t2`) as per-iteration temporaries. Rationale: 8 loop-carried i64 locals across 80 iterations created enough phi-header pressure to offset the savings from avoiding memory traffic. The memory-backed form proved cheaper when measured end-to-end. See `tests/fixtures/wat/sha512.jam.wat` for the canonical round body.
 
 **Message schedule**:
 
@@ -163,7 +174,7 @@ Called 16 times per block from the W[0..15] load. Implemented as a real `$bswap6
 
 Identical rationale to blake2b — see `2026-04-20-blake2b-wat-example-design.md`. Harness:
 
-```
+```text
 assertSha512Agreement(input: Uint8Array, expected?: Uint8Array)
   → PVM == native WASM == reference, and (if expected) == expected
 ```

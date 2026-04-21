@@ -2,9 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a hand-crafted WAT SHA-512 fixture that compiles through the WASM→PVM pipeline, with byte-level three-way differential testing against `@noble/hashes/sha2` and native WebAssembly. Fixed 64-byte output, input size cap 64 KB.
+> **Post-implementation note (2026-04-21):** two things landed differently from this plan; follow-up work (e.g. ed25519 in PR B) should use the updated values rather than copying from the embedded code blocks below:
+> - **Input cap is 32 KB, not 64 KB.** Linux `MAX_ARG_STRLEN` (128 KB per argv string) rejects a 64 KB hex-encoded input as `E2BIG`, so the cap was lowered to 32 KB end-to-end (WAT, tests, spec). All `65535` / `65536` references below should read `32767` / `32768`; `randInt(next, 0, 65536)` should read `randInt(next, 0, 32768)`. The WAT also explicitly rejects `args_len > 32768`.
+> - **Round-function state is memory-backed, not 8 locals.** Keeping 8 loop-carried `i64` locals across 80 iterations created enough phi-header pressure to offset the savings from avoiding memory traffic. The landed WAT keeps the `a..h` state in memory at `0x640..0x67F` and uses only a small number of locals as per-iteration temporaries (`$a`, `$e`, `$t1`, `$t2`). See `tests/fixtures/wat/sha512.jam.wat`.
 
-**Architecture:** FIPS 180-4 SHA-512. WAT module with `$bswap64`, `$compress`, and `main` functions plus active data segments for the initial H values and 80 K round constants. Round function uses 8 `i64` locals cycled per round. Message schedule `W[80]` stored in memory. Padding split into two paths: single-block (`tail_len ≤ 111`) and two-block (`tail_len ≥ 112`).
+**Goal:** Add a hand-crafted WAT SHA-512 fixture that compiles through the WASM→PVM pipeline, with byte-level three-way differential testing against `@noble/hashes/sha2` and native WebAssembly. Fixed 64-byte output, input size cap 32 KB (see note above).
+
+**Architecture:** FIPS 180-4 SHA-512. WAT module with `$bswap64`, `$compress`, and `main` functions plus active data segments for the initial H values and 80 K round constants. Round function carries `a..h` state through memory at `0x640..0x67F` (not 8 locals — see note above). Message schedule `W[80]` stored in memory. Padding split into two paths: single-block (`tail_len ≤ 111`) and two-block (`tail_len ≥ 112`).
 
 **Tech Stack:** WAT (hand-crafted), existing Rust WASM→PVM compiler, Bun test runner, TypeScript, `@noble/hashes` reference library (already installed), `wabt` for WAT→WASM (already installed), existing `runJamBytes`/`runWasmNativeBytes` helpers (added in blake2b PR).
 
@@ -1070,7 +1074,7 @@ Before:
 After:
 ```markdown
 | Hand-crafted crypto example | `tests/fixtures/wat/blake2b.jam.wat` + `tests/layer3/blake2b.test.ts` | RFC 7693 blake2b (unkeyed, variable output 1..=64) with 3-way agreement tests vs `@noble/hashes` |
-| Hand-crafted hash example (SHA-2) | `tests/fixtures/wat/sha512.jam.wat` + `tests/layer3/sha512.test.ts` | FIPS 180-4 SHA-512 (fixed 64-byte output) with 3-way agreement tests vs `@noble/hashes/sha2`. Input cap 64 KB. |
+| Hand-crafted hash example (SHA-2) | `tests/fixtures/wat/sha512.jam.wat` + `tests/layer3/sha512.test.ts` | FIPS 180-4 SHA-512 (fixed 64-byte output) with 3-way agreement tests vs `@noble/hashes/sha2`. Input cap 32 KB (capped to keep the hex CLI encoding under Linux's 128 KB per-argv-string limit). |
 ```
 
 - [ ] **Step 2: Capture any learnings discovered during implementation**
@@ -1127,7 +1131,7 @@ gh pr create --title "feat: hand-crafted SHA-512 WAT example with differential t
 ## Summary
 
 - Hand-crafted SHA-512 WAT fixture at `tests/fixtures/wat/sha512.jam.wat`, following the blake2b pattern from #194.
-- Layer-3 tests at `tests/layer3/sha512.test.ts`: FIPS 180-4 vectors, padding-boundary edges, block-boundary edges, cap-endpoint edges, and 50-iteration seeded random differential (64 KB cap).
+- Layer-3 tests at `tests/layer3/sha512.test.ts`: FIPS 180-4 vectors, padding-boundary edges, block-boundary edges, cap-endpoint edges (32767, 32768), cap rejection (32769), and 50-iteration seeded random differential (32 KB cap).
 - Three-way byte-level agreement per test: PVM == native WASM == `@noble/hashes/sha2`.
 - First PR in a two-PR stack — ed25519 verify (PR B) follows.
 
@@ -1165,7 +1169,7 @@ Edit the PR via `gh pr edit --body-file <file>` or the web UI to replace the `<!
   - ✅ FIPS vectors (Task 2, Task 3.4)
   - ✅ Padding boundaries (Task 2 test list at 111, 112, 119, 120 — matches spec)
   - ✅ Block boundaries (Task 2 test list at 255, 256, 257)
-  - ✅ Cap endpoints (Task 2 at 65535, 65536)
+  - ✅ Cap endpoints (Task 2 at 32767, 32768 — see post-implementation note at the top)
   - ✅ Seeded random differential (Task 2 + Task 3.5)
   - ✅ Three-way agreement (Task 2 `assertSha512Agreement`)
   - ✅ Memory layout matches spec (offsets `0x000`…`0x640`)
