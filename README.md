@@ -114,32 +114,36 @@ All PVM-level optimizations enabled (default):
 
 | Benchmark | WASM size | JAM size | Code size | Gas Used |
 |-----------|----------|----------|-----------|----------|
-| add(5,7) | 68 B | 165 B | 99 B | 28 |
-| fib(20) | 110 B | 227 B | 148 B | 409 |
-| factorial(10) | 102 B | 199 B | 124 B | 156 |
-| is_prime(25) | 162 B | 286 B | 201 B | 62 |
+| add(5,7) | 68 B | 164 B | 99 B | 28 |
+| fib(20) | 110 B | 226 B | 148 B | 409 |
+| factorial(10) | 102 B | 198 B | 124 B | 156 |
+| is_prime(25) | 162 B | 285 B | 201 B | 62 |
 | AS fib(10) | 235 B | 631 B | 504 B | 245 |
 | AS factorial(7) | 234 B | 616 B | 490 B | 207 |
 | AS gcd(2017,200) | 229 B | 640 B | 517 B | 174 |
-| AS decoder | 1.5 KB | 20.8 KB | 6,469 B | 635 |
-| AS array | 1.4 KB | 19.9 KB | 5,740 B | 551 |
-| regalloc two loops | 252 B | 588 B | 461 B | 16,769 |
-| host-call-log | 171 B | 12.5 KB | 112 B | 42 |
-| aslan-fib accumulate | - | 38.5 KB | 18,042 B | 11,044 |
-| anan-as PVM interpreter | 54.6 KB | 155.5 KB | 106,577 B | - |
+| AS decoder | 1.5 KB | 6.6 KB | 4,944 B | 953 |
+| AS array | 1.4 KB | 6.1 KB | 4,427 B | 820 |
+| regalloc two loops | 252 B | 587 B | 461 B | 16,769 |
+| host-call-log | 171 B | 458 B | 104 B | 40 |
+| aslan-fib accumulate | - | 20.7 KB | 13,365 B | 11,474 |
+| blake2b("abc", 32) | 1.1 KB | 3.8 KB | 2,558 B | 17,930 |
+| sha512("abc") | 1.7 KB | 3.7 KB | 2,559 B | 17,981 |
+| anan-as PVM interpreter | 53.4 KB | 115.6 KB | 84,281 B | - |
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
 | Benchmark | JAM Size | Outer Gas | Direct Gas | Overhead |
 |-----------|----------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 21 B | 66,864 | - | - |
-| add(5,7) | 165 B | 1,145,302 | 28 | 40,904x |
-| host-call-log | 12.5 KB | 2,476,470 | 42 | 58,963x |
-| AS fib(10) | 631 B | 1,476,903 | 245 | 6,028x |
-| JAM-SDK fib(10)\* | 26.0 KB | 8,839,149 | - | - |
-| Jambrains fib(10)\* | 62.6 KB | 6,365,026 | - | - |
-| JADE fib(10)\* | 68.9 KB | 18,606,692 | - | - |
-| aslan-fib accumulate\* | 38.5 KB | 17,726,490 | 11,044 | 1,605x |
+| TRAP (interpreter overhead) | 21 B | 89,939 | - | - |
+| add(5,7) | 164 B | 1,219,622 | 28 | 43,558x |
+| host-call-log | 458 B | 1,265,258 | 40 | 31,631x |
+| AS fib(10) | 631 B | 1,571,677 | 245 | 6,415x |
+| JAM-SDK fib(10)\* | 25.4 KB | 9,582,904 | - | - |
+| Jambrains fib(10)\* | 61.1 KB | 29,245,041 | - | - |
+| JADE fib(10)\* | 67.3 KB | 20,493,145 | - | - |
+| aslan-fib accumulate\* | 20.7 KB | 15,849,103 | 11,474 | 1,381x |
+| blake2b("abc", 32) | 3.8 KB | 16,243,164 | 17,930 | 906x |
+| sha512("abc") | 3.7 KB | 15,533,350 | 17,981 | 864x |
 
 \*JAM-SDK fib(10), Jambrains fib(10), JADE fib(10), and aslan-fib accumulate exit on unhandled host calls (ecalli). The gas cost reflects program parsing/loading plus partial execution up to the first unhandled ecalli.
 

@@ -210,15 +210,18 @@ All optimizations enabled (default):
 
 | Benchmark | WASM size | JAM size | Code size | Gas Used |
 |-----------|----------|----------|-----------|----------|
-| add(5,7) | 68 B | 165 B | - | 28 |
-| fib(20) | 110 B | 247 B | - | 511 |
-| factorial(10) | 102 B | 209 B | - | 178 |
-| is_prime(25) | 162 B | 293 B | - | 65 |
-| AS fib(10) | 235 B | 640 B | - | 247 |
-| AS factorial(7) | 234 B | 625 B | - | 209 |
-| AS gcd(2017,200) | 229 B | 649 B | - | 176 |
-| AS decoder | 1.5 KB | 20.8 KB | - | 637 |
-| AS array | 1.4 KB | 20.0 KB | - | 557 |
-| regalloc two loops | - | 595 B | - | 16,776 |
-| aslan-fib accumulate | - | 38.5 KB | - | 11,089 |
-| anan-as PVM interpreter | 54.6 KB | 158.9 KB | - | - |
+| add(5,7) | 68 B | 164 B | 99 B | 28 |
+| fib(20) | 110 B | 226 B | 148 B | 409 |
+| factorial(10) | 102 B | 198 B | 124 B | 156 |
+| is_prime(25) | 162 B | 285 B | 201 B | 62 |
+| AS fib(10) | 235 B | 631 B | 504 B | 245 |
+| AS factorial(7) | 234 B | 616 B | 490 B | 207 |
+| AS gcd(2017,200) | 229 B | 640 B | 517 B | 174 |
+| AS decoder | 1.5 KB | 6.6 KB | 4,944 B | 953 |
+| AS array | 1.4 KB | 6.1 KB | 4,427 B | 820 |
+| regalloc two loops | 252 B | 587 B | 461 B | 16,769 |
+| host-call-log | 171 B | 458 B | 104 B | 40 |
+| aslan-fib accumulate | - | 20.7 KB | 13,365 B | 11,474 |
+| blake2b("abc", 32) | 1.1 KB | 3.8 KB | 2,558 B | 17,930 |
+| sha512("abc") | 1.7 KB | 3.7 KB | 2,559 B | 17,981 |
+| anan-as PVM interpreter | 53.4 KB | 115.6 KB | 84,281 B | - |
