@@ -352,6 +352,28 @@ impl<'a> WasmModule<'a> {
             .count();
 
         let needs_memory_size_global = scan_needs_memory_size_global(&functions)?;
+
+        // Reject signatures that would overflow the fixed 256-byte param
+        // overflow window. Call lowering writes arg[i] at
+        // `param_overflow_base + (i - MAX_LOCAL_REGS) * 8` without bounds
+        // checking, so arity > MAX_TOTAL_PARAMS would corrupt the start of
+        // WASM linear memory. Enforce the cap here rather than at the emit
+        // site so both local-function and `call_indirect` type annotations
+        // are covered uniformly.
+        if let Some((idx, ft)) = func_types
+            .iter()
+            .enumerate()
+            .find(|(_, ft)| ft.params().len() > memory_layout::MAX_TOTAL_PARAMS)
+        {
+            return Err(Error::Internal(format!(
+                "type {idx} has {arity} params; maximum supported is {max} \
+                (4 in registers + 32 in the {bytes}-byte param-overflow area)",
+                arity = ft.params().len(),
+                max = memory_layout::MAX_TOTAL_PARAMS,
+                bytes = memory_layout::PARAM_OVERFLOW_SIZE,
+            )));
+        }
+
         // The parameter-overflow area is needed whenever any signature in the
         // module carries more than `MAX_LOCAL_REGS` params — both for local
         // function declarations (caller writes args[4..] before the call) *and*
@@ -566,6 +588,56 @@ mod tests {
             module.needs_param_overflow,
             "high-arity call_indirect type must force overflow reservation"
         );
+    }
+
+    #[test]
+    fn rejects_signature_exceeding_overflow_capacity() {
+        // A signature with MAX_TOTAL_PARAMS + 1 params cannot be lowered: call
+        // sites would write arg[MAX_TOTAL_PARAMS] at offset
+        // `(MAX_TOTAL_PARAMS - MAX_LOCAL_REGS) * 8 = 256` in the overflow
+        // window, stomping the first 8 bytes of WASM linear memory.
+        let params: String = (0..super::memory_layout::MAX_TOTAL_PARAMS + 1)
+            .map(|_| " i32")
+            .collect();
+        let wasm = wat::parse_str(&format!(
+            r#"(module
+                (type $oversized (func (param{params}) (result i32)))
+                (func $main (export "main") (param i32 i32) (result i64)
+                    (i64.const 0))
+            )"#
+        ))
+        .expect("valid WAT");
+
+        match WasmModule::parse(&wasm) {
+            Ok(_) => panic!("must reject oversized signature"),
+            Err(crate::Error::Internal(msg)) => {
+                assert!(
+                    msg.contains("maximum supported"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn accepts_signature_at_overflow_capacity_boundary() {
+        // Boundary: MAX_TOTAL_PARAMS (36) params is allowed — fills exactly
+        // the 4 registers + 32 overflow slots.
+        let params: String = (0..super::memory_layout::MAX_TOTAL_PARAMS)
+            .map(|_| " i32")
+            .collect();
+        let wasm = wat::parse_str(&format!(
+            r#"(module
+                (type $maximal (func (param{params}) (result i32)))
+                (func $main (export "main") (param i32 i32) (result i64)
+                    (i64.const 0))
+            )"#
+        ))
+        .expect("valid WAT");
+
+        let module = WasmModule::parse(&wasm).expect("boundary arity must parse");
+        assert!(module.needs_param_overflow);
     }
 
     #[test]

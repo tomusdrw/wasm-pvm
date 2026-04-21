@@ -37,6 +37,13 @@ pub const GLOBAL_MEMORY_BASE: i32 = 0x30000;
 /// Each overflow parameter occupies 8 bytes.
 pub const PARAM_OVERFLOW_SIZE: usize = 256;
 
+/// Maximum total parameter count supported by a single function signature.
+/// First `MAX_LOCAL_REGS` (4) go into r9-r12; the next
+/// `PARAM_OVERFLOW_SIZE / 8` (32) into the overflow window. Signatures beyond
+/// this would have call sites writing past the overflow reservation into
+/// WASM linear memory, so `WasmModule::parse` rejects them.
+pub const MAX_TOTAL_PARAMS: usize = crate::abi::MAX_LOCAL_REGS + PARAM_OVERFLOW_SIZE / 8;
+
 /// Compute the base address for the parameter overflow area.
 /// Placed right after the globals region, 8-byte aligned.
 #[must_use]
