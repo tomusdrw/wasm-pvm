@@ -90,11 +90,14 @@ pub struct WasmModule<'a> {
     /// global, so if none of them appear we skip emitting that 4-byte slot.
     pub needs_memory_size_global: bool,
     /// Whether the compiler must reserve a parameter-overflow area in the PVM
-    /// data region. True iff any local function type has more than
-    /// `MAX_LOCAL_REGS` (4) parameters; callers spill the 5th+ args there and
-    /// callees read them back in the prologue. When false, the 256-byte
-    /// overflow reservation (and the 4KB page alignment that follows) can be
-    /// skipped, letting `wasm_memory_base` sit at `GLOBAL_MEMORY_BASE` itself.
+    /// data region. True iff any type signature in the module has more than
+    /// `MAX_LOCAL_REGS` (4) parameters — covering both local function
+    /// declarations and `call_indirect` type annotations, since the caller
+    /// writes args[4..] to the overflow area even when the caller's own
+    /// function is low-arity. When false, the 256-byte overflow reservation
+    /// is skipped and `wasm_memory_base` sits tight against the end of the
+    /// globals/passive-length region (no 4KB alignment is applied; see
+    /// `compute_wasm_memory_base` for the full layout rules).
     pub needs_param_overflow: bool,
 }
 
@@ -349,13 +352,17 @@ impl<'a> WasmModule<'a> {
             .count();
 
         let needs_memory_size_global = scan_needs_memory_size_global(&functions)?;
-        let needs_param_overflow =
-            function_type_indices
-                .iter()
-                .any(|&type_idx| match func_types.get(type_idx as usize) {
-                    Some(ft) => ft.params().len() > crate::abi::MAX_LOCAL_REGS,
-                    None => false,
-                });
+        // The parameter-overflow area is needed whenever any signature in the
+        // module carries more than `MAX_LOCAL_REGS` params — both for local
+        // function declarations (caller writes args[4..] before the call) *and*
+        // for `call_indirect` type annotations (caller writes args[4..] even if
+        // the caller function itself has ≤4 params). Scanning all types is a
+        // conservative superset: it may reserve 256 bytes of overflow for a
+        // module that declares a high-arity type it never calls, but avoids the
+        // real correctness bug of writing into unreserved memory.
+        let needs_param_overflow = func_types
+            .iter()
+            .any(|ft| ft.params().len() > crate::abi::MAX_LOCAL_REGS);
 
         // Compute WASM memory base
         let wasm_memory_base = memory_layout::compute_wasm_memory_base(
@@ -516,6 +523,49 @@ mod tests {
 
         assert!(module.has_secondary_entry);
         assert_eq!(module.secondary_entry_local_idx, Some(1));
+    }
+
+    #[test]
+    fn param_overflow_reserved_for_high_arity_indirect_call() {
+        // Regression: a module whose only local function has ≤4 params but
+        // performs `call_indirect` through a type with >4 params must reserve
+        // the param-overflow area. Before the fix, the scan only inspected
+        // local function declarations (via `function_type_indices`) and
+        // missed the indirect-call type, causing `lower_pvm_call_indirect` to
+        // write args[4..] into unreserved memory in release builds (and
+        // panic the `debug_assert!` at calls.rs:505 in debug builds).
+        let wasm = wat::parse_str(
+            r#"(module
+                (type $narrow (func (param i32 i32) (result i64)))
+                (type $wide (func (param i32 i32 i32 i32 i32) (result i32)))
+                (table 1 funcref)
+                (func $main (export "main") (type $narrow)
+                    (drop (call_indirect (type $wide)
+                        (i32.const 0) (i32.const 0) (i32.const 0)
+                        (i32.const 0) (i32.const 0) (i32.const 0)))
+                    (i64.const 0))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+
+        // Sanity: the only local function has 2 params (≤ MAX_LOCAL_REGS).
+        let max_local_arity = module
+            .function_type_indices
+            .iter()
+            .map(|&ti| module.func_types[ti as usize].params().len())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_local_arity <= crate::abi::MAX_LOCAL_REGS,
+            "fixture invariant: no local function should be high-arity"
+        );
+
+        // The flag must still be set because the indirect-call type is wide.
+        assert!(
+            module.needs_param_overflow,
+            "high-arity call_indirect type must force overflow reservation"
+        );
     }
 
     #[test]

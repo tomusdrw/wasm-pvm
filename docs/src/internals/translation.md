@@ -38,8 +38,8 @@ Source: `crates/wasm-pvm/src/translate/`
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data |
-| `0x30000` | Mem-size slot (4 bytes, only when `memory.size`/`grow`/`init` used), then user globals, passive segment length slots, and (when any local function has >4 params) a 256-byte parameter overflow area. Total size = `globals_region_size(...) + (256 if overflow else 0)`. |
-| `region_end` | WASM linear memory — placed **without 4KB alignment** immediately after the last region. For a bare memory-only program this is `0x30004`. |
+| `0x30000` | Mem-size slot (4 bytes, only when `memory.size`/`grow`/`init` used), then user globals, passive segment length slots, and (when any type signature has >4 params) a 256-byte parameter overflow area. Total size = `align_up_8(globals_region_size(...)) + 256` when overflow is reserved (the overflow base is 8-byte aligned — see `compute_param_overflow_base`), else just `globals_region_size(...)`. |
+| `region_end` | WASM linear memory — placed **without 4KB alignment** immediately after the last region. For a bare memory-only program this is `0x30004`; a typical program with zero user globals + mem-size + overflow lands at `0x30108`. |
 
 ## Anti-Patterns
 

@@ -112,7 +112,14 @@ Impact: ~50% gas reduction, ~15-40% code size reduction across benchmarks.
 | Parameter | Location |
 |-----------|----------|
 | 1st–4th | r9–r12 |
-| 5th+ | `PARAM_OVERFLOW_BASE` (`0x32000 + (i-4)*8`) in global memory |
+| 5th+ | `param_overflow_base + (i-4)*8` in global memory (dynamic) |
+
+The param-overflow base is computed per-module by `compute_wasm_memory_base`
+(see `memory_layout.rs`). It sits right after the globals/passive-length region
+(8-byte aligned), and the 256-byte reservation is only present when some
+signature in the module has more than `MAX_LOCAL_REGS` params — tracked via
+`WasmModule::needs_param_overflow`. For a typical AS program the base lands
+around `0x30010`–`0x30020`; the old fixed `0x32000` location is gone.
 
 Return value: **r7** (single i64).
 
@@ -430,7 +437,7 @@ where storing one phi value would overwrite a source needed by another phi.
 |----------|-----------|
 | Stack-slot for every SSA value | Correctness-first baseline; linear-scan register allocator (for loop-containing functions) assigns high-use values to available callee-saved regs (r9-r12 when not used for this function's incoming parameters), and per-block register cache eliminates most remaining redundant loads |
 | Spill area below SP | Frame grows up from SP, spill area grows down — no overlap |
-| Global `PARAM_OVERFLOW_BASE` | Avoids stack frame complexity for overflow params |
+| Fixed-address overflow region (computed per-module) | Avoids stack frame complexity for overflow params; reserved only when some signature needs it (see `needs_param_overflow`) |
 | Jump-table indices as return addresses | Required by PVM's `JUMP_IND` semantics |
 | Entry function has no stack check | Starts with full stack, nothing to overflow into |
 | Unsigned stack limit comparison | `LoadImm64` avoids sign-extension bugs with large addresses |

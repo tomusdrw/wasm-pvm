@@ -95,8 +95,7 @@ pub fn compute_wasm_memory_base(
     let globals_end = GLOBAL_MEMORY_BASE as usize
         + globals_region_size(num_globals, num_passive_segments, has_mem_size_global);
     let region_end = if needs_param_overflow {
-        compute_param_overflow_base(num_globals, num_passive_segments, has_mem_size_global)
-            as usize
+        compute_param_overflow_base(num_globals, num_passive_segments, has_mem_size_global) as usize
             + PARAM_OVERFLOW_SIZE
     } else {
         globals_end
