@@ -112,7 +112,17 @@ Impact: ~50% gas reduction, ~15-40% code size reduction across benchmarks.
 | Parameter | Location |
 |-----------|----------|
 | 1st–4th | r9–r12 |
-| 5th+ | `PARAM_OVERFLOW_BASE` (`0x32000 + (i-4)*8`) in global memory |
+| 5th+ | `param_overflow_base + (i-4)*8` in global memory (dynamic) |
+
+The param-overflow base is computed per-module by `compute_param_overflow_base`
+(see `memory_layout.rs`). It sits right after the globals/passive-length region,
+8-byte aligned. The complementary helper `compute_wasm_memory_base` returns the
+start of WASM linear memory, which lands immediately after the overflow
+reservation when one is present. The 256-byte reservation is only emitted when
+any module type signature — local function or `call_indirect` target — has more
+than `MAX_LOCAL_REGS` params, tracked via `WasmModule::needs_param_overflow`.
+For a typical AS program the base lands around `0x30010`–`0x30020`; the old
+fixed `0x32000` location is gone.
 
 Return value: **r7** (single i64).
 
@@ -295,27 +305,28 @@ PVM Address Space:
   0x00000 - 0x0FFFF   Reserved / guard (fault on access)
   0x10000 - 0x1FFFF   Read-only data (RO_DATA_BASE) — dispatch tables
   0x20000 - 0x2FFFF   Gap zone (unmapped, guard between RO and RW)
-  0x30000 - 0x31FFF   Globals window (GLOBAL_MEMORY_BASE, 8KB cap; actual bytes used = globals_region_size(...))
-  0x32000 - 0x320FF   Parameter overflow area (5th+ function arguments)
-  0x32100+            Spilled locals (per-function metadata, typically unused)
-  0x33000+             WASM linear memory (4KB-aligned, computed dynamically via `compute_wasm_memory_base`)
-  ...                  (unmapped gap until stack)
-  0xFEFE0000           STACK_SEGMENT_END (initial SP)
-  0xFEFF0000           Arguments segment (input data, read-only)
-  0xFFFF0000           EXIT_ADDRESS (jump here → HALT)
+  0x30000             Mem-size slot (4 bytes, only when memory.size/grow/init used)
+  0x30000 / 0x30004+  User globals (4 bytes each; offset by 4 when mem-size slot present)
+  after globals       Passive data segment length slots (4 bytes each)
+  after lengths       Parameter overflow area (256 bytes, 8-byte aligned, only when any module type signature has >`MAX_LOCAL_REGS` params — covers both local functions and `call_indirect` targets)
+  region_end          WASM linear memory (sits immediately after last region — no 4KB alignment)
+  ...                 (unmapped gap until stack)
+  0xFEFE0000          STACK_SEGMENT_END (initial SP)
+  0xFEFF0000          Arguments segment (input data, read-only)
+  0xFFFF0000          EXIT_ADDRESS (jump here → HALT)
 ```
 
 **Key formulas** (see `memory_layout.rs`):
 
-- Global address: `0x30000 + global_index * 4`
-- Memory size global: `0x30000 + num_globals * 4`
-- Spilled local: `0x32100 + func_idx * SPILLED_LOCALS_PER_FUNC + local_offset`
-- WASM memory base: `align_up(max(SPILLED_LOCALS_BASE + num_funcs * SPILLED_LOCALS_PER_FUNC, GLOBAL_MEMORY_BASE + globals_region_size(num_globals, num_passive_segments)), 4KB)` — the heap starts immediately after the globals/passive-length region, aligned to PVM page size (4KB). This is typically `0x33000` for programs with few globals.
+- Memory-size slot: `0x30000` — stable position, independent of `num_globals`. Emitted only when the module uses `memory.size`/`memory.grow`/`memory.init`.
+- Global address: `0x30000 + (has_mem_size ? 4 : 0) + global_index * 4`. When the mem-size slot is present, user globals start at `0x30004`; otherwise they start at `0x30000`.
+- Passive segment length slot: `0x30000 + ((has_mem_size ? 1 : 0) + num_globals + ordinal) * 4`.
+- WASM memory base: `compute_wasm_memory_base(num_globals, num_passive_segments, has_mem_size_global, needs_param_overflow)`. Sits immediately after the last present region with **no 4KB alignment** — anan-as page-aligns the rw_data tail (`heapZerosStart = heapStart + alignToPageSize(rwLength)`) separately, so the base can land at any byte offset. When every region is empty (no globals, no mem-size, no passive, no overflow), the base collapses to `GLOBAL_MEMORY_BASE` itself.
 - Stack limit: `0xFEFE0000 - stack_size`
 
 ### RW data layout
 
-SPI `rw_data` is defined as a contiguous dump of every byte from `GLOBAL_MEMORY_BASE` up to the last initialized byte of the WASM heap; the loader `memcpy`s this region at `0x30000`, so there is no sparse encoding or per-segment offsets inside the blob. That is why the zero stretch between the globals window and the first non-zero heap byte is encoded verbatim instead of being skipped.
+SPI `rw_data` is defined as a contiguous dump of every byte from `GLOBAL_MEMORY_BASE` up to the last initialized byte of the WASM heap; the loader `memcpy`s this region at `0x30000`, so there is no sparse encoding or per-segment offsets inside the blob. Because `wasm_memory_base` is placed tightly after the globals window (no 4KB alignment), the data-segment bytes start within a few bytes of `rw_data[0]` — the 4KB structural-padding page that the previous layout required for every memory-using program is eliminated. The compiler still trims trailing zeros before encoding.
 
 `build_rw_data()` trims trailing zero bytes before SPI encoding. Heap pages are zero-initialized, so omitted trailing zeros are semantically equivalent.
 
@@ -429,7 +440,7 @@ where storing one phi value would overwrite a source needed by another phi.
 |----------|-----------|
 | Stack-slot for every SSA value | Correctness-first baseline; linear-scan register allocator (for loop-containing functions) assigns high-use values to available callee-saved regs (r9-r12 when not used for this function's incoming parameters), and per-block register cache eliminates most remaining redundant loads |
 | Spill area below SP | Frame grows up from SP, spill area grows down — no overlap |
-| Global `PARAM_OVERFLOW_BASE` | Avoids stack frame complexity for overflow params |
+| Fixed-address overflow region (computed per-module) | Avoids stack frame complexity for overflow params; reserved only when some signature needs it (see `needs_param_overflow`) |
 | Jump-table indices as return addresses | Required by PVM's `JUMP_IND` semantics |
 | Entry function has no stack check | Starts with full stack, nothing to overflow into |
 | Unsigned stack limit comparison | `LoadImm64` avoids sign-extension bugs with large addresses |

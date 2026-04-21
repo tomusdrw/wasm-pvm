@@ -85,6 +85,20 @@ pub struct WasmModule<'a> {
     pub wasm_memory_base: i32,
     /// Maximum WASM memory pages available for memory.grow.
     pub max_memory_pages: u32,
+    /// Whether the module uses `memory.size`, `memory.grow`, or `memory.init`.
+    /// These are the only ops that read/write the compiler-managed memory-size
+    /// global, so if none of them appear we skip emitting that 4-byte slot.
+    pub needs_memory_size_global: bool,
+    /// Whether the compiler must reserve a parameter-overflow area in the PVM
+    /// data region. True iff any type signature in the module has more than
+    /// `MAX_LOCAL_REGS` (4) parameters — covering both local function
+    /// declarations and `call_indirect` type annotations, since the caller
+    /// writes args[4..] to the overflow area even when the caller's own
+    /// function is low-arity. When false, the 256-byte overflow reservation
+    /// is skipped and `wasm_memory_base` sits tight against the end of the
+    /// globals/passive-length region (no 4KB alignment is applied; see
+    /// `compute_wasm_memory_base` for the full layout rules).
+    pub needs_param_overflow: bool,
 }
 
 impl<'a> WasmModule<'a> {
@@ -336,9 +350,49 @@ impl<'a> WasmModule<'a> {
             .iter()
             .filter(|seg| seg.offset.is_none())
             .count();
+
+        let needs_memory_size_global = scan_needs_memory_size_global(&functions)?;
+
+        // Reject signatures that would overflow the fixed 256-byte param
+        // overflow window. Call lowering writes arg[i] at
+        // `param_overflow_base + (i - MAX_LOCAL_REGS) * 8` without bounds
+        // checking, so arity > MAX_TOTAL_PARAMS would corrupt the start of
+        // WASM linear memory. Enforce the cap here rather than at the emit
+        // site so both local-function and `call_indirect` type annotations
+        // are covered uniformly.
+        if let Some((idx, ft)) = func_types
+            .iter()
+            .enumerate()
+            .find(|(_, ft)| ft.params().len() > memory_layout::MAX_TOTAL_PARAMS)
+        {
+            return Err(Error::Internal(format!(
+                "type {idx} has {arity} params; maximum supported is {max} \
+                (4 in registers + 32 in the {bytes}-byte param-overflow area)",
+                arity = ft.params().len(),
+                max = memory_layout::MAX_TOTAL_PARAMS,
+                bytes = memory_layout::PARAM_OVERFLOW_SIZE,
+            )));
+        }
+
+        // The parameter-overflow area is needed whenever any signature in the
+        // module carries more than `MAX_LOCAL_REGS` params — both for local
+        // function declarations (caller writes args[4..] before the call) *and*
+        // for `call_indirect` type annotations (caller writes args[4..] even if
+        // the caller function itself has ≤4 params). Scanning all types is a
+        // conservative superset: it may reserve 256 bytes of overflow for a
+        // module that declares a high-arity type it never calls, but avoids the
+        // real correctness bug of writing into unreserved memory.
+        let needs_param_overflow = func_types
+            .iter()
+            .any(|ft| ft.params().len() > crate::abi::MAX_LOCAL_REGS);
+
         // Compute WASM memory base
-        let wasm_memory_base =
-            memory_layout::compute_wasm_memory_base(globals.len(), num_passive_segments);
+        let wasm_memory_base = memory_layout::compute_wasm_memory_base(
+            globals.len(),
+            num_passive_segments,
+            needs_memory_size_global,
+            needs_param_overflow,
+        );
 
         // max_memory_pages is the runtime limit for memory.grow (hardcoded in PVM code).
         // When the WASM module doesn't declare a max, use DEFAULT_MAX_PAGES (1 MB).
@@ -369,8 +423,32 @@ impl<'a> WasmModule<'a> {
             exported_wasm_func_indices,
             wasm_memory_base,
             max_memory_pages,
+            needs_memory_size_global,
+            needs_param_overflow,
         })
     }
+}
+
+/// Scan function bodies for any operator that reads/writes the compiler-managed
+/// memory-size global (`memory.size`, `memory.grow`, `memory.init`).
+fn scan_needs_memory_size_global(functions: &[FunctionBody<'_>]) -> Result<bool> {
+    for body in functions {
+        let mut reader = body
+            .get_operators_reader()
+            .map_err(|e| Error::Internal(format!("operator reader: {e}")))?;
+        while !reader.eof() {
+            match reader
+                .read()
+                .map_err(|e| Error::Internal(format!("operator read: {e}")))?
+            {
+                wasmparser::Operator::MemorySize { .. }
+                | wasmparser::Operator::MemoryGrow { .. }
+                | wasmparser::Operator::MemoryInit { .. } => return Ok(true),
+                _ => {}
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn eval_const_i32(expr: &wasmparser::ConstExpr) -> Result<i32> {
@@ -467,6 +545,99 @@ mod tests {
 
         assert!(module.has_secondary_entry);
         assert_eq!(module.secondary_entry_local_idx, Some(1));
+    }
+
+    #[test]
+    fn param_overflow_reserved_for_high_arity_indirect_call() {
+        // Regression: a module whose only local function has ≤4 params but
+        // performs `call_indirect` through a type with >4 params must reserve
+        // the param-overflow area. Before the fix, the scan only inspected
+        // local function declarations (via `function_type_indices`) and
+        // missed the indirect-call type, causing `lower_pvm_call_indirect` to
+        // write args[4..] into unreserved memory in release builds (and
+        // panic the `debug_assert!` at calls.rs:505 in debug builds).
+        let wasm = wat::parse_str(
+            r#"(module
+                (type $narrow (func (param i32 i32) (result i64)))
+                (type $wide (func (param i32 i32 i32 i32 i32) (result i32)))
+                (table 1 funcref)
+                (func $main (export "main") (type $narrow)
+                    (drop (call_indirect (type $wide)
+                        (i32.const 0) (i32.const 0) (i32.const 0)
+                        (i32.const 0) (i32.const 0) (i32.const 0)))
+                    (i64.const 0))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+
+        // Sanity: the only local function has 2 params (≤ MAX_LOCAL_REGS).
+        let max_local_arity = module
+            .function_type_indices
+            .iter()
+            .map(|&ti| module.func_types[ti as usize].params().len())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_local_arity <= crate::abi::MAX_LOCAL_REGS,
+            "fixture invariant: no local function should be high-arity"
+        );
+
+        // The flag must still be set because the indirect-call type is wide.
+        assert!(
+            module.needs_param_overflow,
+            "high-arity call_indirect type must force overflow reservation"
+        );
+    }
+
+    #[test]
+    fn rejects_signature_exceeding_overflow_capacity() {
+        // A signature with MAX_TOTAL_PARAMS + 1 params cannot be lowered: call
+        // sites would write arg[MAX_TOTAL_PARAMS] at offset
+        // `(MAX_TOTAL_PARAMS - MAX_LOCAL_REGS) * 8 = 256` in the overflow
+        // window, stomping the first 8 bytes of WASM linear memory.
+        let params: String = (0..super::memory_layout::MAX_TOTAL_PARAMS + 1)
+            .map(|_| " i32")
+            .collect();
+        let wasm = wat::parse_str(&format!(
+            r#"(module
+                (type $oversized (func (param{params}) (result i32)))
+                (func $main (export "main") (param i32 i32) (result i64)
+                    (i64.const 0))
+            )"#
+        ))
+        .expect("valid WAT");
+
+        match WasmModule::parse(&wasm) {
+            Ok(_) => panic!("must reject oversized signature"),
+            Err(crate::Error::Internal(msg)) => {
+                assert!(
+                    msg.contains("maximum supported"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn accepts_signature_at_overflow_capacity_boundary() {
+        // Boundary: MAX_TOTAL_PARAMS (36) params is allowed — fills exactly
+        // the 4 registers + 32 overflow slots.
+        let params: String = (0..super::memory_layout::MAX_TOTAL_PARAMS)
+            .map(|_| " i32")
+            .collect();
+        let wasm = wat::parse_str(&format!(
+            r#"(module
+                (type $maximal (func (param{params}) (result i32)))
+                (func $main (export "main") (param i32 i32) (result i64)
+                    (i64.const 0))
+            )"#
+        ))
+        .expect("valid WAT");
+
+        let module = WasmModule::parse(&wasm).expect("boundary arity must parse");
+        assert!(module.needs_param_overflow);
     }
 
     #[test]

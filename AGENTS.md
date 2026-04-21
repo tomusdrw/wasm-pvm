@@ -320,8 +320,8 @@ Each flag defaults to `true` (enabled). CLI exposes `--no-*` flags.
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data (dispatch table, passive segments) |
-| `0x30000` | Globals storage (each global = 4 bytes), followed immediately by parameter overflow area (5th+ args for call_indirect). The overflow area is placed dynamically right after globals, not at a fixed address. |
-| `≈0x31000+` | WASM linear memory (4KB-aligned; actual base computed via `compute_wasm_memory_base(num_globals, num_passive_segments)`, which aligns after the globals + overflow region to the next 4KB page boundary. Typical base for a program with 5 globals is 0x31000, saving ~8KB RW data vs the previous fixed 0x33000 layout.) |
+| `0x30000` | Mem-size slot (4 bytes, fixed position, only when `memory.size`/`grow`/`init` used), then user globals, passive segment length slots, then (when any local function takes >4 params) a 256-byte parameter overflow area. |
+| `region_end+` | WASM linear memory. Computed via `compute_wasm_memory_base(num_globals, num_passive_segments, has_mem_size_global, needs_param_overflow)`. **No 4KB alignment** is applied: anan-as page-aligns the rw_data tail (`heapZerosStart`) independently, so the base sits tightly against the end of the globals/overflow region. For a bare memory-only program the base lands at `0x30004`; for a typical AS program (1 global, mem-size, no overflow) at `0x30008`. Collapses the 4KB leading-zero page that every memory-using program used to pay for (~4 KB saving per fixture with data segments). |
 | `0xFEFE0000` | Stack segment end (stack grows downward) |
 | `0xFEFF0000` | Arguments (`args_ptr`) |
 | `0xFFFF0000` | EXIT address (HALT) |

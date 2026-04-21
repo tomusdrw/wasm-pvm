@@ -29,7 +29,7 @@ use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 pub fn lower_wasm_global_load<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
-    _ctx: &LoweringContext,
+    ctx: &LoweringContext,
 ) -> Result<()> {
     let slot = result_slot(e, instr)?;
     let ptr = get_operand(instr, 0)?;
@@ -42,7 +42,7 @@ pub fn lower_wasm_global_load<'ctx>(
             .strip_prefix("wasm_global_")
             .and_then(|s| s.parse::<u32>().ok())
         {
-            let global_addr = abi::global_addr(idx);
+            let global_addr = abi::global_addr(idx, ctx.has_memory_size_global);
             e.emit(Instruction::LoadU32 {
                 dst,
                 address: global_addr,
@@ -64,7 +64,7 @@ pub fn lower_wasm_global_load<'ctx>(
 pub fn lower_wasm_global_store<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
-    _ctx: &LoweringContext,
+    ctx: &LoweringContext,
 ) -> Result<()> {
     // store i64 %val, ptr @wasm_global_N
     let val = get_operand(instr, 0)?;
@@ -76,7 +76,7 @@ pub fn lower_wasm_global_store<'ctx>(
             .strip_prefix("wasm_global_")
             .and_then(|s| s.parse::<u32>().ok())
         {
-            let global_addr = abi::global_addr(idx);
+            let global_addr = abi::global_addr(idx, ctx.has_memory_size_global);
 
             // If value is a compile-time constant that fits in i32, use StoreImm.
             if let Some(val_const) = try_get_constant(val)
@@ -284,11 +284,11 @@ pub fn emit_pvm_store<'ctx>(
 pub fn emit_pvm_memory_size<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
-    ctx: &LoweringContext,
+    _ctx: &LoweringContext,
 ) -> Result<()> {
     let slot = result_slot(e, instr)?;
     let dst = result_reg(e, instr);
-    let global_addr = abi::memory_size_global_offset(ctx.num_globals);
+    let global_addr = abi::memory_size_global_offset();
 
     e.emit(Instruction::LoadU32 {
         dst,
@@ -308,7 +308,7 @@ pub fn emit_pvm_memory_grow<'ctx>(
 
     let delta = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;
-    let global_addr = abi::memory_size_global_offset(ctx.num_globals);
+    let global_addr = abi::memory_size_global_offset();
 
     // Load delta into SCRATCH1.
     e.load_operand(delta, SCRATCH1)?;
@@ -841,7 +841,7 @@ pub fn emit_pvm_memory_init<'ctx>(
         src2: TEMP_RESULT,
     });
     // SCRATCH2 = memory_size (in pages)
-    let mem_size_addr = crate::abi::memory_size_global_offset(ctx.num_globals);
+    let mem_size_addr = crate::abi::memory_size_global_offset();
     e.emit(Instruction::LoadU32 {
         dst: SCRATCH2,
         address: mem_size_addr,
