@@ -79,12 +79,15 @@ Tests have 180-second timeouts to accommodate this.
 
 | Benchmark | JAM Size | Code Size | Outer Gas | Direct Gas | Overhead |
 |-----------|----------|-----------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 21 B | 1 B | 80,577 | - | - |
-| add(5,7) | 201 B | 130 B | 1,238,302 | 39 | 31,751x |
-| AS fib(10) | 708 B | 572 B | 1,753,546 | 324 | 5,412x |
-| JAM-SDK fib(10)\* | 25.4 KB | 16.2 KB | 7,230,603 | 42 | 172,157x |
-| Jambrains fib(10)\* | 61.1 KB | - | 6,373,683 | 1 | 6,373,683x |
-| JADE fib(10)\* | 67.3 KB | 45.7 KB | 19,555,955 | 504 | 38,801x |
-| aslan-fib accumulate\* | 37.1 KB | 17.6 KB | 10,511,413 | 15,968 | 658x |
+| TRAP (interpreter overhead) | 21 B | 1 B | 89,939 | - | - |
+| add(5,7) | 164 B | 99 B | 1,219,622 | 28 | 43,558x |
+| host-call-log | 458 B | 104 B | 1,265,258 | 40 | 31,631x |
+| AS fib(10) | 631 B | 504 B | 1,571,677 | 245 | 6,415x |
+| JAM-SDK fib(10)\* | 25.4 KB | 16.2 KB | 9,582,904 | - | - |
+| Jambrains fib(10)\* | 61.1 KB | - | 29,245,041 | - | - |
+| JADE fib(10)\* | 67.3 KB | 45.7 KB | 20,493,145 | - | - |
+| aslan-fib accumulate\* | 20.7 KB | 13.1 KB | 15,849,103 | 11,474 | 1,381x |
+| blake2b("abc", 32) | 3.8 KB | 2.5 KB | 16,243,164 | 17,930 | 906x |
+| sha512("abc") | 3.7 KB | 2.5 KB | 15,533,350 | 17,981 | 864x |
 
 \*These programs exit on unhandled host calls (ecalli). Gas cost reflects parsing/loading plus partial execution up to the first unhandled ecalli.
