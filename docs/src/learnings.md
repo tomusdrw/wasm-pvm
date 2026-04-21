@@ -560,4 +560,6 @@ and the test result comes back empty. The default iteration count (`SHA512_RANDO
 
 This is a non-deterministic issue in the anan-as runtime itself, not a PVM compiler bug or SHA-512 correctness issue. The runtime appears to run out of pre-allocated pages and then fails to service the resulting allocation host call (shown as ecalli 0) in `--spi` mode; the exact trigger is unclear but correlates with sustained rapid test-suite execution.
 
-**Repro:** seed `0x0123456789abcdef`, iteration 9 (inputLen 14439), run under `bun test layer3/sha512.test.ts` with `SHA512_RANDOM_COUNT=1000`.
+**Repro (against the original SHA-512 WAT):** seed `0x0123456789abcdef`, iteration 9 (inputLen 14439), run under `bun test layer3/sha512.test.ts` with `SHA512_RANDOM_COUNT=1000`.
+
+**WAT-level mitigation that fixed the SHA-512 case:** copy the entire input from the PVM args region (`args_ptr`, at `0xFEFF0000`) into WASM memory in one upfront `memory.copy`, then stream from there. The hot compress loop now reads only from the pre-allocated WASM region. 1000-iter run went from 999/1000 pass in 1023 s to 1000/1000 pass in 506 s — the scattered args-region reads were both unsafe under load and slow when they did succeed. The `+143 B` JAM-size / `~4%` gas cost for 64 KB inputs is cheap for the stability and speed gains.
