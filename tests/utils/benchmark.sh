@@ -60,6 +60,7 @@ BENCHMARKS=(
   "anan-as-compiler||0|anan-as PVM interpreter|wasm:vendor/anan-as/dist/build/compiler.wasm"
   "aslan-ecalli|00|0|aslan-ecalli accumulate|wat:tests/fixtures/wat/aslan-ecalli.jam.wat"
   "blake2b|20616263|0|blake2b(\"abc\",32)|wat:tests/fixtures/wat/blake2b.jam.wat"
+  "sha512|616263|0|sha512(\"abc\")|wat:tests/fixtures/wat/sha512.jam.wat"
 )
 
 # Return "imports_path|adapter_path" for benchmarks that need them, or empty.
@@ -96,6 +97,7 @@ PVM_IN_PVM_BENCHMARKS=(
   "EXT:tests/fixtures/external/jade-fib.jam|0100000002000000030000000000000000000000|5|PiP JADE fib(10)"
   "aslan-fib|2a0000|5|PiP aslan-fib accumulate"
   "blake2b|20616263|0|PiP blake2b(\"abc\",32)"
+  "sha512|616263|0|PiP sha512(\"abc\")"
 )
 
 # Extract raw PVM code size (instruction bytes only) from a JAM file.

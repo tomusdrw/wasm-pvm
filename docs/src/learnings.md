@@ -546,3 +546,18 @@ While adding invalid-`out_len` trap tests for blake2b, we discovered that a bare
 **Runtime trap observation from anan-as / SPI mode:** a trapped program exits with OS exit code 0 (not an error), prints `STATUS = -1` in debug output, and produces an **empty Result: [0x]**. `runJamBytes` therefore does **not** throw on trap — it returns an empty `Uint8Array`. Test assertions for trap behavior should check `result.length === 0` rather than `expect(...).toThrow()`.
 
 **Follow-up:** a proper compiler-level fix would be to mark `unreachable` as a true trap (non-UB) in the PVM lowering, or emit an explicit trap instruction that the optimizer can't eliminate. Until then, the sentinel-store workaround is the portable fix for WAT-level fixtures.
+
+### anan-as SPI mode: transient "Run out of pages" failure under sustained test load
+
+Under rapid back-to-back `bun test` runs at high iteration counts (e.g. `SHA512_RANDOM_COUNT=1000`), the anan-as PVM runtime in `--spi` mode occasionally prints:
+
+```
+Warning: Run out of pages! Allocating.
+Unhandled host call: ecalli 0. Finishing.
+```
+
+and the test result comes back empty. The default iteration count (`SHA512_RANDOM_COUNT=50`) has not reproduced the failure. The same input hex that triggered it under `bun test` succeeded on 10/10 standalone `node anan-as ... run` invocations, ruling out any problem in the SHA-512 WAT or the test harness.
+
+This is a non-deterministic issue in the anan-as runtime itself, not a PVM compiler bug or SHA-512 correctness issue. The runtime appears to run out of pre-allocated pages and then fails to service the resulting allocation host call (shown as ecalli 0) in `--spi` mode; the exact trigger is unclear but correlates with sustained rapid test-suite execution.
+
+**Repro:** seed `0x0123456789abcdef`, iteration 9 (inputLen 14439), run under `bun test layer3/sha512.test.ts` with `SHA512_RANDOM_COUNT=1000`.
