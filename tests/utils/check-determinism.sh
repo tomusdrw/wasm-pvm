@@ -14,6 +14,10 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CLI="$PROJECT_ROOT/target/release/wasm-pvm"
 FIXTURES="$PROJECT_ROOT/tests/fixtures/wat"
 RUNS="${1:-10}"
+if ! [[ "$RUNS" =~ ^[0-9]+$ ]] || [ "$RUNS" -lt 2 ]; then
+    echo "Usage: ./tests/utils/check-determinism.sh [N>=2]" >&2
+    exit 2
+fi
 
 # Always rebuild: cargo no-ops when the tree is up-to-date, but this guards
 # against the footgun of editing a source file and running the script before
@@ -49,29 +53,33 @@ TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
 FAIL=0
+MISSING=0
+CHECKED=0
 for name in "${FIXTURES_TO_CHECK[@]}"; do
     fixture="$FIXTURES/$name.jam.wat"
     if [ ! -f "$fixture" ]; then
-        echo "  SKIP $name: fixture missing"
+        printf "  MISSING  %-32s  (fixture %s not found)\n" "$name" "$fixture"
+        MISSING=$((MISSING + 1))
         continue
     fi
+    CHECKED=$((CHECKED + 1))
     for i in $(seq 1 "$RUNS"); do
         "$CLI" compile "$fixture" -o "$TMPDIR/${name}_${i}.jam" >/dev/null 2>&1
     done
     unique=$(shasum -a 256 "$TMPDIR/${name}_"*.jam | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
     if [ "$unique" = "1" ]; then
-        printf "  PASS  %-32s  %d/%d identical\n" "$name" "$RUNS" "$RUNS"
+        printf "  PASS     %-32s  %d/%d identical\n" "$name" "$RUNS" "$RUNS"
     else
-        printf "  FAIL  %-32s  %s distinct outputs across %d runs\n" "$name" "$unique" "$RUNS"
+        printf "  FAIL     %-32s  %s distinct outputs across %d runs\n" "$name" "$unique" "$RUNS"
         FAIL=$((FAIL + 1))
     fi
     rm -f "$TMPDIR/${name}_"*.jam
 done
 
 echo
-if [ "$FAIL" -eq 0 ]; then
-    echo "Determinism check: OK (${#FIXTURES_TO_CHECK[@]} fixtures × $RUNS runs each)"
+if [ "$FAIL" -eq 0 ] && [ "$MISSING" -eq 0 ]; then
+    echo "Determinism check: OK ($CHECKED fixtures × $RUNS runs each)"
 else
-    echo "Determinism check: FAILED on $FAIL fixture(s)"
+    echo "Determinism check: FAILED ($FAIL nondeterministic, $MISSING missing)"
     exit 1
 fi
