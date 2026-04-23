@@ -101,6 +101,9 @@ jobs:
       - name: Run integration tests (layers 1-3)
         run: cd tests && bun test layer1/ layer2/ layer3/
 
+      - name: Check compilation determinism
+        run: ./tests/utils/check-determinism.sh 10
+
   differential:
     name: Differential Tests
     runs-on: ubuntu-latest
