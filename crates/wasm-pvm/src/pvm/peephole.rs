@@ -3,7 +3,7 @@
 // Runs before fixup resolution to remove redundant instructions.
 // Builds an index remap table to update fixup references and label byte offsets.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use super::Instruction;
 use crate::llvm_backend::{LlvmCallFixup, LlvmIndirectCallFixup};
@@ -36,7 +36,7 @@ fn compact_instructions(
     byte_offsets.push(running);
 
     // Build reverse map: byte_offset → instruction_index for label resolution.
-    let mut byte_to_idx = std::collections::HashMap::new();
+    let mut byte_to_idx = std::collections::BTreeMap::new();
     for (idx, &off) in byte_offsets.iter().enumerate() {
         byte_to_idx.entry(off).or_insert(idx);
     }
@@ -115,7 +115,7 @@ pub fn eliminate_dead_stores(
     call_fixups: &mut [LlvmCallFixup],
     indirect_call_fixups: &mut [LlvmIndirectCallFixup],
     labels: &mut [Option<usize>],
-    protected_offsets: &HashSet<i32>,
+    protected_offsets: &BTreeSet<i32>,
 ) {
     const SP: u8 = crate::abi::STACK_PTR_REG;
 
@@ -427,14 +427,14 @@ pub fn optimize_address_calculation(
     // Include the end-of-stream offset so labels pointing past the last instruction
     // (e.g., a label defined after the last emitted instruction) are also remapped.
     old_byte_offsets.push(running);
-    let mut old_offset_to_idx: std::collections::HashMap<usize, usize> =
-        std::collections::HashMap::new();
+    let mut old_offset_to_idx: std::collections::BTreeMap<usize, usize> =
+        std::collections::BTreeMap::new();
     for (idx, &off) in old_byte_offsets.iter().enumerate() {
         old_offset_to_idx.entry(off).or_insert(idx);
     }
 
     // Track label offsets (pre-pass) to reset state at block boundaries.
-    let mut label_offsets = HashSet::new();
+    let mut label_offsets = BTreeSet::new();
     for label in labels.iter().flatten() {
         label_offsets.insert(*label);
     }
@@ -602,7 +602,7 @@ pub fn eliminate_dead_code(
         offsets.push(running);
         running += instr.encode().len();
     }
-    let mut label_offsets = HashSet::new();
+    let mut label_offsets = BTreeSet::new();
     for label in labels.iter().flatten() {
         label_offsets.insert(*label);
     }
@@ -1063,7 +1063,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
-            &HashSet::new(),
+            &BTreeSet::new(),
         );
 
         assert_eq!(instrs.len(), 2);
@@ -1103,7 +1103,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
-            &HashSet::new(),
+            &BTreeSet::new(),
         );
 
         assert_eq!(instrs.len(), 2);
@@ -1131,7 +1131,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
-            &HashSet::new(),
+            &BTreeSet::new(),
         );
 
         assert_eq!(instrs.len(), 2);
@@ -1164,7 +1164,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
-            &HashSet::new(),
+            &BTreeSet::new(),
         );
 
         assert_eq!(instrs.len(), original_len);
@@ -1617,7 +1617,7 @@ mod tests {
             &mut call_fixups,
             &mut indirect_call_fixups,
             &mut labels,
-            &HashSet::new(),
+            &BTreeSet::new(),
         );
 
         assert_eq!(instrs.len(), 2);

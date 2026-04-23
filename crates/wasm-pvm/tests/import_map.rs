@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use wasm_pvm::pvm::{Instruction, Opcode};
 use wasm_pvm::test_harness::*;
 use wasm_pvm::{CompileOptions, ImportAction};
@@ -15,7 +15,7 @@ fn test_import_map_trap() {
         )
     "#;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("abort".to_string(), ImportAction::Trap);
 
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
@@ -36,7 +36,7 @@ fn test_import_map_nop() {
         )
     "#;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("console.log".to_string(), ImportAction::Nop);
 
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
@@ -59,7 +59,7 @@ fn test_import_map_unresolved_import_fails() {
     "#;
 
     // Only map "abort", leave "console.log" unmapped.
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("abort".to_string(), ImportAction::Trap);
 
     let wasm = wat_to_wasm(wat).expect("Failed to parse WAT");
@@ -94,7 +94,7 @@ fn test_import_map_host_call_not_required() {
         )
     "#;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("abort".to_string(), ImportAction::Trap);
 
     let program =
@@ -159,7 +159,7 @@ fn test_import_map_ecalli() {
         )
     "#;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("read".to_string(), ImportAction::Ecalli(5));
 
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
@@ -185,7 +185,7 @@ fn test_import_map_ecalli_zero_args() {
         )
     "#;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("gas".to_string(), ImportAction::Ecalli(3));
 
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");

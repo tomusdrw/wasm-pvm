@@ -11,7 +11,7 @@ pub use crate::memory_layout;
 pub mod stats;
 pub mod wasm_module;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::pvm::Instruction;
 use crate::{Error, Result, SpiProgram};
@@ -113,7 +113,7 @@ pub struct CompileOptions {
     /// Mapping from import function names to actions.
     /// When provided, all imports (except known intrinsics like `host_call_N` and `pvm_ptr`)
     /// must have a mapping or compilation will fail with `UnresolvedImport`.
-    pub import_map: Option<HashMap<String, ImportAction>>,
+    pub import_map: Option<BTreeMap<String, ImportAction>>,
     /// WAT source for an adapter module whose exports replace matching main imports.
     /// Applied before the text-based import map, so the two compose.
     pub adapter: Option<String>,
@@ -308,15 +308,15 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     )?;
 
     // Calculate RO_DATA offsets and lengths for passive data segments
-    let mut data_segment_offsets = std::collections::HashMap::new();
-    let mut data_segment_lengths = std::collections::HashMap::new();
+    let mut data_segment_offsets = std::collections::BTreeMap::new();
+    let mut data_segment_lengths = std::collections::BTreeMap::new();
     let mut current_ro_offset = if module.function_table.is_empty() {
         1 // dummy byte if no function table
     } else {
         module.function_table.len() * 8 // jump_ref + type_idx per entry
     };
 
-    let mut data_segment_length_addrs = std::collections::HashMap::new();
+    let mut data_segment_length_addrs = std::collections::BTreeMap::new();
     let mut passive_ordinal = 0usize;
 
     for (idx, seg) in module.data_segments.iter().enumerate() {
@@ -695,8 +695,8 @@ pub(crate) fn build_rw_data(
     global_init_values: &[i32],
     initial_memory_pages: u32,
     wasm_memory_base: i32,
-    data_segment_length_addrs: &std::collections::HashMap<u32, i32>,
-    data_segment_lengths: &std::collections::HashMap<u32, u32>,
+    data_segment_length_addrs: &std::collections::BTreeMap<u32, i32>,
+    data_segment_lengths: &std::collections::BTreeMap<u32, u32>,
     has_memory_size_global: bool,
 ) -> Vec<u8> {
     // Calculate the minimum size needed for globals — optionally includes a
@@ -892,7 +892,7 @@ fn resolve_call_fixups(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use super::build_rw_data;
     use super::memory_layout;
@@ -905,8 +905,8 @@ mod tests {
             &[],
             0,
             0x30000,
-            &HashMap::new(),
-            &HashMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
             false,
         );
         assert!(rw.is_empty());
@@ -921,8 +921,8 @@ mod tests {
             &[],
             16,
             0x31000,
-            &HashMap::new(),
-            &HashMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
             false,
         );
         assert!(rw.is_empty());
@@ -937,8 +937,8 @@ mod tests {
             &[],
             16,
             0x31000,
-            &HashMap::new(),
-            &HashMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
             true,
         );
         assert_eq!(rw, vec![16]);
@@ -954,8 +954,8 @@ mod tests {
             &globals,
             1, // initial_memory_pages = 1 → mem-size slot byte 0 = 0x01
             0x3000C,
-            &HashMap::new(),
-            &HashMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
             true,
         );
         // rw_data[0..4]  = mem-size (le u32 = 1)           = [0x01, 0, 0, 0]
@@ -977,8 +977,8 @@ mod tests {
             &[],
             0,
             0x30000,
-            &HashMap::new(),
-            &HashMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
             false,
         );
 
@@ -987,9 +987,9 @@ mod tests {
 
     #[test]
     fn build_rw_data_keeps_non_zero_passive_length_bytes() {
-        let mut addrs = HashMap::new();
+        let mut addrs = BTreeMap::new();
         addrs.insert(0u32, memory_layout::GLOBAL_MEMORY_BASE + 4);
-        let mut lengths = HashMap::new();
+        let mut lengths = BTreeMap::new();
         lengths.insert(0u32, 7u32);
 
         let rw = build_rw_data(&[], &[], 0, 0x30000, &addrs, &lengths, true);

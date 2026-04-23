@@ -7,7 +7,7 @@ pub use function_builder::WasmToLlvm;
 use inkwell::context::Context;
 use inkwell::module::Module;
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use crate::Result;
 use crate::translate::wasm_module::WasmModule;
@@ -30,7 +30,7 @@ pub fn translate_wasm_to_llvm<'ctx>(
     run_llvm_passes: bool,
     run_inlining: bool,
     inline_threshold: Option<u32>,
-    reachable_locals: Option<&HashSet<usize>>,
+    reachable_locals: Option<&BTreeSet<usize>>,
 ) -> Result<Module<'ctx>> {
     let translator = WasmToLlvm::new(context, "wasm_module");
     translator.translate_module(

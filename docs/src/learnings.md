@@ -580,3 +580,29 @@ The blake2b follow-up (see next section) gives a more mechanical explanation for
 **Heuristic for new WAT fixtures that read args in bulk:** make the input portion of args start at an 8-byte offset from `args_ptr` (either by having *no* prefix, like SHA-512, or by padding any prefix out to 8 bytes, like the blake2b fix above). Keeping every downstream `data_ptr` / stream-`memory.copy` source 8-byte-aligned avoids the cliff regardless of which page of the args region the tail falls in.
 
 The SHA-512 WAT happens to have no prefix (input starts at `args_ptr + 0`), which is why the earlier SHA-512 fix was sufficient for that fixture — it stayed aligned by accident of format. Blake2b needed the padding change to benefit from the same pattern.
+
+---
+
+## Compilation Reproducibility (2026-04)
+
+The compiler must produce byte-identical JAM output for the same WASM input across invocations. Two subtle traps were hit and fixed; keep both in mind when adding code to the backend.
+
+### Trap 1: `HashMap`/`HashSet` iteration order is process-randomised
+
+Rust's default `HashMap`/`HashSet` use a per-process-randomised hasher, so iteration order changes between CLI invocations. Any iteration whose side effects reach the emitted bytes (emitting an instruction, assigning a register/offset, mutating state read by the next iteration) leaks that randomness. The mitigation is the `AGENTS.md` rule: prefer `BTreeMap`/`BTreeSet` throughout; if a key type has no `Ord` (e.g. `inkwell::BasicBlock`), keep the `HashMap` for lookups only and collect into a `Vec` sorted by a derived key before iterating.
+
+### Trap 2: `BTreeMap<ValKey, _>` is *not* reproducible across runs
+
+This one is non-obvious. `ValKey` wraps `Value::as_value_ref() as usize` — the raw LLVM pointer. LLVM allocates different `Value` subclasses (e.g. `Argument`, `InstructionValue`) from separate arenas, and those arenas sit at independent ASLR-randomised base addresses. So `BTreeMap<ValKey, _>` iteration is pointer-address order, which can flip between invocations whenever entries come from different arenas. A same-process loop over a `BTreeMap<ValKey, _>` is stable; a diff between two process runs is not.
+
+Where this actually bit us: `compute_live_intervals` iterated `value_slots: BTreeMap<ValKey, i32>` directly and then pushed intervals into a `Vec` in that order. The downstream linear scan is stable-sorted by `(start, spill_weight)`; ties fall back to input order, which meant pointer order, which meant non-deterministic register assignments under aggressive allocation (more ties at min_uses=1).
+
+The fix is to iterate by a derived in-process-stable key. `value_slots` values are bump-allocated slot offsets (monotonic in insertion order), so sorting by slot offset gives insertion order. `instr_index` maps `ValKey → linearised position` for the same purpose when values come from instructions. The `ValKey` doc comment carries a warning; heed it.
+
+### Trap 3: Order-dependent loops over `HashMap<BasicBlock, _>`
+
+Most `HashMap<BasicBlock, _>` iteration sites in the backend are commutative (e.g. `end = end.max(...)` across loop headers, `depths[i] += 1` across positions), so the carve-out for `BasicBlock` keys (which lack `Ord`) was considered safe. Except one case wasn't commutative: the live-interval extension loop reads `end` in its predicate and mutates `end` in its body, so iteration N+1's predicate depends on iteration N's effect. Fixed by returning `Vec<(BasicBlock, usize)>` sorted by header position from `detect_loop_headers`. When adding a new iteration over a `BasicBlock`-keyed map, prove commutativity explicitly — "I think this is order-invariant" is how this one slipped in.
+
+### Detection
+
+`tests/utils/check-determinism.sh` compiles a diverse set of fixtures N times in separate processes and diffs the output. A single-process cargo test cannot catch these traps because the `HashMap` hasher seed and the LLVM arena addresses are both fixed for the lifetime of one process. The script is wired into the integration CI job.

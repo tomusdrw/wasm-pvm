@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -611,11 +611,11 @@ fn read_wasm(path: &PathBuf) -> Result<Vec<u8>> {
 /// ```
 ///
 /// Actions: `trap` (emit unreachable), `nop` (return 0), `ecalli:N` (emit PVM ecalli N).
-fn parse_import_map(path: &PathBuf) -> Result<HashMap<String, ImportAction>> {
+fn parse_import_map(path: &PathBuf) -> Result<BTreeMap<String, ImportAction>> {
     let contents =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
 
     for (line_num, line) in contents.lines().enumerate() {
         let line = line.trim();

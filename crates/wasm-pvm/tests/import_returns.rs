@@ -3,7 +3,7 @@
 //! When an imported function has a return value, the compiler must push
 //! a dummy value (0) to maintain stack balance.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use wasm_pvm::ImportAction;
 use wasm_pvm::Opcode;
 use wasm_pvm::test_harness::*;
@@ -21,7 +21,7 @@ fn test_import_with_return_pushes_dummy_value() {
         )
     "#;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("get_value".to_string(), ImportAction::Nop);
 
     let program = compile_wat_with_imports(wat, map).expect("Failed to compile");
@@ -56,7 +56,7 @@ fn test_import_without_return_no_extra_push() {
         )
     "#;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("log".to_string(), ImportAction::Nop);
 
     // Should compile without error (no stack imbalance)
@@ -99,7 +99,7 @@ fn test_import_with_args_and_return() {
         )
     "#;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     map.insert("compute".to_string(), ImportAction::Nop);
 
     // Should compile without error (stack: push 2 args, pop 2 for import, push 1 return)

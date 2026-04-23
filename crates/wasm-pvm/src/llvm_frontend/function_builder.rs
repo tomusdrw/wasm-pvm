@@ -242,7 +242,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         run_llvm_passes: bool,
         run_inlining: bool,
         inline_threshold: Option<u32>,
-        reachable_locals: Option<&std::collections::HashSet<usize>>,
+        reachable_locals: Option<&std::collections::BTreeSet<usize>>,
     ) -> Result<Module<'ctx>> {
         self.declare_functions(wasm_module);
         self.declare_globals(wasm_module);

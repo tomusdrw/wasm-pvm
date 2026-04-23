@@ -28,7 +28,7 @@
     clippy::cast_sign_loss
 )]
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use inkwell::values::{FunctionValue, PhiValue};
 
@@ -75,11 +75,11 @@ struct LiveInterval {
 #[derive(Debug, Clone, Default)]
 pub struct RegAllocResult {
     /// For each `ValKey`, the allocated physical register.
-    pub val_to_reg: HashMap<ValKey, u8>,
+    pub val_to_reg: BTreeMap<ValKey, u8>,
     /// For each stack slot offset, the allocated physical register.
-    pub slot_to_reg: HashMap<i32, u8>,
+    pub slot_to_reg: BTreeMap<i32, u8>,
     /// Reverse: physical register → stack slot offset (for spill/reload).
-    pub reg_to_slot: HashMap<u8, i32>,
+    pub reg_to_slot: BTreeMap<u8, i32>,
     /// Instrumentation stats for this function's allocation run.
     pub stats: RegAllocStats,
 }
@@ -114,7 +114,7 @@ pub struct RegAllocStats {
 #[allow(clippy::fn_params_excessive_bools)]
 pub fn run(
     function: FunctionValue<'_>,
-    value_slots: &HashMap<ValKey, i32>,
+    value_slots: &BTreeMap<ValKey, i32>,
     is_leaf: bool,
     num_params: usize,
     aggressive: bool,
@@ -300,10 +300,10 @@ pub fn run(
 fn linearize<'ctx>(
     blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
 ) -> (
-    HashMap<ValKey, usize>,
+    BTreeMap<ValKey, usize>,
     HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
 ) {
-    let mut instr_index = HashMap::new();
+    let mut instr_index = BTreeMap::new();
     let mut block_ranges = HashMap::new();
     let mut idx = 0usize;
 
@@ -365,11 +365,15 @@ fn max_call_args(function: FunctionValue<'_>) -> usize {
     max_args
 }
 
-/// Detect loop back-edges and return a map from loop header → back-edge end position.
+/// Detect loop back-edges and return loop headers paired with back-edge end
+/// position, sorted by header position. Returned as a `Vec` rather than a map
+/// so that downstream iteration is deterministic across runs — some consumers
+/// update state that is read by the next iteration (e.g. live-interval
+/// extension), where `HashMap` iteration order would leak non-determinism.
 fn detect_loop_headers<'ctx>(
     blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
-) -> HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize> {
+) -> Vec<(inkwell::basic_block::BasicBlock<'ctx>, usize)> {
     let block_order: HashMap<inkwell::basic_block::BasicBlock<'_>, usize> =
         blocks.iter().enumerate().map(|(i, &bb)| (bb, i)).collect();
 
@@ -389,7 +393,10 @@ fn detect_loop_headers<'ctx>(
             }
         }
     }
-    loop_headers
+    let mut result: Vec<(inkwell::basic_block::BasicBlock<'ctx>, usize)> =
+        loop_headers.into_iter().collect();
+    result.sort_by_key(|(bb, _)| block_ranges[bb].0);
+    result
 }
 
 /// Compute loop nesting depth for each instruction position.
@@ -399,11 +406,11 @@ fn detect_loop_headers<'ctx>(
 /// contribute additively.
 fn compute_loop_depths<'ctx>(
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
-    loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
+    loop_headers: &[(inkwell::basic_block::BasicBlock<'ctx>, usize)],
     max_position: usize,
 ) -> Vec<u32> {
     let mut depths = vec![0u32; max_position + 1];
-    for (&header_bb, &back_edge_end) in loop_headers {
+    for &(header_bb, back_edge_end) in loop_headers {
         let (header_start, _) = block_ranges[&header_bb];
         for d in &mut depths[header_start..=back_edge_end.min(max_position)] {
             *d += 1;
@@ -416,7 +423,7 @@ fn compute_loop_depths<'ctx>(
 /// Used for spill weight refinement: values spanning many calls are penalized.
 fn collect_call_positions(
     blocks: &[inkwell::basic_block::BasicBlock<'_>],
-    instr_index: &HashMap<ValKey, usize>,
+    instr_index: &BTreeMap<ValKey, usize>,
 ) -> Vec<usize> {
     let mut positions = Vec::new();
     for &bb in blocks {
@@ -448,31 +455,31 @@ fn count_spanning_calls(call_positions: &[usize], start: usize, end: usize) -> u
 #[allow(clippy::too_many_arguments)]
 fn compute_live_intervals<'ctx>(
     blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
-    instr_index: &HashMap<ValKey, usize>,
+    instr_index: &BTreeMap<ValKey, usize>,
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
-    value_slots: &HashMap<ValKey, i32>,
-    loop_headers: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, usize>,
+    value_slots: &BTreeMap<ValKey, i32>,
+    loop_headers: &[(inkwell::basic_block::BasicBlock<'ctx>, usize)],
     loop_depths: &[u32],
     call_positions: &[usize],
     min_uses: usize,
 ) -> (Vec<LiveInterval>, bool) {
     use inkwell::values::InstructionOpcode;
 
-    let mut def_point: HashMap<ValKey, usize> = HashMap::new();
-    let mut last_use: HashMap<ValKey, usize> = HashMap::new();
-    let mut use_count: HashMap<ValKey, usize> = HashMap::new();
+    let mut def_point: BTreeMap<ValKey, usize> = BTreeMap::new();
+    let mut last_use: BTreeMap<ValKey, usize> = BTreeMap::new();
+    let mut use_count: BTreeMap<ValKey, usize> = BTreeMap::new();
     // Accumulated loop-depth-weighted use count per value.
-    let mut weighted_uses: HashMap<ValKey, f64> = HashMap::new();
+    let mut weighted_uses: BTreeMap<ValKey, f64> = BTreeMap::new();
     // Values defined by real call instructions (prefer r7 allocation).
-    let mut call_defined: HashMap<ValKey, bool> = HashMap::new();
+    let mut call_defined: BTreeMap<ValKey, bool> = BTreeMap::new();
     // Values defined by phi instructions at loop headers (for early expiration).
-    let mut is_loop_phi: std::collections::HashSet<ValKey> = std::collections::HashSet::new();
+    let mut is_loop_phi: BTreeSet<ValKey> = BTreeSet::new();
 
     let has_loops = !loop_headers.is_empty();
 
     // Walk all instructions to find defs and uses.
     for &bb in blocks {
-        let at_loop_header = loop_headers.contains_key(&bb);
+        let at_loop_header = loop_headers.iter().any(|(h, _)| *h == bb);
         for instr in bb.get_instructions() {
             let instr_key = val_key_instr(instr);
             let instr_idx = instr_index[&instr_key];
@@ -542,14 +549,16 @@ fn compute_live_intervals<'ctx>(
         def_point.entry(vk).or_insert(0);
     }
 
-    // Build intervals, extending for loops.
-    // Sort by key for deterministic iteration — HashMap order depends on
-    // LLVM pointer addresses which vary with ASLR, causing different register
-    // assignments across runs.
-    let mut sorted_slots: Vec<_> = value_slots.iter().map(|(&k, &v)| (k, v)).collect();
-    sorted_slots.sort_by_key(|(k, _)| *k);
+    // Build intervals, extending for loops. We iterate by slot offset (not
+    // by ValKey) because ValKey wraps the raw LLVM value pointer — pointer
+    // order within a BTreeMap varies across process invocations (ASLR, and
+    // LLVM arenas for different Value subclasses sit at independent base
+    // addresses). Slot offsets are assigned by a bump allocator in insertion
+    // order and are stable across runs.
+    let mut by_slot: Vec<(ValKey, i32)> = value_slots.iter().map(|(&k, &v)| (k, v)).collect();
+    by_slot.sort_by_key(|(_, slot)| *slot);
     let mut intervals = Vec::new();
-    for &(vk, slot) in &sorted_slots {
+    for (vk, slot) in by_slot {
         let start = def_point.get(&vk).copied().unwrap_or(0);
         let mut end = last_use.get(&vk).copied().unwrap_or(start);
         let uses = use_count.get(&vk).copied().unwrap_or(0);
@@ -565,7 +574,10 @@ fn compute_live_intervals<'ctx>(
 
         // Loop extension: if this value is live at a loop header and the loop's
         // back-edge source is beyond the current end, extend the range.
-        for (&header_bb, &back_edge_end) in loop_headers {
+        // `loop_headers` is sorted by header position so this loop's output is
+        // deterministic even though one iteration's `end` mutation feeds the
+        // next iteration's condition.
+        for &(header_bb, back_edge_end) in loop_headers {
             let (header_start, _) = block_ranges[&header_bb];
             if start <= header_start && end >= header_start {
                 end = end.max(back_edge_end);
@@ -618,9 +630,9 @@ fn depth_weight(depth: u32) -> f64 {
 }
 
 fn update_use(
-    last_use: &mut HashMap<ValKey, usize>,
-    use_count: &mut HashMap<ValKey, usize>,
-    weighted_uses: &mut HashMap<ValKey, f64>,
+    last_use: &mut BTreeMap<ValKey, usize>,
+    use_count: &mut BTreeMap<ValKey, usize>,
+    weighted_uses: &mut BTreeMap<ValKey, f64>,
     loop_depths: &[u32],
     vk: ValKey,
     idx: usize,
@@ -659,10 +671,10 @@ fn linear_scan(
     let mut active: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut free_regs: Vec<u8> = allocatable_regs.to_vec();
     // Register assignment for currently active intervals.
-    let mut active_assigned: HashMap<usize, u8> = HashMap::new();
+    let mut active_assigned: BTreeMap<usize, u8> = BTreeMap::new();
     // Final register assignment for intervals that were allocated and never evicted.
     // Naturally expired intervals stay here so their earlier uses can still benefit.
-    let mut final_assigned: HashMap<usize, u8> = HashMap::new();
+    let mut final_assigned: BTreeMap<usize, u8> = BTreeMap::new();
 
     for (i, interval) in intervals.iter().enumerate() {
         // Expire old intervals.

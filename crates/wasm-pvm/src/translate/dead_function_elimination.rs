@@ -2,7 +2,7 @@
 // from entry points and the function table, so unreachable functions can
 // be skipped during compilation.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 use wasmparser::Operator;
 
@@ -15,11 +15,11 @@ use crate::Result;
 /// referenced in the element table, then follows `Call` and `RefFunc`
 /// instructions transitively.  Modules containing `CallIndirect`
 /// conservatively mark all table-referenced functions as reachable.
-pub fn reachable_functions(module: &WasmModule) -> Result<HashSet<usize>> {
+pub fn reachable_functions(module: &WasmModule) -> Result<BTreeSet<usize>> {
     let num_imports = module.num_imported_funcs as usize;
     let num_locals = module.functions.len();
 
-    let mut reachable: HashSet<usize> = HashSet::new();
+    let mut reachable: BTreeSet<usize> = BTreeSet::new();
     let mut worklist: VecDeque<usize> = VecDeque::new();
 
     // Seed: entry points
@@ -96,7 +96,7 @@ mod tests {
     use super::*;
 
     /// Helper: parse a WAT module and return the reachable set.
-    fn reachable_from_wat(wat: &str) -> HashSet<usize> {
+    fn reachable_from_wat(wat: &str) -> BTreeSet<usize> {
         let wasm = wat::parse_str(wat).expect("valid WAT");
         let module = WasmModule::parse(&wasm).expect("valid module");
         reachable_functions(&module).expect("analysis succeeds")

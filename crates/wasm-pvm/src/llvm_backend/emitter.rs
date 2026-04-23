@@ -14,7 +14,7 @@
     clippy::cast_sign_loss
 )]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
@@ -55,14 +55,14 @@ pub struct LoweringContext {
     pub max_memory_pages: u32,
     pub stack_size: u32,
     /// Map from data segment index to offset in `RO_DATA` (for passive segments).
-    pub data_segment_offsets: HashMap<u32, u32>,
+    pub data_segment_offsets: BTreeMap<u32, u32>,
     /// Map from data segment index to byte length (for passive segments bounds checking).
-    pub data_segment_lengths: HashMap<u32, u32>,
+    pub data_segment_lengths: BTreeMap<u32, u32>,
     /// Map from data segment index to PVM address storing the effective length at runtime.
     /// Used by `memory.init` for bounds checking and by `data.drop` to zero the length.
-    pub data_segment_length_addrs: HashMap<u32, i32>,
+    pub data_segment_length_addrs: BTreeMap<u32, i32>,
     /// User-provided mapping from WASM import names to actions (trap, nop).
-    pub wasm_import_map: Option<HashMap<String, crate::translate::ImportAction>>,
+    pub wasm_import_map: Option<BTreeMap<String, crate::translate::ImportAction>>,
     /// Optimization flags controlling which compiler passes are enabled.
     pub optimizations: OptimizationFlags,
 }
@@ -172,7 +172,7 @@ pub struct PvmEmitter<'ctx> {
     pub(crate) block_labels: HashMap<BasicBlock<'ctx>, usize>,
 
     /// LLVM int values (params + instruction results) → stack slot offset from SP.
-    pub(crate) value_slots: HashMap<ValKey, i32>,
+    pub(crate) value_slots: BTreeMap<ValKey, i32>,
 
     /// Next available slot offset (bump allocator, starts after frame header).
     pub(crate) next_slot_offset: i32,
@@ -187,7 +187,7 @@ pub struct PvmEmitter<'ctx> {
     pub(crate) byte_offset: usize,
 
     /// Maps stack slot offset → register that currently holds this slot's value.
-    slot_cache: HashMap<i32, u8>,
+    slot_cache: BTreeMap<i32, u8>,
     /// Reverse: register → slot offset it holds (for fast invalidation).
     reg_to_slot: [Option<i32>; 13],
 
@@ -249,7 +249,7 @@ pub struct PvmEmitter<'ctx> {
 /// Snapshot of the register cache state for cross-block propagation.
 #[derive(Clone)]
 pub struct CacheSnapshot {
-    pub slot_cache: HashMap<i32, u8>,
+    pub slot_cache: BTreeMap<i32, u8>,
     pub reg_to_slot: [Option<i32>; 13],
     pub reg_to_const: [Option<u64>; 13],
     pub alloc_reg_slot: [Option<i32>; 13],
@@ -299,7 +299,16 @@ pub struct FusedIcmp<'ctx> {
 }
 
 /// Wrapper key for LLVM values in the slot map.
-/// Uses the raw LLVM value pointer cast to usize for hashing.
+/// Uses the raw LLVM value pointer cast to usize.
+///
+/// Reproducibility warning: the derived `Ord` compares raw pointer addresses.
+/// LLVM allocates different `Value` subclasses from separate arenas whose base
+/// addresses are randomised by ASLR, so the relative order of two `ValKey`s
+/// can flip between process invocations. Do **not** rely on `BTreeMap<ValKey, _>`
+/// iteration order for anything whose side effects reach the emitted bytes.
+/// Iterate by a derived in-process-stable key instead — e.g. sort by the bump-
+/// allocated slot offset (`value_slots`) or linearised instruction index
+/// (`instr_index`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ValKey(pub(crate) usize);
 
@@ -323,13 +332,13 @@ impl<'ctx> PvmEmitter<'ctx> {
             labels: Vec::new(),
             fixups: Vec::new(),
             block_labels: HashMap::new(),
-            value_slots: HashMap::new(),
+            value_slots: BTreeMap::new(),
             next_slot_offset: FRAME_HEADER_SIZE,
             frame_size: 0,
             call_fixups: Vec::new(),
             indirect_call_fixups: Vec::new(),
             byte_offset: 0,
-            slot_cache: HashMap::new(),
+            slot_cache: BTreeMap::new(),
             reg_to_slot: [None; 13],
             reg_to_const: [None; 13],
             pending_fused_icmp: None,
@@ -1319,8 +1328,12 @@ pub fn pre_scan_function<'ctx>(
                 let successors = super::successors::collect_successors(term);
                 // Deduplicate successors per predecessor (e.g. switch cases targeting the same block)
                 // so that multiple edges from the same bb don't inflate the predecessor count.
-                let unique_succs: HashSet<_> = successors.into_iter().collect();
-                for succ in unique_succs {
+                let mut seen: Vec<BasicBlock<'_>> = Vec::new();
+                for succ in successors {
+                    if seen.contains(&succ) {
+                        continue;
+                    }
+                    seen.push(succ);
                     let count = pred_count.entry(succ).or_insert(0);
                     *count += 1;
                     pred_from.insert(succ, *bb);

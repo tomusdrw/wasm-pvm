@@ -18,7 +18,7 @@
     clippy::cast_sign_loss
 )]
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::{Error, Result};
 
@@ -35,7 +35,7 @@ pub fn merge_adapter(main_wasm: &[u8], adapter_wat: &str) -> Result<Vec<u8>> {
     let adapter = ParsedModule::parse(&adapter_wasm, "adapter")?;
 
     // Build resolution map: adapter export name -> adapter local func index.
-    let mut adapter_export_map: HashMap<&str, u32> = HashMap::new();
+    let mut adapter_export_map: BTreeMap<&str, u32> = BTreeMap::new();
     for (name, func_idx) in &adapter.func_exports {
         // Export index is global (imports + locals). Convert to local index.
         if *func_idx >= adapter.num_imported_funcs {
@@ -371,7 +371,7 @@ fn build_merged_module(
     }
 
     // Build main export map: export name -> main global func index.
-    let main_export_map: HashMap<&str, u32> = main
+    let main_export_map: BTreeMap<&str, u32> = main
         .func_exports
         .iter()
         .map(|(name, idx)| (name.as_str(), *idx))
