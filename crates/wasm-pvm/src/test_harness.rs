@@ -47,7 +47,7 @@
     clippy::implicit_hasher
 )]
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::pvm::{Instruction, Opcode};
 use crate::translate::ImportAction;
@@ -67,7 +67,7 @@ pub fn compile_wat(wat: &str) -> Result<SpiProgram> {
 /// Compile WAT with an import map to a SPI program
 pub fn compile_wat_with_imports(
     wat: &str,
-    import_map: HashMap<String, ImportAction>,
+    import_map: BTreeMap<String, ImportAction>,
 ) -> Result<SpiProgram> {
     let wasm = wat_to_wasm(wat)?;
     compile_with_options(

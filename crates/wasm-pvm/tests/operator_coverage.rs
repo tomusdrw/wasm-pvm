@@ -1235,7 +1235,7 @@ fn test_local_tee_deep_stack() {
 /// Imported function with Trap action should emit Trap instruction.
 #[test]
 fn test_import_trap_action() {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use wasm_pvm::ImportAction;
 
     let wat = r#"
@@ -1248,7 +1248,7 @@ fn test_import_trap_action() {
         )
     "#;
 
-    let mut import_map = HashMap::new();
+    let mut import_map = BTreeMap::new();
     import_map.insert("abort".to_string(), ImportAction::Trap);
 
     let program = compile_wat_with_imports(wat, import_map).expect("compile");
@@ -1263,7 +1263,7 @@ fn test_import_trap_action() {
 /// Imported function with Nop action should compile without trap.
 #[test]
 fn test_import_nop_action() {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use wasm_pvm::ImportAction;
 
     let wat = r#"
@@ -1276,7 +1276,7 @@ fn test_import_nop_action() {
         )
     "#;
 
-    let mut import_map = HashMap::new();
+    let mut import_map = BTreeMap::new();
     import_map.insert("noop".to_string(), ImportAction::Nop);
 
     let program = compile_wat_with_imports(wat, import_map).expect("compile");

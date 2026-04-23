@@ -125,23 +125,26 @@ pub fn lower_function(
     // predecessor map. Needed for non-leaf functions (intersection at merge points
     // + dominator propagation at loop headers) and leaf functions with lazy spill
     // (dominator propagation at loop headers).
-    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = if has_regalloc
-        && (!is_leaf || emitter.config.lazy_spill_enabled)
-    {
-        let mut map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = HashMap::new();
-        for bb in function.get_basic_blocks() {
-            if let Some(term) = bb.get_terminator() {
-                let successors = successors::collect_successors(term);
-                let unique_succs: std::collections::HashSet<_> = successors.into_iter().collect();
-                for succ in unique_succs {
-                    map.entry(succ).or_default().push(bb);
+    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> =
+        if has_regalloc && (!is_leaf || emitter.config.lazy_spill_enabled) {
+            let mut map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = HashMap::new();
+            for bb in function.get_basic_blocks() {
+                if let Some(term) = bb.get_terminator() {
+                    let successors = successors::collect_successors(term);
+                    let mut seen: Vec<BasicBlock<'_>> = Vec::new();
+                    for succ in successors {
+                        if seen.contains(&succ) {
+                            continue;
+                        }
+                        seen.push(succ);
+                        map.entry(succ).or_default().push(bb);
+                    }
                 }
             }
-        }
-        map
-    } else {
-        HashMap::new()
-    };
+            map
+        } else {
+            HashMap::new()
+        };
 
     let basic_blocks = function.get_basic_blocks();
     for (block_idx, bb) in basic_blocks.iter().enumerate() {
@@ -296,7 +299,7 @@ pub fn lower_function(
     // other code path loads from those slots. We no longer protect allocated
     // slot offsets unconditionally — DSE can now remove truly dead spill stores.
     if ctx.optimizations.dead_store_elimination {
-        let protected_offsets: std::collections::HashSet<i32> = std::collections::HashSet::new();
+        let protected_offsets: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
         crate::pvm::peephole::eliminate_dead_stores(
             &mut emitter.instructions,
             &mut emitter.fixups,

@@ -220,6 +220,7 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 - `unsafe_code = "deny"` (workspace lint)
 - `thiserror` for errors, `tracing` for logging
 - Unit tests inline under `#[cfg(test)]`
+- **Prefer `BTreeMap`/`BTreeSet` over `HashMap`/`HashSet`**. The compiler must be reproducible: the same input WASM must produce byte-identical output every run. Rust's default `HashMap`/`HashSet` use a per-process-randomized hasher, so iteration order varies across invocations; any iteration whose side effects reach the emitted bytes (e.g. instruction emission, register/offset assignment, live-interval extension) would leak that randomness into the output. `BTreeMap`/`BTreeSet` iterate in key order and sidestep the problem entirely. Use `HashMap` only when the key type has no `Ord` impl (e.g. `inkwell::basic_block::BasicBlock`); in those cases, keep the map purely for `get`/`insert`/`contains_key` lookups, and if you must iterate, collect into a `Vec` sorted by a deterministic derived key (position, index) first. Avoid relying on "iteration happens to be commutative" — a future edit can break that silently.
 
 ### Naming
 - Types: `PascalCase`, Functions: `snake_case`
