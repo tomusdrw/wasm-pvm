@@ -64,8 +64,15 @@ for name in "${FIXTURES_TO_CHECK[@]}"; do
     fi
     CHECKED=$((CHECKED + 1))
     for i in $(seq 1 "$RUNS"); do
-        "$CLI" compile "$fixture" -o "$TMPDIR/${name}_${i}.jam" >/dev/null 2>&1
+        if ! "$CLI" compile "$fixture" -o "$TMPDIR/${name}_${i}.jam" \
+            >/dev/null 2>"$TMPDIR/${name}_${i}.err"; then
+            printf "  ERROR    %-32s  compile failed on run %d/%d\n" \
+                "$name" "$i" "$RUNS" >&2
+            sed -n '1,40p' "$TMPDIR/${name}_${i}.err" >&2
+            exit 1
+        fi
     done
+    rm -f "$TMPDIR/${name}_"*.err
     unique=$(shasum -a 256 "$TMPDIR/${name}_"*.jam | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
     if [ "$unique" = "1" ]; then
         printf "  PASS     %-32s  %d/%d identical\n" "$name" "$RUNS" "$RUNS"
