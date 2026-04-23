@@ -15,10 +15,12 @@ CLI="$PROJECT_ROOT/target/release/wasm-pvm"
 FIXTURES="$PROJECT_ROOT/tests/fixtures/wat"
 RUNS="${1:-10}"
 
-if [ ! -x "$CLI" ]; then
-    echo "Building release CLI..."
-    (cd "$PROJECT_ROOT" && cargo build --release --quiet)
-fi
+# Always rebuild: cargo no-ops when the tree is up-to-date, but this guards
+# against the footgun of editing a source file and running the script before
+# remembering to rebuild — which would happily validate determinism of a stale
+# binary.
+echo "Building release CLI..."
+(cd "$PROJECT_ROOT" && cargo build --release --quiet)
 
 # Diverse set: short fixtures, loops, phi-heavy, call-heavy, memory-heavy,
 # crypto. Exercises value-slot ordering across LLVM value arenas, loop
