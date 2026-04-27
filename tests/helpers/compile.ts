@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -29,34 +29,56 @@ export function compileAS(
   }
 
   const ascBin = path.join(TESTS_DIR, "node_modules/.bin/asc");
-  const cmd = `${ascBin} ${sourceFile} -o ${wasmFile} --runtime ${runtime} --noAssert --optimizeLevel 3 --shrinkLevel 2 --converge --use abort= --maximumMemory 16`;
-  execSync(cmd, {
-    cwd: TESTS_DIR,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  execFileSync(
+    ascBin,
+    [
+      sourceFile,
+      "-o",
+      wasmFile,
+      "--runtime",
+      runtime,
+      "--noAssert",
+      "--optimizeLevel",
+      "3",
+      "--shrinkLevel",
+      "2",
+      "--converge",
+      "--use",
+      "abort=",
+      "--maximumMemory",
+      "16",
+    ],
+    {
+      cwd: TESTS_DIR,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }
+  );
   return wasmFile;
 }
 
-export function compileToJAM(inputPath: string, outputName: string, importsPath?: string, adapterPath?: string, maxMemory?: number): string {
-  const jamFile = path.join(
-    TESTS_DIR,
-    "build",
-    "jam",
-    `${outputName}.jam`
-  );
+export function compileToJAM(
+  inputPath: string,
+  outputName: string,
+  importsPath?: string,
+  adapterPath?: string,
+  maxMemory?: number
+): string {
+  const jamFile = path.join(TESTS_DIR, "build", "jam", `${outputName}.jam`);
 
-  let cmd = `${CLI_BINARY} compile ${inputPath} -o ${jamFile}`;
+  const args = ["compile", inputPath, "-o", jamFile];
+
   if (adapterPath) {
-    cmd += ` --adapter ${adapterPath}`;
+    args.push("--adapter", adapterPath);
   }
   if (importsPath) {
-    cmd += ` --imports ${importsPath}`;
+    args.push("--imports", importsPath);
   }
   if (maxMemory !== undefined) {
-    cmd += ` --max-memory ${maxMemory}`;
+    args.push("--max-memory", `${maxMemory}`);
   }
-  execSync(cmd, {
+
+  execFileSync(CLI_BINARY, args, {
     cwd: PROJECT_ROOT,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
