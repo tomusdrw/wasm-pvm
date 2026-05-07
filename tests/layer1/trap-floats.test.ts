@@ -12,7 +12,7 @@
  * `tests/fixtures/wat/` tree).
  */
 
-import { describe, test, expect, beforeAll } from "bun:test";
+import { describe, test, expect, beforeAll, beforeEach } from "bun:test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -31,8 +31,12 @@ const JAM_PATH = path.join(JAM_DIR, "float-trap.jam");
 // the orchestrator may have touched the trap-floats subtree.
 beforeAll(() => {
   fs.mkdirSync(JAM_DIR, { recursive: true });
-  // Always start clean so a stale JAM from a prior run can't make a failing
-  // compile look like a success.
+});
+
+// Reset per-test so any single test in this file is independent of execution
+// order. The compile-failure test expects no JAM; the runtime tests recreate
+// it via `compileTrapFloatsJam()`.
+beforeEach(() => {
   if (fs.existsSync(JAM_PATH)) fs.unlinkSync(JAM_PATH);
 });
 
@@ -65,7 +69,12 @@ describe("trap-floats CLI behavior", () => {
     expect(fs.existsSync(JAM_PATH)).toBe(false);
   });
 
-  test("--trap-floats compiles and writes a JAM", () => {
+  // Compile the trap-floats JAM. Each test that needs the JAM calls this
+  // first so the runtime tests don't silently depend on the compile test
+  // having executed earlier (single-test runs and reordered runners would
+  // otherwise fail on missing setup rather than on actual trap behavior).
+  // Compilation is fast enough (~5ms) that the redundancy is fine.
+  const compileTrapFloatsJam = () =>
     execFileSync(
       CLI_BINARY,
       ["compile", WAT_PATH, "-o", JAM_PATH, "--trap-floats"],
@@ -75,9 +84,6 @@ describe("trap-floats CLI behavior", () => {
         stdio: ["pipe", "pipe", "pipe"],
       },
     );
-    expect(fs.existsSync(JAM_PATH)).toBe(true);
-    expect(fs.statSync(JAM_PATH).size).toBeGreaterThan(0);
-  });
 
   // Shared anan-as runner args: any difference between safe/trap runs is the
   // final hex argument byte.
@@ -91,7 +97,14 @@ describe("trap-floats CLI behavior", () => {
     hexArg,
   ];
 
+  test("--trap-floats compiles and writes a JAM", () => {
+    compileTrapFloatsJam();
+    expect(fs.existsSync(JAM_PATH)).toBe(true);
+    expect(fs.statSync(JAM_PATH).size).toBeGreaterThan(0);
+  });
+
   test("compiled JAM runs cleanly when the float branch is skipped", () => {
+    compileTrapFloatsJam();
     // First byte of args = 0 → safe path → no float op executed.
     const stdout = execFileSync("node", ananAsArgs("0x00"), {
       cwd: PROJECT_ROOT,
@@ -105,6 +118,7 @@ describe("trap-floats CLI behavior", () => {
   });
 
   test("compiled JAM traps when the float branch is taken", () => {
+    compileTrapFloatsJam();
     // First byte of args = 1 → trap path → @llvm.trap → PVM Trap instruction.
     const stdout = execFileSync("node", ananAsArgs("0x01"), {
       cwd: PROJECT_ROOT,

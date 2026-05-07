@@ -54,6 +54,10 @@ for wasm in "${WASM_FILES[@]}"; do
     name="$(basename "${wasm}" .wasm)"
     out="${OUT_DIR}/${name}.jam"
     log="${OUT_DIR}/${name}.log"
+    # Clear any stale .jam from a previous run so a failure here can't leave
+    # a previously-successful artifact behind for downstream tooling to pick
+    # up while the summary says FAIL.
+    rm -f "${out}"
 
     printf '%-40s ' "${name}"
     if "${CLI_BIN}" compile "${wasm}" -o "${out}" "${EXTRA_FLAGS[@]}" >"${log}" 2>&1; then
@@ -61,6 +65,9 @@ for wasm in "${WASM_FILES[@]}"; do
         printf 'OK   %s bytes\n' "${size}"
         ok=$((ok + 1))
     else
+        # The CLI may have written a partial file before erroring; remove it
+        # so there's no chance of a corrupt JAM masquerading as valid output.
+        rm -f "${out}"
         # Surface the most informative line from the error: the new diagnostic
         # wraps unsupported-feature errors with function name + byte offset.
         first_err=$(grep -m 1 -E 'Unsupported|Float|in function' "${log}" || true)
