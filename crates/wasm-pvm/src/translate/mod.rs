@@ -125,6 +125,11 @@ pub struct CompileOptions {
     /// Override the maximum memory pages (memory.grow ceiling).
     /// When set, this takes precedence over both the WASM-declared max and the compiler default.
     pub max_memory_pages: Option<u32>,
+    /// When true, replace every f32/f64 operator with a runtime trap instead of
+    /// failing compilation. Useful for diagnosing what other unsupported features
+    /// a WASM module uses past the float wall. JAMs run normally if execution
+    /// never reaches a float operator; otherwise they trap deterministically.
+    pub trap_floats: bool,
 }
 
 // Re-export register constants from abi module
@@ -305,6 +310,7 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         options.optimizations.inlining,
         options.optimizations.inline_threshold,
         reachable_locals.as_ref(),
+        options.trap_floats,
     )?;
 
     // Calculate RO_DATA offsets and lengths for passive data segments

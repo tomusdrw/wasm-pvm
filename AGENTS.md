@@ -210,6 +210,8 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 - **Inline threshold**: `OptimizationFlags.inline_threshold: Option<u32>` (CLI `--inline-threshold N`) controls inlining aggressiveness. Functions with more than N LLVM IR instructions are marked `noinline`. Lower values = less inlining = smaller code. Default: `Some(5)` — only tiny helpers (setters, getters) are inlined. Use `None` (or `225` on CLI) for LLVM's default behavior.
 - **ecalli:N in import maps**: Import map files (`.imports`) support `name = ecalli:N` syntax in addition to `trap` and `nop`. This generates PVM `Ecalli` instructions directly from named imports, loading WASM call arguments into data registers (r7-r12) before invoking ecalli index N.
 - **Non-leaf r7/r8 allocation is not feasible** (investigated, not implemented): Same root cause as callee-saved state preservation after calls — `operand_reg()` returns the allocated register directly as a source operand for memory lowering, where it may be used as both source and destination for address calculations, clobbering the preserved value. See `docs/src/learnings.md` "Non-Leaf r7/r8 Allocation" for details.
+- **`--trap-floats` (`CompileOptions.trap_floats`)**: Feature gate (not an optimization) that replaces every f32/f64 operator with a runtime trap so compilation can finish past the float wall. Implemented in `llvm_frontend/function_builder.rs::emit_float_trap` via `@llvm.trap()` + LLVM unreachable; the PVM backend lowers `llvm.trap` to `Instruction::Trap` in `llvm_backend/intrinsics.rs::lower_llvm_intrinsic`. Critical: do NOT use bare `unreachable` (LLVM's `simplifycfg` folds branches whose only path leads to it as UB, silently deleting float-only if-arms) and do NOT set `self.unreachable = true` in the frontend (would leave function-result phis without an incoming branch). See `docs/src/trap-floats.md` and `docs/src/learnings.md` "Trap-Floats Lowering". Float operators covered are enumerated in `float_op_stack_effect` (≈60 MVP ops; SIMD float ops not included).
+- **Operator-error location wrapping**: When the WASM operator dispatcher (`function_builder.rs::translate_operator`) returns an error, `translate_function` wraps it in `Error::Located { func_idx, func_name, op_offset, source }`. Function names come from the WASM `name` custom section, then export name, then `wasm_func_<idx>` — see `WasmModule::local_function_display_name`. Errors emitted later (in `llvm_backend/*` or `translate/adapter_merge.rs`) do NOT get this wrapping; they fire after the WASM byte offset has been lost.
 
 ---
 
@@ -273,6 +275,9 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 | Understand/modify native WASM runner | `tests/helpers/wasm-runner.ts` | Native WASM runner (WAT→WASM via wabt, Bun WebAssembly) |
 | Define differential test suite | `tests/helpers/suite.ts` | `defineDifferentialSuite()` + `skipDifferential` flag |
 | Add/aggregate differential tests | `tests/differential/differential.test.ts` | Import suites + call `defineDifferentialSuite()` |
+| Modify trap-floats lowering | `llvm_frontend/function_builder.rs::emit_float_trap` + `float_op_stack_effect` | Frontend emits `@llvm.trap()` + LLVM unreachable; backend lowers `llvm.trap` in `llvm_backend/intrinsics.rs::lower_llvm_intrinsic`. See `docs/src/trap-floats.md`. |
+| Add/edit trap-floats tests | `crates/wasm-pvm/tests/float_handling.rs` (Rust unit) + `tests/layer1/trap-floats.test.ts` (CLI + runtime trap) | Compile-time + run-time coverage |
+| Diagnostic location wrapping | `Error::Located` (in `error.rs`) wrapped at `function_builder.rs::translate_function` | Function name from `WasmModule::local_function_display_name`, op byte offset from `into_iter_with_offsets()` |
 
 ---
 

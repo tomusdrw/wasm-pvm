@@ -126,6 +126,14 @@ enum Commands {
             help = "Override maximum memory pages (default: 16 = 1 MB, each page = 64 KB)"
         )]
         max_memory: Option<u32>,
+
+        #[arg(
+            long,
+            help = "Replace every f32/f64 operator with a runtime trap instead of failing \
+                    compilation. Lets you push past the float wall to see what other \
+                    unsupported features the module uses."
+        )]
+        trap_floats: bool,
     },
 }
 
@@ -162,6 +170,7 @@ fn main() -> Result<()> {
             no_caller_saved_alloc,
             no_lazy_spill,
             max_memory,
+            trap_floats,
         } => {
             let wasm = read_wasm(&input)?;
 
@@ -210,6 +219,7 @@ fn main() -> Result<()> {
                         .or(OptimizationFlags::default().inline_threshold),
                 },
                 max_memory_pages: max_memory,
+                trap_floats,
             };
 
             let start = Instant::now();

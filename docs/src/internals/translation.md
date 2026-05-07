@@ -32,6 +32,7 @@ Source: `crates/wasm-pvm/src/translate/`
 - Call return addresses are pre-assigned as jump-table refs `((idx + 1) * 2)` at emission time; fixup resolution accepts direct (`LoadImmJump`) and indirect (`LoadImm` / `LoadImmJumpInd`) return-address carriers.
 - Export parsing tracks `exported_wasm_func_indices` in WASM global index space for dead-function-elimination roots; entry resolution prefers canonical names (`main`, `main2`) over aliases (`refine*`, `accumulate*`) regardless of export order.
 - Entry exports (`main`/`main2` and aliases) must target local (non-imported) functions; imported targets are rejected during parse with `Error::Internal` to avoid index-underflow panics.
+- WASM `name` custom section (subsection 1, function names) is parsed into `local_function_names: Vec<Option<String>>`. `WasmModule::local_function_display_name(local_idx)` returns the name-section entry, falling back to the export name, then `wasm_func_<global_idx>`. Used by the function-body translator to wrap operator-dispatch errors in `Error::Located { func_idx, func_name, op_offset, source }` — the diagnostic surface for unsupported features. Errors emitted later in the pipeline (LLVM-to-PVM lowering, adapter merge) do not get this wrapping; they fire after the WASM byte offset has been lost.
 
 ## Current Memory Layout
 

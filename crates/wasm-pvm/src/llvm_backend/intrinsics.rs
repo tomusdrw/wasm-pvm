@@ -107,6 +107,13 @@ pub fn lower_llvm_intrinsic<'ctx>(
         return Ok(());
     }
 
+    // llvm.trap — emit a real trap. Used by `--trap-floats` mode in place of
+    // bare `unreachable` (which simplifycfg folds away as UB).
+    if name == "llvm.trap" {
+        e.emit(Instruction::Trap);
+        return Ok(());
+    }
+
     let slot = result_slot(e, instr)?;
 
     // llvm.smax / llvm.smin / llvm.umax / llvm.umin — integer min/max intrinsics.

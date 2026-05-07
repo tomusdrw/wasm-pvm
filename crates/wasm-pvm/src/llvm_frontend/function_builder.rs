@@ -24,6 +24,67 @@ fn llvm_err<T>(result: std::result::Result<T, BuilderError>) -> Result<T> {
     result.map_err(|e| Error::Internal(format!("LLVM builder error: {e:?}")))
 }
 
+/// Stack effect (pop count, push count) for f32/f64 WebAssembly operators.
+/// Returns `None` for non-float operators. Used by `--trap-floats` mode to
+/// adjust the operand stack after replacing a float operator with a trap.
+///
+/// All values on the i64-uniform operand stack are 64-bit integers regardless
+/// of source WASM type, so push counts here just track how many entries the
+/// operator would have produced — the placeholder values are zeros.
+///
+/// Several arm bodies are identical `(1, 1)` / `(2, 1)` tuples but the arms
+/// stay grouped by *category* (loads vs unary vs comparisons vs conversions)
+/// so future readers can see exactly which operators were considered.
+#[allow(clippy::too_many_lines, clippy::match_same_arms)]
+fn float_op_stack_effect(op: &Operator) -> Option<(usize, usize)> {
+    use Operator::{
+        F32Abs, F32Add, F32Ceil, F32Const, F32ConvertI32S, F32ConvertI32U, F32ConvertI64S,
+        F32ConvertI64U, F32Copysign, F32DemoteF64, F32Div, F32Eq, F32Floor, F32Ge, F32Gt, F32Le,
+        F32Load, F32Lt, F32Max, F32Min, F32Mul, F32Ne, F32Nearest, F32Neg, F32ReinterpretI32,
+        F32Sqrt, F32Store, F32Sub, F32Trunc, F64Abs, F64Add, F64Ceil, F64Const, F64ConvertI32S,
+        F64ConvertI32U, F64ConvertI64S, F64ConvertI64U, F64Copysign, F64Div, F64Eq, F64Floor,
+        F64Ge, F64Gt, F64Le, F64Load, F64Lt, F64Max, F64Min, F64Mul, F64Ne, F64Nearest, F64Neg,
+        F64PromoteF32, F64ReinterpretI64, F64Sqrt, F64Store, F64Sub, F64Trunc, I32ReinterpretF32,
+        I32TruncF32S, I32TruncF32U, I32TruncF64S, I32TruncF64U, I32TruncSatF32S, I32TruncSatF32U,
+        I32TruncSatF64S, I32TruncSatF64U, I64ReinterpretF64, I64TruncF32S, I64TruncF32U,
+        I64TruncF64S, I64TruncF64U, I64TruncSatF32S, I64TruncSatF32U, I64TruncSatF64S,
+        I64TruncSatF64U,
+    };
+    Some(match op {
+        // Constants: 0 → 1
+        F32Const { .. } | F64Const { .. } => (0, 1),
+
+        // Loads: 1 (addr) → 1 (value)
+        F32Load { .. } | F64Load { .. } => (1, 1),
+
+        // Stores: 2 (addr, value) → 0
+        F32Store { .. } | F64Store { .. } => (2, 0),
+
+        // Unary float ops: 1 → 1
+        F32Abs | F32Neg | F32Ceil | F32Floor | F32Trunc | F32Nearest | F32Sqrt | F64Abs
+        | F64Neg | F64Ceil | F64Floor | F64Trunc | F64Nearest | F64Sqrt => (1, 1),
+
+        // Binary float ops: 2 → 1
+        F32Add | F32Sub | F32Mul | F32Div | F32Min | F32Max | F32Copysign | F64Add | F64Sub
+        | F64Mul | F64Div | F64Min | F64Max | F64Copysign => (2, 1),
+
+        // Float comparisons: 2 → 1 (i32 result)
+        F32Eq | F32Ne | F32Lt | F32Gt | F32Le | F32Ge | F64Eq | F64Ne | F64Lt | F64Gt | F64Le
+        | F64Ge => (2, 1),
+
+        // Conversions touching float (1 → 1)
+        I32TruncF32S | I32TruncF32U | I32TruncF64S | I32TruncF64U | I64TruncF32S
+        | I64TruncF32U | I64TruncF64S | I64TruncF64U | F32ConvertI32S | F32ConvertI32U
+        | F32ConvertI64S | F32ConvertI64U | F32DemoteF64 | F64ConvertI32S | F64ConvertI32U
+        | F64ConvertI64S | F64ConvertI64U | F64PromoteF32 | I32ReinterpretF32
+        | I64ReinterpretF64 | F32ReinterpretI32 | F64ReinterpretI64 | I32TruncSatF32S
+        | I32TruncSatF32U | I32TruncSatF64S | I32TruncSatF64U | I64TruncSatF32S
+        | I64TruncSatF32U | I64TruncSatF64S | I64TruncSatF64U => (1, 1),
+
+        _ => return None,
+    })
+}
+
 /// WASM control flow frame, tracking LLVM basic blocks and phi nodes.
 enum ControlFrame<'ctx> {
     Block {
@@ -97,6 +158,12 @@ pub struct WasmToLlvm<'ctx> {
     // Type signatures for indirect calls: (num_params, num_results) per type index
     type_signatures: Vec<(usize, usize)>,
 
+    // Module-wide configuration
+    /// When true, every f32/f64 operator is replaced with a runtime trap instead
+    /// of being a compile error. Lets users push past the float wall to see what
+    /// other unsupported features exist downstream.
+    trap_floats: bool,
+
     // Per-function state (reset for each function)
     operand_stack: Vec<IntValue<'ctx>>,
     locals: Vec<PointerValue<'ctx>>,
@@ -141,7 +208,7 @@ struct PvmIntrinsics<'ctx> {
 
 impl<'ctx> WasmToLlvm<'ctx> {
     #[must_use]
-    pub fn new(context: &'ctx Context, module_name: &str) -> Self {
+    pub fn new(context: &'ctx Context, module_name: &str, trap_floats: bool) -> Self {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
         let pvm_intrinsics = Self::declare_pvm_intrinsics(context, &module);
@@ -157,6 +224,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
             type_signatures: Vec::new(),
             functions: Vec::new(),
             globals: Vec::new(),
+            trap_floats,
             operand_stack: Vec::new(),
             locals: Vec::new(),
             current_fn: None,
@@ -261,7 +329,15 @@ impl<'ctx> WasmToLlvm<'ctx> {
             let global_idx = wasm_module.num_imported_funcs as usize + local_idx;
             let func_value = self.functions[global_idx];
             let (num_params, has_return) = wasm_module.function_signatures[global_idx];
-            self.translate_function(func_body, func_value, num_params, has_return)?;
+            let display_name = wasm_module.local_function_display_name(local_idx);
+            self.translate_function(
+                func_body,
+                func_value,
+                num_params,
+                has_return,
+                global_idx,
+                &display_name,
+            )?;
         }
 
         if run_llvm_passes {
@@ -324,6 +400,8 @@ impl<'ctx> WasmToLlvm<'ctx> {
         func_value: FunctionValue<'ctx>,
         num_params: usize,
         has_return: bool,
+        func_idx: usize,
+        func_name: &str,
     ) -> Result<()> {
         self.operand_stack.clear();
         self.locals.clear();
@@ -386,14 +464,22 @@ impl<'ctx> WasmToLlvm<'ctx> {
             stack_depth: 0,
         });
 
-        // Translate operators
-        let ops: Vec<Operator> = func_body
-            .get_operators_reader()?
-            .into_iter()
-            .collect::<std::result::Result<_, _>>()?;
-
-        for op in &ops {
-            self.translate_operator(op)?;
+        // Translate operators with byte-offset tracking so any error from the
+        // operator dispatch can be wrapped in a `Located` variant pointing at
+        // the exact operator within the function body.
+        for entry in func_body.get_operators_reader()?.into_iter_with_offsets() {
+            let (op, op_offset) = entry?;
+            self.translate_operator(&op).map_err(|source| match source {
+                // Avoid double-wrapping: if a deeper translator already attached
+                // a location, keep the innermost one (it's more specific).
+                Error::Located { .. } => source,
+                _ => Error::Located {
+                    func_idx,
+                    func_name: func_name.to_string(),
+                    op_offset,
+                    source: Box::new(source),
+                },
+            })?;
         }
 
         // Verify function ends cleanly (the final End should have popped the fn frame)
@@ -407,6 +493,20 @@ impl<'ctx> WasmToLlvm<'ctx> {
     }
 
     fn translate_operator(&mut self, op: &Operator) -> Result<()> {
+        // Trap-floats mode: convert any f32/f64 operator into an LLVM unreachable
+        // and continue codegen in a fresh block with placeholder operand-stack
+        // values. The trap fires deterministically at runtime; subsequent ops
+        // generate dead code that LLVM will DCE away. We do NOT set
+        // `self.unreachable = true` because the operand stack must keep its
+        // expected shape for the remainder of the function body (in particular,
+        // function-level result phis must still receive an incoming branch).
+        if self.trap_floats
+            && !self.unreachable
+            && let Some((pop, push)) = float_op_stack_effect(op)
+        {
+            return self.emit_float_trap(pop, push);
+        }
+
         // In unreachable code, only track control flow structure for End matching.
         if self.unreachable {
             match op {
@@ -1272,6 +1372,53 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
             _ => Err(Error::Unsupported(format!("{op:?}"))),
         }
+    }
+
+    // ── Trap-floats helper ──
+
+    /// Emit a runtime trap (`@llvm.trap()` + `unreachable`) and continue
+    /// codegen in a fresh basic block. Pops `pop` operand-stack entries for
+    /// the operator's inputs and pushes `push` zero placeholders for its
+    /// outputs. The new block has no live predecessors, so subsequent ops
+    /// translate into provably-dead code that LLVM's DCE removes — but the
+    /// operand stack and control-flow phi nodes stay structurally valid.
+    ///
+    /// Crucially we must NOT emit a bare `unreachable` here. LLVM's
+    /// `simplifycfg` treats `unreachable` as "this code is impossible" and
+    /// folds away conditional branches whose only path leads to one — so a
+    /// float op in an if-arm would silently delete the whole branch instead
+    /// of trapping. `@llvm.trap()` is a side-effecting `noreturn` call that
+    /// the optimizer preserves; the PVM backend lowers it to a `Trap`
+    /// instruction.
+    fn emit_float_trap(&mut self, pop: usize, push: usize) -> Result<()> {
+        let trap_fn = self.llvm_trap_intrinsic()?;
+        llvm_err(self.builder.build_call(trap_fn, &[], "float_trap"))?;
+        llvm_err(self.builder.build_unreachable())?;
+
+        let fn_val = self.current_fn.unwrap();
+        let after_bb = self
+            .context
+            .append_basic_block(fn_val, "after_float_trap");
+        self.builder.position_at_end(after_bb);
+
+        for _ in 0..pop {
+            self.pop()?;
+        }
+        let zero = self.i64_type.const_zero();
+        for _ in 0..push {
+            self.push(zero);
+        }
+        Ok(())
+    }
+
+    /// Look up (and cache via the LLVM module) the `@llvm.trap` intrinsic
+    /// declaration. Not overloaded, so no parameter type list is needed.
+    fn llvm_trap_intrinsic(&self) -> Result<FunctionValue<'ctx>> {
+        let intrinsic = Intrinsic::find("llvm.trap")
+            .ok_or_else(|| Error::Internal("llvm.trap intrinsic not found".to_string()))?;
+        intrinsic
+            .get_declaration(&self.module, &[])
+            .ok_or_else(|| Error::Internal("llvm.trap declaration failed".to_string()))
     }
 
     // ── Stack helpers ──

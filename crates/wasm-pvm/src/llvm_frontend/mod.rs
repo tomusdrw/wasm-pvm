@@ -23,7 +23,7 @@ use crate::translate::wasm_module::WasmModule;
 /// `run_llvm_passes` gates the entire optimization pipeline (all three phases).
 /// `run_inlining` enables/disables Phase 2 independently (requires `run_llvm_passes = true`).
 /// `reachable_locals` when `Some`, limits translation to only those local function indices.
-#[allow(clippy::implicit_hasher)]
+#[allow(clippy::implicit_hasher, clippy::fn_params_excessive_bools)]
 pub fn translate_wasm_to_llvm<'ctx>(
     context: &'ctx Context,
     wasm_module: &WasmModule,
@@ -31,8 +31,9 @@ pub fn translate_wasm_to_llvm<'ctx>(
     run_inlining: bool,
     inline_threshold: Option<u32>,
     reachable_locals: Option<&BTreeSet<usize>>,
+    trap_floats: bool,
 ) -> Result<Module<'ctx>> {
-    let translator = WasmToLlvm::new(context, "wasm_module");
+    let translator = WasmToLlvm::new(context, "wasm_module", trap_floats);
     translator.translate_module(
         wasm_module,
         run_llvm_passes,
