@@ -160,6 +160,20 @@ Two-register branch instructions use **reversed operand order**: `Branch_op { re
 - Lowered as: `if x >= 0 then x else 0 - x`
 - For i32: must sign-extend first (zero-extension from load_operand makes negatives look positive in i64 comparisons)
 
+### llvm.bitreverse vs llvm.bswap
+
+Two distinct LLVM intrinsics easy to confuse:
+
+- `llvm.bswap.iN` — reverses **byte order** (`0xAABBCCDD → 0xDDCCBBAA`). Lowers directly to PVM `ReverseBytes` (opcode 111). For widths < 64, `ReverseBytes` leaves the result in the high bytes of the 64-bit register, so the bswap path follows up with a `ShloRImm64` to recover (shift by `64 - bits`).
+
+- `llvm.bitreverse.iN` — reverses **bit order** within the value (`0x80000001` is a palindrome — bitreverse maps it to itself). PVM has no native bit-reverse, so this is software-emulated via the standard "swap odd/even bits, swap pairs, swap nibbles, swap bytes" algorithm. Supported widths: `i8`, `i16`, `i32`, `i64`.
+  - **i8**: 3 mask phases (masks `0x55`/`0x33`/`0x0F`) using `AndImm` + `ShloLImm32`/`ShloRImm32` — no byte-swap step needed for a single byte (the running value stays clean within the low 8 bits).
+  - **i16**: same shape with masks `0x5555`/`0x3333`/`0x0F0F`, then `ReverseBytes` + `ShloRImm64` by **48** to recover (matches the bswap path's i16 recovery shift).
+  - **i32**: masks `0x55555555`/`0x33333333`/`0x0F0F0F0F`, then `ReverseBytes` + `ShloRImm64` by **32**.
+  - **i64**: masks must be loaded via `LoadImm64` into `TEMP_RESULT` and combined with the register-form `And` (since 64-bit masks don't fit in `AndImm`'s i32 immediate); 64-bit shift variants throughout; no post-shift after `ReverseBytes`.
+
+Substrate / polkadot-fellows runtimes hit `llvm.bitreverse.i32` regularly (shared codec/hashing code). LLVM 18's `recognizeBSwapOrBitReverseIdiom` pass folds the canonical open-coded pattern (at any width — we verified i8/i16/i32/i64) into the matching intrinsic before our lowering sees it, so writing the algorithm in WAT is sufficient to exercise every path in tests. For i8/i16 the trick is to load/store with narrow ops (`i32.load8_u` / `i32.store8` etc.) so LLVM's demanded-bits analysis narrows the width of the bitreverse intrinsic from the default i32.
+
 ---
 
 ## LoadImmJump for Direct Calls

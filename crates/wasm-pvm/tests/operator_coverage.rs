@@ -2532,3 +2532,426 @@ fn test_cmov_iz_register() {
             .join("\n")
     );
 }
+
+// =============================================================================
+// llvm.bswap (i16 / i32 / i64) — single ReverseBytes + width-specific shift
+// =============================================================================
+
+/// `bswap.i16` — LLVM folds the canonical `or(shl(low_byte, 8), shr(high_byte, 8))`
+/// into `llvm.bswap.i16`. Our lowering: `ReverseBytes` + `ShloRImm64` by 48.
+#[test]
+fn test_bswap_i16_lowering() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+                (local $x i32)
+                (local.set $x (i32.load16_u (local.get $args_ptr)))
+                (i32.store16 (i32.const 0)
+                    (i32.or
+                        (i32.shl (i32.and (local.get $x) (i32.const 0xFF)) (i32.const 8))
+                        (i32.shr_u (i32.and (local.get $x) (i32.const 0xFF00)) (i32.const 8))))
+                (i64.const 8589934592)
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert_eq!(
+        count_opcode(&instructions, Opcode::ReverseBytes),
+        1,
+        "bswap.i16 should emit exactly one ReverseBytes.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let has_shr64_48 = instructions.iter().any(|i| {
+        matches!(i, wasm_pvm::Instruction::ShloRImm64 { value: 48, .. })
+    });
+    assert!(has_shr64_48, "missing ShloRImm64 by 48 (i16 recovery shift)");
+}
+
+/// `bswap.i32` — canonical 4-byte rearrangement folds to `llvm.bswap.i32`,
+/// lowering to `ReverseBytes` + `ShloRImm64` by 32.
+#[test]
+fn test_bswap_i32_lowering() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+                (local $x i32)
+                (local.set $x (i32.load (local.get $args_ptr)))
+                (i32.store (i32.const 0)
+                    (i32.or
+                        (i32.or
+                            (i32.shl (local.get $x) (i32.const 24))
+                            (i32.shl (i32.and (local.get $x) (i32.const 0xFF00)) (i32.const 8)))
+                        (i32.or
+                            (i32.and (i32.shr_u (local.get $x) (i32.const 8)) (i32.const 0xFF00))
+                            (i32.shr_u (local.get $x) (i32.const 24)))))
+                (i64.const 17179869184)
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert_eq!(
+        count_opcode(&instructions, Opcode::ReverseBytes),
+        1,
+        "bswap.i32 should emit exactly one ReverseBytes.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let has_shr64_32 = instructions.iter().any(|i| {
+        matches!(i, wasm_pvm::Instruction::ShloRImm64 { value: 32, .. })
+    });
+    assert!(has_shr64_32, "missing ShloRImm64 by 32 (i32 recovery shift)");
+}
+
+/// `bswap.i64` — canonical 8-byte rearrangement folds to `llvm.bswap.i64`,
+/// lowering to a single `ReverseBytes` (no recovery shift needed).
+///
+/// This is the path exercised end-to-end by `sha512.jam.wat`, but the unit
+/// test pins down the exact instruction shape so a regression in the
+/// lowering would fail here even if no integration test happens to flex it.
+#[test]
+fn test_bswap_i64_lowering() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+                (local $x i64)
+                (local.set $x (i64.load (local.get $args_ptr)))
+                (i64.store (i32.const 0)
+                    (i64.or
+                        (i64.or
+                            (i64.or
+                                (i64.shl (local.get $x) (i64.const 56))
+                                (i64.shl (i64.and (local.get $x) (i64.const 0xFF00)) (i64.const 40)))
+                            (i64.or
+                                (i64.shl (i64.and (local.get $x) (i64.const 0xFF0000)) (i64.const 24))
+                                (i64.shl (i64.and (local.get $x) (i64.const 0xFF000000)) (i64.const 8))))
+                        (i64.or
+                            (i64.or
+                                (i64.and (i64.shr_u (local.get $x) (i64.const 8)) (i64.const 0xFF000000))
+                                (i64.and (i64.shr_u (local.get $x) (i64.const 24)) (i64.const 0xFF0000)))
+                            (i64.or
+                                (i64.and (i64.shr_u (local.get $x) (i64.const 40)) (i64.const 0xFF00))
+                                (i64.shr_u (local.get $x) (i64.const 56))))))
+                (i64.const 34359738368)
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert_eq!(
+        count_opcode(&instructions, Opcode::ReverseBytes),
+        1,
+        "bswap.i64 should emit exactly one ReverseBytes.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    // bswap.i64 needs no recovery shift; it must NOT emit a ShloRImm64 by
+    // 32 or 48 like the narrower bswap widths do (a regression that emitted
+    // a recovery shift here would mask all 64-bit values to the lower 32 bits).
+    let has_recovery_shift = instructions.iter().any(|i| {
+        matches!(
+            i,
+            wasm_pvm::Instruction::ShloRImm64 { value: 32, .. }
+                | wasm_pvm::Instruction::ShloRImm64 { value: 48, .. }
+        )
+    });
+    assert!(
+        !has_recovery_shift,
+        "bswap.i64 should not emit a ShloRImm64 by 32/48; the result is already in the full 64-bit register.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+// =============================================================================
+// llvm.bitreverse (i8 / i16 / i32 / i64) — software lowering via 3 mask phases + ReverseBytes
+// =============================================================================
+
+/// The canonical i32 bit-reverse algorithm: swap odd/even bits, pairs, nibbles,
+/// then byte-swap. LLVM 18's instcombine recognises this idiom and folds the
+/// whole chain into `llvm.bitreverse.i32`, which our backend lowers to three
+/// mask phases + a `ReverseBytes` + a 32-bit recovery shift.
+#[test]
+fn test_bitreverse_i32_lowering() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i32) (result i32)
+                (local $x i32)
+                (local.set $x (local.get 0))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 1)) (i32.const 0x55555555))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x55555555)) (i32.const 1))))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 2)) (i32.const 0x33333333))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x33333333)) (i32.const 2))))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 4)) (i32.const 0x0F0F0F0F))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x0F0F0F0F)) (i32.const 4))))
+                (i32.or
+                    (i32.or
+                        (i32.shl (local.get $x) (i32.const 24))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0xFF00)) (i32.const 8)))
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 8)) (i32.const 0xFF00))
+                        (i32.shr_u (local.get $x) (i32.const 24))))
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // bitreverse lowering emits exactly one ReverseBytes (the byte-swap step).
+    assert_eq!(
+        count_opcode(&instructions, Opcode::ReverseBytes),
+        1,
+        "i32 bitreverse should emit exactly one ReverseBytes.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    // The three i32 bit-reverse mask values must each appear in an AndImm.
+    let has_and_imm_with = |value: i32| {
+        instructions
+            .iter()
+            .any(|i| matches!(i, wasm_pvm::Instruction::AndImm { value: v, .. } if *v == value))
+    };
+    // The three masks (0x55555555, 0x33333333, 0x0F0F0F0F) all fit in positive
+    // i32 (< 2^31), so they can be written as i32 literals directly.
+    assert!(has_and_imm_with(0x5555_5555), "missing AndImm 0x55555555");
+    assert!(has_and_imm_with(0x3333_3333), "missing AndImm 0x33333333");
+    assert!(has_and_imm_with(0x0F0F_0F0F), "missing AndImm 0x0F0F0F0F");
+}
+
+/// Defensive coverage for `llvm.bitreverse.i8`: writing the canonical
+/// 8-bit bit-reverse pattern (with `i32.load8_u` / `i32.store8` so LLVM
+/// can narrow the demanded bits to 8) provokes
+/// `recognizeBSwapOrBitReverseIdiom` into folding to the i8 intrinsic.
+/// Our lowering then emits 3 mask phases and *no* `ReverseBytes`
+/// (no byte-swap is needed for a single byte).
+#[test]
+fn test_bitreverse_i8_lowering() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+                (local $x i32)
+                (local.set $x (i32.load8_u (local.get $args_ptr)))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 1)) (i32.const 0x55))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x55)) (i32.const 1))))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 2)) (i32.const 0x33))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x33)) (i32.const 2))))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 4)) (i32.const 0x0F))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x0F)) (i32.const 4))))
+                (i32.store8 (i32.const 0) (local.get $x))
+                (i64.const 4294967296)  ;; ptr=0, len=1
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    // i8 bitreverse must NOT emit ReverseBytes (no byte-swap needed for a
+    // single byte). If it did, that would be a regression of the lowering.
+    assert_eq!(
+        count_opcode(&instructions, Opcode::ReverseBytes),
+        0,
+        "i8 bitreverse should emit zero ReverseBytes.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let has_and_imm_with = |value: i32| {
+        instructions
+            .iter()
+            .any(|i| matches!(i, wasm_pvm::Instruction::AndImm { value: v, .. } if *v == value))
+    };
+    assert!(has_and_imm_with(0x55), "missing AndImm 0x55");
+    assert!(has_and_imm_with(0x33), "missing AndImm 0x33");
+    assert!(has_and_imm_with(0x0F), "missing AndImm 0x0F");
+}
+
+/// Defensive coverage for `llvm.bitreverse.i16`. Same shape as i32 but
+/// with narrower masks, and the post-`ReverseBytes` recovery shift is
+/// 48 bits instead of 32 (mirrors the bswap path for i16).
+#[test]
+fn test_bitreverse_i16_lowering() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+                (local $x i32)
+                (local.set $x (i32.load16_u (local.get $args_ptr)))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 1)) (i32.const 0x5555))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x5555)) (i32.const 1))))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 2)) (i32.const 0x3333))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x3333)) (i32.const 2))))
+                (local.set $x
+                    (i32.or
+                        (i32.and (i32.shr_u (local.get $x) (i32.const 4)) (i32.const 0x0F0F))
+                        (i32.shl (i32.and (local.get $x) (i32.const 0x0F0F)) (i32.const 4))))
+                (local.set $x
+                    (i32.or
+                        (i32.shl (i32.and (local.get $x) (i32.const 0xFF)) (i32.const 8))
+                        (i32.shr_u (i32.and (local.get $x) (i32.const 0xFF00)) (i32.const 8))))
+                (i32.store16 (i32.const 0) (local.get $x))
+                (i64.const 8589934592)  ;; ptr=0, len=2
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert_eq!(
+        count_opcode(&instructions, Opcode::ReverseBytes),
+        1,
+        "i16 bitreverse should emit exactly one ReverseBytes.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let has_and_imm_with = |value: i32| {
+        instructions
+            .iter()
+            .any(|i| matches!(i, wasm_pvm::Instruction::AndImm { value: v, .. } if *v == value))
+    };
+    assert!(has_and_imm_with(0x5555), "missing AndImm 0x5555");
+    assert!(has_and_imm_with(0x3333), "missing AndImm 0x3333");
+    assert!(has_and_imm_with(0x0F0F), "missing AndImm 0x0F0F");
+
+    // The i16 recovery shift is 48 (vs 32 for i32).
+    let has_shr64_48 = instructions.iter().any(|i| {
+        matches!(
+            i,
+            wasm_pvm::Instruction::ShloRImm64 { value: 48, .. }
+        )
+    });
+    assert!(has_shr64_48, "missing ShloRImm64 by 48 (i16 recovery shift)");
+}
+
+/// The canonical i64 bit-reverse algorithm. LLVM folds it to
+/// `llvm.bitreverse.i64`; our backend uses `LoadImm64` + register `And` for
+/// the masks (since they don't fit in `AndImm`'s i32 immediate) and skips
+/// the post-`ReverseBytes` shift.
+#[test]
+fn test_bitreverse_i64_lowering() {
+    let wat = r#"
+        (module
+            (memory 1)
+            (func (export "main") (param i64) (result i64)
+                (local $x i64)
+                (local.set $x (local.get 0))
+                (local.set $x
+                    (i64.or
+                        (i64.and (i64.shr_u (local.get $x) (i64.const 1)) (i64.const 0x5555555555555555))
+                        (i64.shl (i64.and (local.get $x) (i64.const 0x5555555555555555)) (i64.const 1))))
+                (local.set $x
+                    (i64.or
+                        (i64.and (i64.shr_u (local.get $x) (i64.const 2)) (i64.const 0x3333333333333333))
+                        (i64.shl (i64.and (local.get $x) (i64.const 0x3333333333333333)) (i64.const 2))))
+                (local.set $x
+                    (i64.or
+                        (i64.and (i64.shr_u (local.get $x) (i64.const 4)) (i64.const 0x0F0F0F0F0F0F0F0F))
+                        (i64.shl (i64.and (local.get $x) (i64.const 0x0F0F0F0F0F0F0F0F)) (i64.const 4))))
+                (i64.or
+                    (i64.or
+                        (i64.or
+                            (i64.shl (local.get $x) (i64.const 56))
+                            (i64.shl (i64.and (local.get $x) (i64.const 0xFF00)) (i64.const 40)))
+                        (i64.or
+                            (i64.shl (i64.and (local.get $x) (i64.const 0xFF0000)) (i64.const 24))
+                            (i64.shl (i64.and (local.get $x) (i64.const 0xFF000000)) (i64.const 8))))
+                    (i64.or
+                        (i64.or
+                            (i64.and (i64.shr_u (local.get $x) (i64.const 8)) (i64.const 0xFF000000))
+                            (i64.and (i64.shr_u (local.get $x) (i64.const 24)) (i64.const 0xFF0000)))
+                        (i64.or
+                            (i64.and (i64.shr_u (local.get $x) (i64.const 40)) (i64.const 0xFF00))
+                            (i64.shr_u (local.get $x) (i64.const 56)))))
+            )
+        )
+    "#;
+
+    let program = compile_wat(wat).expect("compile");
+    let instructions = extract_instructions(&program);
+
+    assert_eq!(
+        count_opcode(&instructions, Opcode::ReverseBytes),
+        1,
+        "i64 bitreverse should emit exactly one ReverseBytes.\nInstructions:\n{}",
+        instructions
+            .iter()
+            .map(|i| format!("  {i:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let has_load_imm64_with = |value: u64| {
+        instructions
+            .iter()
+            .any(|i| matches!(i, wasm_pvm::Instruction::LoadImm64 { value: v, .. } if *v == value))
+    };
+    assert!(
+        has_load_imm64_with(0x5555_5555_5555_5555),
+        "missing LoadImm64 0x5555555555555555"
+    );
+    assert!(
+        has_load_imm64_with(0x3333_3333_3333_3333),
+        "missing LoadImm64 0x3333333333333333"
+    );
+    assert!(
+        has_load_imm64_with(0x0F0F_0F0F_0F0F_0F0F),
+        "missing LoadImm64 0x0F0F0F0F0F0F0F0F"
+    );
+}

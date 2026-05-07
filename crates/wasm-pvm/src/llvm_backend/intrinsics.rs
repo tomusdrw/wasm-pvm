@@ -94,7 +94,7 @@ pub fn lower_pvm_intrinsic<'ctx>(
     }
 }
 
-/// Lower an LLVM intrinsic call (smax, smin, umax, umin, bswap, abs, ctlz, cttz, ctpop, fshl, fshr, assume).
+/// Lower an LLVM intrinsic call (smax, smin, umax, umin, bitreverse, bswap, abs, ctlz, cttz, ctpop, fshl, fshr, assume).
 pub fn lower_llvm_intrinsic<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -192,6 +192,149 @@ pub fn lower_llvm_intrinsic<'ctx>(
         return Ok(());
     }
 
+    // llvm.bitreverse — reverse bit order within the value.
+    //
+    // Distinct from llvm.bswap (which reverses byte order). PVM has no native
+    // bit-reverse instruction, so this is implemented in software via the
+    // standard "swap odd/even bits, then pairs, then nibbles, then bytes"
+    // algorithm; the byte-swap step (i16/i32/i64) uses PVM's ReverseBytes.
+    // Supports i8 (no byte-swap step), i16, i32, and i64.
+    if name.contains("bitreverse") {
+        let val = get_operand(instr, 0)?;
+        let dst = result_reg(e, instr);
+        let bits = operand_bit_width(instr);
+
+        // Use TEMP1 as the running value across the three mask phases.
+        // Phase 0 reads from the operand register (allocated reg, or TEMP1
+        // after load_operand); phases 1+ read from TEMP1.
+        let mut val_reg = operand_reg(e, val, TEMP1);
+        if val_reg != TEMP1 && val_reg == dst {
+            val_reg = TEMP1;
+        }
+        if val_reg == TEMP1 {
+            e.load_operand(val, TEMP1)?;
+        }
+
+        if bits == 8 || bits == 16 || bits == 32 {
+            // i8/i16/i32 share one shape: 3 mask phases via `AndImm` +
+            // `ShloLImm32`/`ShloRImm32` + `Or`. i8 skips the byte-swap
+            // step because a single byte doesn't need one. All masks fit
+            // in positive i32 (max 0x5555_5555 < 2^31). See
+            // `docs/src/learnings.md` for the per-width recipe and the
+            // 32-bit-shift sign-extension correctness note.
+            let masks: &[i32] = match bits {
+                8 => &[0x55, 0x33, 0x0F],
+                16 => &[0x5555, 0x3333, 0x0F0F],
+                32 => &[0x5555_5555, 0x3333_3333, 0x0F0F_0F0F],
+                _ => unreachable!(),
+            };
+            for (i, &mask) in masks.iter().enumerate() {
+                let shift = 1_i32 << i;
+                let src = if i == 0 { val_reg } else { TEMP1 };
+
+                e.emit(Instruction::AndImm {
+                    dst: TEMP2,
+                    src,
+                    value: mask,
+                });
+                e.emit(Instruction::ShloLImm32 {
+                    dst: TEMP2,
+                    src: TEMP2,
+                    value: shift,
+                });
+                e.emit(Instruction::ShloRImm32 {
+                    dst: TEMP1,
+                    src,
+                    value: shift,
+                });
+                e.emit(Instruction::AndImm {
+                    dst: TEMP1,
+                    src: TEMP1,
+                    value: mask,
+                });
+                e.emit(Instruction::Or {
+                    dst: TEMP1,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                });
+            }
+
+            if bits == 8 {
+                // No byte-swap step for i8; TEMP1 already holds the
+                // bit-reversed value in its low 8 bits with upper bits zero.
+                // Store directly from TEMP1 to skip a redundant MoveReg
+                // when `dst == TEMP_RESULT` and there's no allocated reg.
+                e.store_to_slot(slot, TEMP1);
+                return Ok(());
+            }
+
+            // i16/i32: ReverseBytes leaves the result in the top `bits` bits
+            // of the 64-bit register; shift right by (64 - bits) to recover
+            // (mirrors the bswap path).
+            e.emit(Instruction::ReverseBytes { dst, src: TEMP1 });
+            e.emit(Instruction::ShloRImm64 {
+                dst,
+                src: dst,
+                value: if bits == 16 { 48 } else { 32 },
+            });
+        } else if bits == 64 {
+            // 64-bit masks don't fit in AndImm's i32 immediate; materialize
+            // each into TEMP_RESULT via LoadImm64 and use the register-form
+            // And.
+            for (i, &mask) in [
+                0x5555_5555_5555_5555_u64,
+                0x3333_3333_3333_3333_u64,
+                0x0F0F_0F0F_0F0F_0F0F_u64,
+            ]
+            .iter()
+            .enumerate()
+            {
+                let shift = 1_i32 << i;
+                let src = if i == 0 { val_reg } else { TEMP1 };
+
+                e.emit(Instruction::LoadImm64 {
+                    reg: TEMP_RESULT,
+                    value: mask,
+                });
+                e.emit(Instruction::And {
+                    dst: TEMP2,
+                    src1: src,
+                    src2: TEMP_RESULT,
+                });
+                e.emit(Instruction::ShloLImm64 {
+                    dst: TEMP2,
+                    src: TEMP2,
+                    value: shift,
+                });
+                e.emit(Instruction::ShloRImm64 {
+                    dst: TEMP1,
+                    src,
+                    value: shift,
+                });
+                e.emit(Instruction::And {
+                    dst: TEMP1,
+                    src1: TEMP1,
+                    src2: TEMP_RESULT,
+                });
+                e.emit(Instruction::Or {
+                    dst: TEMP1,
+                    src1: TEMP1,
+                    src2: TEMP2,
+                });
+            }
+
+            // i64 byte-reverse needs no post-shift.
+            e.emit(Instruction::ReverseBytes { dst, src: TEMP1 });
+        } else {
+            return Err(crate::Error::Unsupported(format!(
+                "bitreverse with unsupported bit width: {bits}"
+            )));
+        }
+
+        e.store_to_slot(slot, dst);
+        return Ok(());
+    }
+
     // llvm.bswap — byte swap (reverse byte order).
     if name.contains("bswap") {
         let val = get_operand(instr, 0)?;
@@ -205,26 +348,27 @@ pub fn lower_llvm_intrinsic<'ctx>(
         }
         let bits = operand_bit_width(instr);
 
-        e.emit(Instruction::ReverseBytes { dst, src: val_reg });
+        // Validate the width and choose the post-shift up front. PVM's
+        // `ReverseBytes` is always a 64-bit byte reversal, so for narrower
+        // widths we shift the result down from the high end of the register.
+        let post_shift = match bits {
+            16 => 48,
+            32 => 32,
+            64 => 0,
+            _ => {
+                return Err(crate::Error::Unsupported(format!(
+                    "bswap with unsupported bit width: {bits}"
+                )));
+            }
+        };
 
-        if bits == 16 {
-            // Reversed bytes are in the top 2 positions; shift right by 48.
+        e.emit(Instruction::ReverseBytes { dst, src: val_reg });
+        if post_shift > 0 {
             e.emit(Instruction::ShloRImm64 {
                 dst,
                 src: dst,
-                value: 48,
+                value: post_shift,
             });
-        } else if bits == 32 {
-            // Reversed bytes are in the top 4 positions; shift right by 32.
-            e.emit(Instruction::ShloRImm64 {
-                dst,
-                src: dst,
-                value: 32,
-            });
-        } else if bits != 64 {
-            return Err(crate::Error::Unsupported(format!(
-                "bswap with unsupported bit width: {bits}"
-            )));
         }
 
         e.store_to_slot(slot, dst);
