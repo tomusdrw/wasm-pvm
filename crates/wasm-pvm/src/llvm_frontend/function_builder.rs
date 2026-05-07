@@ -73,13 +73,13 @@ fn float_op_stack_effect(op: &Operator) -> Option<(usize, usize)> {
         | F64Ge => (2, 1),
 
         // Conversions touching float (1 → 1)
-        I32TruncF32S | I32TruncF32U | I32TruncF64S | I32TruncF64U | I64TruncF32S
-        | I64TruncF32U | I64TruncF64S | I64TruncF64U | F32ConvertI32S | F32ConvertI32U
-        | F32ConvertI64S | F32ConvertI64U | F32DemoteF64 | F64ConvertI32S | F64ConvertI32U
-        | F64ConvertI64S | F64ConvertI64U | F64PromoteF32 | I32ReinterpretF32
-        | I64ReinterpretF64 | F32ReinterpretI32 | F64ReinterpretI64 | I32TruncSatF32S
-        | I32TruncSatF32U | I32TruncSatF64S | I32TruncSatF64U | I64TruncSatF32S
-        | I64TruncSatF32U | I64TruncSatF64S | I64TruncSatF64U => (1, 1),
+        I32TruncF32S | I32TruncF32U | I32TruncF64S | I32TruncF64U | I64TruncF32S | I64TruncF32U
+        | I64TruncF64S | I64TruncF64U | F32ConvertI32S | F32ConvertI32U | F32ConvertI64S
+        | F32ConvertI64U | F32DemoteF64 | F64ConvertI32S | F64ConvertI32U | F64ConvertI64S
+        | F64ConvertI64U | F64PromoteF32 | I32ReinterpretF32 | I64ReinterpretF64
+        | F32ReinterpretI32 | F64ReinterpretI64 | I32TruncSatF32S | I32TruncSatF32U
+        | I32TruncSatF64S | I32TruncSatF64U | I64TruncSatF32S | I64TruncSatF32U
+        | I64TruncSatF64S | I64TruncSatF64U => (1, 1),
 
         _ => return None,
     })
@@ -469,17 +469,18 @@ impl<'ctx> WasmToLlvm<'ctx> {
         // the exact operator within the function body.
         for entry in func_body.get_operators_reader()?.into_iter_with_offsets() {
             let (op, op_offset) = entry?;
-            self.translate_operator(&op).map_err(|source| match source {
-                // Avoid double-wrapping: if a deeper translator already attached
-                // a location, keep the innermost one (it's more specific).
-                Error::Located { .. } => source,
-                _ => Error::Located {
-                    func_idx,
-                    func_name: func_name.to_string(),
-                    op_offset,
-                    source: Box::new(source),
-                },
-            })?;
+            self.translate_operator(&op)
+                .map_err(|source| match source {
+                    // Avoid double-wrapping: if a deeper translator already attached
+                    // a location, keep the innermost one (it's more specific).
+                    Error::Located { .. } => source,
+                    _ => Error::Located {
+                        func_idx,
+                        func_name: func_name.to_string(),
+                        op_offset,
+                        source: Box::new(source),
+                    },
+                })?;
         }
 
         // Verify function ends cleanly (the final End should have popped the fn frame)
@@ -1396,9 +1397,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         llvm_err(self.builder.build_unreachable())?;
 
         let fn_val = self.current_fn.unwrap();
-        let after_bb = self
-            .context
-            .append_basic_block(fn_val, "after_float_trap");
+        let after_bb = self.context.append_basic_block(fn_val, "after_float_trap");
         self.builder.position_at_end(after_bb);
 
         for _ in 0..pop {
