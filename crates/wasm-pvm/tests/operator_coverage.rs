@@ -2570,10 +2570,13 @@ fn test_bswap_i16_lowering() {
             .join("\n")
     );
 
-    let has_shr64_48 = instructions.iter().any(|i| {
-        matches!(i, wasm_pvm::Instruction::ShloRImm64 { value: 48, .. })
-    });
-    assert!(has_shr64_48, "missing ShloRImm64 by 48 (i16 recovery shift)");
+    let has_shr64_48 = instructions
+        .iter()
+        .any(|i| matches!(i, wasm_pvm::Instruction::ShloRImm64 { value: 48, .. }));
+    assert!(
+        has_shr64_48,
+        "missing ShloRImm64 by 48 (i16 recovery shift)"
+    );
 }
 
 /// `bswap.i32` — canonical 4-byte rearrangement folds to `llvm.bswap.i32`,
@@ -2613,10 +2616,13 @@ fn test_bswap_i32_lowering() {
             .join("\n")
     );
 
-    let has_shr64_32 = instructions.iter().any(|i| {
-        matches!(i, wasm_pvm::Instruction::ShloRImm64 { value: 32, .. })
-    });
-    assert!(has_shr64_32, "missing ShloRImm64 by 32 (i32 recovery shift)");
+    let has_shr64_32 = instructions
+        .iter()
+        .any(|i| matches!(i, wasm_pvm::Instruction::ShloRImm64 { value: 32, .. }));
+    assert!(
+        has_shr64_32,
+        "missing ShloRImm64 by 32 (i32 recovery shift)"
+    );
 }
 
 /// `bswap.i64` — canonical 8-byte rearrangement folds to `llvm.bswap.i64`,
@@ -2871,13 +2877,13 @@ fn test_bitreverse_i16_lowering() {
     assert!(has_and_imm_with(0x0F0F), "missing AndImm 0x0F0F");
 
     // The i16 recovery shift is 48 (vs 32 for i32).
-    let has_shr64_48 = instructions.iter().any(|i| {
-        matches!(
-            i,
-            wasm_pvm::Instruction::ShloRImm64 { value: 48, .. }
-        )
-    });
-    assert!(has_shr64_48, "missing ShloRImm64 by 48 (i16 recovery shift)");
+    let has_shr64_48 = instructions
+        .iter()
+        .any(|i| matches!(i, wasm_pvm::Instruction::ShloRImm64 { value: 48, .. }));
+    assert!(
+        has_shr64_48,
+        "missing ShloRImm64 by 48 (i16 recovery shift)"
+    );
 }
 
 /// The canonical i64 bit-reverse algorithm. LLVM folds it to
