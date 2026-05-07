@@ -29,8 +29,9 @@ AssemblyScript uses a `writeResult(val: i32): i64` helper that stores the value 
 
 ### instcombine Convergence
 
-- `instcombine` defaults to `max-iterations=1`, which can cause `LLVM ERROR: Instruction Combining did not reach a fixpoint` on complex IR (e.g., after aggressive inlining)
-- Fix: use `instcombine<max-iterations=2>` to give it a second iteration
+- `instcombine` defaults to `max-iterations=1`, which can cause `LLVM ERROR: Instruction Combining did not reach a fixpoint` on complex IR (e.g., after aggressive inlining). The error is a hard `report_fatal_error` (process abort), not a recoverable Rust error — it bypasses `Error::Located` diagnostics
+- Fix: use `instcombine<max-iterations=N>` for a higher cap. We currently use `N=20`
+- A cap of 2 is enough for typical IR shapes but not for `--trap-floats` on large modules: every float operator emits a `@llvm.trap()`+`unreachable` cluster, and propagating those through real control flow takes more iterations to fold (issue #212 — observed on the polkadot-fellows v2.2.2 relay-chain runtimes)
 - Running `instcombine,simplifycfg` before inlining also helps by simplifying the IR first
 
 ### Inlining Creates New LLVM Intrinsics

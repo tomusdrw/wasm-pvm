@@ -157,9 +157,9 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 2. **WASM parsing**: `wasm_module.rs` parses all WASM sections into `WasmModule` struct
 3. **LLVM IR generation**: `llvm_frontend/function_builder.rs` translates `wasmparser::Operator` → LLVM IR using inkwell. **Important**: LLVM's `IRBuilder` constant-folds at instruction *creation* time — `LLVMBuildAdd(3, 5)` produces the constant `8` directly, never an `add` instruction. This means no instruction with all-constant operands survives IR construction, even without optimization passes. This has implications for any optimization that tries to detect constant-valued instructions (see learnings.md "Rematerialization" entry).
 4. **LLVM optimization passes** (three phases):
-   - Phase 1: `mem2reg` (SSA promotion), `instcombine`, `simplifycfg` (pre-inline cleanup)
+   - Phase 1: `mem2reg` (SSA promotion), `instcombine<max-iterations=20>`, `simplifycfg` (pre-inline cleanup)
    - Phase 2: `cgscc(inline)` (function inlining, optional)
-   - Phase 3: `instcombine<max-iterations=2>`, `simplifycfg`, `gvn` (redundancy elimination), `simplifycfg`, `dce` (dead code removal)
+   - Phase 3: `instcombine<max-iterations=20>`, `simplifycfg`, `gvn` (redundancy elimination), `simplifycfg`, `dce` (dead code removal). The `max-iterations=20` cap (was `2` before #212) prevents LLVM hard-aborts on `--trap-floats` IR shapes with many `@llvm.trap()`+`unreachable` clusters; see `docs/src/learnings.md` "instcombine Convergence".
 5. **PVM lowering**: `llvm_backend/` modules read LLVM IR and emit PVM bytecode:
    - `emitter.rs`: `EmitterConfig` (immutable per-function config) + `PvmEmitter` (mutable codegen state) with value slot management and **per-block register cache** (store-load forwarding)
    - `alu.rs`: Arithmetic, logic, comparisons, conversions
