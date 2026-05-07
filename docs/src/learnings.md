@@ -606,3 +606,31 @@ Most `HashMap<BasicBlock, _>` iteration sites in the backend are commutative (e.
 ### Detection
 
 `tests/utils/check-determinism.sh` compiles a diverse set of fixtures N times in separate processes and diffs the output. A single-process cargo test cannot catch these traps because the `HashMap` hasher seed and the LLVM arena addresses are both fixed for the lifetime of one process. The script is wired into the integration CI job.
+
+---
+
+## Trap-Floats Lowering — Don't Set `unreachable = true`, and Use `@llvm.trap`
+
+`--trap-floats` replaces every f32/f64 operator with an LLVM-level trap (PVM backend lowers to `Trap`). Two non-obvious traps to avoid in the implementation:
+
+### Trap A: setting `self.unreachable = true` after the float trap
+
+The naive implementation is "emit the trap, set `self.unreachable = true`, push placeholder zeros for the operator's outputs." This is wrong on two counts:
+
+1. **The placeholder zeros are never consumed.** The dead-code skip path at the top of `translate_operator` returns `Ok(())` for every non-control-flow op when `self.unreachable` is true — including any future op that would have consumed those zeros. Pushing them is dead work.
+
+2. **Function-result phis end up with no incoming branches.** The function-end implicit `Block` frame's `End` handler skips the "pop result, branch to merge" path when `self.unreachable` is true. If the only path through the body trapped, the result phi at `fn_return` has zero incoming edges → LLVM verifier rejects the module. The same hazard applies to `if`-arm phis when both arms trap.
+
+The correct lowering: emit `unreachable`, create a fresh `after_float_trap` basic block, position there, pop the operator's inputs from the operand stack, push `i64 0` placeholders for its outputs, **and leave `self.unreachable` alone**. Subsequent ops translate normally into the (provably-dead) block; `End` handlers run their reachable branch and add a placeholder-zero incoming to the merge phi; LLVM's `dce` collapses the unreachable region away. Result: valid IR + correct runtime trap + no special-case handling for trap-floats in any other translator path.
+
+The investigation cost was non-trivial — the broken phi only manifests when both arms of a structured construct trap, which is a rare pattern in the unit tests but common in trap-floats mode (entire float-heavy functions trap on the first const). The integration test `trap_floats_inside_if_arm_compiles` pins this down.
+
+`self.unreachable` keeps its original meaning: "WASM operand-stack-aware dead code following an explicit `unreachable`/`return`/`br` operator." The trap-floats lowering produces *LLVM*-level dead code, not WASM-level dead code, and the two abstractions must not be conflated.
+
+### Trap B: bare `unreachable` is folded by simplifycfg as UB
+
+The first working version emitted only `build_unreachable()` (no `@llvm.trap` call). Tests verified compilation succeeded, but a runtime-execution test caught the real bug: floats inside an `if`-arm vanished. anan-as reported `Status: 0` (clean halt) on the trap path because **LLVM's `simplifycfg` folds branches whose only path leads to `unreachable`** — it treats `unreachable` as "this code is impossible; the condition must steer away from it" and rewrites the conditional branch to always take the other arm. Float-only else-bodies were silently deleted; the JAM ran the then-arm regardless of the condition.
+
+The fix: emit `@llvm.trap()` (a real intrinsic call) followed by `build_unreachable()`. `@llvm.trap` is `noreturn` but **not** UB-on-reach — the optimizer treats it as a side-effecting call and preserves it. The PVM backend gains a dedicated case in `lower_llvm_intrinsic` that emits `Instruction::Trap`. The bare `unreachable` after the call is fine (it's now redundant but lets the verifier see the BB has a terminator).
+
+Detection lesson: a pure compilation test can't catch this. The Rust integration tests all checked "JAM compiles and contains a Trap instruction" — which was true (the entry-header trap is always present). Only running the JAM through anan-as with both branch inputs and asserting `Status: 1` on the trap path exposed the elimination. The bun layer1 test `trap-floats.test.ts` is the regression guard.

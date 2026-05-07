@@ -63,6 +63,10 @@ pub struct WasmModule<'a> {
     pub imported_func_type_indices: Vec<u32>,
     /// Names of imported functions.
     pub imported_func_names: Vec<String>,
+    /// Optional display names for local functions, indexed by local function index.
+    /// Populated from the WASM "name" custom section, falling back to export names.
+    /// `None` means no name is known; callers should use a synthetic identifier.
+    pub local_function_names: Vec<Option<String>>,
 
     // --- Derived data ---
     /// Local function index of the main entry point.
@@ -102,6 +106,17 @@ pub struct WasmModule<'a> {
 }
 
 impl<'a> WasmModule<'a> {
+    /// Display name for a local function: name-section entry, exported name, or
+    /// the synthetic `wasm_func_<global_idx>` placeholder.
+    #[must_use]
+    pub fn local_function_display_name(&self, local_idx: usize) -> String {
+        if let Some(Some(name)) = self.local_function_names.get(local_idx) {
+            return name.clone();
+        }
+        let global_idx = self.num_imported_funcs as usize + local_idx;
+        format!("wasm_func_{global_idx}")
+    }
+
     /// Parse and validate a WASM binary, producing a `WasmModule` with all derived data.
     pub fn parse(wasm: &'a [u8]) -> Result<Self> {
         wasmparser::validate(wasm)
@@ -123,6 +138,15 @@ impl<'a> WasmModule<'a> {
         let mut num_imported_funcs: u32 = 0;
         let mut imported_func_type_indices: Vec<u32> = Vec::new();
         let mut imported_func_names: Vec<String> = Vec::new();
+        // Raw (global_func_idx, name) pairs collected from the WASM "name" custom
+        // section. Resolved into `local_function_names` after parsing finishes,
+        // since the name section may precede the import section in pathological
+        // modules and `num_imported_funcs` may not yet be known.
+        let mut name_section_entries: Vec<(u32, String)> = Vec::new();
+        // First export name observed for each global function index (fallback when
+        // the name section is absent).
+        let mut export_name_by_global_idx: std::collections::BTreeMap<u32, String> =
+            std::collections::BTreeMap::new();
 
         for payload in Parser::new(0).parse_all(wasm) {
             match payload? {
@@ -211,6 +235,9 @@ impl<'a> WasmModule<'a> {
                         let export = export?;
                         if export.kind == wasmparser::ExternalKind::Func {
                             exported_wasm_func_indices.push(export.index);
+                            export_name_by_global_idx
+                                .entry(export.index)
+                                .or_insert_with(|| export.name.to_string());
                             let is_imported = export.index < num_imported_funcs;
                             let is_main_name = matches!(
                                 export.name,
@@ -272,6 +299,20 @@ impl<'a> WasmModule<'a> {
                                     offset: None,
                                     data: data.data.to_vec(),
                                 });
+                            }
+                        }
+                    }
+                }
+                Payload::CustomSection(custom) => {
+                    if let wasmparser::KnownCustom::Name(reader) = custom.as_known() {
+                        for subsection in reader {
+                            let subsection = subsection?;
+                            if let wasmparser::Name::Function(map) = subsection {
+                                for naming in map {
+                                    let naming = naming?;
+                                    name_section_entries
+                                        .push((naming.index, naming.name.to_string()));
+                                }
                             }
                         }
                     }
@@ -402,6 +443,25 @@ impl<'a> WasmModule<'a> {
             .unwrap_or(DEFAULT_MAX_PAGES)
             .max(memory_limits.initial_pages);
 
+        // Resolve display names for local functions: prefer the name section,
+        // fall back to the export section.
+        let mut local_function_names: Vec<Option<String>> = vec![None; functions.len()];
+        for (global_idx, name) in &name_section_entries {
+            if let Some(local_idx) = (*global_idx).checked_sub(num_imported_funcs)
+                && let Some(slot) = local_function_names.get_mut(local_idx as usize)
+            {
+                *slot = Some(name.clone());
+            }
+        }
+        for (global_idx, name) in &export_name_by_global_idx {
+            if let Some(local_idx) = (*global_idx).checked_sub(num_imported_funcs)
+                && let Some(slot) = local_function_names.get_mut(local_idx as usize)
+                && slot.is_none()
+            {
+                *slot = Some(name.clone());
+            }
+        }
+
         Ok(WasmModule {
             functions,
             func_types,
@@ -413,6 +473,7 @@ impl<'a> WasmModule<'a> {
             num_imported_funcs,
             imported_func_type_indices,
             imported_func_names,
+            local_function_names,
             main_func_local_idx,
             has_secondary_entry,
             secondary_entry_local_idx,
@@ -638,6 +699,64 @@ mod tests {
 
         let module = WasmModule::parse(&wasm).expect("boundary arity must parse");
         assert!(module.needs_param_overflow);
+    }
+
+    #[test]
+    fn display_name_uses_name_section_entry() {
+        // `$identifier` in WAT becomes a name-section entry; that wins over
+        // the export alias.
+        let wasm = wat::parse_str(
+            r#"(module
+                (func $canonical (export "main") (param i32 i32) (result i64) (i64.const 0))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+        assert_eq!(module.local_function_display_name(0), "canonical");
+    }
+
+    #[test]
+    fn display_name_falls_back_to_export_name() {
+        // No `$identifier` → no name-section entry → display falls back to the
+        // export name.
+        let wasm = wat::parse_str(
+            r#"(module
+                (func (export "main") (param i32 i32) (result i64) (i64.const 0))
+                (func (export "helper"))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+        assert_eq!(module.local_function_display_name(0), "main");
+        assert_eq!(module.local_function_display_name(1), "helper");
+    }
+
+    #[test]
+    fn display_name_synthetic_when_unexported_and_no_name_section() {
+        // Second function has no export and no `$identifier` → both fallback
+        // sources are empty → synthetic `wasm_func_<global_idx>` name.
+        let wasm = wat::parse_str(
+            r#"(module
+                (func (export "main") (param i32 i32) (result i64) (i64.const 0))
+                (func)
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+        // No imports, so local_idx 1 → global_idx 1 → "wasm_func_1".
+        assert_eq!(module.local_function_display_name(1), "wasm_func_1");
+    }
+
+    #[test]
+    fn display_name_out_of_bounds_returns_synthetic_no_panic() {
+        let wasm = wat::parse_str(
+            r#"(module (func (export "main") (param i32 i32) (result i64) (i64.const 0)))"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+        // Past the end of `local_function_names` must fall through to the
+        // synthetic formatter rather than panicking.
+        assert_eq!(module.local_function_display_name(99), "wasm_func_99");
     }
 
     #[test]

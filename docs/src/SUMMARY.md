@@ -7,6 +7,7 @@
 - [Getting Started](./getting-started.md)
 - [CLI Usage](./cli-usage.md)
 - [Import Handling](./import-handling.md)
+- [Trap Floats Mode](./trap-floats.md)
 
 # Architecture
 
