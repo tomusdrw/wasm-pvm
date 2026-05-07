@@ -39,8 +39,14 @@ The frontend has a small table mapping each f32/f64 operator to its
 `(pop_count, push_count)` stack effect. When `trap_floats` is enabled and a
 float operator is encountered:
 
-1. An LLVM `unreachable` instruction is emitted (which the PVM backend lowers
-   to a `Trap` instruction).
+1. An `@llvm.trap()` intrinsic call is emitted, followed by an LLVM
+   `unreachable` terminator so the basic block is well-formed. The PVM
+   backend's `lower_llvm_intrinsic` lowers `@llvm.trap()` to
+   `Instruction::Trap`. Crucially we cannot use a bare `unreachable` here:
+   `simplifycfg` treats `unreachable` as undefined behaviour and will fold
+   away conditional branches whose only path leads to it, silently deleting
+   float-only if-arms (see `learnings.md` "Trap-Floats Lowering" for the
+   investigation that caught this).
 2. A fresh basic block is created and the IR builder positions there. The
    block has no predecessor edge, so subsequent operators translate into
    provably-dead code that LLVM's `dce` pass removes.

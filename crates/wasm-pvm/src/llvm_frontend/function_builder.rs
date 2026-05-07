@@ -469,18 +469,17 @@ impl<'ctx> WasmToLlvm<'ctx> {
         // the exact operator within the function body.
         for entry in func_body.get_operators_reader()?.into_iter_with_offsets() {
             let (op, op_offset) = entry?;
-            self.translate_operator(&op)
-                .map_err(|source| match source {
-                    // Avoid double-wrapping: if a deeper translator already attached
-                    // a location, keep the innermost one (it's more specific).
-                    Error::Located { .. } => source,
-                    _ => Error::Located {
-                        func_idx,
-                        func_name: func_name.to_string(),
-                        op_offset,
-                        source: Box::new(source),
-                    },
-                })?;
+            self.translate_operator(&op).map_err(|cause| match cause {
+                // Avoid double-wrapping: if a deeper translator already attached
+                // a location, keep the innermost one (it's more specific).
+                Error::Located { .. } => cause,
+                _ => Error::Located {
+                    func_idx,
+                    func_name: func_name.to_string(),
+                    op_offset,
+                    cause: Box::new(cause),
+                },
+            })?;
         }
 
         // Verify function ends cleanly (the final End should have popped the fn frame)

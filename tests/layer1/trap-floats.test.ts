@@ -13,7 +13,7 @@
  */
 
 import { describe, test, expect, beforeAll } from "bun:test";
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -79,10 +79,21 @@ describe("trap-floats CLI behavior", () => {
     expect(fs.statSync(JAM_PATH).size).toBeGreaterThan(0);
   });
 
+  // Shared anan-as runner args: any difference between safe/trap runs is the
+  // final hex argument byte.
+  const ananAsArgs = (hexArg: string) => [
+    ANAN_AS_CLI,
+    "run",
+    "--spi",
+    "--no-logs",
+    "--gas=100000000",
+    JAM_PATH,
+    hexArg,
+  ];
+
   test("compiled JAM runs cleanly when the float branch is skipped", () => {
     // First byte of args = 0 → safe path → no float op executed.
-    const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=100000000 ${JAM_PATH} 0x00`;
-    const stdout = execSync(cmd, {
+    const stdout = execFileSync("node", ananAsArgs("0x00"), {
       cwd: PROJECT_ROOT,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -95,8 +106,7 @@ describe("trap-floats CLI behavior", () => {
 
   test("compiled JAM traps when the float branch is taken", () => {
     // First byte of args = 1 → trap path → @llvm.trap → PVM Trap instruction.
-    const cmd = `node ${ANAN_AS_CLI} run --spi --no-logs --gas=100000000 ${JAM_PATH} 0x01`;
-    const stdout = execSync(cmd, {
+    const stdout = execFileSync("node", ananAsArgs("0x01"), {
       cwd: PROJECT_ROOT,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],

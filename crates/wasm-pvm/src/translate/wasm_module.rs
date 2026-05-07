@@ -702,6 +702,64 @@ mod tests {
     }
 
     #[test]
+    fn display_name_uses_name_section_entry() {
+        // `$identifier` in WAT becomes a name-section entry; that wins over
+        // the export alias.
+        let wasm = wat::parse_str(
+            r#"(module
+                (func $canonical (export "main") (param i32 i32) (result i64) (i64.const 0))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+        assert_eq!(module.local_function_display_name(0), "canonical");
+    }
+
+    #[test]
+    fn display_name_falls_back_to_export_name() {
+        // No `$identifier` → no name-section entry → display falls back to the
+        // export name.
+        let wasm = wat::parse_str(
+            r#"(module
+                (func (export "main") (param i32 i32) (result i64) (i64.const 0))
+                (func (export "helper"))
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+        assert_eq!(module.local_function_display_name(0), "main");
+        assert_eq!(module.local_function_display_name(1), "helper");
+    }
+
+    #[test]
+    fn display_name_synthetic_when_unexported_and_no_name_section() {
+        // Second function has no export and no `$identifier` → both fallback
+        // sources are empty → synthetic `wasm_func_<global_idx>` name.
+        let wasm = wat::parse_str(
+            r#"(module
+                (func (export "main") (param i32 i32) (result i64) (i64.const 0))
+                (func)
+            )"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+        // No imports, so local_idx 1 → global_idx 1 → "wasm_func_1".
+        assert_eq!(module.local_function_display_name(1), "wasm_func_1");
+    }
+
+    #[test]
+    fn display_name_out_of_bounds_returns_synthetic_no_panic() {
+        let wasm = wat::parse_str(
+            r#"(module (func (export "main") (param i32 i32) (result i64) (i64.const 0)))"#,
+        )
+        .expect("valid WAT");
+        let module = WasmModule::parse(&wasm).expect("valid module");
+        // Past the end of `local_function_names` must fall through to the
+        // synthetic formatter rather than panicking.
+        assert_eq!(module.local_function_display_name(99), "wasm_func_99");
+    }
+
+    #[test]
     fn imported_entry_export_returns_error() {
         let wasm = wat::parse_str(
             r#"(module

@@ -77,4 +77,5 @@ if [[ ${fail} -gt 0 ]]; then
     for f in "${failures[@]}"; do
         echo "  ${f}  → see ${OUT_DIR}/${f}.log"
     done
+    exit 1
 fi

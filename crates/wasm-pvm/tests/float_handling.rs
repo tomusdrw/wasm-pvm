@@ -43,7 +43,7 @@ fn float_op_fails_with_function_name_and_offset() {
         func_idx,
         func_name,
         op_offset,
-        source,
+        cause,
     } = err
     else {
         panic!("expected Error::Located, got something else");
@@ -56,7 +56,7 @@ fn float_op_fails_with_function_name_and_offset() {
     );
     assert!(op_offset > 0, "op offset should point into function body");
 
-    let msg = source.to_string();
+    let msg = cause.to_string();
     assert!(
         msg.contains("Unsupported") || msg.contains("Float"),
         "inner error should describe the unsupported operator, got: {msg}"
@@ -132,15 +132,15 @@ fn non_float_unsupported_op_also_gets_location() {
         .err()
         .expect("expected compilation to fail on data.drop");
     let Error::Located {
-        func_name, source, ..
+        func_name, cause, ..
     } = err
     else {
         panic!("expected Error::Located, got: {err:?}");
     };
     assert_eq!(func_name, "main");
     assert!(
-        source.to_string().contains("data.drop"),
-        "inner error should mention data.drop, got: {source}"
+        cause.to_string().contains("data.drop"),
+        "inner error should mention data.drop, got: {cause}"
     );
 }
 
