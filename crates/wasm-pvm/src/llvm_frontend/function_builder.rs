@@ -1775,10 +1775,17 @@ impl<'ctx> WasmToLlvm<'ctx> {
         // Phase 1: Promote allocas to SSA and simplify before inlining.
         // Running instcombine+simplifycfg pre-inline reduces IR complexity so that
         // post-inline instcombine converges reliably (avoids LLVM fixpoint errors).
+        //
+        // `max-iterations` caps `instcombine`'s fixpoint loop — if the IR keeps
+        // changing past the cap LLVM aborts the whole process with
+        // "Instruction Combining did not reach a fixpoint after N iterations".
+        // The cap was originally 2 (enough for normal IR shapes) but `--trap-floats`
+        // produces lots of `@llvm.trap()`+`unreachable` clusters whose folding takes
+        // longer to converge, so we use a comfortable margin (#212).
         let opts = PassBuilderOptions::create();
         self.module
             .run_passes(
-                "mem2reg,instcombine<max-iterations=2>,simplifycfg",
+                "mem2reg,instcombine<max-iterations=20>,simplifycfg",
                 &machine,
                 opts,
             )
@@ -1832,11 +1839,12 @@ impl<'ctx> WasmToLlvm<'ctx> {
         }
 
         // Phase 3: Clean up the (potentially inlined) IR.
-        // Use instcombine<max-iterations=2> to handle complex patterns created by inlining.
+        // Use instcombine<max-iterations=20> to handle complex patterns created by
+        // inlining. See Phase 1 above for why the cap is 20 and not 2 (#212).
         let opts = PassBuilderOptions::create();
         self.module
             .run_passes(
-                "instcombine<max-iterations=2>,simplifycfg,gvn,simplifycfg,dce",
+                "instcombine<max-iterations=20>,simplifycfg,gvn,simplifycfg,dce",
                 &machine,
                 opts,
             )
