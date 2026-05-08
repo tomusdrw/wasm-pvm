@@ -657,7 +657,111 @@ pub fn lower_llvm_intrinsic<'ctx>(
         return Ok(());
     }
 
+    // Saturating arithmetic — see lower_{u,s}{add,sub}_sat helpers below.
+    if name.contains("usub.sat") {
+        return lower_usub_sat(e, instr);
+    }
+    if name.contains("uadd.sat") {
+        return lower_uadd_sat(e, instr);
+    }
+    if name.contains("ssub.sat") {
+        return lower_ssub_sat(e, instr);
+    }
+    if name.contains("sadd.sat") {
+        return lower_sadd_sat(e, instr);
+    }
+
     Err(crate::Error::Unsupported(format!(
         "unsupported LLVM intrinsic: {name}"
+    )))
+}
+
+/// Lower `@llvm.usub.sat.iN(a, b)`.
+///
+/// Result form: zero-extended (`u8`/`u16`/`u32`/`u64`).
+/// Algorithm: `result = (a < b) ? 0 : a - b` with unsigned compare.
+///   - i8/i16: `AndImm` mask, `SetLtU`, `Sub64`, `CmovNzImm dst, cond, 0`
+///   - i32: shift-shift zero-extend (mask `0xFFFFFFFF` doesn't fit `AndImm`),
+///     then same shape
+///   - i64: `SetLtU`, `Sub64`, `CmovNzImm dst, cond, 0`
+fn lower_usub_sat<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+) -> Result<()> {
+    let slot = result_slot(e, instr)?;
+    let a = get_operand(instr, 0)?;
+    let b = get_operand(instr, 1)?;
+    let dst = result_reg(e, instr);
+    let bits = operand_bit_width(instr);
+
+    // Force-load both operands into TEMP1/TEMP2 so we can clobber freely.
+    e.load_operand(a, TEMP1)?;
+    e.load_operand(b, TEMP2)?;
+
+    match bits {
+        8 => {
+            e.emit(Instruction::AndImm { dst: TEMP1, src: TEMP1, value: 0xFF });
+            e.emit(Instruction::AndImm { dst: TEMP2, src: TEMP2, value: 0xFF });
+        }
+        16 => {
+            e.emit(Instruction::AndImm { dst: TEMP1, src: TEMP1, value: 0xFFFF });
+            e.emit(Instruction::AndImm { dst: TEMP2, src: TEMP2, value: 0xFFFF });
+        }
+        32 => {
+            // Zero-extend via shl 32 + shr 32 (0xFFFFFFFF doesn't fit AndImm).
+            e.emit(Instruction::ShloLImm64 { dst: TEMP1, src: TEMP1, value: 32 });
+            e.emit(Instruction::ShloRImm64 { dst: TEMP1, src: TEMP1, value: 32 });
+            e.emit(Instruction::ShloLImm64 { dst: TEMP2, src: TEMP2, value: 32 });
+            e.emit(Instruction::ShloRImm64 { dst: TEMP2, src: TEMP2, value: 32 });
+        }
+        64 => {
+            // Operands are already canonical i64; no masking needed.
+        }
+        _ => {
+            return Err(crate::Error::Unsupported(format!(
+                "usub.sat with unsupported bit width: {bits}"
+            )));
+        }
+    }
+
+    // cond = 1 if a < b unsigned; subtract; conditionally zero.
+    e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 });
+    e.emit(Instruction::Sub64 { dst, src1: TEMP1, src2: TEMP2 });
+    e.emit(Instruction::CmovNzImm { dst, cond: TEMP_RESULT, value: 0 });
+
+    e.store_to_slot(slot, dst);
+    Ok(())
+}
+
+/// Lower `@llvm.uadd.sat.iN(a, b)`. STUB — implemented in Task 3.
+fn lower_uadd_sat<'ctx>(
+    _e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+) -> Result<()> {
+    Err(crate::Error::Unsupported(format!(
+        "unsupported LLVM intrinsic: llvm.uadd.sat.i{}",
+        operand_bit_width(instr)
+    )))
+}
+
+/// Lower `@llvm.ssub.sat.iN(a, b)`. STUB — implemented in Task 4.
+fn lower_ssub_sat<'ctx>(
+    _e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+) -> Result<()> {
+    Err(crate::Error::Unsupported(format!(
+        "unsupported LLVM intrinsic: llvm.ssub.sat.i{}",
+        operand_bit_width(instr)
+    )))
+}
+
+/// Lower `@llvm.sadd.sat.iN(a, b)`. STUB — implemented in Task 5.
+fn lower_sadd_sat<'ctx>(
+    _e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+) -> Result<()> {
+    Err(crate::Error::Unsupported(format!(
+        "unsupported LLVM intrinsic: llvm.sadd.sat.i{}",
+        operand_bit_width(instr)
     )))
 }
