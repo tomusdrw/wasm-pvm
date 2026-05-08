@@ -423,9 +423,8 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
             function_offsets[local_func_idx] = func_start_offset;
             all_instructions.push(Instruction::Trap);
             dead_functions_eliminated += 1;
-            let global_func_idx = module.num_imported_funcs as usize + local_func_idx;
             function_stats.push(stats::FunctionStats {
-                name: format!("wasm_func_{global_func_idx}"),
+                name: module.local_function_display_name(local_func_idx),
                 index: local_func_idx,
                 instruction_count: 1,
                 frame_size: 0,
@@ -540,7 +539,7 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
 
         let ls = &translation.lowering_stats;
         function_stats.push(stats::FunctionStats {
-            name: fn_name,
+            name: module.local_function_display_name(local_func_idx),
             index: local_func_idx,
             instruction_count: translation.instructions.len(),
             frame_size: ls.frame_size,
