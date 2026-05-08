@@ -49,8 +49,9 @@
 
 use std::collections::BTreeMap;
 
+use crate::llvm_frontend;
 use crate::pvm::{Instruction, Opcode};
-use crate::translate::ImportAction;
+use crate::translate::{ImportAction, WasmModule};
 use crate::{CompileOptions, Error, Result, SpiProgram, compile, compile_with_options};
 
 /// Parse WAT (WebAssembly Text) format to WASM binary
@@ -92,8 +93,6 @@ pub fn compile_wat_with_options(wat: &str, options: &CompileOptions) -> Result<S
 /// patterns and folds them into expected intrinsic calls (e.g.
 /// `@llvm.uadd.sat.i32`).
 pub fn dump_llvm_ir(wat: &str) -> Result<String> {
-    use crate::llvm_frontend;
-    use crate::translate::WasmModule;
     let wasm = wat_to_wasm(wat)?;
     let module = WasmModule::parse(&wasm)?;
     let context = inkwell::context::Context::create();
