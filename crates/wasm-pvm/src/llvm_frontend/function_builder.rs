@@ -944,6 +944,16 @@ impl<'ctx> WasmToLlvm<'ctx> {
                     *else_seen = true;
                 }
 
+                // Dummy `If` frames pushed by the dead-code dispatcher
+                // reuse the current (terminated) block as both `else_bb`
+                // and `merge_bb`. Repositioning there would emit past a
+                // terminator, and resetting `unreachable=false` would
+                // corrupt the surrounding dead-code state.
+                if else_block.get_terminator().is_some() {
+                    self.operand_stack.truncate(depth);
+                    return Ok(());
+                }
+
                 if !self.unreachable {
                     if let Some(phi) = phi {
                         let val = self.pop()?;
@@ -990,6 +1000,14 @@ impl<'ctx> WasmToLlvm<'ctx> {
                                 llvm_err(self.builder.build_return(None))?;
                             }
                             self.unreachable = false;
+                        } else if merge_bb.get_terminator().is_some() {
+                            // Dummy `Block`/`Loop` frame from the dead-code
+                            // dispatcher: `merge_bb` is the already-
+                            // terminated block we were positioned at when
+                            // the frame was pushed. Don't reposition or
+                            // reset `unreachable` — leave the surrounding
+                            // dead-code state intact.
+                            self.operand_stack.truncate(stack_depth);
                         } else {
                             // Nested block End
                             if !self.unreachable {
@@ -1013,12 +1031,23 @@ impl<'ctx> WasmToLlvm<'ctx> {
                         stack_depth,
                         ..
                     } => {
-                        if !self.unreachable {
+                        // The only path into a loop's `merge_bb` is the
+                        // fall-through branch from the body. If the body
+                        // ends unreachable (e.g. `loop { return …; br 0 }`)
+                        // there is no predecessor and post-loop code is
+                        // dead — `unreachable` must stay set. Terminate the
+                        // empty `merge_bb` with `unreachable` so the LLVM
+                        // verifier accepts it as a valid (dead) block.
+                        let fell_through = !self.unreachable;
+                        if fell_through {
                             llvm_err(self.builder.build_unconditional_branch(merge_bb))?;
                         }
                         self.builder.position_at_end(merge_bb);
                         self.operand_stack.truncate(stack_depth);
-                        self.unreachable = false;
+                        if !fell_through {
+                            llvm_err(self.builder.build_unreachable())?;
+                        }
+                        self.unreachable = !fell_through;
                     }
                     ControlFrame::If {
                         else_bb,
@@ -1027,6 +1056,15 @@ impl<'ctx> WasmToLlvm<'ctx> {
                         stack_depth,
                         else_seen,
                     } => {
+                        // Dummy `If` frames pushed by the dead-code
+                        // dispatcher reuse the current (terminated) block
+                        // as both `else_bb` and `merge_bb`; skip the
+                        // emit/reposition so we stay in dead-code mode.
+                        if merge_bb.get_terminator().is_some() {
+                            self.operand_stack.truncate(stack_depth);
+                            return Ok(());
+                        }
+
                         if !self.unreachable {
                             if let Some(phi) = result_phi {
                                 let val = self.pop()?;
