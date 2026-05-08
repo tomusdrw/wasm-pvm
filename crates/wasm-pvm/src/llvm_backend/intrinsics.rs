@@ -724,10 +724,25 @@ fn lower_usub_sat<'ctx>(
         }
     }
 
-    // cond = 1 if a < b unsigned; subtract; conditionally zero.
-    e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: TEMP1, src2: TEMP2 });
+    // Compute result = a - b, then cond = (a < b unsigned), then zero dst if cond.
+    //
+    // Ordering is critical: `dst` may alias `TEMP_RESULT` (the fallback when no
+    // register is allocated for this instruction's result).  If we emitted
+    // `SetLtU { dst: TEMP_RESULT }` first and then `Sub64 { dst: TEMP_RESULT }`,
+    // the subtraction would silently overwrite the condition before `CmovNzImm`
+    // reads it, producing the wrong result.
+    //
+    // Safe ordering:
+    //   1. Sub64   → writes *dst* (may be TEMP_RESULT), leaves TEMP1/TEMP2 intact
+    //   2. SetLtU  → writes TEMP1 (clobbers TEMP1=a, which we no longer need),
+    //                reads TEMP2=b which is still valid
+    //   3. CmovNzImm → reads *cond* from TEMP1 (never aliases dst), writes *dst*
+    //
+    // TEMP1 is safe to reuse for cond because `dst` is never TEMP1 — it is either
+    // an allocator-assigned register or the TEMP_RESULT fallback (r4).
     e.emit(Instruction::Sub64 { dst, src1: TEMP1, src2: TEMP2 });
-    e.emit(Instruction::CmovNzImm { dst, cond: TEMP_RESULT, value: 0 });
+    e.emit(Instruction::SetLtU { dst: TEMP1, src1: TEMP1, src2: TEMP2 });
+    e.emit(Instruction::CmovNzImm { dst, cond: TEMP1, value: 0 });
 
     e.store_to_slot(slot, dst);
     Ok(())
