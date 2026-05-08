@@ -119,6 +119,9 @@
 
     ;; -------------------------------------------------------------------
     ;; op 8: sadd.sat.i8
+    ;; clamp(s, -128, 127) via two selects:
+    ;;   inner = (s > -128) ? s : -128    ; max(s, -128)
+    ;;   outer = (s < 127)  ? inner : 127 ; min(inner, 127)
     ;; -------------------------------------------------------------------
     (if (i32.eq (local.get $op) (i32.const 8)) (then
       (local.set $a32 (i32.load8_s (i32.add (local.get $args_ptr) (i32.const 4))))
@@ -126,11 +129,11 @@
       (local.set $s32 (i32.add (local.get $a32) (local.get $b32)))
       (i32.store8 (i32.const 0)
         (select
-          (i32.const 127)
           (select
-            (i32.const -128)
             (local.get $s32)
+            (i32.const -128)
             (i32.gt_s (local.get $s32) (i32.const -128)))
+          (i32.const 127)
           (i32.lt_s (local.get $s32) (i32.const 127))))
       (return (i64.const 4294967296))))
 
@@ -141,11 +144,11 @@
       (local.set $s32 (i32.add (local.get $a32) (local.get $b32)))
       (i32.store16 (i32.const 0)
         (select
-          (i32.const 32767)
           (select
-            (i32.const -32768)
             (local.get $s32)
+            (i32.const -32768)
             (i32.gt_s (local.get $s32) (i32.const -32768)))
+          (i32.const 32767)
           (i32.lt_s (local.get $s32) (i32.const 32767))))
       (return (i64.const 8589934592))))
 
@@ -159,11 +162,11 @@
       (i32.store (i32.const 0)
         (i32.wrap_i64
           (select
-            (i64.const 0x7FFFFFFF)
             (select
-              (i64.const -2147483648)
               (local.get $s64)
+              (i64.const -2147483648)
               (i64.gt_s (local.get $s64) (i64.const -2147483648)))
+            (i64.const 0x7FFFFFFF)
             (i64.lt_s (local.get $s64) (i64.const 0x7FFFFFFF)))))
       (return (i64.const 17179869184))))
 
@@ -188,7 +191,7 @@
       (return (i64.const 34359738368))))
 
     ;; -------------------------------------------------------------------
-    ;; op 12: ssub.sat.i8
+    ;; op 12: ssub.sat.i8 — same clamp shape as sadd.sat (see ops 8-10)
     ;; -------------------------------------------------------------------
     (if (i32.eq (local.get $op) (i32.const 12)) (then
       (local.set $a32 (i32.load8_s (i32.add (local.get $args_ptr) (i32.const 4))))
@@ -196,11 +199,11 @@
       (local.set $s32 (i32.sub (local.get $a32) (local.get $b32)))
       (i32.store8 (i32.const 0)
         (select
-          (i32.const 127)
           (select
-            (i32.const -128)
             (local.get $s32)
+            (i32.const -128)
             (i32.gt_s (local.get $s32) (i32.const -128)))
+          (i32.const 127)
           (i32.lt_s (local.get $s32) (i32.const 127))))
       (return (i64.const 4294967296))))
 
@@ -211,11 +214,11 @@
       (local.set $s32 (i32.sub (local.get $a32) (local.get $b32)))
       (i32.store16 (i32.const 0)
         (select
-          (i32.const 32767)
           (select
-            (i32.const -32768)
             (local.get $s32)
+            (i32.const -32768)
             (i32.gt_s (local.get $s32) (i32.const -32768)))
+          (i32.const 32767)
           (i32.lt_s (local.get $s32) (i32.const 32767))))
       (return (i64.const 8589934592))))
 
@@ -229,11 +232,11 @@
       (i32.store (i32.const 0)
         (i32.wrap_i64
           (select
-            (i64.const 0x7FFFFFFF)
             (select
-              (i64.const -2147483648)
               (local.get $s64)
+              (i64.const -2147483648)
               (i64.gt_s (local.get $s64) (i64.const -2147483648)))
+            (i64.const 0x7FFFFFFF)
             (i64.lt_s (local.get $s64) (i64.const 0x7FFFFFFF)))))
       (return (i64.const 17179869184))))
 

@@ -753,20 +753,24 @@ fn lower_uadd_sat<'ctx>(
     e.load_operand(a, TEMP1)?;
     e.load_operand(b, TEMP2)?;
 
+    // After `Add64 dst, TEMP1, TEMP2`, both TEMP1 and TEMP2 are free —
+    // we use TEMP1 for the umax constant. Avoiding TEMP_RESULT here is
+    // critical: `result_reg` may return TEMP_RESULT under register pressure,
+    // so loading the constant into TEMP_RESULT would clobber `dst`'s sum.
     match bits {
         8 => {
             e.emit(Instruction::AndImm { dst: TEMP1, src: TEMP1, value: 0xFF });
             e.emit(Instruction::AndImm { dst: TEMP2, src: TEMP2, value: 0xFF });
             e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
-            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: 0xFF });
-            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP_RESULT });
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: 0xFF });
+            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP1 });
         }
         16 => {
             e.emit(Instruction::AndImm { dst: TEMP1, src: TEMP1, value: 0xFFFF });
             e.emit(Instruction::AndImm { dst: TEMP2, src: TEMP2, value: 0xFFFF });
             e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
-            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: 0xFFFF });
-            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP_RESULT });
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: 0xFFFF });
+            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP1 });
         }
         32 => {
             // Zero-extend via shl 32 + shr 32 (0xFFFFFFFF doesn't fit AndImm).
@@ -776,17 +780,19 @@ fn lower_uadd_sat<'ctx>(
             e.emit(Instruction::ShloRImm64 { dst: TEMP2, src: TEMP2, value: 32 });
             e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
             // umax = 0xFFFFFFFF: load -1 (all 1s) then logical-shift right 32.
-            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: -1 });
-            e.emit(Instruction::ShloRImm64 { dst: TEMP_RESULT, src: TEMP_RESULT, value: 32 });
-            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP_RESULT });
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: -1 });
+            e.emit(Instruction::ShloRImm64 { dst: TEMP1, src: TEMP1, value: 32 });
+            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP1 });
         }
         64 => {
             e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
-            // Overflow iff sum < a (unsigned).
-            e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: dst, src2: TEMP1 });
+            // Overflow iff sum < a (unsigned). Use TEMP2 for the flag (TEMP2
+            // held `b`, no longer needed). Using TEMP_RESULT here would
+            // clobber `dst` when `result_reg` returned TEMP_RESULT.
+            e.emit(Instruction::SetLtU { dst: TEMP2, src1: dst, src2: TEMP1 });
             // umax_64 = -1 sign-extended = 0xFFFF_FFFF_FFFF_FFFF.
             e.emit(Instruction::LoadImm { reg: TEMP1, value: -1 });
-            e.emit(Instruction::CmovNz { dst, src: TEMP1, cond: TEMP_RESULT });
+            e.emit(Instruction::CmovNz { dst, src: TEMP1, cond: TEMP2 });
         }
         _ => {
             return Err(crate::Error::Unsupported(format!(
@@ -842,15 +848,18 @@ fn lower_ssub_sat<'ctx>(
             }
             e.emit(Instruction::Sub64 { dst, src1: TEMP1, src2: TEMP2 });
 
+            // After Sub64, both TEMP1 and TEMP2 are dead — use TEMP1 for the
+            // imin/imax constants (NOT TEMP_RESULT, which may alias `dst`
+            // when result_reg returns TEMP_RESULT under register pressure).
             let (imin, imax): (i32, i32) = match bits {
                 8 => (-128, 127),
                 16 => (-32_768, 32_767),
                 _ => (i32::MIN, i32::MAX),
             };
-            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: imin });
-            e.emit(Instruction::Max { dst, src1: dst, src2: TEMP_RESULT });
-            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: imax });
-            e.emit(Instruction::Min { dst, src1: dst, src2: TEMP_RESULT });
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: imin });
+            e.emit(Instruction::Max { dst, src1: dst, src2: TEMP1 });
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: imax });
+            e.emit(Instruction::Min { dst, src1: dst, src2: TEMP1 });
         }
         64 => {
             // Uses SCRATCH1/SCRATCH2 — bracket with spill/reload.
@@ -923,15 +932,17 @@ fn lower_sadd_sat<'ctx>(
                 }
             }
             e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
+            // After Add64, both TEMP1 and TEMP2 are dead — use TEMP1 for
+            // the imin/imax constants (NOT TEMP_RESULT, which may alias `dst`).
             let (imin, imax): (i32, i32) = match bits {
                 8 => (-128, 127),
                 16 => (-32_768, 32_767),
                 _ => (i32::MIN, i32::MAX),
             };
-            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: imin });
-            e.emit(Instruction::Max { dst, src1: dst, src2: TEMP_RESULT });
-            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: imax });
-            e.emit(Instruction::Min { dst, src1: dst, src2: TEMP_RESULT });
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: imin });
+            e.emit(Instruction::Max { dst, src1: dst, src2: TEMP1 });
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: imax });
+            e.emit(Instruction::Min { dst, src1: dst, src2: TEMP1 });
         }
         64 => {
             // Uses SCRATCH1/SCRATCH2 — bracket with spill/reload.
