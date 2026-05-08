@@ -165,3 +165,144 @@ fn usub_sat_i64_emits_setltu_and_cmovnzimm() {
         instructions.iter().map(|i| format!("{i:?}")).collect::<Vec<_>>()
     );
 }
+
+// =============================================================================
+// uadd.sat
+// =============================================================================
+
+/// Canonical pattern for `uadd.sat`. To get instcombine to fold (working
+/// around the outer-zext-blocks-fold issue documented above), inputs are
+/// zero-extended to i64 first; the saturation maximum is `(1 << N) - 1`.
+const UADD_SAT_I32_WAT: &str = r#"
+    (module
+        (func (export "main") (param $a i32) (param $b i32) (result i32)
+            (local $ae i64)
+            (local $be i64)
+            (local $s i64)
+            (local.set $ae (i64.extend_i32_u (local.get $a)))
+            (local.set $be (i64.extend_i32_u (local.get $b)))
+            (local.set $s (i64.add (local.get $ae) (local.get $be)))
+            (i32.wrap_i64
+                (select
+                    (i64.const 0xFFFFFFFF)
+                    (local.get $s)
+                    (i64.gt_u (local.get $s) (i64.const 0xFFFFFFFF))))))
+"#;
+
+#[test]
+fn uadd_sat_i32_folds_to_intrinsic() {
+    let ir = dump_llvm_ir(UADD_SAT_I32_WAT).expect("dump");
+    assert!(
+        ir.contains("@llvm.uadd.sat.i64") || ir.contains("@llvm.umin.i64"),
+        "expected @llvm.uadd.sat.i64 (or @llvm.umin.i64 if instcombine takes the alt fold), got:\n{ir}"
+    );
+}
+
+#[test]
+fn uadd_sat_i32_compiles() {
+    compile_wat(UADD_SAT_I32_WAT).expect("backend should compile uadd.sat.i32 WAT");
+}
+
+const UADD_SAT_I64_WAT: &str = r#"
+    (module
+        (func (export "main") (param $a i64) (param $b i64) (result i64)
+            (local $s i64)
+            (local.set $s (i64.add (local.get $a) (local.get $b)))
+            (select
+                (i64.const -1)
+                (local.get $s)
+                (i64.lt_u (local.get $s) (local.get $a)))))
+"#;
+
+#[test]
+fn uadd_sat_i64_folds_to_intrinsic() {
+    let ir = dump_llvm_ir(UADD_SAT_I64_WAT).expect("dump");
+    assert!(
+        ir.contains("@llvm.uadd.sat.i64"),
+        "expected @llvm.uadd.sat.i64, got:\n{ir}"
+    );
+}
+
+#[test]
+fn uadd_sat_i64_compiles() {
+    compile_wat(UADD_SAT_I64_WAT).expect("backend should lower llvm.uadd.sat.i64");
+}
+
+const UADD_SAT_I8_WAT: &str = r#"
+    (module
+        (memory 1)
+        (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+            (local $ae i64)
+            (local $be i64)
+            (local $s i64)
+            (local.set $ae (i64.extend_i32_u (i32.load8_u (local.get $args_ptr))))
+            (local.set $be (i64.extend_i32_u (i32.load8_u (i32.add (local.get $args_ptr) (i32.const 1)))))
+            (local.set $s (i64.add (local.get $ae) (local.get $be)))
+            (i32.store8 (i32.const 0)
+                (i32.wrap_i64
+                    (select
+                        (i64.const 0xFF)
+                        (local.get $s)
+                        (i64.gt_u (local.get $s) (i64.const 0xFF)))))
+            (i64.const 4294967296)))
+"#;
+
+#[test]
+fn uadd_sat_i8_folds_to_intrinsic() {
+    let ir = dump_llvm_ir(UADD_SAT_I8_WAT).expect("dump");
+    assert!(
+        ir.contains("@llvm.uadd.sat.i64") || ir.contains("@llvm.umin.i64"),
+        "expected @llvm.uadd.sat.i64 (or @llvm.umin.i64), got:\n{ir}"
+    );
+}
+
+#[test]
+fn uadd_sat_i8_compiles() {
+    compile_wat(UADD_SAT_I8_WAT).expect("backend should compile uadd.sat.i8 WAT");
+}
+
+const UADD_SAT_I16_WAT: &str = r#"
+    (module
+        (memory 1)
+        (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+            (local $ae i64)
+            (local $be i64)
+            (local $s i64)
+            (local.set $ae (i64.extend_i32_u (i32.load16_u (local.get $args_ptr))))
+            (local.set $be (i64.extend_i32_u (i32.load16_u (i32.add (local.get $args_ptr) (i32.const 2)))))
+            (local.set $s (i64.add (local.get $ae) (local.get $be)))
+            (i32.store16 (i32.const 0)
+                (i32.wrap_i64
+                    (select
+                        (i64.const 0xFFFF)
+                        (local.get $s)
+                        (i64.gt_u (local.get $s) (i64.const 0xFFFF)))))
+            (i64.const 8589934592)))
+"#;
+
+#[test]
+fn uadd_sat_i16_folds_to_intrinsic() {
+    let ir = dump_llvm_ir(UADD_SAT_I16_WAT).expect("dump");
+    assert!(
+        ir.contains("@llvm.uadd.sat.i64") || ir.contains("@llvm.umin.i64"),
+        "expected @llvm.uadd.sat.i64 (or @llvm.umin.i64), got:\n{ir}"
+    );
+}
+
+#[test]
+fn uadd_sat_i16_compiles() {
+    compile_wat(UADD_SAT_I16_WAT).expect("backend should compile uadd.sat.i16 WAT");
+}
+
+#[test]
+fn uadd_sat_i64_emits_setltu_and_cmovnz() {
+    use wasm_pvm::Opcode;
+    let program = compile_wat(UADD_SAT_I64_WAT).expect("compile");
+    let instructions = extract_instructions(&program);
+    assert!(
+        has_opcode(&instructions, Opcode::SetLtU)
+            && has_opcode(&instructions, Opcode::CmovNz),
+        "uadd.sat.i64 must emit SetLtU + CmovNz; got opcodes: {:?}",
+        instructions.iter().map(|i| format!("{i:?}")).collect::<Vec<_>>()
+    );
+}

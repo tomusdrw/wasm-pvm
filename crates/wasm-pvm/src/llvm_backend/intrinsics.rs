@@ -733,15 +733,70 @@ fn lower_usub_sat<'ctx>(
     Ok(())
 }
 
-/// Lower `@llvm.uadd.sat.iN(a, b)`. STUB — implemented in Task 3.
+/// Lower `@llvm.uadd.sat.iN(a, b)`.
+///
+/// Result form: zero-extended.
+/// Algorithm:
+///   - i8/i16/i32: zero-extend operands, do 64-bit add (cannot overflow
+///     because both fit in 32 bits), `MinU` against the width's UMAX.
+///   - i64: `Add64`, detect wrap via `SetLtU sum, a`, `CmovNz` to UINT64_MAX.
 fn lower_uadd_sat<'ctx>(
-    _e: &mut PvmEmitter<'ctx>,
+    e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
 ) -> Result<()> {
-    Err(crate::Error::Unsupported(format!(
-        "unsupported LLVM intrinsic: llvm.uadd.sat.i{}",
-        operand_bit_width(instr)
-    )))
+    let slot = result_slot(e, instr)?;
+    let a = get_operand(instr, 0)?;
+    let b = get_operand(instr, 1)?;
+    let dst = result_reg(e, instr);
+    let bits = operand_bit_width(instr);
+
+    e.load_operand(a, TEMP1)?;
+    e.load_operand(b, TEMP2)?;
+
+    match bits {
+        8 => {
+            e.emit(Instruction::AndImm { dst: TEMP1, src: TEMP1, value: 0xFF });
+            e.emit(Instruction::AndImm { dst: TEMP2, src: TEMP2, value: 0xFF });
+            e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
+            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: 0xFF });
+            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP_RESULT });
+        }
+        16 => {
+            e.emit(Instruction::AndImm { dst: TEMP1, src: TEMP1, value: 0xFFFF });
+            e.emit(Instruction::AndImm { dst: TEMP2, src: TEMP2, value: 0xFFFF });
+            e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
+            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: 0xFFFF });
+            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP_RESULT });
+        }
+        32 => {
+            // Zero-extend via shl 32 + shr 32 (0xFFFFFFFF doesn't fit AndImm).
+            e.emit(Instruction::ShloLImm64 { dst: TEMP1, src: TEMP1, value: 32 });
+            e.emit(Instruction::ShloRImm64 { dst: TEMP1, src: TEMP1, value: 32 });
+            e.emit(Instruction::ShloLImm64 { dst: TEMP2, src: TEMP2, value: 32 });
+            e.emit(Instruction::ShloRImm64 { dst: TEMP2, src: TEMP2, value: 32 });
+            e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
+            // umax = 0xFFFFFFFF: load -1 (all 1s) then logical-shift right 32.
+            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: -1 });
+            e.emit(Instruction::ShloRImm64 { dst: TEMP_RESULT, src: TEMP_RESULT, value: 32 });
+            e.emit(Instruction::MinU { dst, src1: dst, src2: TEMP_RESULT });
+        }
+        64 => {
+            e.emit(Instruction::Add64 { dst, src1: TEMP1, src2: TEMP2 });
+            // Overflow iff sum < a (unsigned).
+            e.emit(Instruction::SetLtU { dst: TEMP_RESULT, src1: dst, src2: TEMP1 });
+            // umax_64 = -1 sign-extended = 0xFFFF_FFFF_FFFF_FFFF.
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: -1 });
+            e.emit(Instruction::CmovNz { dst, src: TEMP1, cond: TEMP_RESULT });
+        }
+        _ => {
+            return Err(crate::Error::Unsupported(format!(
+                "uadd.sat with unsupported bit width: {bits}"
+            )));
+        }
+    }
+
+    e.store_to_slot(slot, dst);
+    Ok(())
 }
 
 /// Lower `@llvm.ssub.sat.iN(a, b)`. STUB — implemented in Task 4.
