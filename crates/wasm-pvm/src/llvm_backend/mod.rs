@@ -44,11 +44,38 @@ use abi::{TEMP1, TEMP2};
 use emitter::{PvmEmitter, pre_scan_function, val_key_instr};
 
 /// Lower a single LLVM function to PVM bytecode.
+///
+/// `func_display_name` is the WASM-aware name (name section, export name, or
+/// `wasm_func_<idx>` fallback) — preferred over the LLVM function symbol so the
+/// diagnostic matches what the frontend already emits.
 pub fn lower_function(
     function: FunctionValue<'_>,
     ctx: &LoweringContext,
     is_main: bool,
-    _func_idx: usize,
+    func_idx: usize,
+    func_display_name: &str,
+    call_return_base: usize,
+) -> Result<LlvmFunctionTranslation> {
+    lower_function_inner(function, ctx, is_main, call_return_base).map_err(|cause| {
+        match cause {
+            // Avoid double-wrapping: a deeper layer (e.g. the WASM-operator
+            // dispatcher in the frontend) may have already attached a more
+            // specific location, in which case we keep that one.
+            Error::Located { .. } => cause,
+            _ => Error::Located {
+                func_idx,
+                func_name: func_display_name.to_string(),
+                op_offset: None,
+                cause: Box::new(cause),
+            },
+        }
+    })
+}
+
+fn lower_function_inner(
+    function: FunctionValue<'_>,
+    ctx: &LoweringContext,
+    is_main: bool,
     call_return_base: usize,
 ) -> Result<LlvmFunctionTranslation> {
     let config = EmitterConfig {

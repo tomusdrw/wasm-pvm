@@ -54,7 +54,10 @@ fn float_op_fails_with_function_name_and_offset() {
         func_name, "float_user",
         "name section ($float_user) should win over export alias (main)"
     );
-    assert!(op_offset > 0, "op offset should point into function body");
+    assert!(
+        op_offset.is_some_and(|o| o > 0),
+        "op offset should point into function body, got {op_offset:?}"
+    );
 
     let msg = cause.to_string();
     assert!(
@@ -132,15 +135,130 @@ fn non_float_unsupported_op_also_gets_location() {
         .err()
         .expect("expected compilation to fail on data.drop");
     let Error::Located {
-        func_name, cause, ..
+        func_name,
+        op_offset,
+        cause,
+        ..
     } = err
     else {
         panic!("expected Error::Located, got: {err:?}");
     };
     assert_eq!(func_name, "main");
     assert!(
+        op_offset.is_some(),
+        "frontend errors carry a byte offset, got {op_offset:?}"
+    );
+    assert!(
         cause.to_string().contains("data.drop"),
         "inner error should mention data.drop, got: {cause}"
+    );
+}
+
+/// Errors raised during PVM lowering (after LLVM IR has been built) must also
+/// be wrapped in `Error::Located`, so users see which function rejected the
+/// program. `op_offset` is `None` because the WASM byte offset is no longer
+/// recoverable at that point — the diagnostic explicitly says "during PVM
+/// lowering" instead.
+///
+/// Trigger: `host_call_5` is recognised by name in the backend, where it's
+/// validated to require an `(result i64)` signature. Declaring it without one
+/// fires an `Error::Unsupported` from `llvm_backend::calls::lower_host_call_variant`
+/// — long after the frontend's operator-byte-offset wrapper has had a chance.
+#[test]
+fn backend_error_includes_function_context() {
+    let wat = r#"
+        (module
+            (import "env" "host_call_5"
+                (func $hc5 (param i64 i64 i64 i64 i64 i64)))
+            (func $caller (export "main") (result i32)
+                (call $hc5
+                    (i64.const 1) (i64.const 2) (i64.const 3)
+                    (i64.const 4) (i64.const 5) (i64.const 6))
+                (i32.const 0)
+            )
+        )
+    "#;
+
+    let err = compile_wat(wat)
+        .err()
+        .expect("expected backend rejection of host_call_5 with no result");
+    let Error::Located {
+        func_name,
+        op_offset,
+        cause,
+        ..
+    } = err
+    else {
+        panic!("expected Error::Located, got: {err:?}");
+    };
+    assert_eq!(
+        func_name, "caller",
+        "func_name should be the WASM-aware display name, not the LLVM symbol"
+    );
+    assert!(
+        op_offset.is_none(),
+        "backend errors don't have a WASM byte offset, got {op_offset:?}"
+    );
+    assert!(
+        cause.to_string().contains("host_call_5"),
+        "inner error should mention host_call_5, got: {cause}"
+    );
+
+    // Display string must clearly indicate the lowering phase.
+    let display = Error::Located {
+        func_idx: 1,
+        func_name: "caller".into(),
+        op_offset: None,
+        cause: Box::new(Error::Unsupported("synthetic".into())),
+    }
+    .to_string();
+    assert!(
+        display.contains("during PVM lowering"),
+        "display should distinguish backend errors, got: {display}"
+    );
+}
+
+/// Errors raised in adapter-merge — before any LLVM IR exists — must be
+/// wrapped in `Error::AdapterMerge` with a context naming the offending
+/// adapter element. The trigger here is a float constant inside an adapter
+/// function body, which `encode_passthrough_operator` rejects.
+#[test]
+fn adapter_merge_error_includes_context() {
+    let main_wat = r#"
+        (module
+            (import "env" "abort" (func $abort))
+            (func (export "main") (result i32)
+                (call $abort)
+                (i32.const 0)
+            )
+        )
+    "#;
+    let adapter_wat = r#"
+        (module
+            (func (export "abort")
+                f64.const 1.0
+                drop
+            )
+        )
+    "#;
+
+    let opts = CompileOptions {
+        adapter: Some(adapter_wat.to_string()),
+        ..CompileOptions::default()
+    };
+    let err = compile_wat_with_options(main_wat, &opts)
+        .err()
+        .expect("expected adapter-merge rejection of f64.const");
+    let Error::AdapterMerge { context, cause } = err else {
+        panic!("expected Error::AdapterMerge, got: {err:?}");
+    };
+    assert!(
+        context.contains("adapter func"),
+        "context should identify the adapter function, got: {context}"
+    );
+    assert!(
+        cause.to_string().contains("floating point"),
+        "inner error should mention float rejection, got: {cause}"
     );
 }
 

@@ -582,8 +582,10 @@ fn build_merged_module(
     // Element section (from main, with remapped function indices)
     if !main.elements.is_empty() {
         let mut elem_section = ElementSection::new();
-        for el in &main.elements {
-            encode_element(&mut elem_section, &el.raw, &main_func_remap)?;
+        for (el_idx, el) in main.elements.iter().enumerate() {
+            let label = format!("main element {el_idx}");
+            encode_element(&mut elem_section, &el.raw, &main_func_remap)
+                .map_err(wrap_adapter_err(&label))?;
         }
         module.section(&elem_section);
     }
@@ -835,6 +837,19 @@ fn encode_data_segment(
     Ok(())
 }
 
+/// Wrap an error in an `Error::AdapterMerge` with the given context, unless
+/// the error is already an `AdapterMerge` or `Located` variant — in which case
+/// the existing (more specific) wrapping is kept.
+fn wrap_adapter_err(label: &str) -> impl FnOnce(Error) -> Error + '_ {
+    move |cause| match cause {
+        Error::AdapterMerge { .. } | Error::Located { .. } => cause,
+        _ => Error::AdapterMerge {
+            context: label.to_string(),
+            cause: Box::new(cause),
+        },
+    }
+}
+
 /// Encode a function body with index remapping (for adapter functions).
 fn encode_function_body(
     section: &mut wasm_encoder::CodeSection,
@@ -853,8 +868,10 @@ fn encode_function_body(
     while !reader.eof() {
         let op = reader
             .read()
-            .map_err(|e| Error::Internal(format!("{label} operator read: {e}")))?;
-        encode_operator_with_remap(&mut func, &op, func_remap, type_remap)?;
+            .map_err(|e| Error::Internal(format!("{label} operator read: {e}")))
+            .map_err(wrap_adapter_err(label))?;
+        encode_operator_with_remap(&mut func, &op, func_remap, type_remap)
+            .map_err(wrap_adapter_err(label))?;
     }
 
     section.function(&func);
@@ -882,10 +899,12 @@ fn encode_function_body_main(
     while !reader.eof() {
         let op = reader
             .read()
-            .map_err(|e| Error::Internal(format!("{label} operator read: {e}")))?;
+            .map_err(|e| Error::Internal(format!("{label} operator read: {e}")))
+            .map_err(wrap_adapter_err(label))?;
         // For main functions, type indices stay the same (main types are at the start).
         // Pass empty remap so the fallback path in encode_operator_with_remap keeps indices as-is.
-        encode_operator_with_remap(&mut func, &op, func_remap, &empty_type_remap)?;
+        encode_operator_with_remap(&mut func, &op, func_remap, &empty_type_remap)
+            .map_err(wrap_adapter_err(label))?;
     }
 
     section.function(&func);
