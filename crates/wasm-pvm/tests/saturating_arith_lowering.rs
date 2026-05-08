@@ -482,3 +482,154 @@ fn ssub_sat_i64_emits_xor_and_sub() {
         "ssub.sat.i64 Hacker's Delight WAT needs >=2 Xors (a^b, a^sum) + Sub64; got xor_count={xor_count}"
     );
 }
+
+// =============================================================================
+// sadd.sat
+// =============================================================================
+
+const SADD_SAT_I32_WAT: &str = r#"
+    (module
+        (func (export "main") (param $a i32) (param $b i32) (result i32)
+            (local $s i64)
+            (local.set $s
+                (i64.add
+                    (i64.extend_i32_s (local.get $a))
+                    (i64.extend_i32_s (local.get $b))))
+            (i32.wrap_i64
+                (select
+                    (i64.const 0x7FFFFFFF)
+                    (select
+                        (i64.const -2147483648)
+                        (local.get $s)
+                        (i64.gt_s (local.get $s) (i64.const -2147483648)))
+                    (i64.lt_s (local.get $s) (i64.const 0x7FFFFFFF))))))
+"#;
+
+#[test]
+fn sadd_sat_i32_folds_to_intrinsic() {
+    let ir = dump_llvm_ir(SADD_SAT_I32_WAT).expect("dump");
+    assert!(
+        ir.contains("@llvm.sadd.sat.i64")
+            || ir.contains("@llvm.smax.i64")
+            || ir.contains("@llvm.smin.i64"),
+        "expected @llvm.sadd.sat.i64 / smax / smin in IR, got:\n{ir}"
+    );
+}
+
+#[test]
+fn sadd_sat_i32_compiles() {
+    compile_wat(SADD_SAT_I32_WAT).expect("backend should compile sadd.sat.i32 WAT");
+}
+
+const SADD_SAT_I64_WAT: &str = r#"
+    (module
+        (func (export "main") (param $a i64) (param $b i64) (result i64)
+            (local $s i64)
+            (local $ov i64)
+            (local.set $s (i64.add (local.get $a) (local.get $b)))
+            ;; overflow iff (a^sum) & (b^sum) is negative (bit 63 set).
+            (local.set $ov
+                (i64.and
+                    (i64.xor (local.get $a) (local.get $s))
+                    (i64.xor (local.get $b) (local.get $s))))
+            (select
+                (select
+                    (i64.const -9223372036854775808)
+                    (i64.const 9223372036854775807)
+                    (i64.lt_s (local.get $a) (i64.const 0)))
+                (local.get $s)
+                (i64.lt_s (local.get $ov) (i64.const 0)))))
+"#;
+
+#[test]
+fn sadd_sat_i64_folds_to_intrinsic() {
+    let ir = dump_llvm_ir(SADD_SAT_I64_WAT).expect("dump");
+    // Like ssub.sat.i64, instcombine may or may not fold to @llvm.sadd.sat.i64.
+    // Either way, saturating-arithmetic ops should appear.
+    assert!(
+        ir.contains("@llvm.sadd.sat.i64")
+            || ir.contains("@llvm.smax.i64")
+            || ir.contains("@llvm.smin.i64")
+            || ir.contains("select"),
+        "expected saturating addition ops in IR, got:\n{ir}"
+    );
+}
+
+#[test]
+fn sadd_sat_i64_compiles() {
+    compile_wat(SADD_SAT_I64_WAT).expect("backend should lower llvm.sadd.sat.i64");
+}
+
+const SADD_SAT_I8_WAT: &str = r#"
+    (module
+        (memory 1)
+        (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+            (local $s i64)
+            (local.set $s
+                (i64.add
+                    (i64.extend_i32_s (i32.load8_s (local.get $args_ptr)))
+                    (i64.extend_i32_s (i32.load8_s (i32.add (local.get $args_ptr) (i32.const 1))))))
+            (i32.store8 (i32.const 0)
+                (i32.wrap_i64
+                    (select
+                        (i64.const 127)
+                        (select
+                            (i64.const -128)
+                            (local.get $s)
+                            (i64.gt_s (local.get $s) (i64.const -128)))
+                        (i64.lt_s (local.get $s) (i64.const 127)))))
+            (i64.const 4294967296)))
+"#;
+
+#[test]
+fn sadd_sat_i8_folds_to_intrinsic() {
+    let ir = dump_llvm_ir(SADD_SAT_I8_WAT).expect("dump");
+    assert!(
+        ir.contains("@llvm.sadd.sat.i64")
+            || ir.contains("@llvm.smax.i64")
+            || ir.contains("@llvm.smin.i64"),
+        "expected @llvm.sadd.sat.i64 / smax / smin in IR, got:\n{ir}"
+    );
+}
+
+#[test]
+fn sadd_sat_i8_compiles() {
+    compile_wat(SADD_SAT_I8_WAT).expect("backend should compile sadd.sat.i8 WAT");
+}
+
+const SADD_SAT_I16_WAT: &str = r#"
+    (module
+        (memory 1)
+        (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+            (local $s i64)
+            (local.set $s
+                (i64.add
+                    (i64.extend_i32_s (i32.load16_s (local.get $args_ptr)))
+                    (i64.extend_i32_s (i32.load16_s (i32.add (local.get $args_ptr) (i32.const 2))))))
+            (i32.store16 (i32.const 0)
+                (i32.wrap_i64
+                    (select
+                        (i64.const 32767)
+                        (select
+                            (i64.const -32768)
+                            (local.get $s)
+                            (i64.gt_s (local.get $s) (i64.const -32768)))
+                        (i64.lt_s (local.get $s) (i64.const 32767)))))
+            (i64.const 8589934592)))
+"#;
+
+#[test]
+fn sadd_sat_i16_folds_to_intrinsic() {
+    let ir = dump_llvm_ir(SADD_SAT_I16_WAT).expect("dump");
+    assert!(
+        ir.contains("@llvm.sadd.sat.i64")
+            || ir.contains("@llvm.smax.i64")
+            || ir.contains("@llvm.smin.i64"),
+        "expected @llvm.sadd.sat.i64 / smax / smin in IR, got:\n{ir}"
+    );
+}
+
+#[test]
+fn sadd_sat_i16_compiles() {
+    compile_wat(SADD_SAT_I16_WAT).expect("backend should compile sadd.sat.i16 WAT");
+}
