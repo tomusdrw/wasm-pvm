@@ -2760,6 +2760,16 @@ fn test_bitreverse_i32_lowering() {
     assert!(has_and_imm_with(0x5555_5555), "missing AndImm 0x55555555");
     assert!(has_and_imm_with(0x3333_3333), "missing AndImm 0x33333333");
     assert!(has_and_imm_with(0x0F0F_0F0F), "missing AndImm 0x0F0F0F0F");
+
+    // The i32 recovery shift is 32 (vs 48 for i16). Pin it explicitly so a
+    // wrong post-shift can't slip through this unit test.
+    let has_shr64_32 = instructions
+        .iter()
+        .any(|i| matches!(i, wasm_pvm::Instruction::ShloRImm64 { value: 32, .. }));
+    assert!(
+        has_shr64_32,
+        "missing ShloRImm64 by 32 (i32 recovery shift)"
+    );
 }
 
 /// Defensive coverage for `llvm.bitreverse.i8`: writing the canonical
