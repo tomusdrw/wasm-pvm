@@ -85,6 +85,30 @@ pub fn compile_wat_with_options(wat: &str, options: &CompileOptions) -> Result<S
     compile_with_options(&wasm, options)
 }
 
+/// Translate WAT through the WASM frontend and LLVM optimization passes,
+/// returning the post-pass LLVM IR as a string.
+///
+/// Useful for verifying that LLVM `instcombine` recognizes specific WAT
+/// patterns and folds them into expected intrinsic calls (e.g.
+/// `@llvm.uadd.sat.i32`).
+pub fn dump_llvm_ir(wat: &str) -> Result<String> {
+    use crate::llvm_frontend;
+    use crate::translate::WasmModule;
+    let wasm = wat_to_wasm(wat)?;
+    let module = WasmModule::parse(&wasm)?;
+    let context = inkwell::context::Context::create();
+    let llvm_module = llvm_frontend::translate_wasm_to_llvm(
+        &context,
+        &module,
+        /* run_llvm_passes */ true,
+        /* run_inlining */ true,
+        /* inline_threshold */ Some(5),
+        /* reachable_locals */ None,
+        /* trap_floats */ false,
+    )?;
+    Ok(llvm_module.print_to_string().to_string())
+}
+
 /// Extract the instruction sequence from a SPI program
 pub fn extract_instructions(program: &SpiProgram) -> Vec<Instruction> {
     program.code().instructions().to_vec()
