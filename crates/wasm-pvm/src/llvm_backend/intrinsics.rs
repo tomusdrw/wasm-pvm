@@ -799,15 +799,91 @@ fn lower_uadd_sat<'ctx>(
     Ok(())
 }
 
-/// Lower `@llvm.ssub.sat.iN(a, b)`. STUB — implemented in Task 4.
+/// Lower `@llvm.ssub.sat.iN(a, b)`.
+///
+/// Result form: sign-extended.
+/// Algorithm:
+///   - i8/i16/i32: sign-extend operands, do 64-bit subtract (true difference
+///     fits in i64 because two iN values differ by at most 2^N), then clamp
+///     to [INT_MIN, INT_MAX] via signed Max/Min.
+///   - i64: Hacker's Delight overflow detection. Uses SCRATCH1/SCRATCH2,
+///     so brackets the sequence with spill_allocated_regs() /
+///     reload_allocated_regs_after_scratch_clobber().
 fn lower_ssub_sat<'ctx>(
-    _e: &mut PvmEmitter<'ctx>,
+    e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
 ) -> Result<()> {
-    Err(crate::Error::Unsupported(format!(
-        "unsupported LLVM intrinsic: llvm.ssub.sat.i{}",
-        operand_bit_width(instr)
-    )))
+    use crate::abi::{SCRATCH1, SCRATCH2};
+
+    let slot = result_slot(e, instr)?;
+    let a = get_operand(instr, 0)?;
+    let b = get_operand(instr, 1)?;
+    let dst = result_reg(e, instr);
+    let bits = operand_bit_width(instr);
+
+    match bits {
+        8 | 16 | 32 => {
+            e.load_operand(a, TEMP1)?;
+            e.load_operand(b, TEMP2)?;
+            match bits {
+                8 => {
+                    e.emit(Instruction::SignExtend8 { dst: TEMP1, src: TEMP1 });
+                    e.emit(Instruction::SignExtend8 { dst: TEMP2, src: TEMP2 });
+                }
+                16 => {
+                    e.emit(Instruction::SignExtend16 { dst: TEMP1, src: TEMP1 });
+                    e.emit(Instruction::SignExtend16 { dst: TEMP2, src: TEMP2 });
+                }
+                _ => {
+                    // i32: AddImm32 _, _, 0 sign-extends low 32 bits to 64.
+                    e.emit(Instruction::AddImm32 { dst: TEMP1, src: TEMP1, value: 0 });
+                    e.emit(Instruction::AddImm32 { dst: TEMP2, src: TEMP2, value: 0 });
+                }
+            }
+            e.emit(Instruction::Sub64 { dst, src1: TEMP1, src2: TEMP2 });
+
+            let (imin, imax): (i32, i32) = match bits {
+                8 => (-128, 127),
+                16 => (-32_768, 32_767),
+                _ => (i32::MIN, i32::MAX),
+            };
+            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: imin });
+            e.emit(Instruction::Max { dst, src1: dst, src2: TEMP_RESULT });
+            e.emit(Instruction::LoadImm { reg: TEMP_RESULT, value: imax });
+            e.emit(Instruction::Min { dst, src1: dst, src2: TEMP_RESULT });
+        }
+        64 => {
+            // Uses SCRATCH1/SCRATCH2 — bracket with spill/reload.
+            e.spill_allocated_regs();
+            e.load_operand(a, TEMP1)?;
+            e.load_operand(b, TEMP2)?;
+            // sum = a - b (wrapping)
+            e.emit(Instruction::Sub64 { dst, src1: TEMP1, src2: TEMP2 });
+            // t1 = a ^ b ; t2 = a ^ sum ; t1 &= t2 ; cond = arith-shift t1 right 63
+            e.emit(Instruction::Xor { dst: SCRATCH1, src1: TEMP1, src2: TEMP2 });
+            e.emit(Instruction::Xor { dst: SCRATCH2, src1: TEMP1, src2: dst });
+            e.emit(Instruction::And { dst: SCRATCH1, src1: SCRATCH1, src2: SCRATCH2 });
+            e.emit(Instruction::SharRImm64 { dst: SCRATCH1, src: SCRATCH1, value: 63 });
+            // sign_a = arith-shift a right 63 (0 or -1)
+            e.emit(Instruction::SharRImm64 { dst: SCRATCH2, src: TEMP1, value: 63 });
+            // imax = INT64_MAX = (-1 logical-shift-right 1)
+            e.emit(Instruction::LoadImm { reg: TEMP1, value: -1 });
+            e.emit(Instruction::ShloRImm64 { dst: TEMP1, src: TEMP1, value: 1 });
+            // sat = sign_a ^ INT64_MAX
+            e.emit(Instruction::Xor { dst: SCRATCH2, src1: SCRATCH2, src2: TEMP1 });
+            // if cond, dst = sat
+            e.emit(Instruction::CmovNz { dst, src: SCRATCH2, cond: SCRATCH1 });
+            e.reload_allocated_regs_after_scratch_clobber();
+        }
+        _ => {
+            return Err(crate::Error::Unsupported(format!(
+                "ssub.sat with unsupported bit width: {bits}"
+            )));
+        }
+    }
+
+    e.store_to_slot(slot, dst);
+    Ok(())
 }
 
 /// Lower `@llvm.sadd.sat.iN(a, b)`. STUB — implemented in Task 5.
