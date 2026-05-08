@@ -99,3 +99,37 @@ fn unnamed_unexported_function_uses_synthetic_name() {
         "unnamed/unexported helper should use the synthetic placeholder"
     );
 }
+
+/// Synthetic placeholder must use the *global* function index. With one
+/// import in front, the local helper at `local_idx == 0` should render as
+/// `wasm_func_1`, not `wasm_func_0`. This guards against regressions where
+/// someone wires `local_idx` directly into the placeholder.
+#[test]
+fn unnamed_unexported_function_with_import_uses_global_index_placeholder() {
+    let wat = r#"
+        (module
+            (import "env" "abort" (func))
+            (func (result i32)
+                i32.const 1
+            )
+            (func (export "main") (param i32 i32) (result i64)
+                call 1
+                drop
+                i64.const 17179869184
+            )
+        )
+    "#;
+    let wasm = wat_to_wasm(wat).expect("WAT should parse");
+    let (_program, stats) =
+        compile_with_stats(&wasm, &CompileOptions::default()).expect("compilation should succeed");
+
+    let helper = stats
+        .functions
+        .iter()
+        .find(|f| f.index == 0)
+        .expect("helper function must be present in stats");
+    assert_eq!(
+        helper.name, "wasm_func_1",
+        "synthetic placeholder must use the global index (1 import + 0 local = 1)"
+    );
+}
