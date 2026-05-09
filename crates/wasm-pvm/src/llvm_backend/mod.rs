@@ -689,7 +689,7 @@ mod tests {
             .expect("function wasm_func_0 should exist");
 
         let ctx = minimal_lowering_context();
-        let translation = lower_function(func, &ctx, false, 0, 0)
+        let translation = lower_function(func, &ctx, false, 0, "wasm_func_0", 0)
             .expect("lowering a function containing `freeze` should succeed");
 
         // Sanity check: no Unknown instruction leaked through from the
