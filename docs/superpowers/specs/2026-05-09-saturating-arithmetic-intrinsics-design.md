@@ -81,7 +81,7 @@ Narrow widths sign-extend, do a 64-bit subtract (the true result fits in i64 bec
 
 `ssub.sat.i64` (Hacker's Delight, *uses* SCRATCH registers — wrap with `spill_allocated_regs` / `reload_allocated_regs_after_scratch_clobber`):
 
-```
+```text
 Sub64       sum, a, b                   ; wrapping sub
 Xor         t1, a, b                    ; signs differ?
 Xor         t2, a, sum                  ; sign(a) != sign(sum)?
@@ -129,7 +129,7 @@ The two i64 signed helpers additionally bracket steps 3-4 with `e.spill_allocate
 
 Args layout:
 
-```
+```text
 byte 0..3   : op selector (u32 LE) — encodes (intrinsic, width):
               op = intrinsic_idx * 4 + width_idx
               intrinsic_idx: 0=uadd, 1=usub, 2=sadd, 3=ssub

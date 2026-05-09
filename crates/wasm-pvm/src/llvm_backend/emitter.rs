@@ -1438,6 +1438,10 @@ pub(super) fn is_real_call(instr: InstructionValue<'_>) -> bool {
 /// - `__pvm_memory_grow`, `__pvm_memory_fill`, `__pvm_memory_copy`, `__pvm_memory_init`
 /// - `llvm.fshl.*`, `llvm.fshr.*` (funnel shifts — conservatively flagged even if
 ///   they might lower to a rotation which doesn't clobber)
+/// - `llvm.sadd.sat.i64`, `llvm.ssub.sat.i64` (signed i64 saturating arithmetic uses
+///   SCRATCH1/SCRATCH2 for the Hacker's Delight overflow detection sequence; the
+///   narrow signed widths and all unsigned widths use only TEMP registers, so they
+///   are not flagged)
 pub fn scratch_regs_safe(function: FunctionValue<'_>) -> bool {
     use inkwell::values::InstructionOpcode;
 
@@ -1465,6 +1469,14 @@ pub fn scratch_regs_safe(function: FunctionValue<'_>) -> bool {
                 }
                 // Funnel shifts (conservatively including rotations).
                 if name.starts_with("llvm.fshl.") || name.starts_with("llvm.fshr.") {
+                    return false;
+                }
+                // Signed i64 saturating arithmetic uses SCRATCH1/SCRATCH2 for
+                // Hacker's Delight overflow detection. If a value's slot were
+                // allocated to r5/r6, the lowering would clobber it before
+                // store_to_slot reads it back. Narrow widths use Min/Max + TEMP
+                // registers and don't touch SCRATCH; unsigned widths likewise.
+                if matches!(name.as_ref(), "llvm.sadd.sat.i64" | "llvm.ssub.sat.i64") {
                     return false;
                 }
             }
