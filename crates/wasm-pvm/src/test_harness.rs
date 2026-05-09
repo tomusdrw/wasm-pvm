@@ -92,16 +92,22 @@ pub fn compile_wat_with_options(wat: &str, options: &CompileOptions) -> Result<S
 /// Useful for verifying that LLVM `instcombine` recognizes specific WAT
 /// patterns and folds them into expected intrinsic calls (e.g.
 /// `@llvm.uadd.sat.i32`).
+///
+/// Pass settings (`llvm_passes`, `inlining`, `inline_threshold`) are sourced
+/// from `OptimizationFlags::default()` so this stays in sync with the
+/// production pipeline; if production defaults change, the IR-fold tests
+/// follow automatically rather than silently drifting.
 pub fn dump_llvm_ir(wat: &str) -> Result<String> {
     let wasm = wat_to_wasm(wat)?;
     let module = WasmModule::parse(&wasm)?;
     let context = inkwell::context::Context::create();
+    let opts = crate::translate::OptimizationFlags::default();
     let llvm_module = llvm_frontend::translate_wasm_to_llvm(
         &context,
         &module,
-        /* run_llvm_passes */ true,
-        /* run_inlining */ true,
-        /* inline_threshold */ Some(5),
+        opts.llvm_passes,
+        opts.inlining,
+        opts.inline_threshold,
         /* reachable_locals */ None,
         /* trap_floats */ false,
     )?;

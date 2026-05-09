@@ -241,22 +241,27 @@
       (return (i64.const 17179869184))))
 
     ;; op 15: ssub.sat.i64
-    (local.set $a64 (i64.load (i32.add (local.get $args_ptr) (i32.const 4))))
-    (local.set $b64 (i64.load (i32.add (local.get $args_ptr) (i32.const 12))))
-    (local.set $s64 (i64.sub (local.get $a64) (local.get $b64)))
-    (i64.store (i32.const 0)
-      (if (result i64)
-        (i64.lt_s
-          (i64.and
-            (i64.xor (local.get $a64) (local.get $b64))
-            (i64.xor (local.get $a64) (local.get $s64)))
-          (i64.const 0))
-        (then
-          (select
-            (i64.const -9223372036854775808)
-            (i64.const 0x7FFFFFFFFFFFFFFF)
-            (i64.lt_s (local.get $a64) (i64.const 0))))
-        (else (local.get $s64))))
-    (i64.const 34359738368)
+    (if (i32.eq (local.get $op) (i32.const 15)) (then
+      (local.set $a64 (i64.load (i32.add (local.get $args_ptr) (i32.const 4))))
+      (local.set $b64 (i64.load (i32.add (local.get $args_ptr) (i32.const 12))))
+      (local.set $s64 (i64.sub (local.get $a64) (local.get $b64)))
+      (i64.store (i32.const 0)
+        (if (result i64)
+          (i64.lt_s
+            (i64.and
+              (i64.xor (local.get $a64) (local.get $b64))
+              (i64.xor (local.get $a64) (local.get $s64)))
+            (i64.const 0))
+          (then
+            (select
+              (i64.const -9223372036854775808)
+              (i64.const 0x7FFFFFFFFFFFFFFF)
+              (i64.lt_s (local.get $a64) (i64.const 0))))
+          (else (local.get $s64))))
+      (return (i64.const 34359738368))))
+
+    ;; Unknown op selector — trap so the test harness can detect bad arg encoding
+    ;; rather than silently running op 15.
+    (unreachable)
   )
 )

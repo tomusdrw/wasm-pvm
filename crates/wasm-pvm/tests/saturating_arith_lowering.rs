@@ -332,11 +332,11 @@ const SSUB_SAT_I32_WAT: &str = r#"
                     (i64.extend_i32_s (local.get $b))))
             (i32.wrap_i64
                 (select
-                    (i64.const 0x7FFFFFFF)
                     (select
-                        (i64.const -2147483648)
                         (local.get $s)
+                        (i64.const -2147483648)
                         (i64.gt_s (local.get $s) (i64.const -2147483648)))
+                    (i64.const 0x7FFFFFFF)
                     (i64.lt_s (local.get $s) (i64.const 0x7FFFFFFF))))))
 "#;
 
@@ -411,11 +411,11 @@ const SSUB_SAT_I8_WAT: &str = r#"
             (i32.store8 (i32.const 0)
                 (i32.wrap_i64
                     (select
-                        (i64.const 127)
                         (select
-                            (i64.const -128)
                             (local.get $s)
+                            (i64.const -128)
                             (i64.gt_s (local.get $s) (i64.const -128)))
+                        (i64.const 127)
                         (i64.lt_s (local.get $s) (i64.const 127)))))
             (i64.const 4294967296)))
 "#;
@@ -448,11 +448,11 @@ const SSUB_SAT_I16_WAT: &str = r#"
             (i32.store16 (i32.const 0)
                 (i32.wrap_i64
                     (select
-                        (i64.const 32767)
                         (select
-                            (i64.const -32768)
                             (local.get $s)
+                            (i64.const -32768)
                             (i64.gt_s (local.get $s) (i64.const -32768)))
+                        (i64.const 32767)
                         (i64.lt_s (local.get $s) (i64.const 32767)))))
             (i64.const 8589934592)))
 "#;
@@ -504,11 +504,11 @@ const SADD_SAT_I32_WAT: &str = r#"
                     (i64.extend_i32_s (local.get $b))))
             (i32.wrap_i64
                 (select
-                    (i64.const 0x7FFFFFFF)
                     (select
-                        (i64.const -2147483648)
                         (local.get $s)
+                        (i64.const -2147483648)
                         (i64.gt_s (local.get $s) (i64.const -2147483648)))
+                    (i64.const 0x7FFFFFFF)
                     (i64.lt_s (local.get $s) (i64.const 0x7FFFFFFF))))))
 "#;
 
@@ -579,11 +579,11 @@ const SADD_SAT_I8_WAT: &str = r#"
             (i32.store8 (i32.const 0)
                 (i32.wrap_i64
                     (select
-                        (i64.const 127)
                         (select
-                            (i64.const -128)
                             (local.get $s)
+                            (i64.const -128)
                             (i64.gt_s (local.get $s) (i64.const -128)))
+                        (i64.const 127)
                         (i64.lt_s (local.get $s) (i64.const 127)))))
             (i64.const 4294967296)))
 "#;
@@ -616,11 +616,11 @@ const SADD_SAT_I16_WAT: &str = r#"
             (i32.store16 (i32.const 0)
                 (i32.wrap_i64
                     (select
-                        (i64.const 32767)
                         (select
-                            (i64.const -32768)
                             (local.get $s)
+                            (i64.const -32768)
                             (i64.gt_s (local.get $s) (i64.const -32768)))
+                        (i64.const 32767)
                         (i64.lt_s (local.get $s) (i64.const 32767)))))
             (i64.const 8589934592)))
 "#;
