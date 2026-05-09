@@ -1398,6 +1398,7 @@ fn instruction_produces_value(instr: InstructionValue<'_>) -> bool {
             | InstructionOpcode::Phi
             | InstructionOpcode::Load
             | InstructionOpcode::Call
+            | InstructionOpcode::Freeze
     )
 }
 
