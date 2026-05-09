@@ -604,9 +604,104 @@ fn lower_instruction<'ctx>(
         // Phi nodes — copies emitted by terminators via emit_phi_copies()
         InstructionOpcode::Phi => Ok(()),
 
+        // Freeze: PVM's value model is concrete i64 — there's no poison/undef
+        // representation. Materialize the operand into the result slot.
+        InstructionOpcode::Freeze => {
+            use emitter::{operand_reg, result_reg};
+
+            let val = emitter::get_operand(instr, 0)?;
+            let slot = emitter::result_slot(e, instr)?;
+            let dst = result_reg(e, instr);
+            let val_reg = operand_reg(e, val, dst);
+            if val_reg == dst {
+                e.load_operand(val, dst)?;
+            }
+            e.store_to_slot(slot, val_reg);
+            Ok(())
+        }
+
         _ => Err(Error::Unsupported(format!(
             "LLVM opcode {:?}",
             instr.get_opcode()
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::translate::OptimizationFlags;
+    use std::collections::BTreeMap;
+
+    /// Build a minimal `LoweringContext` suitable for unit-testing single
+    /// function lowering. All numeric/collection fields default to empty/zero;
+    /// optimizations match the production default.
+    fn minimal_lowering_context() -> LoweringContext {
+        LoweringContext {
+            wasm_memory_base: 0x30000,
+            num_globals: 0,
+            has_memory_size_global: false,
+            param_overflow_base: 0,
+            param_overflow_reserved: false,
+            function_signatures: vec![(1, true)],
+            type_signatures: vec![],
+            function_table: vec![],
+            num_imported_funcs: 0,
+            imported_func_names: vec![],
+            initial_memory_pages: 1,
+            max_memory_pages: 1,
+            stack_size: 65536,
+            data_segment_offsets: BTreeMap::new(),
+            data_segment_lengths: BTreeMap::new(),
+            data_segment_length_addrs: BTreeMap::new(),
+            wasm_import_map: None,
+            optimizations: OptimizationFlags::default(),
+        }
+    }
+
+    /// Regression test for issue #218: the backend must lower LLVM's `freeze`
+    /// instruction as a value passthrough. By the time IR reaches the backend
+    /// every value is a concrete i64 — there's no `poison`/`undef` in PVM —
+    /// so `freeze` is operationally a no-op on the input value.
+    ///
+    /// inkwell 0.8 doesn't expose `build_freeze` so we parse hand-written IR
+    /// text via `Context::create_module_from_ir` (`LLVMParseIRInContext`).
+    #[test]
+    fn freeze_is_lowered_as_passthrough() {
+        use inkwell::context::Context;
+        use inkwell::memory_buffer::MemoryBuffer;
+
+        let ir = r"
+            define i64 @wasm_func_0(i64 %0) {
+            entry:
+              %frozen = freeze i64 %0
+              ret i64 %frozen
+            }
+        ";
+
+        let context = Context::create();
+        let buffer = MemoryBuffer::create_from_memory_range_copy(ir.as_bytes(), "freeze_test");
+        let module = context
+            .create_module_from_ir(buffer)
+            .expect("hand-written IR should parse");
+        let func = module
+            .get_function("wasm_func_0")
+            .expect("function wasm_func_0 should exist");
+
+        let ctx = minimal_lowering_context();
+        let translation = lower_function(func, &ctx, false, 0, "wasm_func_0", 0)
+            .expect("lowering a function containing `freeze` should succeed");
+
+        // Sanity check: no Unknown instruction leaked through from the
+        // unsupported-opcode path (Trap is legitimate prologue/epilogue
+        // overhead — stack overflow guard — and not specific to freeze).
+        assert!(
+            !translation
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Unknown { .. })),
+            "freeze passthrough should not emit Unknown, got: {:?}",
+            translation.instructions
+        );
     }
 }

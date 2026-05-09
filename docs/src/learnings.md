@@ -663,3 +663,18 @@ The fix in `function_builder.rs::translate_operator` is two parts. (1) `Loop`'s 
 Why both fixes are needed together: with only fix (1), an inner construct (e.g. another `loop (result T)`) appearing after the unreachable loop becomes a dummy frame; its `End` handler still flipped `unreachable=false`, re-creating the same underflow at function-level `End`. The Rust test `loop_unreachable_end.rs::unreachable_loop_followed_by_result_loop_compiles` exercises both paths simultaneously and is the regression guard.
 
 Validation note: the WASM validator does *not* propagate the loop body's unreachable state into the surrounding scope — `pop_ctrl()` pushes the frame's `end_types` onto the outer operand stack regardless of inner unreachability. So the most-minimal `loop { return; br 0 } end_function` shape is rejected upstream by `wasmparser::validate`. The bug only surfaces when the post-loop region is well-typed for the validator (e.g. a trailing `unreachable`, or a follow-up construct that pushes the function's result type) but the compiler's own `unreachable` tracking has been corrupted.
+
+---
+
+## LLVM `freeze` Lowers to a Value Passthrough (#218)
+
+LLVM's `freeze` instruction takes a value that may be `poison`/`undef` and converts it into "some specific bit pattern, but we don't say which" — operationally a no-op on a concrete value. Our LLVM optimizer occasionally emits it (instcombine sinking poison-carrying ops past branches; observed on polkadot-fellows v2.2.2 `glutton-kusama_runtime` and `encointer-kusama_runtime` under `--trap-floats`).
+
+By the time IR reaches the PVM backend, every value is a concrete i64 in a stack slot — there is no `poison`/`undef` representation. So `freeze` is implemented as a value passthrough: take the operand, materialize it into the result slot. The arm sits next to `Phi` in `lower_instruction` (`llvm_backend/mod.rs`) and uses load-side coalescing — when the operand is already in an allocated register, `store_to_slot` writes from that register directly.
+
+Two pieces are required for the lowering to work end-to-end:
+
+1. **The match arm in `lower_instruction`** (the visible fix).
+2. **`Freeze` listed in `instruction_produces_value`** (`llvm_backend/emitter.rs`). The pre-scan walks every block and allocates a stack slot for any instruction whose result is consumed downstream; without `Freeze` in the producer set, `result_slot()` later returns `Error::Internal("no slot for Freeze result")`. Easy to miss: the `lower_instruction` arm compiles cleanly without it and the passthrough is well-defined — the failure only surfaces when the test actually runs.
+
+Testing strategy: triggering `freeze` reliably from a small WAT input is hard. WASM produces no poison itself, our frontend never adds `nsw`/`nuw` flags, and the optimizer passes we run (`mem2reg`, `instcombine`, `simplifycfg`, `gvn`, `dce`) only emit `freeze` for specific shapes that don't reduce to small fixtures. The regression test in `llvm_backend::tests::freeze_is_lowered_as_passthrough` parses hand-written LLVM IR text via `Context::create_module_from_ir` (inkwell 0.8 doesn't expose `build_freeze`) and runs it through `lower_function` directly with a minimal `LoweringContext`. This bypasses the LLVM-version-dependent question of "what input emits freeze" and pins down the lowering arm directly.
