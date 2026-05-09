@@ -171,7 +171,7 @@ Register the fixture in the differential runner. Bun's WebAssembly engine evalua
 
 ### Lowering-was-actually-exercised check
 
-The bitreverse fixture relies on `instcombine` folding the WAT pattern into the intrinsic call without verification. To avoid silently bypassing the new lowering (e.g., if a future LLVM version stops folding one of the patterns), add **one Rust unit test** in `crates/wasm-pvm/tests/saturating_arith_lowering.rs` that:
+The closest precedent in this codebase, the bitreverse fixture, trusts `instcombine` to fold its canonical WAT pattern into the expected intrinsic call without explicit verification. To avoid replicating that gap in the new saturating-arithmetic fixture (e.g., if a future LLVM version stops folding one of the patterns), add **one Rust unit test** in `crates/wasm-pvm/tests/saturating_arith_lowering.rs` that:
 
 1. Compiles the `saturating_arith.jam.wat` fixture through the full pipeline.
 2. Asserts the resulting LLVM IR (captured at the end of phase 3 optimisation passes) contains calls to `llvm.uadd.sat.*`, `llvm.usub.sat.*`, `llvm.sadd.sat.*`, `llvm.ssub.sat.*` — confirming the new lowering paths are actually traversed.
@@ -202,7 +202,7 @@ Run
 ./tests/utils/benchmark.sh --base main --current <branch>
 ```
 
-and paste the resulting comparison tables (JAM file size, gas usage, execution time — both direct and PVM-in-PVM) into the PR description. Per `AGENTS.md`: "Every PR description MUST include benchmark results. PRs without benchmark results should not be merged." If the script can't run in your environment (e.g. main is checked out in a sibling worktree), explicitly state that in the PR rather than omitting the section.
+and paste the resulting comparison tables (JAM file size, gas usage, execution time — both direct and PVM-in-PVM) into the PR description. Per `AGENTS.md`: "Every PR description MUST include benchmark results. PRs without benchmark results should not be merged."
 
 ---
 
