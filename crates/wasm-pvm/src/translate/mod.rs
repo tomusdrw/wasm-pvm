@@ -507,11 +507,13 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
             });
         }
 
+        let display_name = module.local_function_display_name(local_func_idx);
         let translation = llvm_backend::lower_function(
             llvm_func,
             &ctx,
             is_entry,
             global_func_idx,
+            &display_name,
             next_call_return_idx,
         )?;
         next_call_return_idx += translation.num_call_returns;

@@ -476,7 +476,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 _ => Error::Located {
                     func_idx,
                     func_name: func_name.to_string(),
-                    op_offset,
+                    op_offset: Some(op_offset),
                     cause: Box::new(cause),
                 },
             })?;
