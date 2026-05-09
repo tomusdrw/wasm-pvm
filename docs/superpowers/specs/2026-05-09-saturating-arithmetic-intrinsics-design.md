@@ -180,15 +180,29 @@ If LLVM ever stops folding one pattern, this test fails immediately rather than 
 
 ---
 
-## 6. Polkadot smoke check
+## 6. Pre-merge validation
 
-After implementation, manually run
+Two pre-merge gates, both required (per the project's `AGENTS.md` PR policy):
+
+### 6a. Polkadot smoke check
+
+Manually run
 
 ```bash
 cargo run -p wasm-pvm-cli -- compile <some_runtime>.wasm --trap-floats -o /tmp/out.jam
 ```
 
 against one of the 8 affected polkadot-fellows v2.2.2 runtimes (e.g. `polkadot_runtime`) to confirm the `Unsupported WASM feature: unsupported LLVM intrinsic: llvm.usub.sat.i32` error no longer fires. Not a CI test — a manual gate before merging.
+
+### 6b. Benchmark
+
+Run
+
+```bash
+./tests/utils/benchmark.sh --base main --current <branch>
+```
+
+and paste the resulting comparison tables (JAM file size, gas usage, execution time — both direct and PVM-in-PVM) into the PR description. Per `AGENTS.md`: "Every PR description MUST include benchmark results. PRs without benchmark results should not be merged." If the script can't run in your environment (e.g. main is checked out in a sibling worktree), explicitly state that in the PR rather than omitting the section.
 
 ---
 
