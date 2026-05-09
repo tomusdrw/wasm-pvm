@@ -657,7 +657,608 @@ pub fn lower_llvm_intrinsic<'ctx>(
         return Ok(());
     }
 
+    // Saturating arithmetic — see lower_{u,s}{add,sub}_sat helpers below.
+    if name.contains("usub.sat") {
+        return lower_usub_sat(e, instr);
+    }
+    if name.contains("uadd.sat") {
+        return lower_uadd_sat(e, instr);
+    }
+    if name.contains("ssub.sat") {
+        return lower_ssub_sat(e, instr);
+    }
+    if name.contains("sadd.sat") {
+        return lower_sadd_sat(e, instr);
+    }
+
     Err(crate::Error::Unsupported(format!(
         "unsupported LLVM intrinsic: {name}"
     )))
+}
+
+/// Lower `@llvm.usub.sat.iN(a, b)`.
+///
+/// Result form: zero-extended (`u8`/`u16`/`u32`/`u64`).
+/// Algorithm: `result = (a < b) ? 0 : a - b` with unsigned compare.
+///   - i8/i16: `AndImm` mask, `SetLtU`, `Sub64`, `CmovNzImm dst, cond, 0`
+///   - i32: shift-shift zero-extend (mask `0xFFFFFFFF` doesn't fit `AndImm`),
+///     then same shape
+///   - i64: `SetLtU`, `Sub64`, `CmovNzImm dst, cond, 0`
+fn lower_usub_sat<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
+    let slot = result_slot(e, instr)?;
+    let a = get_operand(instr, 0)?;
+    let b = get_operand(instr, 1)?;
+    let dst = result_reg(e, instr);
+    let bits = operand_bit_width(instr);
+
+    // Force-load both operands into TEMP1/TEMP2 so we can clobber freely.
+    e.load_operand(a, TEMP1)?;
+    e.load_operand(b, TEMP2)?;
+
+    match bits {
+        8 => {
+            e.emit(Instruction::AndImm {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 0xFF,
+            });
+            e.emit(Instruction::AndImm {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 0xFF,
+            });
+        }
+        16 => {
+            e.emit(Instruction::AndImm {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 0xFFFF,
+            });
+            e.emit(Instruction::AndImm {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 0xFFFF,
+            });
+        }
+        32 => {
+            // Zero-extend via shl 32 + shr 32 (0xFFFFFFFF doesn't fit AndImm).
+            e.emit(Instruction::ShloLImm64 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 32,
+            });
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 32,
+            });
+            e.emit(Instruction::ShloLImm64 {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 32,
+            });
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 32,
+            });
+        }
+        64 => {
+            // Operands are already canonical i64; no masking needed.
+        }
+        _ => {
+            return Err(crate::Error::Unsupported(format!(
+                "usub.sat with unsupported bit width: {bits}"
+            )));
+        }
+    }
+
+    // Compute result = a - b, then cond = (a < b unsigned), then zero dst if cond.
+    //
+    // Ordering is critical: `dst` may alias `TEMP_RESULT` (the fallback when no
+    // register is allocated for this instruction's result).  If we emitted
+    // `SetLtU { dst: TEMP_RESULT }` first and then `Sub64 { dst: TEMP_RESULT }`,
+    // the subtraction would silently overwrite the condition before `CmovNzImm`
+    // reads it, producing the wrong result.
+    //
+    // Safe ordering:
+    //   1. Sub64   → writes *dst* (may be TEMP_RESULT), leaves TEMP1/TEMP2 intact
+    //   2. SetLtU  → writes TEMP1 (clobbers TEMP1=a, which we no longer need),
+    //                reads TEMP2=b which is still valid
+    //   3. CmovNzImm → reads *cond* from TEMP1 (never aliases dst), writes *dst*
+    //
+    // TEMP1 is safe to reuse for cond because `dst` is never TEMP1 — it is either
+    // an allocator-assigned register or the TEMP_RESULT fallback (r4).
+    e.emit(Instruction::Sub64 {
+        dst,
+        src1: TEMP1,
+        src2: TEMP2,
+    });
+    e.emit(Instruction::SetLtU {
+        dst: TEMP1,
+        src1: TEMP1,
+        src2: TEMP2,
+    });
+    e.emit(Instruction::CmovNzImm {
+        dst,
+        cond: TEMP1,
+        value: 0,
+    });
+
+    e.store_to_slot(slot, dst);
+    Ok(())
+}
+
+/// Lower `@llvm.uadd.sat.iN(a, b)`.
+///
+/// Result form: zero-extended.
+/// Algorithm:
+///   - i8/i16/i32: zero-extend operands, do 64-bit add (cannot overflow
+///     because both fit in 32 bits), `MinU` against the width's UMAX.
+///   - i64: `Add64`, detect wrap via `SetLtU sum, a`, `CmovNz` to `UINT64_MAX`.
+fn lower_uadd_sat<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
+    let slot = result_slot(e, instr)?;
+    let a = get_operand(instr, 0)?;
+    let b = get_operand(instr, 1)?;
+    let dst = result_reg(e, instr);
+    let bits = operand_bit_width(instr);
+
+    e.load_operand(a, TEMP1)?;
+    e.load_operand(b, TEMP2)?;
+
+    // After `Add64 dst, TEMP1, TEMP2`, both TEMP1 and TEMP2 are free —
+    // we use TEMP1 for the umax constant. Avoiding TEMP_RESULT here is
+    // critical: `result_reg` may return TEMP_RESULT under register pressure,
+    // so loading the constant into TEMP_RESULT would clobber `dst`'s sum.
+    match bits {
+        8 => {
+            e.emit(Instruction::AndImm {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 0xFF,
+            });
+            e.emit(Instruction::AndImm {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 0xFF,
+            });
+            e.emit(Instruction::Add64 {
+                dst,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: 0xFF,
+            });
+            e.emit(Instruction::MinU {
+                dst,
+                src1: dst,
+                src2: TEMP1,
+            });
+        }
+        16 => {
+            e.emit(Instruction::AndImm {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 0xFFFF,
+            });
+            e.emit(Instruction::AndImm {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 0xFFFF,
+            });
+            e.emit(Instruction::Add64 {
+                dst,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: 0xFFFF,
+            });
+            e.emit(Instruction::MinU {
+                dst,
+                src1: dst,
+                src2: TEMP1,
+            });
+        }
+        32 => {
+            // Zero-extend via shl 32 + shr 32 (0xFFFFFFFF doesn't fit AndImm).
+            e.emit(Instruction::ShloLImm64 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 32,
+            });
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 32,
+            });
+            e.emit(Instruction::ShloLImm64 {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 32,
+            });
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP2,
+                src: TEMP2,
+                value: 32,
+            });
+            e.emit(Instruction::Add64 {
+                dst,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            // umax = 0xFFFFFFFF: load -1 (all 1s) then logical-shift right 32.
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: -1,
+            });
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 32,
+            });
+            e.emit(Instruction::MinU {
+                dst,
+                src1: dst,
+                src2: TEMP1,
+            });
+        }
+        64 => {
+            e.emit(Instruction::Add64 {
+                dst,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            // Overflow iff sum < a (unsigned). Use TEMP2 for the flag (TEMP2
+            // held `b`, no longer needed). Using TEMP_RESULT here would
+            // clobber `dst` when `result_reg` returned TEMP_RESULT.
+            e.emit(Instruction::SetLtU {
+                dst: TEMP2,
+                src1: dst,
+                src2: TEMP1,
+            });
+            // umax_64 = -1 sign-extended = 0xFFFF_FFFF_FFFF_FFFF.
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: -1,
+            });
+            e.emit(Instruction::CmovNz {
+                dst,
+                src: TEMP1,
+                cond: TEMP2,
+            });
+        }
+        _ => {
+            return Err(crate::Error::Unsupported(format!(
+                "uadd.sat with unsupported bit width: {bits}"
+            )));
+        }
+    }
+
+    e.store_to_slot(slot, dst);
+    Ok(())
+}
+
+/// Lower `@llvm.ssub.sat.iN(a, b)`.
+///
+/// Result form: sign-extended.
+/// Algorithm:
+///   - i8/i16/i32: sign-extend operands, do 64-bit subtract (true difference
+///     fits in i64 because two iN values differ by at most 2^N), then clamp
+///     to [`INT_MIN`, `INT_MAX`] via signed Max/Min.
+///   - i64: Hacker's Delight overflow detection. Uses SCRATCH1/SCRATCH2,
+///     so brackets the sequence with `spill_allocated_regs()` /
+///     `reload_allocated_regs_after_scratch_clobber()`.
+fn lower_ssub_sat<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
+    use crate::abi::{SCRATCH1, SCRATCH2};
+
+    let slot = result_slot(e, instr)?;
+    let a = get_operand(instr, 0)?;
+    let b = get_operand(instr, 1)?;
+    let dst = result_reg(e, instr);
+    let bits = operand_bit_width(instr);
+
+    match bits {
+        8 | 16 | 32 => {
+            e.load_operand(a, TEMP1)?;
+            e.load_operand(b, TEMP2)?;
+            match bits {
+                8 => {
+                    e.emit(Instruction::SignExtend8 {
+                        dst: TEMP1,
+                        src: TEMP1,
+                    });
+                    e.emit(Instruction::SignExtend8 {
+                        dst: TEMP2,
+                        src: TEMP2,
+                    });
+                }
+                16 => {
+                    e.emit(Instruction::SignExtend16 {
+                        dst: TEMP1,
+                        src: TEMP1,
+                    });
+                    e.emit(Instruction::SignExtend16 {
+                        dst: TEMP2,
+                        src: TEMP2,
+                    });
+                }
+                _ => {
+                    // i32: AddImm32 _, _, 0 sign-extends low 32 bits to 64.
+                    e.emit(Instruction::AddImm32 {
+                        dst: TEMP1,
+                        src: TEMP1,
+                        value: 0,
+                    });
+                    e.emit(Instruction::AddImm32 {
+                        dst: TEMP2,
+                        src: TEMP2,
+                        value: 0,
+                    });
+                }
+            }
+            e.emit(Instruction::Sub64 {
+                dst,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+
+            // After Sub64, both TEMP1 and TEMP2 are dead — use TEMP1 for the
+            // imin/imax constants (NOT TEMP_RESULT, which may alias `dst`
+            // when result_reg returns TEMP_RESULT under register pressure).
+            let (imin, imax): (i32, i32) = match bits {
+                8 => (-128, 127),
+                16 => (-32_768, 32_767),
+                _ => (i32::MIN, i32::MAX),
+            };
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: imin,
+            });
+            e.emit(Instruction::Max {
+                dst,
+                src1: dst,
+                src2: TEMP1,
+            });
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: imax,
+            });
+            e.emit(Instruction::Min {
+                dst,
+                src1: dst,
+                src2: TEMP1,
+            });
+        }
+        64 => {
+            // Uses SCRATCH1/SCRATCH2 — bracket with spill/reload.
+            e.spill_allocated_regs();
+            e.load_operand(a, TEMP1)?;
+            e.load_operand(b, TEMP2)?;
+            // sum = a - b (wrapping)
+            e.emit(Instruction::Sub64 {
+                dst,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            // t1 = a ^ b ; t2 = a ^ sum ; t1 &= t2 ; cond = arith-shift t1 right 63
+            e.emit(Instruction::Xor {
+                dst: SCRATCH1,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            e.emit(Instruction::Xor {
+                dst: SCRATCH2,
+                src1: TEMP1,
+                src2: dst,
+            });
+            e.emit(Instruction::And {
+                dst: SCRATCH1,
+                src1: SCRATCH1,
+                src2: SCRATCH2,
+            });
+            e.emit(Instruction::SharRImm64 {
+                dst: SCRATCH1,
+                src: SCRATCH1,
+                value: 63,
+            });
+            // sign_a = arith-shift a right 63 (0 or -1)
+            e.emit(Instruction::SharRImm64 {
+                dst: SCRATCH2,
+                src: TEMP1,
+                value: 63,
+            });
+            // imax = INT64_MAX = (-1 logical-shift-right 1)
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: -1,
+            });
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 1,
+            });
+            // sat = sign_a ^ INT64_MAX
+            e.emit(Instruction::Xor {
+                dst: SCRATCH2,
+                src1: SCRATCH2,
+                src2: TEMP1,
+            });
+            // if cond, dst = sat
+            e.emit(Instruction::CmovNz {
+                dst,
+                src: SCRATCH2,
+                cond: SCRATCH1,
+            });
+            e.reload_allocated_regs_after_scratch_clobber();
+        }
+        _ => {
+            return Err(crate::Error::Unsupported(format!(
+                "ssub.sat with unsupported bit width: {bits}"
+            )));
+        }
+    }
+
+    e.store_to_slot(slot, dst);
+    Ok(())
+}
+
+/// Lower `@llvm.sadd.sat.iN(a, b)`.
+///
+/// Result form: sign-extended.
+/// Same shape as `ssub.sat` — only differences are `Add64` vs `Sub64` and the
+/// i64 overflow XOR pair `(a^sum) & (b^sum)` vs `(a^b) & (a^sum)`.
+fn lower_sadd_sat<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
+    use crate::abi::{SCRATCH1, SCRATCH2};
+
+    let slot = result_slot(e, instr)?;
+    let a = get_operand(instr, 0)?;
+    let b = get_operand(instr, 1)?;
+    let dst = result_reg(e, instr);
+    let bits = operand_bit_width(instr);
+
+    match bits {
+        8 | 16 | 32 => {
+            e.load_operand(a, TEMP1)?;
+            e.load_operand(b, TEMP2)?;
+            match bits {
+                8 => {
+                    e.emit(Instruction::SignExtend8 {
+                        dst: TEMP1,
+                        src: TEMP1,
+                    });
+                    e.emit(Instruction::SignExtend8 {
+                        dst: TEMP2,
+                        src: TEMP2,
+                    });
+                }
+                16 => {
+                    e.emit(Instruction::SignExtend16 {
+                        dst: TEMP1,
+                        src: TEMP1,
+                    });
+                    e.emit(Instruction::SignExtend16 {
+                        dst: TEMP2,
+                        src: TEMP2,
+                    });
+                }
+                _ => {
+                    // i32: AddImm32 _, _, 0 sign-extends low 32 bits to 64.
+                    e.emit(Instruction::AddImm32 {
+                        dst: TEMP1,
+                        src: TEMP1,
+                        value: 0,
+                    });
+                    e.emit(Instruction::AddImm32 {
+                        dst: TEMP2,
+                        src: TEMP2,
+                        value: 0,
+                    });
+                }
+            }
+            e.emit(Instruction::Add64 {
+                dst,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            // After Add64, both TEMP1 and TEMP2 are dead — use TEMP1 for
+            // the imin/imax constants (NOT TEMP_RESULT, which may alias `dst`).
+            let (imin, imax): (i32, i32) = match bits {
+                8 => (-128, 127),
+                16 => (-32_768, 32_767),
+                _ => (i32::MIN, i32::MAX),
+            };
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: imin,
+            });
+            e.emit(Instruction::Max {
+                dst,
+                src1: dst,
+                src2: TEMP1,
+            });
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: imax,
+            });
+            e.emit(Instruction::Min {
+                dst,
+                src1: dst,
+                src2: TEMP1,
+            });
+        }
+        64 => {
+            // Uses SCRATCH1/SCRATCH2 — bracket with spill/reload.
+            e.spill_allocated_regs();
+            e.load_operand(a, TEMP1)?;
+            e.load_operand(b, TEMP2)?;
+            // sum = a + b (wrapping)
+            e.emit(Instruction::Add64 {
+                dst,
+                src1: TEMP1,
+                src2: TEMP2,
+            });
+            // sadd overflow test: (a^sum) & (b^sum) negative ⟺ same-sign-input + diff-sign-output.
+            e.emit(Instruction::Xor {
+                dst: SCRATCH1,
+                src1: TEMP1,
+                src2: dst,
+            });
+            e.emit(Instruction::Xor {
+                dst: SCRATCH2,
+                src1: TEMP2,
+                src2: dst,
+            });
+            e.emit(Instruction::And {
+                dst: SCRATCH1,
+                src1: SCRATCH1,
+                src2: SCRATCH2,
+            });
+            e.emit(Instruction::SharRImm64 {
+                dst: SCRATCH1,
+                src: SCRATCH1,
+                value: 63,
+            });
+            // sign_a = arith-shift a right 63 (0 or -1)
+            e.emit(Instruction::SharRImm64 {
+                dst: SCRATCH2,
+                src: TEMP1,
+                value: 63,
+            });
+            // imax = INT64_MAX = (-1 logical-shift-right 1)
+            e.emit(Instruction::LoadImm {
+                reg: TEMP1,
+                value: -1,
+            });
+            e.emit(Instruction::ShloRImm64 {
+                dst: TEMP1,
+                src: TEMP1,
+                value: 1,
+            });
+            // sat = sign_a ^ INT64_MAX
+            e.emit(Instruction::Xor {
+                dst: SCRATCH2,
+                src1: SCRATCH2,
+                src2: TEMP1,
+            });
+            // if cond, dst = sat
+            e.emit(Instruction::CmovNz {
+                dst,
+                src: SCRATCH2,
+                cond: SCRATCH1,
+            });
+            e.reload_allocated_regs_after_scratch_clobber();
+        }
+        _ => {
+            return Err(crate::Error::Unsupported(format!(
+                "sadd.sat with unsupported bit width: {bits}"
+            )));
+        }
+    }
+
+    e.store_to_slot(slot, dst);
+    Ok(())
 }

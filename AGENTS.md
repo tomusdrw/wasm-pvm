@@ -246,7 +246,7 @@ wasm-pvm = { version = "0.5.2", default-features = false }
 | Add PVM lowering (memory) | `llvm_backend/memory.rs` | Load/store, memory.size, memory.grow, bulk ops (word-sized) |
 | Add PVM lowering (control flow) | `llvm_backend/control_flow.rs` | Branches, phi, switch, return |
 | Add PVM lowering (calls) | `llvm_backend/calls.rs` | Direct/indirect calls, import stubs |
-| Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` | PVM + LLVM intrinsic lowering |
+| Add PVM lowering (intrinsics) | `llvm_backend/intrinsics.rs` | PVM + LLVM intrinsic lowering (incl. min/max, bswap, bitreverse, ctlz/cttz/ctpop, abs, fshl/fshr, `{u,s}{add,sub}.sat`) |
 | Modify emitter core | `llvm_backend/emitter.rs` | EmitterConfig (per-function config) + PvmEmitter (mutable state) |
 | Add PVM instruction | `pvm/opcode.rs` + `pvm/instruction.rs` | Add enum + encode/decode wiring |
 | Modify register allocator | `llvm_backend/regalloc.rs` | Live range computation, linear scan, allocatable regs |

@@ -678,3 +678,23 @@ Two pieces are required for the lowering to work end-to-end:
 2. **`Freeze` listed in `instruction_produces_value`** (`llvm_backend/emitter.rs`). The pre-scan walks every block and allocates a stack slot for any instruction whose result is consumed downstream; without `Freeze` in the producer set, `result_slot()` later returns `Error::Internal("no slot for Freeze result")`. Easy to miss: the `lower_instruction` arm compiles cleanly without it and the passthrough is well-defined — the failure only surfaces when the test actually runs.
 
 Testing strategy: triggering `freeze` reliably from a small WAT input is hard. WASM produces no poison itself, our frontend never adds `nsw`/`nuw` flags, and the optimizer passes we run (`mem2reg`, `instcombine`, `simplifycfg`, `gvn`, `dce`) only emit `freeze` for specific shapes that don't reduce to small fixtures. The regression test in `llvm_backend::tests::freeze_is_lowered_as_passthrough` parses hand-written LLVM IR text via `Context::create_module_from_ir` (inkwell 0.8 doesn't expose `build_freeze`) and runs it through `lower_function` directly with a minimal `LoweringContext`. This bypasses the LLVM-version-dependent question of "what input emits freeze" and pins down the lowering arm directly.
+
+---
+
+## Saturating-arithmetic intrinsic lowering (#217)
+
+Lowering `llvm.{u,s}{add,sub}.sat.iN` splits cleanly by width:
+
+- **Narrow widths (i8/i16/i32) — clamp via wider arithmetic:**
+  - Unsigned: zero-extend operands, do 64-bit add/subtract (which cannot overflow because both operands fit in 32 bits), then `MinU` (uadd) or branch + `CmovNzImm dst, cond, 0` (usub) to saturate. Result is naturally zero-extended.
+  - Signed: sign-extend operands (`SignExtend8`/`SignExtend16` or `AddImm32 _, _, 0` for i32), do 64-bit add/subtract (true result fits in i64 because two iN values differ/sum to at most 2^(N+1)), then clamp to `[INT_MIN, INT_MAX]` via signed `Max`/`Min`. Result is naturally sign-extended.
+
+- **i64 — no wider register, must detect overflow in-place:**
+  - Unsigned: `Add64`, then test `sum < a` (unsigned) for wrap; `CmovNz` saturates to `UINT64_MAX`.
+  - Signed: Hacker's Delight — overflow flag is bit 63 of `(a^b) & (a^sum)` (sub) or `(a^sum) & (b^sum)` (add). `SharRImm64 by 63` extracts the flag as 0 or -1; saturation value `INT_MIN`/`INT_MAX` is built from `sign(a) XOR INT_MAX`. The signed i64 paths use SCRATCH1/SCRATCH2 and bracket the sequence with `spill_allocated_regs` + `reload_allocated_regs_after_scratch_clobber` (same compromise as non-rotation `fshl`/`fshr`).
+
+The narrow paths are 5-7 instructions; i64 paths are 4 (uadd) / 3 (usub) / 10 (ssub/sadd). All paths use `result_reg`-driven store-side coalescing so the final saturated value lands directly in the register-allocated destination.
+
+**Critical: avoid `TEMP_RESULT` clobber after `dst` is written.** `result_reg` may return `TEMP_RESULT` (r4) when no allocated register is available. After `Add64 dst, ...` (or `Sub64`), any subsequent `LoadImm TEMP_RESULT, ...` would overwrite the sum/difference. The narrow-width sat helpers therefore load constants into `TEMP1` (which is dead after Add/Sub), not `TEMP_RESULT`. The bug surfaced under register pressure in the layer3 fixture; it doesn't show up in small unit tests where `result_reg` returns an allocated register.
+
+**Test coverage limitation:** WAT-driven tests for narrow-width and signed sat intrinsics only fold to `@llvm.{u,s}{add,sub}.sat.i64` (not the narrow widths) because LLVM 18 `instcombine` doesn't fold the canonical `clamp` shape through outer `zext`/`sext` to i32. The narrow-width and signed-narrow backend paths are present and correct algorithmically, exercised by real-world Rust IR (verified via the polkadot-fellows v2.2.2 runtime smoke check). The `dump_llvm_ir` test-harness helper exposes the post-pass IR so unit tests can assert which intrinsics were folded.
