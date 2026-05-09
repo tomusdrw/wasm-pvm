@@ -16,7 +16,10 @@ fn dump_llvm_ir_helper_returns_textual_ir() {
                 i32.add))
     "#;
     let ir = dump_llvm_ir(wat).expect("dump");
-    assert!(ir.contains("define"), "IR should contain a function definition, got:\n{ir}");
+    assert!(
+        ir.contains("define"),
+        "IR should contain a function definition, got:\n{ir}"
+    );
 }
 
 // =============================================================================
@@ -159,10 +162,12 @@ fn usub_sat_i64_emits_setltu_and_cmovnzimm() {
     let program = compile_wat(USUB_SAT_I64_WAT).expect("compile");
     let instructions = extract_instructions(&program);
     assert!(
-        has_opcode(&instructions, Opcode::SetLtU)
-            && has_opcode(&instructions, Opcode::CmovNzImm),
+        has_opcode(&instructions, Opcode::SetLtU) && has_opcode(&instructions, Opcode::CmovNzImm),
         "usub.sat.i64 lowering must emit SetLtU + CmovNzImm; got opcodes: {:?}",
-        instructions.iter().map(|i| format!("{i:?}")).collect::<Vec<_>>()
+        instructions
+            .iter()
+            .map(|i| format!("{i:?}"))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -300,10 +305,12 @@ fn uadd_sat_i64_emits_setltu_and_cmovnz() {
     let program = compile_wat(UADD_SAT_I64_WAT).expect("compile");
     let instructions = extract_instructions(&program);
     assert!(
-        has_opcode(&instructions, Opcode::SetLtU)
-            && has_opcode(&instructions, Opcode::CmovNz),
+        has_opcode(&instructions, Opcode::SetLtU) && has_opcode(&instructions, Opcode::CmovNz),
         "uadd.sat.i64 must emit SetLtU + CmovNz; got opcodes: {:?}",
-        instructions.iter().map(|i| format!("{i:?}")).collect::<Vec<_>>()
+        instructions
+            .iter()
+            .map(|i| format!("{i:?}"))
+            .collect::<Vec<_>>()
     );
 }
 
