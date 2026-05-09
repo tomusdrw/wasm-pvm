@@ -795,7 +795,7 @@ fn lower_usub_sat<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
 /// Algorithm:
 ///   - i8/i16/i32: zero-extend operands, do 64-bit add (cannot overflow
 ///     because both fit in 32 bits), `MinU` against the width's UMAX.
-///   - i64: `Add64`, detect wrap via `SetLtU sum, a`, `CmovNz` to UINT64_MAX.
+///   - i64: `Add64`, detect wrap via `SetLtU sum, a`, `CmovNz` to `UINT64_MAX`.
 fn lower_uadd_sat<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let slot = result_slot(e, instr)?;
     let a = get_operand(instr, 0)?;
@@ -948,10 +948,10 @@ fn lower_uadd_sat<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
 /// Algorithm:
 ///   - i8/i16/i32: sign-extend operands, do 64-bit subtract (true difference
 ///     fits in i64 because two iN values differ by at most 2^N), then clamp
-///     to [INT_MIN, INT_MAX] via signed Max/Min.
+///     to [`INT_MIN`, `INT_MAX`] via signed Max/Min.
 ///   - i64: Hacker's Delight overflow detection. Uses SCRATCH1/SCRATCH2,
-///     so brackets the sequence with spill_allocated_regs() /
-///     reload_allocated_regs_after_scratch_clobber().
+///     so brackets the sequence with `spill_allocated_regs()` /
+///     `reload_allocated_regs_after_scratch_clobber()`.
 fn lower_ssub_sat<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     use crate::abi::{SCRATCH1, SCRATCH2};
 
