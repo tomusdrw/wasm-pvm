@@ -698,3 +698,29 @@ The narrow paths are 5-7 instructions; i64 paths are 4 (uadd) / 3 (usub) / 10 (s
 **Critical: avoid `TEMP_RESULT` clobber after `dst` is written.** `result_reg` may return `TEMP_RESULT` (r4) when no allocated register is available. After `Add64 dst, ...` (or `Sub64`), any subsequent `LoadImm TEMP_RESULT, ...` would overwrite the sum/difference. The narrow-width sat helpers therefore load constants into `TEMP1` (which is dead after Add/Sub), not `TEMP_RESULT`. The bug surfaced under register pressure in the layer3 fixture; it doesn't show up in small unit tests where `result_reg` returns an allocated register.
 
 **Test coverage limitation:** WAT-driven tests for narrow-width and signed sat intrinsics only fold to `@llvm.{u,s}{add,sub}.sat.i64` (not the narrow widths) because LLVM 18 `instcombine` doesn't fold the canonical `clamp` shape through outer `zext`/`sext` to i32. The narrow-width and signed-narrow backend paths are present and correct algorithmically, exercised by real-world Rust IR (verified via the polkadot-fellows v2.2.2 runtime smoke check). The `dump_llvm_ir` test-harness helper exposes the post-pass IR so unit tests can assert which intrinsics were folded.
+
+## Phi-Copy Resolution: Slot-Based Parallel Moves (#219)
+
+The original phi-copy lowering snapshotted every incoming value into a distinct temp register (TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2 — five slots) and then wrote them all to their destinations, bailing with `Unsupported("too many phi values for available temp registers")` whenever a join block produced more than five copies on a single edge. The shape is rare in MVP-style code but appears reliably in the largest polkadot-fellows runtimes (`asset-hub-{kusama,polkadot}`, `bridge-hub-polkadot`) when compiled with `--trap-floats`.
+
+The fix replaces the bail with a slot-based parallel-move resolver in `llvm_backend/control_flow.rs::emit_phi_copies_via_slots`. Key design points:
+
+- **Canonical state on the stack.** `spill_all_dirty_regs()` runs first, so each value's authoritative copy lives at its allocated slot. The resolver reads/writes slots directly with `LoadIndU64`/`StoreIndU64` and never depends on register-cache state.
+- **Constants are detached from the dependency graph.** A phi whose incoming value is a constant has no source slot, so it cannot participate in a cycle. Constants are emitted *after* the slot-to-slot moves with `LoadImm + StoreIndU64`. If the constant-copy destination happens to be another phi's source, the slot reads have already happened, so the order is sound.
+- **Topological pass for the easy case.** A copy whose destination slot isn't anyone else's source can fire immediately (2 instructions: load via TEMP1, store). Real-world phi shapes — even on hot blocks in large runtimes — are dominated by this case.
+- **Single-temp cycle handling for the hard case.** Remaining copies form one or more disjoint permutation cycles. For each cycle `(d_0, s_0) … (d_{k-1}, s_{k-1})` (closed when `s_{k-1} == d_0`), the resolver: saves slot `d_0` to TEMP1, walks copies 0..k-1 via TEMP2 (2 instructions each), then finalizes the last write from TEMP1. Total `2k` PVM instructions per cycle — same as the old temp-snapshot path used to cost when it didn't bail. Two temp registers are enough for arbitrary cycle length.
+- **Cache invalidation after every direct slot store.** Each raw `StoreIndU64` to a phi destination calls `PvmEmitter::invalidate_cache_for_slot`, which drops the general `slot_cache` entry *and* clears any `alloc_reg_slot[r] == Some(slot)` mapping. Without this, later `operand_reg`/`load_operand` calls in the same block could believe an allocated register still holds the (now stale) old value of the destination slot.
+
+The two existing fast paths (≤5 copies) are kept verbatim: the regression risk is concentrated entirely in the new fallback, and benchmarks show **zero gas/size delta** across the standard benchmark suite (no benchmark hits the `>5` threshold).
+
+**Why a stack-only resolver, not a register-based one?** The regaware (lazy-spill) phi path could in principle resolve cycles in registers (it already discovers per-copy `incoming_reg`/`phi_reg` allocations). But once the fallback triggers, the active set is large enough that the dependency graph cuts across both register- and stack-only copies; the cleanest correctness story is to drop into a uniform slot-based representation. The resolver invalidates `alloc_reg_slot` for every destination slot it writes, so the next access through `load_operand` reloads from the canonical stack copy — no special-casing needed.
+
+**The loop-header swap as the canonical cycle.** The motivating cycle shape comes from loops whose header contains multiple phis that reference each other on the back-edge, e.g.
+
+```
+header:
+  %a = phi [%init1, %entry], [%b, %latch]
+  %b = phi [%init2, %entry], [%a, %latch]
+```
+
+On the body→header edge this becomes two simultaneous copies — `a.slot ← b.slot` and `b.slot ← a.slot` — a 2-cycle. The test `many_phi_values_with_loop_cycle_compiles` (in `crates/wasm-pvm/tests/phi_many_values.rs`) drives a 6-cycle through this pattern.
