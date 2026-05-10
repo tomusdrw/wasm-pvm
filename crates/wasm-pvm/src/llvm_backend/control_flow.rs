@@ -499,6 +499,13 @@ fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx
         e.load_operand(copy.incoming_value, TEMP1)?;
         e.store_to_slot(copy.phi_slot, TEMP1);
     } else {
+        // Fast path: when the copy count fits in the temp-register pool, load
+        // every incoming value into a distinct temp register and then write to
+        // destinations. This emits the same `2N` PVM instructions the
+        // slot-based fallback would, but skips the topological / cycle
+        // bookkeeping. The 5-temp limit comes from the available scratch
+        // registers (TEMP1/TEMP2/TEMP_RESULT plus SCRATCH1/SCRATCH2 when no
+        // bulk memory or funnel-shift uses them in this function).
         let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
         if copies.len() <= temp_regs.len() {
             // When using SCRATCH1/SCRATCH2 as temp registers (4+ copies), spill
@@ -516,7 +523,8 @@ fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx
             }
         } else {
             // More copies than the temp-register snapshot can hold: fall back
-            // to a slot-based parallel-move resolver that uses TEMP1/TEMP2.
+            // to a slot-based parallel-move resolver that uses TEMP1/TEMP2 and
+            // handles arbitrary copy counts (incl. permutation cycles).
             emit_phi_copies_via_slots(e, copies)?;
         }
     }
@@ -579,6 +587,9 @@ fn emit_phi_copies_regaware<'ctx>(
     //
     // Strategy: use temp registers to hold ALL incoming values, then write
     // them to destinations. This is simple and handles all dependency cases.
+    // Threshold of 5 = the available scratch pool. For larger phi shapes we
+    // delegate to `emit_phi_copies_via_slots`, which handles arbitrary
+    // counts and permutation cycles using only TEMP1/TEMP2.
     let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
 
     // When using SCRATCH1/SCRATCH2 as temp registers (4+ active copies), we

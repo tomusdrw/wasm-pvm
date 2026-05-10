@@ -195,3 +195,95 @@ fn many_phi_values_with_loop_cycle_compiles_without_lazy_spill() {
     let instructions = extract_instructions(&program);
     assert!(!instructions.is_empty());
 }
+
+/// Three independent swap-pairs in a single loop body. After mem2reg the
+/// back-edge phi copies form **three disjoint 2-cycles** rather than one
+/// long cycle, exercising the parallel-move resolver's ability to find and
+/// emit each cycle independently. Plus the loop counter, this is 7 phis on
+/// one edge.
+const WAT_MANY_PHI_DISJOINT_CYCLES: &str = r#"
+    (module
+        (memory 1)
+        (func (export "main") (param $args_ptr i32) (param $args_len i32) (result i64)
+            (local $a i64) (local $b i64)
+            (local $c i64) (local $d i64)
+            (local $e i64) (local $f i64)
+            (local $i i32)
+            (local $tmp i64)
+
+            (local.set $a (i64.load        (local.get $args_ptr)))
+            (local.set $b (i64.load offset=8  (local.get $args_ptr)))
+            (local.set $c (i64.load offset=16 (local.get $args_ptr)))
+            (local.set $d (i64.load offset=24 (local.get $args_ptr)))
+            (local.set $e (i64.load offset=32 (local.get $args_ptr)))
+            (local.set $f (i64.load offset=40 (local.get $args_ptr)))
+            (local.set $i (i32.const 0))
+
+            (loop $L
+                ;; Swap a, b
+                (local.set $tmp (local.get $a))
+                (local.set $a (local.get $b))
+                (local.set $b (local.get $tmp))
+
+                ;; Swap c, d
+                (local.set $tmp (local.get $c))
+                (local.set $c (local.get $d))
+                (local.set $d (local.get $tmp))
+
+                ;; Swap e, f
+                (local.set $tmp (local.get $e))
+                (local.set $e (local.get $f))
+                (local.set $f (local.get $tmp))
+
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $L (i32.lt_s (local.get $i) (local.get $args_len)))
+            )
+
+            ;; Persist final state so LLVM cannot fold the loop body away.
+            (i64.store        (local.get $args_ptr) (local.get $a))
+            (i64.store offset=8  (local.get $args_ptr) (local.get $b))
+            (i64.store offset=16 (local.get $args_ptr) (local.get $c))
+            (i64.store offset=24 (local.get $args_ptr) (local.get $d))
+            (i64.store offset=32 (local.get $args_ptr) (local.get $e))
+            (i64.store offset=40 (local.get $args_ptr) (local.get $f))
+
+            ;; Return packed (ptr=0, len=48).
+            (i64.const 206158430208)
+        )
+    )
+"#;
+
+#[test]
+fn many_phi_values_with_disjoint_cycles_compiles() {
+    let ir = dump_llvm_ir(WAT_MANY_PHI_DISJOINT_CYCLES).expect("LLVM IR dump");
+    let phi_count = ir.matches("= phi ").count();
+    assert!(
+        phi_count >= 6,
+        "expected >=6 phi nodes after LLVM passes, got {phi_count}; \
+         WAT no longer exercises the parallel-move resolver"
+    );
+
+    let program = compile_wat(WAT_MANY_PHI_DISJOINT_CYCLES)
+        .expect("compilation should succeed after the fix");
+    let instructions = extract_instructions(&program);
+    assert!(!instructions.is_empty());
+}
+
+#[test]
+fn many_phi_values_with_disjoint_cycles_compiles_without_lazy_spill() {
+    let opts = OptimizationFlags {
+        lazy_spill: false,
+        ..OptimizationFlags::default()
+    };
+
+    let program = compile_wat_with_options(
+        WAT_MANY_PHI_DISJOINT_CYCLES,
+        &CompileOptions {
+            optimizations: opts,
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compilation should succeed after the fix");
+    let instructions = extract_instructions(&program);
+    assert!(!instructions.is_empty());
+}
