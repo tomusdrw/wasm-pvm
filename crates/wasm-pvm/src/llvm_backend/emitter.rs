@@ -951,6 +951,25 @@ impl<'ctx> PvmEmitter<'ctx> {
         self.reg_to_const[idx] = None;
     }
 
+    /// Drop any cached register-to-slot mapping for `slot`.
+    ///
+    /// Used by the slot-based phi-copy resolver: writing directly to a slot via
+    /// `StoreIndU64` makes any register that previously claimed to hold that
+    /// slot's value stale. Both the general register cache and any
+    /// register-allocation mapping pointing to `slot` are cleared.
+    /// Caller is responsible for spilling dirty registers beforehand.
+    pub fn invalidate_cache_for_slot(&mut self, slot: i32) {
+        if let Some(reg) = self.slot_cache.remove(&slot) {
+            self.reg_to_slot[reg as usize] = None;
+        }
+        for r_idx in 0..self.alloc_reg_slot.len() {
+            if self.alloc_reg_slot[r_idx] == Some(slot) {
+                self.alloc_reg_slot[r_idx] = None;
+                self.alloc_dirty[r_idx] = false;
+            }
+        }
+    }
+
     /// Clear the entire register cache (at block boundaries).
     ///
     /// Clears the general cache (`slot_cache`, `reg_to_slot`, `reg_to_const`) and
