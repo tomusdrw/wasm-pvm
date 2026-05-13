@@ -11,6 +11,8 @@
     clippy::cast_sign_loss
 )]
 
+use std::collections::BTreeMap;
+
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{AnyValue, BasicValueEnum, InstructionOpcode, InstructionValue, PhiValue};
@@ -22,7 +24,7 @@ use super::emitter::{
     PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, operand_reg,
     result_slot, try_get_constant, val_key_basic, val_key_instr,
 };
-use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
+use crate::abi::{STACK_PTR_REG, TEMP_RESULT, TEMP1, TEMP2};
 
 /// Lower a branch instruction (conditional or unconditional).
 pub fn lower_br<'ctx>(
@@ -497,6 +499,13 @@ fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx
         e.load_operand(copy.incoming_value, TEMP1)?;
         e.store_to_slot(copy.phi_slot, TEMP1);
     } else {
+        // Fast path: when the copy count fits in the temp-register pool, load
+        // every incoming value into a distinct temp register and then write to
+        // destinations. This emits the same `2N` PVM instructions the
+        // slot-based fallback would, but skips the topological / cycle
+        // bookkeeping. The 5-temp limit comes from the available scratch
+        // registers (TEMP1/TEMP2/TEMP_RESULT plus SCRATCH1/SCRATCH2 when no
+        // bulk memory or funnel-shift uses them in this function).
         let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
         if copies.len() <= temp_regs.len() {
             // When using SCRATCH1/SCRATCH2 as temp registers (4+ copies), spill
@@ -513,9 +522,10 @@ fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx
                 e.store_to_slot(copy.phi_slot, temp_regs[i]);
             }
         } else {
-            return Err(Error::Unsupported(
-                "too many phi values for available temp registers".to_string(),
-            ));
+            // More copies than the temp-register snapshot can hold: fall back
+            // to a slot-based parallel-move resolver that uses TEMP1/TEMP2 and
+            // handles arbitrary copy counts (incl. permutation cycles).
+            emit_phi_copies_via_slots(e, copies)?;
         }
     }
 
@@ -577,6 +587,9 @@ fn emit_phi_copies_regaware<'ctx>(
     //
     // Strategy: use temp registers to hold ALL incoming values, then write
     // them to destinations. This is simple and handles all dependency cases.
+    // Threshold of 5 = the available scratch pool. For larger phi shapes we
+    // delegate to `emit_phi_copies_via_slots`, which handles arbitrary
+    // counts and permutation cycles using only TEMP1/TEMP2.
     let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
 
     // When using SCRATCH1/SCRATCH2 as temp registers (4+ active copies), we
@@ -630,10 +643,267 @@ fn emit_phi_copies_regaware<'ctx>(
             }
         }
     } else {
-        return Err(Error::Unsupported(
-            "too many phi values for available temp registers".to_string(),
-        ));
+        // More active copies than the temp-register snapshot can hold: fall
+        // back to slot-based parallel-move resolution. Build a sub-list of
+        // PhiCopy values for the active subset.
+        let active: Vec<PhiCopy<'ctx>> = active_copies
+            .iter()
+            .map(|&ci| PhiCopy {
+                phi_slot: copies[ci].phi_slot,
+                incoming_value: copies[ci].incoming_value,
+                phi_reg: copies[ci].phi_reg,
+                incoming_reg: copies[ci].incoming_reg,
+            })
+            .collect();
+        emit_phi_copies_via_slots(e, &active)?;
     }
 
     Ok(())
+}
+
+/// Slot-based parallel-move resolver for phi copies.
+///
+/// Handles arbitrary numbers of copies using only TEMP1/TEMP2. Operates
+/// entirely on stack slots after spilling all dirty allocated registers, so
+/// it is correct regardless of the lazy-spill / register-cache state.
+///
+/// Algorithm:
+/// 1. Spill all dirty regs so each value's canonical home is on the stack.
+/// 2. Split copies into:
+///    - constant copies (no source slot — emitted last via `LoadImm` + store);
+///    - slot copies `(dst_slot, src_slot)`.
+/// 3. Topologically resolve slot copies: a copy whose destination slot is not
+///    used as a source by any unfinished copy can be emitted directly with
+///    `load TEMP1; store TEMP1`.
+/// 4. Remaining copies form one or more cycles. For each cycle of length k:
+///    - save the original value of `cycle[0].dst` to TEMP1 (`k`th copy will
+///      write to that slot but the value is needed by the last write);
+///    - emit copies 0..k-1 normally via TEMP2;
+///    - emit final copy by storing TEMP1 to `cycle[k-1].dst`.
+///    - Total: `2k` PVM instructions per cycle.
+///
+/// Cache invalidation: after every direct slot store, any general or allocated
+/// register cache entry pointing to the destination slot is invalidated so
+/// subsequent loads reload from the (now-canonical) stack value.
+fn emit_phi_copies_via_slots<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    copies: &[PhiCopy<'ctx>],
+) -> Result<()> {
+    e.spill_all_dirty_regs();
+
+    // Bucket copies into slot-to-slot moves and constant materializations.
+    // Skip self-copies (dst_slot == src_slot for the same SSA value).
+    let mut slot_copies: Vec<(i32, i32)> = Vec::new();
+    let mut const_copies: Vec<(i32, BasicValueEnum<'ctx>)> = Vec::new();
+
+    for copy in copies {
+        if is_constant_or_undef(copy.incoming_value) {
+            const_copies.push((copy.phi_slot, copy.incoming_value));
+            continue;
+        }
+        let key = val_key_basic(copy.incoming_value);
+        let src_slot = e
+            .get_slot(key)
+            .ok_or_else(|| Error::Internal("phi incoming value has no slot".into()))?;
+        if src_slot != copy.phi_slot {
+            slot_copies.push((copy.phi_slot, src_slot));
+        }
+    }
+
+    resolve_slot_parallel_move(e, &slot_copies);
+
+    // Constants are emitted last: they don't depend on any source slot, but
+    // their destination might have been a source for a slot copy that just ran.
+    for (dst_slot, val) in const_copies {
+        e.load_operand(val, TEMP1)?;
+        e.emit(Instruction::StoreIndU64 {
+            base: STACK_PTR_REG,
+            src: TEMP1,
+            offset: dst_slot,
+        });
+        e.invalidate_cache_for_slot(dst_slot);
+    }
+
+    // Reload phi destinations into their allocated registers (if any).
+    //
+    // The parallel-move resolver writes values to stack slots via raw
+    // `StoreIndU64`, but never touches the register file. When the target
+    // block begins, `restore_phi_alloc_reg_slots` will tell the emitter
+    // that each phi_reg "owns" its phi_slot — under that invariant the
+    // physical register must already hold the correct value, otherwise
+    // future reads via `operand_reg(phi)` see stale data. Load each
+    // phi_reg from its (now canonical) slot here.
+    for copy in copies {
+        if let Some(phi_reg) = copy.phi_reg {
+            e.emit(Instruction::LoadIndU64 {
+                dst: phi_reg,
+                base: STACK_PTR_REG,
+                offset: copy.phi_slot,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn is_constant_or_undef(val: BasicValueEnum<'_>) -> bool {
+    if let BasicValueEnum::IntValue(iv) = val {
+        iv.get_sign_extended_constant().is_some()
+            || iv.get_zero_extended_constant().is_some()
+            || iv.is_poison()
+            || iv.is_undef()
+    } else {
+        false
+    }
+}
+
+/// Emit a slot-to-slot move using TEMP1 as the staging register.
+fn emit_slot_move(e: &mut PvmEmitter<'_>, dst: i32, src: i32, via: u8) {
+    e.emit(Instruction::LoadIndU64 {
+        dst: via,
+        base: STACK_PTR_REG,
+        offset: src,
+    });
+    e.emit(Instruction::StoreIndU64 {
+        base: STACK_PTR_REG,
+        src: via,
+        offset: dst,
+    });
+    e.invalidate_cache_for_slot(dst);
+}
+
+/// Resolve a parallel-move on stack slots.
+///
+/// The input is a list of `(dst, src)` slot pairs representing simultaneous
+/// copies (`for each pair: slot[dst] := slot[src]`). The implementation
+/// emits a serialized sequence that achieves the same effect.
+///
+/// Uses a topological pass for the non-cyclic part, then breaks any
+/// remaining cycles by saving the head of the cycle to TEMP1 once.
+fn resolve_slot_parallel_move(e: &mut PvmEmitter<'_>, slot_copies: &[(i32, i32)]) {
+    if slot_copies.is_empty() {
+        return;
+    }
+
+    // Track how many remaining copies still use each slot as a source.
+    // Once a slot is no longer anyone's source, any copy writing it is "free".
+    let mut src_use_count: BTreeMap<i32, usize> = BTreeMap::new();
+    for &(_, src) in slot_copies {
+        *src_use_count.entry(src).or_default() += 1;
+    }
+
+    let mut remaining: Vec<(i32, i32)> = slot_copies.to_vec();
+
+    // Phase 1: emit any copy whose destination slot isn't a source of an
+    // unfinished copy. Repeat until no more such copies exist.
+    loop {
+        let leaf = remaining
+            .iter()
+            .position(|&(dst, _)| src_use_count.get(&dst).is_none_or(|&c| c == 0));
+        match leaf {
+            Some(i) => {
+                let (dst, src) = remaining.swap_remove(i);
+                emit_slot_move(e, dst, src, TEMP1);
+                if let Some(c) = src_use_count.get_mut(&src) {
+                    *c -= 1;
+                }
+            }
+            None => break,
+        }
+    }
+
+    // Phase 2: anything left forms one or more cycles. Resolve each.
+    while !remaining.is_empty() {
+        let cycle = extract_cycle(&mut remaining);
+        emit_slot_cycle(e, &cycle);
+    }
+}
+
+/// Extract one cycle from `remaining`, returning the chain of copies.
+///
+/// Walks forward following "next dst becomes prev src" links until the loop
+/// closes. For a true permutation the chain always closes; if input is
+/// malformed (broken cycle) the function returns whatever path it walked,
+/// which is harmless — `emit_slot_cycle` still produces a correct sequence.
+fn extract_cycle(remaining: &mut Vec<(i32, i32)>) -> Vec<(i32, i32)> {
+    // Pick any remaining copy as the start.
+    let first = remaining.swap_remove(0);
+    let head_dst = first.0;
+    let mut chain = vec![first];
+    let mut current_src = chain[0].1;
+
+    while current_src != head_dst {
+        let Some(idx) = remaining.iter().position(|(d, _)| *d == current_src) else {
+            // Shouldn't happen if the input was a clean permutation; bail
+            // gracefully — `emit_slot_cycle` handles partial chains too.
+            break;
+        };
+        let copy = remaining.swap_remove(idx);
+        current_src = copy.1;
+        chain.push(copy);
+    }
+
+    chain
+}
+
+/// Emit a cyclic chain of copies using TEMP1 for the saved head value and
+/// TEMP2 for the per-step staging register.
+///
+/// `chain` is `[(d_0, s_0), ..., (d_{k-1}, s_{k-1})]`, where for each
+/// `i in 0..k-1`, `s_i == d_{i+1}` (next link), and `s_{k-1} == d_0` for a
+/// closed cycle. For a chain that didn't close (defensive path), the last
+/// copy's source is read from the stack like any other source.
+fn emit_slot_cycle(e: &mut PvmEmitter<'_>, chain: &[(i32, i32)]) {
+    if chain.is_empty() {
+        return;
+    }
+    if chain.len() == 1 {
+        // Self-loop or stray single-element chain: emit as a normal move.
+        let (dst, src) = chain[0];
+        emit_slot_move(e, dst, src, TEMP1);
+        return;
+    }
+
+    let head_dst = chain[0].0;
+    let last_src = chain[chain.len() - 1].1;
+    let closed = last_src == head_dst;
+
+    if closed {
+        // Save head's original value (which is `last_src` == `head_dst`).
+        e.emit(Instruction::LoadIndU64 {
+            dst: TEMP1,
+            base: STACK_PTR_REG,
+            offset: head_dst,
+        });
+
+        // Emit all but the last copy via TEMP2.
+        for &(dst, src) in &chain[..chain.len() - 1] {
+            e.emit(Instruction::LoadIndU64 {
+                dst: TEMP2,
+                base: STACK_PTR_REG,
+                offset: src,
+            });
+            e.emit(Instruction::StoreIndU64 {
+                base: STACK_PTR_REG,
+                src: TEMP2,
+                offset: dst,
+            });
+            e.invalidate_cache_for_slot(dst);
+        }
+
+        // Final copy reads from saved TEMP1 (slot was overwritten by the first
+        // step, so we can't read it from the stack any more).
+        let last_dst = chain[chain.len() - 1].0;
+        e.emit(Instruction::StoreIndU64 {
+            base: STACK_PTR_REG,
+            src: TEMP1,
+            offset: last_dst,
+        });
+        e.invalidate_cache_for_slot(last_dst);
+    } else {
+        // Defensive: chain didn't close. Emit each copy directly.
+        for &(dst, src) in chain {
+            emit_slot_move(e, dst, src, TEMP1);
+        }
+    }
 }
