@@ -717,7 +717,7 @@ The two existing fast paths (≤5 copies) are kept verbatim: the regression risk
 
 **The loop-header swap as the canonical cycle.** The motivating cycle shape comes from loops whose header contains multiple phis that reference each other on the back-edge, e.g.
 
-```
+```llvm
 header:
   %a = phi [%init1, %entry], [%b, %latch]
   %b = phi [%init2, %entry], [%a, %latch]

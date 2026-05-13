@@ -724,6 +724,25 @@ fn emit_phi_copies_via_slots<'ctx>(
         e.invalidate_cache_for_slot(dst_slot);
     }
 
+    // Reload phi destinations into their allocated registers (if any).
+    //
+    // The parallel-move resolver writes values to stack slots via raw
+    // `StoreIndU64`, but never touches the register file. When the target
+    // block begins, `restore_phi_alloc_reg_slots` will tell the emitter
+    // that each phi_reg "owns" its phi_slot — under that invariant the
+    // physical register must already hold the correct value, otherwise
+    // future reads via `operand_reg(phi)` see stale data. Load each
+    // phi_reg from its (now canonical) slot here.
+    for copy in copies {
+        if let Some(phi_reg) = copy.phi_reg {
+            e.emit(Instruction::LoadIndU64 {
+                dst: phi_reg,
+                base: STACK_PTR_REG,
+                offset: copy.phi_slot,
+            });
+        }
+    }
+
     Ok(())
 }
 
