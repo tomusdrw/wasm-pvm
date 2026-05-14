@@ -342,10 +342,21 @@ compile_polkadot_jams() {
       cmd+=("${extra_flags[@]}")
     fi
     rm -f "$out"
+    local rc=0
     if [ -n "$timeout_bin" ]; then
-      "$timeout_bin" "$POLKADOT_COMPILE_TIMEOUT" "${cmd[@]}" >/dev/null 2>&1 || true
+      "$timeout_bin" "$POLKADOT_COMPILE_TIMEOUT" "${cmd[@]}" >/dev/null 2>&1 || rc=$?
     else
-      "${cmd[@]}" >/dev/null 2>&1 || true
+      "${cmd[@]}" >/dev/null 2>&1 || rc=$?
+    fi
+    # Silent SKIPs leave `polkadot_summary_row` reporting `Σ N/14` with no
+    # indication of which runtime didn't make it; surface a short reason
+    # here. coreutils `timeout` exits 124 (or 137 on SIGKILL) on time-out.
+    if [ "$rc" -ne 0 ]; then
+      if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+        echo "  ${short}: timed out after ${POLKADOT_COMPILE_TIMEOUT}s — JAM missing from summary row" >&2
+      else
+        echo "  ${short}: compile failed (rc=${rc}) — JAM missing from summary row" >&2
+      fi
     fi
   done
 }
