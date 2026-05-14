@@ -241,9 +241,9 @@ extract_error_reason() {
 
 build_compiler
 
-# Per-runtime results. Each entry is a tab-separated row used to render the README.
+# Per-runtime results. Each entry is a pipe-separated row used to render the
+# README: name|compressed|wasm|imports|float_ops|status|jam|reason|elapsed.
 declare -a RESULTS
-RESULTS_HEADER="name|compressed|wasm|imports|float_ops|status|jam|reason|elapsed"
 
 for file in "${RUNTIME_FILES[@]}"; do
   short="${file%.compact.compressed.wasm}"
