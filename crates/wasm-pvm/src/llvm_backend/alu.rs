@@ -349,6 +349,59 @@ pub fn lower_binary_arith<'ctx>(
         return Ok(());
     }
 
+    // Non-commutative shift with constant LHS: `const SHIFT x` → *ImmAlt variant.
+    // Useful for the common `1 << x` bitmask idiom and similar patterns where
+    // the shift count is variable but the shifted value is a small constant.
+    if let Some(lhs_const) = try_get_constant(lhs)
+        && i32::try_from(lhs_const).is_ok()
+        && matches!(op, BinaryOp::Shl | BinaryOp::LShr | BinaryOp::AShr)
+    {
+        let imm = lhs_const as i32;
+        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
+        if rhs_reg != TEMP1 && rhs_reg == dst {
+            rhs_reg = TEMP1;
+        }
+        if rhs_reg == TEMP1 {
+            e.load_operand(rhs, TEMP1)?;
+        }
+        let instr = match (op, bits <= 32) {
+            (BinaryOp::Shl, true) => Instruction::ShloLImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::Shl, false) => Instruction::ShloLImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::LShr, true) => Instruction::ShloRImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::LShr, false) => Instruction::ShloRImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::AShr, true) => Instruction::SharRImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::AShr, false) => Instruction::SharRImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            _ => unreachable!("guarded by matches! above"),
+        };
+        e.emit(instr);
+        e.store_to_slot(slot, dst);
+        return Ok(());
+    }
+
     // Commutative constant-LHS folding: `const op x` → `x op const` for commutative ops.
     // LLVM's instcombine usually canonicalizes constants to RHS, but this helps edge cases
     // and --no-llvm-passes mode.
