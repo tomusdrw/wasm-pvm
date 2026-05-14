@@ -614,7 +614,10 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     // routed through `encode_imm`), `function_offsets` and `jump_table`
     // silently desync; catch that here instead of producing a corrupt JAM.
     debug_assert_eq!(
-        all_instructions.iter().map(|i| i.encode().len()).sum::<usize>(),
+        all_instructions
+            .iter()
+            .map(|i| i.encode().len())
+            .sum::<usize>(),
         current_code_bytes,
         "post-patch instruction stream size differs from emission-time total — \
          a patched instruction's encoded length changed, invalidating \
