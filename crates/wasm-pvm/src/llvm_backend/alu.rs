@@ -856,24 +856,22 @@ pub fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     let dst = result_reg_or(e, instr, TEMP1);
 
     if from_bits == 32 {
-        // i32 → i64: use load-side coalescing for the shift source.
+        // i32 → i64 zero-extend: `(x << 32) >>u 32`. Use immediate-form
+        // shifts so we don't need a separate `LoadImm 32` instruction or a
+        // dedicated register to hold the shift count.
         let src_reg = operand_reg(e, src, dst);
         if src_reg == dst {
             e.load_operand(src, dst)?;
         }
-        e.emit(Instruction::LoadImm {
-            reg: TEMP2,
+        e.emit(Instruction::ShloLImm64 {
+            dst,
+            src: src_reg,
             value: 32,
         });
-        e.emit(Instruction::ShloL64 {
+        e.emit(Instruction::ShloRImm64 {
             dst,
-            src1: src_reg,
-            src2: TEMP2,
-        });
-        e.emit(Instruction::ShloR64 {
-            dst,
-            src1: dst,
-            src2: TEMP2,
+            src: dst,
+            value: 32,
         });
     } else {
         // i1 → i32/i64 (no-op copy) and other widths: load into dst as before.
