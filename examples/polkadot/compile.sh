@@ -12,8 +12,10 @@
 #
 # Output: examples/polkadot/README.md (overwritten each run).
 #
-# Prerequisites: bash, curl, zstd, xxd, awk, python3 (for byte-strip helper),
-#                cargo (release build of wasm-pvm-cli is invoked automatically).
+# Prerequisites: bash, curl, zstd, xxd, awk, wasm-tools
+#                (`cargo install wasm-tools` if missing — needed to
+#                 generate the trap-all import map), and cargo (release
+#                 build of wasm-pvm-cli is invoked automatically).
 
 set -euo pipefail
 
@@ -22,6 +24,21 @@ PROJECT_ROOT="$(cd "$THIS_DIR/../.." && pwd)"
 
 RELEASE_TAG="${RELEASE_TAG:-v2.2.2}"
 RELEASE_URL_BASE="https://github.com/polkadot-fellows/runtimes/releases/download/${RELEASE_TAG}"
+
+# The asset list (`RUNTIME_FILES` below) is currently pinned to the `v2002002`
+# basenames shipped with `v2.2.2`. Reusing those names against any other tag
+# either 404s on download or — worse — silently reuses a previous tag's cached
+# downloads while the regenerated README links the new release. Until the
+# asset list is derived from `RELEASE_TAG` (e.g. by querying the GitHub
+# release API at startup), fail fast on anything else.
+SUPPORTED_RELEASE_TAG="v2.2.2"
+if [ "$RELEASE_TAG" != "$SUPPORTED_RELEASE_TAG" ]; then
+  echo "Error: RELEASE_TAG='$RELEASE_TAG' is not yet supported." >&2
+  echo "       This script is currently pinned to ${SUPPORTED_RELEASE_TAG}'s" >&2
+  echo "       asset basenames. Drop the override or use" >&2
+  echo "       RELEASE_TAG=${SUPPORTED_RELEASE_TAG}." >&2
+  exit 1
+fi
 
 # Substrate "compact compressed" magic (8 bytes prepended before the zstd stream).
 SUBSTRATE_MAGIC_HEX="52bc537646db8e05"
@@ -346,7 +363,7 @@ log "Writing README to $README"
   echo "cd examples/polkadot && ./compile.sh"
   echo '```'
   echo
-  echo "Set \`RELEASE_TAG=vX.Y.Z\` to target a different release, \`COMPILE_TIMEOUT=600\` to relax the per-runtime time budget, or \`TRAP_FLOATS=0\` to disable the \`--trap-floats\` flag (so the first f32/f64 op surfaces as a hard error instead of becoming a runtime trap)."
+  echo "Set \`COMPILE_TIMEOUT=600\` to relax the per-runtime time budget, or \`TRAP_FLOATS=0\` to disable the \`--trap-floats\` flag (so the first f32/f64 op surfaces as a hard error instead of becoming a runtime trap). The pipeline is currently pinned to release ${RELEASE_TAG}; overriding \`RELEASE_TAG\` is rejected until the asset list is derived from the tag."
   echo
   echo "Compressed downloads land in \`runtimes/\`, decompressed modules in \`wasm/\`, generated trap-all import maps in \`imports/\`, JAM outputs in \`jam/\`, and full compile logs in \`logs/\`. All five directories are gitignored."
 } > "$README"
