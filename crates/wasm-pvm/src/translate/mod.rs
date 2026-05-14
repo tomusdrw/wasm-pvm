@@ -606,6 +606,21 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         }
     }
 
+    // The prefix-sum / running-counter optimisation (#225) relies on the
+    // patches above leaving every instruction's encoded byte length
+    // unchanged — `LoadImmJump.offset` and `Jump.offset` are fixed 4-byte
+    // fields (`encode_one_reg_one_imm_one_off` / `to_le_bytes()`). If a
+    // future change adds a patchable variable-length immediate (anything
+    // routed through `encode_imm`), `function_offsets` and `jump_table`
+    // silently desync; catch that here instead of producing a corrupt JAM.
+    debug_assert_eq!(
+        all_instructions.iter().map(|i| i.encode().len()).sum::<usize>(),
+        current_code_bytes,
+        "post-patch instruction stream size differs from emission-time total — \
+         a patched instruction's encoded length changed, invalidating \
+         function_offsets / jump_table",
+    );
+
     // Phase 5: Build dispatch table for call_indirect.
     let mut ro_data = vec![0u8];
     if !module.function_table.is_empty() {
