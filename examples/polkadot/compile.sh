@@ -305,7 +305,7 @@ log "Writing README to $README"
   if [ "$TRAP_FLOATS" = "1" ]; then
     echo "Compiled with **\`--trap-floats\`** (f32/f64 ops replaced with runtime traps so compilation can finish past the float wall)."
   else
-    echo "Compiled in default mode — first f32/f64 op rejects compilation. Re-run with \`TRAP_FLOATS=0\` cleared (or \`TRAP_FLOATS=1\`, the script default) to skip past floats."
+    echo "Compiled with \`--trap-floats\` disabled — the first f32/f64 op rejects compilation. Re-run with \`TRAP_FLOATS=1\` (the script default) to replace float ops with runtime traps and skip past the float wall."
   fi
   echo
   echo "## Results"
@@ -348,7 +348,7 @@ log "Writing README to $README"
   echo
   echo "Set \`RELEASE_TAG=vX.Y.Z\` to target a different release, \`COMPILE_TIMEOUT=600\` to relax the per-runtime time budget, or \`TRAP_FLOATS=0\` to disable the \`--trap-floats\` flag (so the first f32/f64 op surfaces as a hard error instead of becoming a runtime trap)."
   echo
-  echo "Compressed downloads land in \`runtimes/\`, decompressed modules in \`wasm/\`, generated trap-all import maps in \`imports/\`, JAM outputs in \`jam/\`, and full compile logs in \`logs/\`. All four directories are gitignored."
+  echo "Compressed downloads land in \`runtimes/\`, decompressed modules in \`wasm/\`, generated trap-all import maps in \`imports/\`, JAM outputs in \`jam/\`, and full compile logs in \`logs/\`. All five directories are gitignored."
 } > "$README"
 
 log "Done."
