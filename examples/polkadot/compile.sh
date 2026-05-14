@@ -189,8 +189,17 @@ float_op_kinds() {
     echo "?"; return
   fi
   local kinds
+  # The regex has two alternatives so we capture both:
+  #   1. `(f32|f64).<anything>`  — every plain f32/f64 op, including
+  #      mnemonics whose tail contains digits (e.g. `f32.convert_i32_s`,
+  #      `f64.promote_f32`).
+  #   2. `i{32,64}.(trunc[_sat]?|reinterpret)_f{32,64}[_su]?` — the
+  #      integer-result float ops (`i32.trunc_f64_s`,
+  #      `i32.trunc_sat_f64_u`, `i64.reinterpret_f64`, …) which consume a
+  #      float and would still trap under `--trap-floats`. Without #2 the
+  #      table silently under-reports.
   kinds="$(wasm-tools print "$wasm" 2>/dev/null \
-            | grep -oE '(f32|f64)\.[a-z_]+' \
+            | grep -oE '(f32|f64)\.[a-z0-9_]+|i(32|64)\.(trunc(_sat)?|reinterpret)_(f32|f64)(_[su])?' \
             | sort -u \
             | tr '\n' ',' \
             | sed 's/,$//')"

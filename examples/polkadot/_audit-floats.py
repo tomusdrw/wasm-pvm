@@ -15,8 +15,17 @@ def main() -> None:
 
     # `(func $name (;idx;)` — wasm-tools format.
     fn_re = re.compile(r"^\s*\(func\s+\$(\S+)\s+\(;(\d+);\)")
-    # Any f32/f64 op variant.
-    op_re = re.compile(r"\b((?:f32|f64)\.[a-z_0-9]+)\b")
+    # Any float op variant. Two alternatives:
+    #   1. `(f32|f64).<anything>` — every plain f32/f64 op (including
+    #      mnemonics with digits in the tail like `f32.convert_i32_s`).
+    #   2. `i{32,64}.(trunc[_sat]?|reinterpret)_f{32,64}[_su]?` — the
+    #      integer-result float ops (`i32.trunc_f64_s`,
+    #      `i32.trunc_sat_f64_u`, `i64.reinterpret_f64`, …) which
+    #      consume a float and would still trap under `--trap-floats`.
+    op_re = re.compile(
+        r"\b((?:f32|f64)\.[a-z0-9_]+"
+        r"|i(?:32|64)\.(?:trunc(?:_sat)?|reinterpret)_f(?:32|64)(?:_[su])?)\b"
+    )
 
     # Best-effort Rust symbol cleaner that tolerates the wasm-tools `$LT$` /
     # `$RF$` / `..` escapes the WAT printer applies to keep names valid
