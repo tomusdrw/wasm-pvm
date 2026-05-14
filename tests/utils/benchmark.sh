@@ -64,6 +64,44 @@ BENCHMARKS=(
   "sha512|616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161|0|sha512(240x\"a\" — multi-block + two-pad)|wat:tests/fixtures/wat/sha512.jam.wat"
 )
 
+# Polkadot fellowship runtime benchmarks (polkadot-fellows/runtimes v2.2.2).
+# Each is a size-only entry — Polkadot runtimes need substrate to actually run,
+# so the benchmark only reports JAM/code size. WASMs are NOT checked into the
+# repo; populate them once with `cd examples/polkadot && ./compile.sh` (which
+# downloads from the GitHub release, strips the Substrate magic header, and
+# zstd-decompresses). After that, every benchmark run picks them up
+# automatically via `compile_polkadot_jams` below. If a runtime's WASM is
+# missing it's silently skipped, so a fresh clone still benchmarks cleanly.
+POLKADOT_RUNTIMES=(
+  asset-hub-kusama_runtime-v2002002
+  asset-hub-polkadot_runtime-v2002002
+  bridge-hub-kusama_runtime-v2002002
+  bridge-hub-polkadot_runtime-v2002002
+  bulletin-polkadot_runtime-v2002002
+  collectives-polkadot_runtime-v2002002
+  coretime-kusama_runtime-v2002002
+  coretime-polkadot_runtime-v2002002
+  encointer-kusama_runtime-v2002002
+  glutton-kusama_runtime-v2002002
+  kusama_runtime-v2002002
+  people-kusama_runtime-v2002002
+  people-polkadot_runtime-v2002002
+  polkadot_runtime-v2002002
+)
+
+# Per-runtime compile timeout, in seconds. Pre-#225 versions of the compiler
+# stall indefinitely on real-world modules, so a cap keeps `--base/--current`
+# branch comparisons bounded.
+POLKADOT_COMPILE_TIMEOUT="${POLKADOT_COMPILE_TIMEOUT:-300}"
+
+# Polkadot runtimes do not get one row per benchmark — that's 14 long-name rows
+# of large numbers that drown out the rest of the suite. Instead, after the
+# standard `BENCHMARKS` loop finishes, `polkadot_summary_row` emits a single
+# row whose WASM / JAM / Code columns are the *sum* across all populated
+# runtimes. Any per-runtime regression (or improvement) shifts the sum, so
+# the row is still useful for change detection; per-runtime detail lives in
+# `examples/polkadot/README.md` after running `compile.sh` there.
+
 # Return "imports_path|adapter_path" for benchmarks that need them, or empty.
 benchmark_imports_for() {
   local basename="$1"
@@ -227,8 +265,99 @@ compile_noopt_jams() {
     if [ -z "$wasm_src" ] || [[ "$basename" == EXT:* ]]; then
       continue
     fi
+    # Polkadot entries get their own compile path (they need --trap-floats and
+    # an auto-generated trap-all import map).
+    if [[ "$basename" == polkadot-* ]]; then
+      continue
+    fi
     local output="$noopt_dir/$basename.jam"
     compile_benchmark "$wasm_src" "$output" "$basename" "${NO_OPT_FLAGS[@]}" >&2
+  done
+  compile_polkadot_jams "$noopt_dir" "${NO_OPT_FLAGS[@]}"
+}
+
+# Resolve a `timeout` binary or empty string if none is available.
+polkadot_timeout_bin() {
+  if command -v timeout >/dev/null 2>&1; then echo "timeout"; return; fi
+  if command -v gtimeout >/dev/null 2>&1; then echo "gtimeout"; return; fi
+  echo ""
+}
+
+# Compile each populated Polkadot runtime (`examples/polkadot/wasm/*.wasm`) to
+# `<out_dir>/polkadot-<runtime>.jam` with `--trap-floats` and the auto-generated
+# trap-all import map. Silently does nothing when no WASMs are present so a
+# fresh clone benchmarks cleanly. `extra_flags` (optional) are forwarded to
+# `wasm-pvm compile` after `--trap-floats`, so the no-opt mode can pass the
+# usual `--no-llvm-passes` etc.
+compile_polkadot_jams() {
+  local out_dir="$1"
+  shift
+  local extra_flags=("$@")
+  local polkadot_dir="$PROJECT_ROOT/examples/polkadot"
+  local wasm_dir="$polkadot_dir/wasm"
+  local imports_dir="$polkadot_dir/imports"
+
+  if [ ! -d "$wasm_dir" ]; then
+    return 0
+  fi
+
+  shopt -s nullglob
+  local wasms=("$wasm_dir"/*.wasm)
+  shopt -u nullglob
+
+  if [ ${#wasms[@]} -eq 0 ]; then
+    return 0
+  fi
+
+  mkdir -p "$out_dir" "$imports_dir"
+  local timeout_bin
+  timeout_bin="$(polkadot_timeout_bin)"
+
+  echo "Compiling ${#wasms[@]} Polkadot runtime(s) to $out_dir ..." >&2
+  for wasm in "${wasms[@]}"; do
+    local short imports out
+    short="$(basename "$wasm" .wasm)"
+    imports="$imports_dir/$short.imports"
+    out="$out_dir/polkadot-$short.jam"
+
+    # Auto-generate trap-all import map on first run (cached afterwards).
+    if [ ! -f "$imports" ]; then
+      if command -v wasm-tools >/dev/null 2>&1; then
+        wasm-tools print "$wasm" 2>/dev/null \
+          | awk -F\" '/^[[:space:]]*\(import "/ { print $4 }' \
+          | awk '!seen[$0]++ { print $0 " = trap" }' \
+          > "$imports"
+      else
+        echo "  skip $short: missing imports map and wasm-tools not installed" >&2
+        continue
+      fi
+    fi
+
+    local cmd=(
+      "$PROJECT_ROOT/target/release/wasm-pvm" compile "$wasm" -o "$out"
+      --imports "$imports" --trap-floats
+    )
+    # `set -u` chokes on `${empty[@]}` in older bashes, so guard the expansion.
+    if [ ${#extra_flags[@]} -gt 0 ]; then
+      cmd+=("${extra_flags[@]}")
+    fi
+    rm -f "$out"
+    local rc=0
+    if [ -n "$timeout_bin" ]; then
+      "$timeout_bin" "$POLKADOT_COMPILE_TIMEOUT" "${cmd[@]}" >/dev/null 2>&1 || rc=$?
+    else
+      "${cmd[@]}" >/dev/null 2>&1 || rc=$?
+    fi
+    # Silent SKIPs leave `polkadot_summary_row` reporting `Σ N/14` with no
+    # indication of which runtime didn't make it; surface a short reason
+    # here. coreutils `timeout` exits 124 (or 137 on SIGKILL) on time-out.
+    if [ "$rc" -ne 0 ]; then
+      if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+        echo "  ${short}: timed out after ${POLKADOT_COMPILE_TIMEOUT}s — JAM missing from summary row" >&2
+      else
+        echo "  ${short}: compile failed (rc=${rc}) — JAM missing from summary row" >&2
+      fi
+    fi
   done
 }
 
@@ -409,6 +538,40 @@ benchmark_pvm_in_pvm() {
   echo "OK|$desc|$size|$code_size|$gas_used|${time_ms}ms"
 }
 
+# Emit one row summarising every populated Polkadot runtime as
+# WASM/JAM/Code *sums*. Returns nothing (silently skips) when no runtimes
+# are populated, so a fresh clone benchmarks cleanly.
+polkadot_summary_row() {
+  local total_wasm=0 total_jam=0 total_code=0 count=0
+  for rt in "${POLKADOT_RUNTIMES[@]}"; do
+    local wasm="$PROJECT_ROOT/examples/polkadot/wasm/$rt.wasm"
+    local jam="$JAM_DIR/polkadot-$rt.jam"
+    [ -f "$wasm" ] || continue
+    [ -f "$jam" ] || continue
+    local w j c
+    w=$(filesize "$wasm")
+    j=$(filesize "$jam")
+    c=$(jam_code_size "$jam")
+    total_wasm=$((total_wasm + w))
+    total_jam=$((total_jam + j))
+    if [ "$c" != "-" ]; then
+      total_code=$((total_code + c))
+    fi
+    count=$((count + 1))
+  done
+  if [ "$count" -gt 0 ]; then
+    local total=${#POLKADOT_RUNTIMES[@]}
+    local desc="polkadot v2.2.2 (Σ ${count}/${total})"
+    printf "| %-20s | %10s | %10s | %10s | %10s | %10s |\n" \
+      "$desc" "$total_wasm" "$total_jam" "$total_code" "-" "-"
+  fi
+}
+
+# Portable file size in bytes (BSD stat on macOS, GNU stat elsewhere).
+filesize() {
+  if stat -f%z "$1" >/dev/null 2>&1; then stat -f%z "$1"; else stat -c%s "$1"; fi
+}
+
 run_benchmarks() {
   local label="$1"
   echo "## $label"
@@ -438,6 +601,7 @@ run_benchmarks() {
       printf "| %-20s | %10s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "SKIP" "-" "-" "-"
     fi
   done
+  polkadot_summary_row
   echo ""
 
   # PVM-in-PVM benchmarks
@@ -511,6 +675,10 @@ build_and_benchmark() {
   else
     JAM_DIR="$DEFAULT_JAM_DIR"
     COMPILER_JAM="$DEFAULT_JAM_DIR/anan-as-compiler.jam"
+    # `bun build.ts` only knows about the standard fixtures, so compile the
+    # populated Polkadot runtimes (if any) into the same JAM dir using the
+    # current toolchain. Silently no-ops if WASMs aren't present.
+    compile_polkadot_jams "$JAM_DIR"
   fi
 
   run_benchmarks "$label"

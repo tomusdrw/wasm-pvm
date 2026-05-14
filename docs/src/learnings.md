@@ -724,3 +724,40 @@ header:
 ```
 
 On the body→header edge this becomes two simultaneous copies — `a.slot ← b.slot` and `b.slot ← a.slot` — a 2-cycle. The test `many_phi_values_with_loop_cycle_compiles` (in `crates/wasm-pvm/tests/phi_many_values.rs`) drives a 6-cycle through this pattern.
+
+## O(N²) Byte-Size Scans Blocked Real-World Compilation (#225)
+
+Once #214/#215/#217/#218/#224 closed every *correctness* gap that had been bailing the backend early on Polkadot runtimes, compilation finally reached `translate/mod.rs::compile_via_llvm`'s emission loop and `resolve_call_fixups` — and **hung at 99% CPU past 10 minutes on the smallest 2 MiB runtime**. Per-pass timing showed all LLVM passes finishing in ~2 s and per-function PVM backend lowering in ~1.6 s across 1631 functions; the missing minutes were spent in two adjacent O(N²) shapes neither of which had ever been exercised on a multi-MB module before.
+
+**The bug.** Both loops computed instruction byte offsets the same way:
+
+```rust
+// Emission loop, per function:
+let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
+function_offsets[local_func_idx] = func_start_offset;
+// ...
+all_instructions.extend(translation.instructions);
+
+// resolve_call_fixups, per direct + indirect call:
+let return_addr_offset: usize = instructions[..=jump_idx]
+    .iter().map(|i| i.encode().len()).sum();
+let jump_start_offset: usize = instructions[..jump_idx]
+    .iter().map(|i| i.encode().len()).sum();
+```
+
+Each invocation re-summed every preceding instruction's encoded byte length. For F functions / C call sites / M total instructions, the work is `O(F × M) + O(C × M)`. `glutton-kusama_runtime` lands at F=1631, C≈20 000, M≈1.5 M — roughly **3 × 10¹⁰ allocating `encode()` calls** total. `Instruction::encode()` returns a fresh `Vec<u8>` whose only consumer was `.len()`, so the cost was 30 billion small Vec allocations on top of the arithmetic.
+
+The shape had been latent for as long as the emission loop and the fixup resolver have existed. It went unnoticed because the backend used to fail early on real-world modules — every Polkadot runtime hit either `bitreverse`, `usub.sat`, `freeze`, or a "too many phi values" bail before reaching the offset-computation hot path.
+
+**The fix.** Two O(N+M) replacements in `translate/mod.rs`:
+
+- *Emission loop:* maintain a running `current_code_bytes: usize` seeded from the entry header (which is pushed *before* the loop), update it by summing only the *newly appended* slice after each function is lowered, and use it directly for `function_offsets[local_func_idx]`.
+- *`resolve_call_fixups`:* compute a `byte_prefix: Vec<usize>` once at function entry, with `byte_prefix[i] = sum(instructions[0..i].encode().len())`. Each fixup then reads `byte_prefix[jump_idx]` / `byte_prefix[jump_idx + 1]` directly.
+
+**Why the prefix sum stays valid through patching.** The fixup loop patches `LoadImmJump.offset` (per `encode_one_reg_one_imm_one_off`, always a fixed 4-byte little-endian field — `bytes.extend_from_slice(&offset.to_le_bytes())`) and, *after* the loop returns, the entry-header `Jump.offset` (per `Self::Jump { offset }`, also `to_le_bytes()` so 4 bytes). Neither patch changes the instruction's encoded length, so a prefix sum computed once at the top of `resolve_call_fixups` is safe to use throughout.
+
+This is *not* true of `encode_imm` (used for plain `LoadImm`, `JumpInd`, `AddImm32`, etc.) which produces 0–4 bytes depending on the immediate's magnitude — but those instructions aren't patched anywhere in `compile_via_llvm` once emitted, so they stay constant from the prefix-sum computation onwards.
+
+**Verified-safe seeding.** The emission loop pushes 2 entry-header instructions (one `Jump` + either another `Jump` or `Trap`) before iterating, so `current_code_bytes` is initialized from `all_instructions.iter().map(|i| i.encode().len()).sum()` — paying the one-time cost across exactly those two entries. Forgetting this offset (`= 0`) was an early version of the fix that passed glutton but broke `test_branch_fixup_resolution` (`crates/wasm-pvm/tests/emitter_unit.rs:194-220`), which compiles a single-`if` function where main is emitted first and the entry-header `Jump.offset` ends up at zero — a fast in-flight regression catch that justifies why this test was worth keeping.
+
+**Result on glutton (2.04 MiB WASM, 1631 functions):** compile time drops from >10 min (hard timeout, never finished) to **~4 s** — ≥150× speedup. All 14 polkadot-fellows v2.2.2 runtimes now compile in 4:26 wall-clock total. Standard benchmark JAM/code/gas numbers are byte-identical across main and the fix (verified by md5sum), since this change is purely compile-time.

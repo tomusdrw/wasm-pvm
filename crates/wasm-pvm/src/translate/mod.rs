@@ -412,6 +412,14 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         }
     }
 
+    // Running total of `all_instructions.iter().map(|i| i.encode().len()).sum()`.
+    // Updated incrementally each time we append instructions so per-function
+    // `func_start_offset` lookups stay O(1) — re-summing on every iteration
+    // was an O(N²) shape that made compile times unbounded on real-world
+    // modules (see issue #225). Seed from the entry header pushed above so
+    // the first function's offset is correct.
+    let mut current_code_bytes: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
+
     for &local_func_idx in &emission_order {
         // Dead functions: emit a single Trap as a placeholder.
         // The function offset is still recorded so dispatch table indices stay valid.
@@ -419,9 +427,10 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
             .as_ref()
             .is_some_and(|r| !r.contains(&local_func_idx))
         {
-            let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
-            function_offsets[local_func_idx] = func_start_offset;
-            all_instructions.push(Instruction::Trap);
+            function_offsets[local_func_idx] = current_code_bytes;
+            let trap = Instruction::Trap;
+            current_code_bytes += trap.encode().len();
+            all_instructions.push(trap);
             dead_functions_eliminated += 1;
             function_stats.push(stats::FunctionStats {
                 name: module.local_function_display_name(local_func_idx),
@@ -448,8 +457,8 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         let is_secondary = module.secondary_entry_local_idx == Some(local_func_idx);
         let is_entry = is_main || is_secondary;
 
-        let func_start_offset: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
-        function_offsets[local_func_idx] = func_start_offset;
+        function_offsets[local_func_idx] = current_code_bytes;
+        let func_emission_start = all_instructions.len();
 
         // If entry function and there's a start function, call it first.
         if let Some(start_local_idx) = module.start_func_local_idx.filter(|_| is_entry) {
@@ -568,6 +577,12 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         });
 
         all_instructions.extend(translation.instructions);
+
+        // Update the running byte counter to cover everything emitted this
+        // iteration (entry-header trampoline pushes + the lowered body).
+        for ins in &all_instructions[func_emission_start..] {
+            current_code_bytes += ins.encode().len();
+        }
     }
 
     // Phase 4: Resolve call fixups and build jump table.
@@ -590,6 +605,24 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
             *offset = secondary_offset;
         }
     }
+
+    // The prefix-sum / running-counter optimisation (#225) relies on the
+    // patches above leaving every instruction's encoded byte length
+    // unchanged — `LoadImmJump.offset` and `Jump.offset` are fixed 4-byte
+    // fields (`encode_one_reg_one_imm_one_off` / `to_le_bytes()`). If a
+    // future change adds a patchable variable-length immediate (anything
+    // routed through `encode_imm`), `function_offsets` and `jump_table`
+    // silently desync; catch that here instead of producing a corrupt JAM.
+    debug_assert_eq!(
+        all_instructions
+            .iter()
+            .map(|i| i.encode().len())
+            .sum::<usize>(),
+        current_code_bytes,
+        "post-patch instruction stream size differs from emission-time total — \
+         a patched instruction's encoded length changed, invalidating \
+         function_offsets / jump_table",
+    );
 
     // Phase 5: Build dispatch table for call_indirect.
     let mut ro_data = vec![0u8];
@@ -820,6 +853,28 @@ fn resolve_call_fixups(
     indirect_call_fixups: &[(usize, IndirectCallFixup)],
     function_offsets: &[usize],
 ) -> Result<(Vec<u32>, usize)> {
+    // Pre-compute a prefix sum of instruction byte sizes. `byte_prefix[i]` is
+    // the sum of `instructions[0..i].encode().len()`. Patching `LoadImmJump`
+    // only changes the `offset` field — a fixed 4-byte field per
+    // `encode_one_reg_one_imm_one_off` — and `Jump.offset` is likewise fixed
+    // 4 bytes, so these prefix sums stay valid throughout the loop below and
+    // through the entry-header patches in `compile_via_llvm` afterwards.
+    //
+    // Before this precompute existed, the loop body re-summed
+    // `instructions[..=jump_idx].iter().map(|i| i.encode().len()).sum()` per
+    // fixup → O(N × M) where N = #fixups, M = #instructions. On Polkadot
+    // runtimes that's ~10⁹ operations + Vec allocations (encode() returns a
+    // fresh Vec each time just to count bytes), which made compile times
+    // unbounded once the recent backend fixes let real-world modules reach
+    // this point — see issue #225.
+    let mut byte_prefix: Vec<usize> = Vec::with_capacity(instructions.len() + 1);
+    byte_prefix.push(0);
+    let mut acc: usize = 0;
+    for ins in instructions.iter() {
+        acc += ins.encode().len();
+        byte_prefix.push(acc);
+    }
+
     // Count total call-return entries by finding the maximum pre-assigned index.
     // Entries are written at their pre-assigned slot so mixed direct/indirect
     // call ordering within a function is preserved correctly.
@@ -849,10 +904,7 @@ fn resolve_call_fixups(
         let jump_idx = instr_base + fixup.jump_instr;
 
         // Return address = byte offset after the LoadImmJump instruction.
-        let return_addr_offset: usize = instructions[..=jump_idx]
-            .iter()
-            .map(|i| i.encode().len())
-            .sum();
+        let return_addr_offset = byte_prefix[jump_idx + 1];
 
         let slot = return_addr_jump_table_idx(instructions, instr_base + fixup.return_addr_instr)?;
         jump_table[slot] = return_addr_offset as u32;
@@ -866,10 +918,7 @@ fn resolve_call_fixups(
         );
 
         // Patch the offset field of LoadImmJump.
-        let jump_start_offset: usize = instructions[..jump_idx]
-            .iter()
-            .map(|i| i.encode().len())
-            .sum();
+        let jump_start_offset = byte_prefix[jump_idx];
         let relative_offset = (*target_offset as i32) - (jump_start_offset as i32);
 
         if let Instruction::LoadImmJump { offset, .. } = &mut instructions[jump_idx] {
@@ -880,10 +929,7 @@ fn resolve_call_fixups(
     for (instr_base, fixup) in indirect_call_fixups {
         let jump_ind_idx = instr_base + fixup.jump_ind_instr;
 
-        let return_addr_offset: usize = instructions[..=jump_ind_idx]
-            .iter()
-            .map(|i| i.encode().len())
-            .sum();
+        let return_addr_offset = byte_prefix[jump_ind_idx + 1];
 
         let slot = return_addr_jump_table_idx(instructions, instr_base + fixup.return_addr_instr)?;
         jump_table[slot] = return_addr_offset as u32;
