@@ -270,6 +270,22 @@ pub fn optimize(
     // 4. New: Fuse LoadImm + AddImm chains and chained AddImm operations.
     optimize_immediate_chains(instructions, &mut keep);
 
+    // 5. Eliminate StoreIndU64 → LoadIndU64 at the same (base, offset).
+    //
+    // After `store_to_slot(dst)` the value at `STACK_PTR + offset` is exactly
+    // what's in the source register. When a following `LoadIndU64` reads it
+    // back into the same register, the load is a no-op. When it reads into a
+    // different register, we can replace the load with a `MoveReg` (same
+    // 2-byte encoding) so the read still happens but the memory round-trip
+    // disappears.
+    //
+    // Guard: only eliminate when no label points at the load's byte offset,
+    // because branches from elsewhere may target the load and expect to see
+    // the value materialized in `dst`. Within a basic block produced by our
+    // emitter, adjacent Store+Load pairs are never branch targets, but we
+    // still verify in case `define_label` lands between the two emissions.
+    optimize_store_then_load(instructions, &mut keep, labels);
+
     compact_instructions(
         instructions,
         &keep,
@@ -378,6 +394,83 @@ fn optimize_immediate_chains(instructions: &mut [Instruction], keep: &mut [bool]
                     _ => unreachable!(),
                 }
             }
+        }
+    }
+}
+
+/// Eliminate redundant `LoadIndU64` immediately following a `StoreIndU64` at
+/// the same `(base, offset)`.
+///
+/// The store puts the value of `src` at `mem[base + offset]`. The load reads
+/// the same 8 bytes back into `dst`. If `dst == src`, the value is already in
+/// the register and the load is a pure no-op. If `dst != src`, the load
+/// becomes a register copy, which we encode as `MoveReg` (2 bytes — same as
+/// the smallest `LoadIndU64`).
+///
+/// Skipped if a label points at the load's byte offset (branches from
+/// elsewhere may target the load and depend on `dst` being materialized).
+fn optimize_store_then_load(
+    instructions: &mut [Instruction],
+    keep: &mut [bool],
+    labels: &[Option<usize>],
+) {
+    let len = instructions.len();
+    if len < 2 {
+        return;
+    }
+
+    // Byte offset of each instruction (so we can match against label targets).
+    let mut byte_offsets = Vec::with_capacity(len + 1);
+    let mut running = 0usize;
+    for instr in instructions.iter() {
+        byte_offsets.push(running);
+        running += instr.encode().len();
+    }
+    byte_offsets.push(running);
+
+    let labeled: BTreeSet<usize> = labels.iter().flatten().copied().collect();
+
+    for i in 0..len - 1 {
+        if !keep[i] || !keep[i + 1] {
+            continue;
+        }
+
+        let Instruction::StoreIndU64 {
+            base: s_base,
+            src: s_src,
+            offset: s_off,
+        } = instructions[i]
+        else {
+            continue;
+        };
+        let Instruction::LoadIndU64 {
+            dst: l_dst,
+            base: l_base,
+            offset: l_off,
+        } = instructions[i + 1]
+        else {
+            continue;
+        };
+        if s_base != l_base || s_off != l_off {
+            continue;
+        }
+        if labeled.contains(&byte_offsets[i + 1]) {
+            // Branch target — must not drop the load.
+            continue;
+        }
+
+        if l_dst == s_src {
+            // Pure no-op: value already in dst.
+            keep[i + 1] = false;
+        } else {
+            // Replace load with a register-to-register copy. Same byte length
+            // as the smallest LoadIndU64 encoding (2 bytes), so smaller-or-
+            // equal in all cases. The byte-offset recompute inside
+            // `compact_instructions` handles any size change.
+            instructions[i + 1] = Instruction::MoveReg {
+                dst: l_dst,
+                src: s_src,
+            };
         }
     }
 }

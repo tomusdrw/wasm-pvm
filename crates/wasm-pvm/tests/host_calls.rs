@@ -153,8 +153,20 @@ fn test_host_call_2b_captures_r8() {
         instructions[ecalli_pos + 1]
     );
 
-    // Should also have a LoadIndU64 for host_call_r8.
-    assert!(has_opcode(&instructions, Opcode::LoadIndU64));
+    // `host_call_r8()` must retrieve the captured value somehow. With no
+    // intervening side-effectful work between the capture store and the
+    // retrieve load, the peephole at the end of compilation folds the
+    // round-trip into a register-to-register move from r8. Accept either
+    // shape: a LoadIndU64 (when the retrieve is no longer adjacent to the
+    // capture) or a MoveReg whose source is `r8` (a.k.a. `ARGS_LEN_REG`).
+    let has_load = has_opcode(&instructions, Opcode::LoadIndU64);
+    let has_move_from_r8 = instructions.iter().any(|i| {
+        matches!(i, wasm_pvm::pvm::Instruction::MoveReg { src, .. } if *src == wasm_pvm::abi::ARGS_LEN_REG)
+    });
+    assert!(
+        has_load || has_move_from_r8,
+        "Expected `host_call_r8` to retrieve r8 via LoadIndU64 or MoveReg from r8",
+    );
 }
 
 #[test]
@@ -376,11 +388,17 @@ fn test_host_call_5b_captures_r8() {
 fn test_host_call_r8_survives_helper_call() {
     // Verify the captured r8 slot (SP-relative) is not clobbered by an
     // intervening function call: host_call_2b → helper() → host_call_r8.
+    //
+    // The helper writes to a global so LLVM's DCE can't fold the call away
+    // and the intervening call really sits between capture and retrieve.
     let wat = r#"
         (module
             (import "env" "host_call_2b" (func $host_call_2b (param i64 i64 i64) (result i64)))
             (import "env" "host_call_r8" (func $host_call_r8 (result i64)))
-            (func $helper (result i32) (i32.const 99))
+            (global $g (mut i32) (i32.const 0))
+            (func $helper (result i32)
+                (global.set $g (i32.const 1))
+                (i32.const 99))
             (func (export "main") (param i32 i32) (result i32)
                 (drop (call $host_call_2b (i64.const 10) (i64.const 100) (i64.const 200)))
                 (drop (call $helper))
