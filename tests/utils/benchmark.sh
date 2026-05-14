@@ -94,12 +94,13 @@ POLKADOT_RUNTIMES=(
 # branch comparisons bounded.
 POLKADOT_COMPILE_TIMEOUT="${POLKADOT_COMPILE_TIMEOUT:-300}"
 
-# Append Polkadot entries to BENCHMARKS. They run as size-only (empty `args`),
-# so benchmark_one prints JAM/code size and `-` for gas/time.
-for _rt in "${POLKADOT_RUNTIMES[@]}"; do
-  BENCHMARKS+=("polkadot-$_rt||0|polkadot $_rt|wasm:examples/polkadot/wasm/$_rt.wasm")
-done
-unset _rt
+# Polkadot runtimes do not get one row per benchmark — that's 14 long-name rows
+# of large numbers that drown out the rest of the suite. Instead, after the
+# standard `BENCHMARKS` loop finishes, `polkadot_summary_row` emits a single
+# row whose WASM / JAM / Code columns are the *sum* across all populated
+# runtimes. Any per-runtime regression (or improvement) shifts the sum, so
+# the row is still useful for change detection; per-runtime detail lives in
+# `examples/polkadot/README.md` after running `compile.sh` there.
 
 # Return "imports_path|adapter_path" for benchmarks that need them, or empty.
 benchmark_imports_for() {
@@ -526,6 +527,40 @@ benchmark_pvm_in_pvm() {
   echo "OK|$desc|$size|$code_size|$gas_used|${time_ms}ms"
 }
 
+# Emit one row summarising every populated Polkadot runtime as
+# WASM/JAM/Code *sums*. Returns nothing (silently skips) when no runtimes
+# are populated, so a fresh clone benchmarks cleanly.
+polkadot_summary_row() {
+  local total_wasm=0 total_jam=0 total_code=0 count=0
+  for rt in "${POLKADOT_RUNTIMES[@]}"; do
+    local wasm="$PROJECT_ROOT/examples/polkadot/wasm/$rt.wasm"
+    local jam="$JAM_DIR/polkadot-$rt.jam"
+    [ -f "$wasm" ] || continue
+    [ -f "$jam" ] || continue
+    local w j c
+    w=$(filesize "$wasm")
+    j=$(filesize "$jam")
+    c=$(jam_code_size "$jam")
+    total_wasm=$((total_wasm + w))
+    total_jam=$((total_jam + j))
+    if [ "$c" != "-" ]; then
+      total_code=$((total_code + c))
+    fi
+    count=$((count + 1))
+  done
+  if [ "$count" -gt 0 ]; then
+    local total=${#POLKADOT_RUNTIMES[@]}
+    local desc="polkadot v2.2.2 (Σ ${count}/${total})"
+    printf "| %-20s | %10s | %10s | %10s | %10s | %10s |\n" \
+      "$desc" "$total_wasm" "$total_jam" "$total_code" "-" "-"
+  fi
+}
+
+# Portable file size in bytes (BSD stat on macOS, GNU stat elsewhere).
+filesize() {
+  if stat -f%z "$1" >/dev/null 2>&1; then stat -f%z "$1"; else stat -c%s "$1"; fi
+}
+
 run_benchmarks() {
   local label="$1"
   echo "## $label"
@@ -555,6 +590,7 @@ run_benchmarks() {
       printf "| %-20s | %10s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "SKIP" "-" "-" "-"
     fi
   done
+  polkadot_summary_row
   echo ""
 
   # PVM-in-PVM benchmarks
