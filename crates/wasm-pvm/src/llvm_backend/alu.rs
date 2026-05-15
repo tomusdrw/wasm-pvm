@@ -349,6 +349,59 @@ pub fn lower_binary_arith<'ctx>(
         return Ok(());
     }
 
+    // Non-commutative shift with constant LHS: `const SHIFT x` → *ImmAlt variant.
+    // Useful for the common `1 << x` bitmask idiom and similar patterns where
+    // the shift count is variable but the shifted value is a small constant.
+    if let Some(lhs_const) = try_get_constant(lhs)
+        && i32::try_from(lhs_const).is_ok()
+        && matches!(op, BinaryOp::Shl | BinaryOp::LShr | BinaryOp::AShr)
+    {
+        let imm = lhs_const as i32;
+        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
+        if rhs_reg != TEMP1 && rhs_reg == dst {
+            rhs_reg = TEMP1;
+        }
+        if rhs_reg == TEMP1 {
+            e.load_operand(rhs, TEMP1)?;
+        }
+        let instr = match (op, bits <= 32) {
+            (BinaryOp::Shl, true) => Instruction::ShloLImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::Shl, false) => Instruction::ShloLImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::LShr, true) => Instruction::ShloRImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::LShr, false) => Instruction::ShloRImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::AShr, true) => Instruction::SharRImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::AShr, false) => Instruction::SharRImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            _ => unreachable!("guarded by matches! above"),
+        };
+        e.emit(instr);
+        e.store_to_slot(slot, dst);
+        return Ok(());
+    }
+
     // Commutative constant-LHS folding: `const op x` → `x op const` for commutative ops.
     // LLVM's instcombine usually canonicalizes constants to RHS, but this helps edge cases
     // and --no-llvm-passes mode.
@@ -856,24 +909,22 @@ pub fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     let dst = result_reg_or(e, instr, TEMP1);
 
     if from_bits == 32 {
-        // i32 → i64: use load-side coalescing for the shift source.
+        // i32 → i64 zero-extend: `(x << 32) >>u 32`. Use immediate-form
+        // shifts so we don't need a separate `LoadImm 32` instruction or a
+        // dedicated register to hold the shift count.
         let src_reg = operand_reg(e, src, dst);
         if src_reg == dst {
             e.load_operand(src, dst)?;
         }
-        e.emit(Instruction::LoadImm {
-            reg: TEMP2,
+        e.emit(Instruction::ShloLImm64 {
+            dst,
+            src: src_reg,
             value: 32,
         });
-        e.emit(Instruction::ShloL64 {
+        e.emit(Instruction::ShloRImm64 {
             dst,
-            src1: src_reg,
-            src2: TEMP2,
-        });
-        e.emit(Instruction::ShloR64 {
-            dst,
-            src1: dst,
-            src2: TEMP2,
+            src: dst,
+            value: 32,
         });
     } else {
         // i1 → i32/i64 (no-op copy) and other widths: load into dst as before.

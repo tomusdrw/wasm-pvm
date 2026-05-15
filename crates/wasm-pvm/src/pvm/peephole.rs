@@ -210,6 +210,24 @@ pub fn optimize(
         return;
     }
 
+    // Run the store/load same-slot peephole FIRST, before any pass that can
+    // change instruction encoded sizes. The pass needs to compare each
+    // load's byte offset against `labels[]` to skip branch targets, and
+    // `labels[]` holds emission-time byte offsets. Both
+    // `optimize_address_calculation` (AddImm fusion may grow/shrink the
+    // combined Load/Store offset) and `optimize_immediate_chains` (value
+    // patches may grow/shrink the immediate) can change instruction sizes
+    // in place, which would desync our recomputed byte offsets from the
+    // (stale) label offsets and silently let us drop a real branch target.
+    //
+    // The peephole itself is size-preserving: removals (`keep[i+1] = false`)
+    // don't change any instruction's encoded length, and the
+    // `LoadIndU64 → MoveReg` rewrite is gated on an exact length match in
+    // `optimize_store_then_load`, so running it here doesn't disturb the
+    // size invariants the later passes rely on.
+    let mut keep = vec![true; len];
+    optimize_store_then_load(instructions, &mut keep, labels);
+
     // 1. Optimize address calculations (fuse AddImm + Load/Store).
     // This updates instructions in-place and doesn't remove any, so fixups are fine.
     optimize_address_calculation(instructions, labels);
@@ -230,7 +248,11 @@ pub fn optimize(
     // 3. Simple peephole patterns (redundant fallthroughs).
     // Mark instructions for removal (true = keep, false = remove).
     let len = instructions.len();
-    let mut keep = vec![true; len];
+    debug_assert_eq!(
+        keep.len(),
+        len,
+        "instruction count must not change between store/load peephole and later passes",
+    );
 
     for i in 0..len {
         if !keep[i] {
@@ -267,7 +289,8 @@ pub fn optimize(
         }
     }
 
-    // 4. New: Fuse LoadImm + AddImm chains and chained AddImm operations.
+    // 4. Fuse LoadImm + AddImm chains and chained AddImm operations.
+    // (Store/load peephole already ran at the top of `optimize()`.)
     optimize_immediate_chains(instructions, &mut keep);
 
     compact_instructions(
@@ -377,6 +400,93 @@ fn optimize_immediate_chains(instructions: &mut [Instruction], keep: &mut [bool]
                     }
                     _ => unreachable!(),
                 }
+            }
+        }
+    }
+}
+
+/// Eliminate redundant `LoadIndU64` immediately following a `StoreIndU64` at
+/// the same `(base, offset)`.
+///
+/// The store puts the value of `src` at `mem[base + offset]`. The load reads
+/// the same 8 bytes back into `dst`. If `dst == src`, the value is already in
+/// the register and the load is a pure no-op. If `dst != src`, the load
+/// becomes a register copy, which we encode as `MoveReg` (2 bytes — same as
+/// the smallest `LoadIndU64`).
+///
+/// Skipped if a label points at the load's byte offset (branches from
+/// elsewhere may target the load and depend on `dst` being materialized).
+fn optimize_store_then_load(
+    instructions: &mut [Instruction],
+    keep: &mut [bool],
+    labels: &[Option<usize>],
+) {
+    let len = instructions.len();
+    if len < 2 {
+        return;
+    }
+
+    // Byte offset of each instruction (so we can match against label targets).
+    let mut byte_offsets = Vec::with_capacity(len + 1);
+    let mut running = 0usize;
+    for instr in instructions.iter() {
+        byte_offsets.push(running);
+        running += instr.encode().len();
+    }
+    byte_offsets.push(running);
+
+    let labeled: BTreeSet<usize> = labels.iter().flatten().copied().collect();
+
+    for i in 0..len - 1 {
+        if !keep[i] || !keep[i + 1] {
+            continue;
+        }
+
+        let Instruction::StoreIndU64 {
+            base: s_base,
+            src: s_src,
+            offset: s_off,
+        } = instructions[i]
+        else {
+            continue;
+        };
+        let Instruction::LoadIndU64 {
+            dst: l_dst,
+            base: l_base,
+            offset: l_off,
+        } = instructions[i + 1]
+        else {
+            continue;
+        };
+        if s_base != l_base || s_off != l_off {
+            continue;
+        }
+        if labeled.contains(&byte_offsets[i + 1]) {
+            // Branch target — must not drop the load.
+            continue;
+        }
+
+        if l_dst == s_src {
+            // Pure no-op: value already in dst. Marking for removal is safe
+            // because `compact_instructions` knows how to remove instructions
+            // (it remaps fixups + labels through `byte_to_idx`).
+            keep[i + 1] = false;
+        } else {
+            // Replace load with a register-to-register copy. Both `MoveReg`
+            // and `LoadIndU64` use 2-byte encodings only when the load's
+            // offset is zero (`encode_imm(0)` returns an empty slice). For
+            // any non-zero offset, `LoadIndU64` is 3-6 bytes while `MoveReg`
+            // stays at 2, and `compact_instructions` caches `encoded_lengths`
+            // BEFORE this pass mutates, so a size-shrinking in-place rewrite
+            // would silently leave labels past the rewrite point pointing at
+            // stale byte offsets. Only do the rewrite when encoded sizes
+            // match (the offset == 0 case); skip otherwise.
+            let replacement = Instruction::MoveReg {
+                dst: l_dst,
+                src: s_src,
+            };
+            if replacement.encode().len() == instructions[i + 1].encode().len() {
+                instructions[i + 1] = replacement;
             }
         }
     }
