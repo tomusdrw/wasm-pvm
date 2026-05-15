@@ -140,6 +140,7 @@ impl<'ctx> ControlFrame<'ctx> {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct WasmToLlvm<'ctx> {
     context: &'ctx Context,
     module: Module<'ctx>,
