@@ -22,10 +22,43 @@ use super::emitter::{
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
+/// Look up the PVM address and storage width for a `wasm_global_N` reference.
+fn resolve_global_slot(idx: u32, ctx: &LoweringContext) -> Result<(i32, u32)> {
+    let address = ctx
+        .global_offsets
+        .get(idx as usize)
+        .copied()
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "wasm_global_{idx} not in global_offsets (len={})",
+                ctx.global_offsets.len()
+            ))
+        })?;
+    let width = ctx
+        .global_widths
+        .get(idx as usize)
+        .copied()
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "wasm_global_{idx} not in global_widths (len={})",
+                ctx.global_widths.len()
+            ))
+        })?;
+    Ok((address, width))
+}
+
 /// Lower a load from a WASM global variable.
 ///
 /// After mem2reg optimization, remaining loads in LLVM IR typically access
-/// WASM global variables (represented as LLVM globals with names like `wasm_global_N`).
+/// WASM global variables (represented as LLVM globals with names like
+/// `wasm_global_N`). The LLVM IR uses `load i64` uniformly; the actual PVM
+/// load width comes from `ctx.global_widths[idx]` — 4 B → `LoadU32`
+/// (zero-extends into the 64-bit register), 8 B → `LoadU64`. For i32 globals
+/// the LLVM `load i64` reads past the 4-byte slot in IR semantics, but the
+/// backend's `LoadU32` only reads 4 bytes and zero-fills the high 32 bits;
+/// since the frontend's i32 ops always produce zero-extended i64 values, the
+/// `top 32 bits = 0` invariant matches what LLVM would have observed had it
+/// been width-honest.
 pub fn lower_wasm_global_load<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -35,18 +68,23 @@ pub fn lower_wasm_global_load<'ctx>(
     let ptr = get_operand(instr, 0)?;
     let dst = result_reg(e, instr);
 
-    // Try to extract the global index from the name.
     if let BasicValueEnum::PointerValue(pv) = ptr {
         let name = pv.get_name().to_string_lossy().to_string();
         if let Some(idx) = name
             .strip_prefix("wasm_global_")
             .and_then(|s| s.parse::<u32>().ok())
         {
-            let global_addr = abi::global_addr(idx, ctx.has_memory_size_global);
-            e.emit(Instruction::LoadU32 {
-                dst,
-                address: global_addr,
-            });
+            let (address, width) = resolve_global_slot(idx, ctx)?;
+            let opcode = match width {
+                4 => Instruction::LoadU32 { dst, address },
+                8 => Instruction::LoadU64 { dst, address },
+                other => {
+                    return Err(Error::Internal(format!(
+                        "wasm_global_{idx} has unexpected width {other} bytes"
+                    )));
+                }
+            };
+            e.emit(opcode);
             e.store_to_slot(slot, dst);
             return Ok(());
         }
@@ -59,14 +97,17 @@ pub fn lower_wasm_global_load<'ctx>(
 
 /// Lower a store to a WASM global variable.
 ///
-/// When the value is a compile-time constant that fits in i32, uses `StoreImmIndU32`
-/// to avoid loading the value into a register.
+/// The LLVM IR uses `store i64` uniformly; the actual PVM store width comes
+/// from `ctx.global_widths[idx]`. For i32 globals (4-byte slot), only the
+/// low 4 bytes of the stored value land in PVM memory — which is correct
+/// because the WASM frontend's i32 ops zero-extend their result to i64
+/// before pushing onto the operand stack, so the high 32 bits are always 0
+/// (or don't-care under WASM type rules) and dropping them is lossless.
 pub fn lower_wasm_global_store<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
     ctx: &LoweringContext,
 ) -> Result<()> {
-    // store i64 %val, ptr @wasm_global_N
     let val = get_operand(instr, 0)?;
     let ptr = get_operand(instr, 1)?;
 
@@ -76,28 +117,63 @@ pub fn lower_wasm_global_store<'ctx>(
             .strip_prefix("wasm_global_")
             .and_then(|s| s.parse::<u32>().ok())
         {
-            let global_addr = abi::global_addr(idx, ctx.has_memory_size_global);
+            let (address, width) = resolve_global_slot(idx, ctx)?;
 
-            // If value is a compile-time constant that fits in i32, use StoreImm.
-            if let Some(val_const) = try_get_constant(val)
-                && i32::try_from(val_const).is_ok()
-            {
-                e.emit(Instruction::StoreImmU32 {
-                    address: global_addr,
-                    value: val_const as i32,
-                });
-                return Ok(());
+            // Constant fast path: emit `StoreImmU32` / `StoreImmU64` when the
+            // value is a compile-time integer that fits in the immediate field.
+            if let Some(val_const) = try_get_constant(val) {
+                match width {
+                    4 => {
+                        // i32 slot: write the low 4 bytes of the constant.
+                        // `try_get_constant` returns the i64 sign-extended value;
+                        // casting to i32 picks out the low 4 bytes regardless of
+                        // the sign-bit pattern.
+                        e.emit(Instruction::StoreImmU32 {
+                            address,
+                            value: val_const as i32,
+                        });
+                        return Ok(());
+                    }
+                    8 => {
+                        if i32::try_from(val_const).is_ok() {
+                            e.emit(Instruction::StoreImmU64 {
+                                address,
+                                value: val_const as i32,
+                            });
+                            return Ok(());
+                        }
+                        // Large i64 constants fall through to the register path
+                        // (LoadImm64 + StoreU64).
+                    }
+                    other => {
+                        return Err(Error::Internal(format!(
+                            "wasm_global_{idx} has unexpected width {other} bytes"
+                        )));
+                    }
+                }
             }
 
-            // Load-side coalescing for global store value.
+            // Register store path (also used for non-constant values).
             let val_reg = operand_reg(e, val, TEMP1);
             if val_reg == TEMP1 {
                 e.load_operand(val, TEMP1)?;
             }
-            e.emit(Instruction::StoreU32 {
-                src: val_reg,
-                address: global_addr,
-            });
+            let store_instr = match width {
+                4 => Instruction::StoreU32 {
+                    src: val_reg,
+                    address,
+                },
+                8 => Instruction::StoreU64 {
+                    src: val_reg,
+                    address,
+                },
+                other => {
+                    return Err(Error::Internal(format!(
+                        "wasm_global_{idx} has unexpected width {other} bytes"
+                    )));
+                }
+            };
+            e.emit(store_instr);
             return Ok(());
         }
     }

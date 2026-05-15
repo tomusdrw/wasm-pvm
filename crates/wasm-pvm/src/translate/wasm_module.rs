@@ -51,8 +51,17 @@ pub struct WasmModule<'a> {
     pub function_type_indices: Vec<u32>,
     /// Global variable types.
     pub globals: Vec<GlobalType>,
-    /// Initial values of global variables.
-    pub global_init_values: Vec<i32>,
+    /// Initial values of global variables, captured as i64 to cover both
+    /// `(global i32 ...)` and `(global i64 ...)`. Float/ref/v128 globals are
+    /// either rejected outright or recorded as zero (see `Self::parse`).
+    pub global_init_values: Vec<i64>,
+    /// Byte width of each global's storage slot (4 for i32/f32, 8 for i64/f64).
+    /// Parallels `globals` / `global_init_values`.
+    pub global_widths: Vec<u32>,
+    /// Absolute PVM address of each global's storage slot. Pre-computed at
+    /// parse time so backend lowering doesn't need to re-sum widths per access.
+    /// Parallels `globals` / `global_init_values` / `global_widths`.
+    pub global_offsets: Vec<i32>,
     /// Active data segments from the data section.
     pub data_segments: Vec<DataSegment>,
     /// Memory limits parsed from the memory section.
@@ -169,7 +178,7 @@ impl<'a> WasmModule<'a> {
         let mut func_types: Vec<wasmparser::FuncType> = Vec::new();
         let mut function_type_indices = Vec::new();
         let mut globals: Vec<GlobalType> = Vec::new();
-        let mut global_init_values: Vec<i32> = Vec::new();
+        let mut global_init_values: Vec<i64> = Vec::new();
         let mut main_func_idx: Option<u32> = None;
         let mut secondary_entry_func_idx: Option<u32> = None;
         let mut start_func_idx: Option<u32> = None;
@@ -222,8 +231,24 @@ impl<'a> WasmModule<'a> {
                 Payload::GlobalSection(reader) => {
                     for global in reader {
                         let g = global?;
+                        // Only integer globals are supported. Float globals (f32/f64)
+                        // would have their initial value silently zeroed by
+                        // `eval_const_global_init` and could subsequently be observed
+                        // via `i32.reinterpret_f32` / `i64.reinterpret_f64` or by
+                        // forwarding the global into another function, producing
+                        // wrong results — `--trap-floats` only traps float *operators*,
+                        // not the integer-typed plumbing around float globals.
+                        // v128 and ref-type globals have no lowering path at all.
+                        match g.ty.content_type {
+                            wasmparser::ValType::I32 | wasmparser::ValType::I64 => {}
+                            other => {
+                                return Err(Error::Unsupported(format!(
+                                    "WASM global type {other:?} is not supported (only i32 and i64 globals are supported)"
+                                )));
+                            }
+                        }
                         globals.push(g.ty);
-                        let init_value = eval_const_i32(&g.init_expr)?;
+                        let init_value = eval_const_global_init(&g.init_expr)?;
                         global_init_values.push(init_value);
                     }
                 }
@@ -470,9 +495,19 @@ impl<'a> WasmModule<'a> {
             .iter()
             .any(|ft| ft.params().len() > crate::abi::MAX_LOCAL_REGS);
 
+        // Compute per-global storage widths (4 B for i32/f32, 8 B for i64/f64),
+        // then precompute absolute PVM addresses so backend lowering doesn't
+        // need to re-sum widths per access.
+        let global_widths: Vec<u32> = globals
+            .iter()
+            .map(|g| memory_layout::global_storage_width(g.content_type))
+            .collect();
+        let global_offsets =
+            memory_layout::compute_global_offsets(&global_widths, needs_memory_size_global);
+
         // Compute WASM memory base
         let wasm_memory_base = memory_layout::compute_wasm_memory_base(
-            globals.len(),
+            &global_widths,
             num_passive_segments,
             needs_memory_size_global,
             needs_param_overflow,
@@ -526,6 +561,8 @@ impl<'a> WasmModule<'a> {
             function_type_indices,
             globals,
             global_init_values,
+            global_widths,
+            global_offsets,
             data_segments,
             memory_limits,
             num_imported_funcs,
@@ -736,6 +773,43 @@ fn eval_const_i32(expr: &wasmparser::ConstExpr) -> Result<i32> {
     Ok(0)
 }
 
+/// Evaluate a global's initializer constant-expression. Only single-literal
+/// `i32.const` / `i64.const` initializers are supported; legal-but-unsupported
+/// init-expressions (e.g. `global.get` referencing an imported const global,
+/// `ref.func`, `ref.null`, or extended-const arithmetic like
+/// `i32.const 5; i32.const 7; i32.add`) error out instead of silently producing
+/// the first literal and dropping the rest. wasmparser's `EXTENDED_CONST`
+/// feature is on by default, so multi-operator const-exprs *can* reach this
+/// function after validation — we have to inspect the trailing operator and
+/// require `End`, not just return on the first literal.
+fn eval_const_global_init(expr: &wasmparser::ConstExpr) -> Result<i64> {
+    let mut reader = expr.get_binary_reader();
+    if reader.eof() {
+        // Empty const-expr; treat as zero (no value produced).
+        return Ok(0);
+    }
+    let value = match reader.read_operator()? {
+        wasmparser::Operator::I32Const { value } => i64::from(value),
+        wasmparser::Operator::I64Const { value } => value,
+        // `End` alone produces no value — zero is the only sensible default.
+        wasmparser::Operator::End => return Ok(0),
+        other => {
+            return Err(Error::Unsupported(format!(
+                "unsupported global init expression: {other:?} (only i32.const and i64.const literals are supported)"
+            )));
+        }
+    };
+    // Reject extended-const-expression tails (e.g. an `i32.add` after a literal
+    // pair) instead of silently using only the first literal. The const-expr
+    // must consist of exactly one literal followed by `End`.
+    match reader.read_operator()? {
+        wasmparser::Operator::End => Ok(value),
+        other => Err(Error::Unsupported(format!(
+            "unsupported global init expression: trailing operator {other:?} after literal (only single-literal i32.const/i64.const initializers are supported)"
+        ))),
+    }
+}
+
 fn eval_const_ref(expr: &wasmparser::ConstExpr) -> Option<u32> {
     let mut reader = expr.get_binary_reader();
     while !reader.eof() {
@@ -872,7 +946,7 @@ mod tests {
         let params: String = (0..super::memory_layout::MAX_TOTAL_PARAMS + 1)
             .map(|_| " i32")
             .collect();
-        let wasm = wat::parse_str(&format!(
+        let wasm = wat::parse_str(format!(
             r#"(module
                 (type $oversized (func (param{params}) (result i32)))
                 (func $main (export "main") (param i32 i32) (result i64)
@@ -900,7 +974,7 @@ mod tests {
         let params: String = (0..super::memory_layout::MAX_TOTAL_PARAMS)
             .map(|_| " i32")
             .collect();
-        let wasm = wat::parse_str(&format!(
+        let wasm = wat::parse_str(format!(
             r#"(module
                 (type $maximal (func (param{params}) (result i32)))
                 (func $main (export "main") (param i32 i32) (result i64)

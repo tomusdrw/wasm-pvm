@@ -743,6 +743,8 @@ mod tests {
             wasm_memory_base: 0x30000,
             num_globals: 0,
             has_memory_size_global: false,
+            global_offsets: Vec::new(),
+            global_widths: Vec::new(),
             param_overflow_base: 0,
             param_overflow_reserved: false,
             function_signatures: vec![(1, true)],

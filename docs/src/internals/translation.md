@@ -39,7 +39,7 @@ Source: `crates/wasm-pvm/src/translate/`
 | Address | Purpose |
 |---------|---------|
 | `0x10000` | Read-only data |
-| `0x30000` | Mem-size slot (4 bytes, only when `memory.size`/`grow`/`init` used), then user globals, passive segment length slots, and (when any type signature has >4 params) a 256-byte parameter overflow area. Total size = `align_up_8(globals_region_size(...)) + 256` when overflow is reserved (the overflow base is 8-byte aligned — see `compute_param_overflow_base`), else just `globals_region_size(...)`. |
+| `0x30000` | Mem-size slot (4 bytes, only when `memory.size`/`grow`/`init` used), then user globals (per-global width: 4 B for i32/f32, 8 B for i64/f64 — see `docs/src/learnings.md` "Global Storage Width"; addresses precomputed at parse time as `WasmModule::global_offsets`), passive segment length slots (4 bytes each), and (when any type signature has >4 params) a 256-byte parameter overflow area. Total size = `align_up_8(globals_region_size(...)) + 256` when overflow is reserved (the overflow base is 8-byte aligned — see `compute_param_overflow_base`), else just `globals_region_size(...)`. |
 | `region_end` | WASM linear memory — placed **without 4KB alignment** immediately after the last region. For a module that only declares memory and never uses `memory.size`/`grow`/`init`, `wasm_memory_base` collapses to `0x30000`. A memory-op-using program with zero user globals, no passive segments, and no overflow lands at `0x30004`. A program that also needs overflow (e.g. a 5+ param `call_indirect` target) lands at `0x30108`. |
 
 ## Anti-Patterns

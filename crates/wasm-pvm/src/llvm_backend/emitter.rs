@@ -35,9 +35,19 @@ pub struct LoweringContext {
     pub wasm_memory_base: i32,
     pub num_globals: usize,
     /// Whether the compiler-managed memory-size global slot is emitted at
-    /// `GLOBAL_MEMORY_BASE`. Determines whether user globals start at offset 0
-    /// or offset 4 inside the globals window (see `global_addr`).
+    /// `GLOBAL_MEMORY_BASE`. Used by `memory.size`/`memory.grow` lowering;
+    /// for plain `global.get`/`global.set` access, prefer `global_offsets`.
     pub has_memory_size_global: bool,
+    /// Absolute PVM address of each WASM global, indexed by WASM global index.
+    /// Pre-computed at parse time from per-global widths so backend lowering
+    /// can address globals in O(1) without re-summing widths.
+    pub global_offsets: Vec<i32>,
+    /// Storage width (4 or 8 bytes) for each WASM global, indexed by WASM
+    /// global index. Determines which PVM load/store opcode the backend emits
+    /// — `LoadU32`/`StoreU32` for 4-byte slots, `LoadU64`/`StoreU64` for 8.
+    /// The LLVM IR uses `i64` load/store uniformly regardless of width, so
+    /// the backend cannot derive width from the LLVM instruction's type.
+    pub global_widths: Vec<u32>,
     /// Base address for the parameter overflow area (5th+ args for `call_indirect`).
     /// Only meaningful when `param_overflow_reserved` is true; otherwise emitters
     /// must not dereference this value — the compiler proved no function needs it.

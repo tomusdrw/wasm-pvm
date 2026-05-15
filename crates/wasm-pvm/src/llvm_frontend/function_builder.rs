@@ -470,6 +470,12 @@ impl<'ctx> WasmToLlvm<'ctx> {
     }
 
     fn declare_globals(&mut self, wasm_module: &WasmModule) {
+        // LLVM globals are uniformly declared as `i64`, independent of the
+        // WASM-declared type. The actual PVM storage width (4 B for i32/f32,
+        // 8 B for i64/f64) is enforced by the backend via `ctx.global_widths`,
+        // which picks `LoadU32`/`LoadU64` and `StoreU32`/`StoreU64` per global.
+        // Keeping the LLVM IR shape uniform avoids changing LLVM-pass
+        // outcomes for i32-only modules (the common case).
         self.globals.clear();
         for (idx, &init_value) in wasm_module.global_init_values.iter().enumerate() {
             let global = self
@@ -696,6 +702,12 @@ impl<'ctx> WasmToLlvm<'ctx> {
             }
 
             // === Globals ===
+            // LLVM IR uses i64 load/store regardless of the WASM-declared
+            // global type — the backend picks the correct PVM opcode width
+            // from `ctx.global_widths`. For i32 globals the LLVM `load i64`
+            // is reinterpreted by the backend as `LoadU32` (zero-extends
+            // from 4 bytes); the high 32 bits are zero, which matches what
+            // the WASM frontend produces for i32 stack values anyway.
             Operator::GlobalGet { global_index } => {
                 let idx = *global_index as usize;
                 let ptr = self.globals[idx].as_pointer_value();

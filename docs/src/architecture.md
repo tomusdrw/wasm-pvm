@@ -306,7 +306,8 @@ PVM Address Space:
   0x10000 - 0x1FFFF   Read-only data (RO_DATA_BASE) — dispatch tables
   0x20000 - 0x2FFFF   Gap zone (unmapped, guard between RO and RW)
   0x30000             Mem-size slot (4 bytes, only when memory.size/grow/init used)
-  0x30000 / 0x30004+  User globals (4 bytes each; offset by 4 when mem-size slot present)
+  0x30000 / 0x30004+  User globals (per-global width: 4 B for i32/f32, 8 B for i64/f64,
+                      packed in declaration order; offset by 4 when mem-size slot present)
   after globals       Passive data segment length slots (4 bytes each)
   after lengths       Parameter overflow area (256 bytes, 8-byte aligned, only when any module type signature has >`MAX_LOCAL_REGS` params — covers both local functions and `call_indirect` targets)
   region_end          WASM linear memory (sits immediately after last region — no 4KB alignment)
@@ -319,8 +320,8 @@ PVM Address Space:
 **Key formulas** (see `memory_layout.rs`):
 
 - Memory-size slot: `0x30000` — stable position, independent of `num_globals`. Emitted only when the module uses `memory.size`/`memory.grow`/`memory.init`.
-- Global address: `0x30000 + (has_mem_size ? 4 : 0) + global_index * 4`. When the mem-size slot is present, user globals start at `0x30004`; otherwise they start at `0x30000`.
-- Passive segment length slot: `0x30000 + ((has_mem_size ? 1 : 0) + num_globals + ordinal) * 4`.
+- Global address: precomputed at parse time as `WasmModule::global_offsets[idx]`. Each user global occupies `global_storage_width(type)` bytes — 4 B for `i32`/`f32`, 8 B for `i64`/`f64` — packed in declaration order with no inter-global padding. `(global i64 ...)` round-trips through `LoadU64`/`StoreU64` without truncation; `(global i32 ...)` keeps its 4-byte slot and uses `LoadU32`/`StoreU32`. The LLVM frontend declares each global with its matching int type (`i32`/`i64`) and zext/truncs at `global.get`/`global.set` so the i64 WASM stack representation stays uniform.
+- Passive segment length slot: `0x30000 + (has_mem_size ? 4 : 0) + sum(global_widths) + ordinal * 4` (lengths remain 4 bytes — they're effective sizes, never i64).
 - WASM memory base: `compute_wasm_memory_base(num_globals, num_passive_segments, has_mem_size_global, needs_param_overflow)`. Sits immediately after the last present region with **no 4KB alignment** — anan-as page-aligns the rw_data tail (`heapZerosStart = heapStart + alignToPageSize(rwLength)`) separately, so the base can land at any byte offset. When every region is empty (no globals, no mem-size, no passive, no overflow), the base collapses to `GLOBAL_MEMORY_BASE` itself.
 - Stack limit: `0xFEFE0000 - stack_size`
 
