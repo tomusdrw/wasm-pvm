@@ -312,11 +312,13 @@ fn emit_udivti3_body<'ctx>(
     let slow_path_fn = translator
         .function_value(slow_path_global_idx)
         .ok_or_else(|| Error::Internal("udivti3 slow path function not declared".into()))?;
-    let sp_global = translator.global_value(stack_pointer_global).ok_or_else(|| {
-        Error::Internal(format!(
-            "udivti3 stack-pointer global {stack_pointer_global} not declared"
-        ))
-    })?;
+    let sp_global = translator
+        .global_value(stack_pointer_global)
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "udivti3 stack-pointer global {stack_pointer_global} not declared"
+            ))
+        })?;
 
     let sret = load_local(translator, 0, "sret")?;
     let a_lo = load_local(translator, 1, "a_lo")?;
@@ -367,11 +369,8 @@ fn emit_udivti3_body<'ctx>(
     let sp_old = llvm_err(builder.build_load(i64_type, sp_ptr, "sp_old"))?.into_int_value();
     // sp_new = (sp_old as i32) - 32, then zext back to i64
     let sp_old_i32 = llvm_err(builder.build_int_truncate(sp_old, i32_type, "sp_old_i32"))?;
-    let sp_new_i32 = llvm_err(builder.build_int_sub(
-        sp_old_i32,
-        i32_type.const_int(32, false),
-        "sp_new_i32",
-    ))?;
+    let sp_new_i32 =
+        llvm_err(builder.build_int_sub(sp_old_i32, i32_type.const_int(32, false), "sp_new_i32"))?;
     let sp_new = llvm_err(builder.build_int_z_extend(sp_new_i32, i64_type, "sp_new"))?;
     llvm_err(builder.build_store(sp_ptr, sp_new))?;
 
@@ -407,22 +406,14 @@ fn emit_udivti3_body<'ctx>(
 
     llvm_err(builder.build_call(store_i64, &[sret.into(), scratch_q_lo.into()], ""))?;
     let sret_hi_slow = llvm_err(builder.build_int_add(sret, eight, "sret_hi_slow"))?;
-    llvm_err(builder.build_call(
-        store_i64,
-        &[sret_hi_slow.into(), scratch_q_hi.into()],
-        "",
-    ))?;
+    llvm_err(builder.build_call(store_i64, &[sret_hi_slow.into(), scratch_q_hi.into()], ""))?;
 
     // Restore __stack_pointer. The original __udivti3 ANDs with 0xFFFFFFFF
     // before storing — mask the high bits since the global is i32.
-    let sp_restore = llvm_err(builder.build_and(
-        sp_old,
-        i64_type.const_int(0xFFFF_FFFF, false),
-        "sp_restore",
-    ))?;
+    let sp_restore =
+        llvm_err(builder.build_and(sp_old, i64_type.const_int(0xFFFF_FFFF, false), "sp_restore"))?;
     llvm_err(builder.build_store(sp_ptr, sp_restore))?;
 
     llvm_err(builder.build_return(None))?;
     Ok(())
 }
-

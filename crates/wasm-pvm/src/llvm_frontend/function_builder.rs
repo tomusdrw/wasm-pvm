@@ -306,10 +306,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
     /// disabled / its parse-time scan failed). The kind carries any
     /// auxiliary data the synthesizer needs (slow-path target,
     /// stack-pointer global, …).
-    fn libcall_kind_for(
-        &self,
-        func_idx: usize,
-    ) -> Option<super::libcall_recognition::LibcallKind> {
+    fn libcall_kind_for(&self, func_idx: usize) -> Option<super::libcall_recognition::LibcallKind> {
         let targets = &self.libcall_targets;
         if targets.multi3 == Some(func_idx) {
             return Some(super::libcall_recognition::LibcallKind::Multi3);
