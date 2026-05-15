@@ -1,7 +1,7 @@
 # WASM-PVM: WebAssembly to PolkaVM Recompiler
 
 > **WARNING: This project is largely vibe-coded.**
-> It was built iteratively with heavy AI assistance (Claude). While it has 412 passing integration tests and
+> It was built iteratively with heavy AI assistance (Claude). While it has 670 passing integration tests and
 > produces working PVM bytecode, the internals may contain unconventional patterns, over-engineering in some
 > places, and under-engineering in others. Use at your own risk. Contributions and proper engineering reviews
 > are very welcome!
@@ -106,7 +106,7 @@ Entry functions use a unified ABI: `main(args_ptr: i32, args_len: i32) -> i64`, 
 - **Per-block register cache**: eliminates redundant loads when a value is reused shortly after being computed (~50% gas reduction)
 - **No `unsafe` code**: `deny(unsafe_code)` enforced at workspace level
 - **No floating point**: PVM lacks FP support; WASM floats are rejected at compile time
-- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--no-cross-block-cache`, `--no-register-alloc`, `--no-fallthrough-jumps`
+- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--inline-threshold N`, `--no-cross-block-cache`, `--no-register-alloc`, `--no-aggressive-regalloc`, `--no-scratch-reg-alloc`, `--no-caller-saved-alloc`, `--no-lazy-spill`, `--no-dead-function-elim`, `--no-fallthrough-jumps`, `--no-libcall-recognition`
 
 ### Benchmark: Optimizations Impact
 
@@ -191,7 +191,15 @@ wasm-pvm compile input.wasm -o output.jam \
   --no-llvm-passes --no-peephole --no-register-cache \
   --no-icmp-fusion --no-shrink-wrap --no-dead-store-elim \
   --no-const-prop --no-inline --no-cross-block-cache \
-  --no-register-alloc
+  --no-register-alloc --no-aggressive-regalloc \
+  --no-scratch-reg-alloc --no-caller-saved-alloc \
+  --no-lazy-spill --no-dead-function-elim \
+  --no-fallthrough-jumps --no-libcall-recognition
+
+# Compile past the "float wall" by replacing every f32/f64 op
+# with a runtime trap (useful for discovering other unsupported
+# features in a module before adding real FP support)
+wasm-pvm compile input.wasm -o output.jam --trap-floats
 ```
 
 See the [Import Handling](#import-handling) section for details on resolving WASM imports.
@@ -202,10 +210,10 @@ The `wasm-pvm` crate can be used as a Rust dependency. It supports two modes:
 
 ```toml
 # Full compiler (default) — requires LLVM 18
-wasm-pvm = "0.5.2"
+wasm-pvm = "0.9.0"
 
 # PVM types only — no LLVM dependency, compiles to wasm32-unknown-unknown
-wasm-pvm = { version = "0.5.2", default-features = false }
+wasm-pvm = { version = "0.9.0", default-features = false }
 ```
 
 With `default-features = false`, only the PVM type definitions are available: `Instruction`, `Opcode`, `ProgramBlob`, `SpiProgram`, `abi::*`, `memory_layout::*`, and `Error`. This is useful for downstream tools that need to work with PVM bytecode (interpreters, debuggers, analyzers) without requiring the full LLVM compiler toolchain.
@@ -229,7 +237,7 @@ crates/
       llvm_backend/      # LLVM IR → PVM bytecode lowering (feature = "compiler")
       translate/         # Compilation orchestration & SPI assembly (feature = "compiler")
   wasm-pvm-cli/          # Command-line interface
-tests/                   # 412 integration tests (TypeScript/Bun)
+tests/                   # 670 integration tests (TypeScript/Bun)
   fixtures/
     wat/                 # WAT test programs
     assembly/            # AssemblyScript examples
@@ -256,10 +264,11 @@ cd tests && bun test layer1/
 
 The test suite is organized into layers:
 
-- **Layer 1**: Core/smoke tests (~50 tests) — fast, run during development
-- **Layer 2**: Feature tests (~140 tests)
-- **Layer 3**: Regression/edge cases (~220 tests)
+- **Layer 1**: Core/smoke tests (~56 tests) — fast, run during development
+- **Layer 2**: Feature tests (~169 tests)
+- **Layer 3**: Regression/edge cases (~445 tests)
 - **Layer 4-5**: PVM-in-PVM tests — the PVM interpreter itself compiled to PVM, running the test suite inside PVM
+- **Differential** (~142 tests): cross-checks PVM output against Bun's native WebAssembly engine; run with `bun run test:differential`
 
 ## Import Handling
 
