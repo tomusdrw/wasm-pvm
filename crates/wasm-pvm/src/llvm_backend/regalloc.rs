@@ -118,7 +118,7 @@ pub struct RegAllocStats {
 /// see the same sequence — otherwise back-edges and live ranges get computed
 /// against an order the emitter never executes, producing wrong-register
 /// reads in the emitted code.
-#[allow(clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
 pub fn run<'ctx>(
     function: FunctionValue<'ctx>,
     value_slots: &BTreeMap<ValKey, i32>,
