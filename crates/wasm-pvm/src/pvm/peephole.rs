@@ -210,6 +210,24 @@ pub fn optimize(
         return;
     }
 
+    // Run the store/load same-slot peephole FIRST, before any pass that can
+    // change instruction encoded sizes. The pass needs to compare each
+    // load's byte offset against `labels[]` to skip branch targets, and
+    // `labels[]` holds emission-time byte offsets. Both
+    // `optimize_address_calculation` (AddImm fusion may grow/shrink the
+    // combined Load/Store offset) and `optimize_immediate_chains` (value
+    // patches may grow/shrink the immediate) can change instruction sizes
+    // in place, which would desync our recomputed byte offsets from the
+    // (stale) label offsets and silently let us drop a real branch target.
+    //
+    // The peephole itself is size-preserving: removals (`keep[i+1] = false`)
+    // don't change any instruction's encoded length, and the
+    // `LoadIndU64 → MoveReg` rewrite is gated on an exact length match in
+    // `optimize_store_then_load`, so running it here doesn't disturb the
+    // size invariants the later passes rely on.
+    let mut keep = vec![true; len];
+    optimize_store_then_load(instructions, &mut keep, labels);
+
     // 1. Optimize address calculations (fuse AddImm + Load/Store).
     // This updates instructions in-place and doesn't remove any, so fixups are fine.
     optimize_address_calculation(instructions, labels);
@@ -230,7 +248,11 @@ pub fn optimize(
     // 3. Simple peephole patterns (redundant fallthroughs).
     // Mark instructions for removal (true = keep, false = remove).
     let len = instructions.len();
-    let mut keep = vec![true; len];
+    debug_assert_eq!(
+        keep.len(),
+        len,
+        "instruction count must not change between store/load peephole and later passes",
+    );
 
     for i in 0..len {
         if !keep[i] {
@@ -267,24 +289,9 @@ pub fn optimize(
         }
     }
 
-    // 4. New: Fuse LoadImm + AddImm chains and chained AddImm operations.
+    // 4. Fuse LoadImm + AddImm chains and chained AddImm operations.
+    // (Store/load peephole already ran at the top of `optimize()`.)
     optimize_immediate_chains(instructions, &mut keep);
-
-    // 5. Eliminate StoreIndU64 → LoadIndU64 at the same (base, offset).
-    //
-    // After `store_to_slot(dst)` the value at `STACK_PTR + offset` is exactly
-    // what's in the source register. When a following `LoadIndU64` reads it
-    // back into the same register, the load is a no-op. When it reads into a
-    // different register, we can replace the load with a `MoveReg` (same
-    // 2-byte encoding) so the read still happens but the memory round-trip
-    // disappears.
-    //
-    // Guard: only eliminate when no label points at the load's byte offset,
-    // because branches from elsewhere may target the load and expect to see
-    // the value materialized in `dst`. Within a basic block produced by our
-    // emitter, adjacent Store+Load pairs are never branch targets, but we
-    // still verify in case `define_label` lands between the two emissions.
-    optimize_store_then_load(instructions, &mut keep, labels);
 
     compact_instructions(
         instructions,

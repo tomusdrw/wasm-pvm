@@ -25,5 +25,9 @@ JAM="$THIS_DIR/jam/glutton-kusama.jam"
   }
 
 # Pull the headline numbers out of the analyzer's first ~5 lines.
-python3 "$THIS_DIR/analyze-jam.py" "$JAM" | head -5
+# Capture the output first so `head` exiting early doesn't SIGPIPE the
+# producer (which would trip `set -o pipefail` and abort the script
+# before the final JAM-size echo runs).
+ANALYZE_OUT="$(python3 "$THIS_DIR/analyze-jam.py" "$JAM")"
+printf '%s\n' "$ANALYZE_OUT" | head -5
 echo "JAM bytes: $(stat -f%z "$JAM" 2>/dev/null || stat -c%s "$JAM")"

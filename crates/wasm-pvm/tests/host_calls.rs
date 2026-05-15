@@ -153,19 +153,43 @@ fn test_host_call_2b_captures_r8() {
         instructions[ecalli_pos + 1]
     );
 
-    // `host_call_r8()` must retrieve the captured value somehow. With no
-    // intervening side-effectful work between the capture store and the
-    // retrieve load, the peephole at the end of compilation folds the
-    // round-trip into a register-to-register move from r8. Accept either
-    // shape: a LoadIndU64 (when the retrieve is no longer adjacent to the
-    // capture) or a MoveReg whose source is `r8` (a.k.a. `ARGS_LEN_REG`).
-    let has_load = has_opcode(&instructions, Opcode::LoadIndU64);
-    let has_move_from_r8 = instructions.iter().any(|i| {
-        matches!(i, wasm_pvm::pvm::Instruction::MoveReg { src, .. } if *src == wasm_pvm::abi::ARGS_LEN_REG)
+    // `host_call_r8()` must retrieve the captured value from the
+    // `R8_CAPTURE_SLOT_OFFSET` SP-relative slot. The lowering emits:
+    //   `LoadIndU64 { dst: TEMP_RESULT, base: STACK_PTR_REG,
+    //                 offset: R8_CAPTURE_SLOT_OFFSET }`
+    //
+    // With no intervening side-effectful work between the capture store
+    // and this retrieve load, the store-then-load peephole folds the
+    // adjacent round-trip into:
+    //   `MoveReg { dst: TEMP_RESULT, src: ARGS_LEN_REG }`
+    //
+    // (`ARGS_LEN_REG` == r8 == the StoreIndU64's source.) Accept exactly
+    // one of those two shapes so a regression that drops the retrieve
+    // entirely — or rewrites it to read the wrong slot or wrong register —
+    // is caught.
+    let retrieved_via_load = instructions.iter().any(|i| {
+        matches!(
+            i,
+            wasm_pvm::pvm::Instruction::LoadIndU64 { dst, base, offset }
+                if *dst == wasm_pvm::abi::TEMP_RESULT
+                    && *base == wasm_pvm::abi::STACK_PTR_REG
+                    && *offset == wasm_pvm::abi::R8_CAPTURE_SLOT_OFFSET
+        )
+    });
+    let retrieved_via_move = instructions.iter().any(|i| {
+        matches!(
+            i,
+            wasm_pvm::pvm::Instruction::MoveReg { dst, src }
+                if *dst == wasm_pvm::abi::TEMP_RESULT
+                    && *src == wasm_pvm::abi::ARGS_LEN_REG
+        )
     });
     assert!(
-        has_load || has_move_from_r8,
-        "Expected `host_call_r8` to retrieve r8 via LoadIndU64 or MoveReg from r8",
+        retrieved_via_load || retrieved_via_move,
+        "Expected `host_call_r8` to retrieve r8 either via \
+         `LoadIndU64 dst=TEMP_RESULT base=SP offset=R8_CAPTURE_SLOT_OFFSET` \
+         or via `MoveReg dst=TEMP_RESULT src=ARGS_LEN_REG` \
+         (peephole-folded). Instructions: {instructions:#?}",
     );
 }
 
@@ -425,9 +449,25 @@ fn test_host_call_r8_survives_helper_call() {
 
     // The r8 capture slot is SP-relative and preserved across calls because
     // the caller's SP doesn't change — callees get their own frame below.
-    // Verify the capture store and load are both present.
+    // With a real intervening function call between capture and retrieve,
+    // the store-then-load peephole can't fold the round-trip, so the
+    // retrieve MUST emit a `LoadIndU64` reading exactly the capture slot.
     assert!(has_opcode(&instructions, Opcode::Ecalli));
-    assert!(has_opcode(&instructions, Opcode::LoadIndU64));
+    let retrieve = instructions.iter().find(|i| {
+        matches!(
+            i,
+            wasm_pvm::pvm::Instruction::LoadIndU64 { dst, base, offset }
+                if *dst == wasm_pvm::abi::TEMP_RESULT
+                    && *base == wasm_pvm::abi::STACK_PTR_REG
+                    && *offset == wasm_pvm::abi::R8_CAPTURE_SLOT_OFFSET
+        )
+    });
+    assert!(
+        retrieve.is_some(),
+        "Expected `host_call_r8` to retrieve r8 via \
+         `LoadIndU64 dst=TEMP_RESULT base=SP offset=R8_CAPTURE_SLOT_OFFSET` \
+         after the intervening helper call. Instructions: {instructions:#?}",
+    );
 }
 
 #[test]
