@@ -40,7 +40,7 @@ use inkwell::values::{FunctionValue, InstructionOpcode};
 use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
-use abi::{TEMP1, TEMP2, TEMP_RESULT};
+use abi::{TEMP_RESULT, TEMP1, TEMP2};
 use emitter::{PvmEmitter, SCRATCH1, SCRATCH2, pre_scan_function, val_key_instr};
 
 /// Lower a single LLVM function to PVM bytecode.

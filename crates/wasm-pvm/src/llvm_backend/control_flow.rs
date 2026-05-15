@@ -530,7 +530,8 @@ fn topo_order_phase2(copies: &[PhiCopy<'_>], temp_regs: &[u8]) -> Option<Vec<usi
     }
     // Kahn's algorithm. Use FIFO over a deterministic seed order so the output
     // is reproducible across runs.
-    let mut queue: std::collections::VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
+    let mut queue: std::collections::VecDeque<usize> =
+        (0..n).filter(|&i| in_degree[i] == 0).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
     while let Some(i) = queue.pop_front() {
         order.push(i);
