@@ -22,7 +22,7 @@ use crate::{Error, Result, abi};
 
 use super::emitter::{
     PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, operand_reg,
-    result_slot, try_get_constant, val_key_basic, val_key_instr,
+    operand_reg_avoiding, result_slot, try_get_constant, val_key_basic, val_key_instr,
 };
 use crate::abi::{STACK_PTR_REG, TEMP_RESULT, TEMP1, TEMP2};
 
@@ -352,8 +352,8 @@ fn emit_fused_branch<'a>(
         return Ok(());
     }
 
-    let lhs_reg = operand_reg(e, fused.lhs, TEMP1);
-    let rhs_reg = operand_reg(e, fused.rhs, TEMP2);
+    let lhs_reg = operand_reg_avoiding(e, fused.lhs, TEMP1, &[TEMP2]);
+    let rhs_reg = operand_reg_avoiding(e, fused.rhs, TEMP2, &[TEMP1]);
     if lhs_reg == TEMP1 {
         e.load_operand(fused.lhs, TEMP1)?;
     }

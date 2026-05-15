@@ -20,8 +20,9 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, operand_reg, result_reg,
-    result_reg_or, result_slot, source_bit_width, try_get_constant,
+    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, operand_reg,
+    operand_reg_avoiding, result_reg, result_reg_or, result_slot, source_bit_width,
+    try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -432,8 +433,8 @@ pub fn lower_binary_arith<'ctx>(
             .or_else(|| try_get_bitwise_not(lhs).map(|inner| (rhs, inner)));
 
         if let Some((plain, inv_inner)) = fused_pair {
-            let mut plain_reg = operand_reg(e, plain, TEMP1);
-            let mut inv_reg = operand_reg(e, inv_inner, TEMP2);
+            let mut plain_reg = operand_reg_avoiding(e, plain, TEMP1, &[TEMP2]);
+            let mut inv_reg = operand_reg_avoiding(e, inv_inner, TEMP2, &[TEMP1]);
             if plain_reg != TEMP1 && plain_reg == dst {
                 plain_reg = TEMP1;
             }
@@ -484,8 +485,8 @@ pub fn lower_binary_arith<'ctx>(
         e.load_operand(rhs, TEMP2)?;
         (TEMP1, TEMP2)
     } else {
-        let mut lhs_reg = operand_reg(e, lhs, TEMP1);
-        let mut rhs_reg = operand_reg(e, rhs, TEMP2);
+        let mut lhs_reg = operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]);
+        let mut rhs_reg = operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]);
         if lhs_reg != TEMP1 && lhs_reg == dst {
             lhs_reg = TEMP1;
         }
@@ -776,8 +777,8 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     }
 
     // Load-side coalescing for register-register comparisons.
-    let mut lhs_reg = operand_reg(e, lhs, TEMP1);
-    let mut rhs_reg = operand_reg(e, rhs, TEMP2);
+    let mut lhs_reg = operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]);
+    let mut rhs_reg = operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]);
     if lhs_reg != TEMP1 && lhs_reg == dst {
         lhs_reg = TEMP1;
     }
@@ -1077,9 +1078,9 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
 
     if let Some(tv) = true_const {
         // true_val is constant: load false_val as default, CmovNzImm overwrites if cond != 0
-        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        let def_reg = operand_reg_avoiding(e, false_val, TEMP_RESULT, &[TEMP1]);
         e.load_operand(false_val, def_reg)?;
-        let cond_reg = operand_reg(e, cond, TEMP1);
+        let cond_reg = operand_reg_avoiding(e, cond, TEMP1, &[TEMP_RESULT]);
         e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovNzImm {
             dst: def_reg,
@@ -1089,9 +1090,9 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
         e.store_to_slot(slot, def_reg);
     } else if let Some(fv) = false_const {
         // false_val is constant: load true_val as default, CmovIzImm overwrites if cond == 0
-        let def_reg = operand_reg(e, true_val, TEMP_RESULT);
+        let def_reg = operand_reg_avoiding(e, true_val, TEMP_RESULT, &[TEMP1]);
         e.load_operand(true_val, def_reg)?;
-        let cond_reg = operand_reg(e, cond, TEMP1);
+        let cond_reg = operand_reg_avoiding(e, cond, TEMP1, &[TEMP_RESULT]);
         e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovIzImm {
             dst: def_reg,
@@ -1102,11 +1103,11 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
     } else if let Some(inner_cond) = try_get_inverted_condition(cond) {
         // Inverted condition: select(!c, tv, fv) ≡ select(c, fv, tv)
         // Use CmovIz: load false_val as default, overwrite with true_val when inner_cond==0
-        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        let def_reg = operand_reg_avoiding(e, false_val, TEMP_RESULT, &[TEMP1, TEMP2]);
         e.load_operand(false_val, def_reg)?;
-        let src_reg = operand_reg(e, true_val, TEMP2);
+        let src_reg = operand_reg_avoiding(e, true_val, TEMP2, &[TEMP_RESULT, TEMP1]);
         e.load_operand(true_val, src_reg)?;
-        let cond_reg = operand_reg(e, inner_cond, TEMP1);
+        let cond_reg = operand_reg_avoiding(e, inner_cond, TEMP1, &[TEMP_RESULT, TEMP2]);
         e.load_operand(inner_cond, cond_reg)?;
         e.emit(Instruction::CmovIz {
             dst: def_reg,
@@ -1116,11 +1117,11 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
         e.store_to_slot(slot, def_reg);
     } else {
         // Neither is a small constant: use register CmovNz
-        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        let def_reg = operand_reg_avoiding(e, false_val, TEMP_RESULT, &[TEMP1, TEMP2]);
         e.load_operand(false_val, def_reg)?;
-        let src_reg = operand_reg(e, true_val, TEMP2);
+        let src_reg = operand_reg_avoiding(e, true_val, TEMP2, &[TEMP_RESULT, TEMP1]);
         e.load_operand(true_val, src_reg)?;
-        let cond_reg = operand_reg(e, cond, TEMP1);
+        let cond_reg = operand_reg_avoiding(e, cond, TEMP1, &[TEMP_RESULT, TEMP2]);
         e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovNz {
             dst: def_reg,
