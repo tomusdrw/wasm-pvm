@@ -17,8 +17,8 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    LoweringContext, PvmEmitter, get_operand, operand_bit_width, operand_reg, result_reg,
-    result_slot, try_get_constant, val_key_basic,
+    LoweringContext, PvmEmitter, get_operand, operand_bit_width, operand_reg, operand_reg_avoiding,
+    result_reg, result_slot, try_get_constant, val_key_basic,
 };
 use super::memory::{
     PvmLoadKind, PvmStoreKind, emit_pvm_data_drop, emit_pvm_load, emit_pvm_memory_copy,
@@ -135,8 +135,8 @@ pub fn lower_llvm_intrinsic<'ctx>(
         // source of the sign extension, but the min/max itself uses TEMP1/TEMP2
         // (which hold the sign-extended values).
         let (a_reg, b_reg) = if is_signed && bits == 32 {
-            let a_src = operand_reg(e, a, TEMP1);
-            let b_src = operand_reg(e, b, TEMP2);
+            let a_src = operand_reg_avoiding(e, a, TEMP1, &[TEMP2]);
+            let b_src = operand_reg_avoiding(e, b, TEMP2, &[TEMP1]);
             if a_src == TEMP1 {
                 e.load_operand(a, TEMP1)?;
             }
@@ -155,8 +155,8 @@ pub fn lower_llvm_intrinsic<'ctx>(
             });
             (TEMP1, TEMP2)
         } else {
-            let mut a_reg = operand_reg(e, a, TEMP1);
-            let mut b_reg = operand_reg(e, b, TEMP2);
+            let mut a_reg = operand_reg_avoiding(e, a, TEMP1, &[TEMP2]);
+            let mut b_reg = operand_reg_avoiding(e, b, TEMP2, &[TEMP1]);
             if a_reg != TEMP1 && a_reg == dst {
                 a_reg = TEMP1;
             }
@@ -506,7 +506,10 @@ pub fn lower_llvm_intrinsic<'ctx>(
         // Rotation detection: when a and b are the same SSA value, use RotL/RotR.
         if val_key_basic(a) == val_key_basic(b) {
             let dst = result_reg(e, instr);
-            let mut a_reg = operand_reg(e, a, TEMP1);
+            // `amt_reg` is resolved lazily below (only on the variable-amount
+            // path), so `a_reg` only needs to avoid TEMP2 — the future load
+            // target for `amt` if the constant fast-path doesn't fire.
+            let mut a_reg = operand_reg_avoiding(e, a, TEMP1, &[TEMP2]);
             if a_reg != TEMP1 && a_reg == dst {
                 a_reg = TEMP1;
             }
@@ -547,7 +550,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
             }
 
             // Variable rotation amount: use the register-form rotates.
-            let mut amt_reg = operand_reg(e, amt, TEMP2);
+            let mut amt_reg = operand_reg_avoiding(e, amt, TEMP2, &[TEMP1]);
             if amt_reg != TEMP2 && amt_reg == dst {
                 amt_reg = TEMP2;
             }

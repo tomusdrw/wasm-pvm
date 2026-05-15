@@ -1181,6 +1181,31 @@ pub fn result_reg_or(e: &PvmEmitter<'_>, instr: InstructionValue<'_>, fallback: 
 /// Used for load-side coalescing: callers can use the allocated register directly as an
 /// instruction operand instead of copying to a temp register via `load_operand`.
 pub fn operand_reg(e: &PvmEmitter<'_>, val: BasicValueEnum<'_>, fallback: u8) -> u8 {
+    operand_reg_avoiding(e, val, fallback, &[])
+}
+
+/// Variant of [`operand_reg`] that avoids returning specific registers.
+///
+/// Multi-operand callers (binary arithmetic, stores, cmov, ...) issue several
+/// `load_operand` calls into distinct scratch registers (e.g. lhs → `TEMP1`,
+/// rhs → `TEMP2`). The per-block `slot_cache` may report that some other value
+/// is currently sitting in one of those scratch registers — but if we return
+/// that scratch register here, the sibling `load_operand` call will overwrite
+/// it before the emitted instruction reads it, producing a `Add r4, r2, r2`
+/// kind of aliasing where both operands collapse to the same scratch value.
+///
+/// `avoid` lists the scratch registers reserved as load targets for *other*
+/// operands at the same call site. The cache lookup skips any cached register
+/// that appears in `avoid`, falling back to the operand's own fallback so a
+/// fresh load can populate a non-conflicting register.
+///
+/// Single-operand callers (no sibling load) can use [`operand_reg`] directly.
+pub fn operand_reg_avoiding(
+    e: &PvmEmitter<'_>,
+    val: BasicValueEnum<'_>,
+    fallback: u8,
+    avoid: &[u8],
+) -> u8 {
     if let BasicValueEnum::IntValue(iv) = val {
         // Constants don't have allocated registers.
         if iv.get_sign_extended_constant().is_some() || iv.get_zero_extended_constant().is_some() {
@@ -1190,11 +1215,23 @@ pub fn operand_reg(e: &PvmEmitter<'_>, val: BasicValueEnum<'_>, fallback: u8) ->
             return fallback;
         }
         let key = val_key_int(iv);
-        if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key)
-            && let Some(slot) = e.get_slot(key)
-            && e.alloc_reg_slot[alloc_reg as usize] == Some(slot)
-        {
-            return alloc_reg;
+        if let Some(slot) = e.get_slot(key) {
+            // Narrow path: value's allocated register currently holds the slot.
+            if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key)
+                && e.alloc_reg_slot[alloc_reg as usize] == Some(slot)
+            {
+                return alloc_reg;
+            }
+            // Broader path: per-block cache says the value is in some register
+            // (e.g. it was previously loaded into `TEMP1` for another use). Use
+            // it directly to skip the load — but only if a sibling load won't
+            // clobber it before our emit reads it.
+            if let Some(&cached_reg) = e.slot_cache.get(&slot)
+                && cached_reg != fallback
+                && !avoid.contains(&cached_reg)
+            {
+                return cached_reg;
+            }
         }
     }
     fallback
