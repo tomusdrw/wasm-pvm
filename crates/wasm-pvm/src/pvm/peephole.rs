@@ -460,17 +460,27 @@ fn optimize_store_then_load(
         }
 
         if l_dst == s_src {
-            // Pure no-op: value already in dst.
+            // Pure no-op: value already in dst. Marking for removal is safe
+            // because `compact_instructions` knows how to remove instructions
+            // (it remaps fixups + labels through `byte_to_idx`).
             keep[i + 1] = false;
         } else {
-            // Replace load with a register-to-register copy. Same byte length
-            // as the smallest LoadIndU64 encoding (2 bytes), so smaller-or-
-            // equal in all cases. The byte-offset recompute inside
-            // `compact_instructions` handles any size change.
-            instructions[i + 1] = Instruction::MoveReg {
+            // Replace load with a register-to-register copy. Both `MoveReg`
+            // and `LoadIndU64` use 2-byte encodings only when the load's
+            // offset is zero (`encode_imm(0)` returns an empty slice). For
+            // any non-zero offset, `LoadIndU64` is 3-6 bytes while `MoveReg`
+            // stays at 2, and `compact_instructions` caches `encoded_lengths`
+            // BEFORE this pass mutates, so a size-shrinking in-place rewrite
+            // would silently leave labels past the rewrite point pointing at
+            // stale byte offsets. Only do the rewrite when encoded sizes
+            // match (the offset == 0 case); skip otherwise.
+            let replacement = Instruction::MoveReg {
                 dst: l_dst,
                 src: s_src,
             };
+            if replacement.encode().len() == instructions[i + 1].encode().len() {
+                instructions[i + 1] = replacement;
+            }
         }
     }
 }

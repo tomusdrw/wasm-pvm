@@ -77,24 +77,47 @@ def parse_jam(path):
 
     off = 0
     # Metadata prefix: varint length + metadata bytes
-    meta_len, n = read_var_u32(data, off); off += n
+    meta_len, n = read_var_u32(data, off)
+    off += n
     off += meta_len
-    ro_len = int.from_bytes(data[off:off+3], "little"); off += 3
-    rw_len = int.from_bytes(data[off:off+3], "little"); off += 3
-    heap_pages = int.from_bytes(data[off:off+2], "little"); off += 2
-    stack_size = int.from_bytes(data[off:off+3], "little"); off += 3
+    ro_len = int.from_bytes(data[off:off+3], "little")
+    off += 3
+    rw_len = int.from_bytes(data[off:off+3], "little")
+    off += 3
+    heap_pages = int.from_bytes(data[off:off+2], "little")
+    off += 2
+    stack_size = int.from_bytes(data[off:off+3], "little")
+    off += 3
     off += ro_len + rw_len  # skip ro/rw data
-    code_total_len = int.from_bytes(data[off:off+4], "little"); off += 4
+    code_total_len = int.from_bytes(data[off:off+4], "little")
+    off += 4
+    blob_end = off + code_total_len
+    if blob_end > len(data):
+        raise ValueError(
+            f"Invalid JAM: declared code blob ({code_total_len} bytes) "
+            f"exceeds remaining file size ({len(data) - off} bytes)"
+        )
 
     blob_start = off
-    jt_len, n = read_var_u32(data, off); off += n
-    jt_item_bytes = data[off]; off += 1
-    blob_code_len, n = read_var_u32(data, off); off += n
+    jt_len, n = read_var_u32(data, off)
+    off += n
+    jt_item_bytes = data[off]
+    off += 1
+    blob_code_len, n = read_var_u32(data, off)
+    off += n
 
     off += jt_len * jt_item_bytes  # skip jump table
     code_start = off
-    code = data[code_start:code_start + blob_code_len]
-    mask = data[code_start + blob_code_len:]
+    code_end = code_start + blob_code_len
+    if code_end > blob_end:
+        raise ValueError(
+            f"Invalid JAM: code section ({blob_code_len} bytes from "
+            f"offset {code_start}) extends past the declared blob end"
+        )
+    code = data[code_start:code_end]
+    # Mask is bounded by the declared code blob length so trailing bytes
+    # (if any) don't get folded into instruction-start counting.
+    mask = data[code_end:blob_end]
     return code, mask, {
         "ro_len": ro_len,
         "rw_len": rw_len,
