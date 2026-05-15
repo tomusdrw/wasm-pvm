@@ -164,6 +164,17 @@ pub struct WasmToLlvm<'ctx> {
     /// other unsupported features exist downstream.
     trap_floats: bool,
 
+    /// When true, functions whose `name` custom section entry matches a known
+    /// compiler-builtins libcall (`__multi3`, `__udivti3`) have their bodies
+    /// replaced with a hand-crafted PVM-friendly implementation. See
+    /// `libcall_recognition.rs` for the recognition table and synthesized bodies.
+    recognize_libcalls: bool,
+
+    /// Pre-scanned libcall targets. Populated from `wasm_module.libcall_targets`
+    /// at the start of `translate_module` (when recognition is enabled).
+    /// Drives the body-replacement decision in `translate_function`.
+    libcall_targets: crate::translate::wasm_module::LibcallTargets,
+
     // Per-function state (reset for each function)
     operand_stack: Vec<IntValue<'ctx>>,
     locals: Vec<PointerValue<'ctx>>,
@@ -204,11 +215,19 @@ struct PvmIntrinsics<'ctx> {
     #[allow(dead_code)] // Infrastructure ready for when data.drop is fully supported
     data_drop: FunctionValue<'ctx>,
     call_indirect: FunctionValue<'ctx>,
+    /// Upper 64 bits of an unsigned 64×64→128 multiply. Lowers to `MulUpperUU`.
+    /// Used by the synthesized `__multi3` body.
+    mul_upper_uu: FunctionValue<'ctx>,
 }
 
 impl<'ctx> WasmToLlvm<'ctx> {
     #[must_use]
-    pub fn new(context: &'ctx Context, module_name: &str, trap_floats: bool) -> Self {
+    pub fn new(
+        context: &'ctx Context,
+        module_name: &str,
+        trap_floats: bool,
+        recognize_libcalls: bool,
+    ) -> Self {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
         let pvm_intrinsics = Self::declare_pvm_intrinsics(context, &module);
@@ -225,6 +244,8 @@ impl<'ctx> WasmToLlvm<'ctx> {
             functions: Vec::new(),
             globals: Vec::new(),
             trap_floats,
+            recognize_libcalls,
+            libcall_targets: crate::translate::wasm_module::LibcallTargets::default(),
             operand_stack: Vec::new(),
             locals: Vec::new(),
             current_fn: None,
@@ -232,6 +253,79 @@ impl<'ctx> WasmToLlvm<'ctx> {
             control_stack: Vec::new(),
             unreachable: false,
         }
+    }
+
+    // ── Accessors used by the `libcall_recognition` module ──
+    // Kept narrow so the libcall synthesizer doesn't reach into private
+    // state; everything needed to emit a synthesized body goes through
+    // these. If a future libcall needs more state, add an accessor here
+    // rather than widening field visibility.
+
+    pub(super) fn builder(&self) -> &inkwell::builder::Builder<'ctx> {
+        &self.builder
+    }
+
+    pub(super) fn context(&self) -> &'ctx Context {
+        self.context
+    }
+
+    pub(super) fn i64_type(&self) -> IntType<'ctx> {
+        self.i64_type
+    }
+
+    pub(super) fn i32_type(&self) -> IntType<'ctx> {
+        self.i32_type
+    }
+
+    pub(super) fn local_slot(&self, idx: usize) -> Option<PointerValue<'ctx>> {
+        self.locals.get(idx).copied()
+    }
+
+    pub(super) fn function_value(&self, global_idx: usize) -> Option<FunctionValue<'ctx>> {
+        self.functions.get(global_idx).copied()
+    }
+
+    pub(super) fn global_value(&self, global_idx: usize) -> Option<GlobalValue<'ctx>> {
+        self.globals.get(global_idx).copied()
+    }
+
+    pub(super) fn pvm_store_i64(&self) -> FunctionValue<'ctx> {
+        self.pvm_intrinsics.store_i64
+    }
+
+    pub(super) fn pvm_load_i64(&self) -> FunctionValue<'ctx> {
+        self.pvm_intrinsics.load_i64
+    }
+
+    pub(super) fn pvm_mul_upper_uu(&self) -> FunctionValue<'ctx> {
+        self.pvm_intrinsics.mul_upper_uu
+    }
+
+    /// Return the libcall kind for a given global function index, or `None`
+    /// if the function isn't a recognized libcall (or recognition was
+    /// disabled / its parse-time scan failed). The kind carries any
+    /// auxiliary data the synthesizer needs (slow-path target,
+    /// stack-pointer global, …).
+    fn libcall_kind_for(
+        &self,
+        func_idx: usize,
+    ) -> Option<super::libcall_recognition::LibcallKind> {
+        let targets = &self.libcall_targets;
+        if targets.multi3 == Some(func_idx) {
+            return Some(super::libcall_recognition::LibcallKind::Multi3);
+        }
+        if targets.udivti3 == Some(func_idx)
+            && let (Some(sp_idx), Some(sp_global)) = (
+                targets.udivti3_slow_path,
+                targets.udivti3_stack_pointer_global,
+            )
+        {
+            return Some(super::libcall_recognition::LibcallKind::Udivti3 {
+                slow_path_global_idx: sp_idx,
+                stack_pointer_global: sp_global,
+            });
+        }
+        None
     }
 
     fn declare_pvm_intrinsics(
@@ -301,6 +395,11 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 void_type.fn_type(&[i64_type.into()], false),
             ),
             call_indirect: decl("__pvm_call_indirect", call_indirect_sig),
+            // (a: i64, b: i64) -> i64 — upper 64 bits of unsigned 64×64→128 product.
+            mul_upper_uu: decl(
+                "__pvm_mul_upper_uu",
+                i64_type.fn_type(&[i64_type.into(), i64_type.into()], false),
+            ),
         }
     }
 
@@ -316,6 +415,9 @@ impl<'ctx> WasmToLlvm<'ctx> {
         self.declare_globals(wasm_module);
         self.type_signatures
             .clone_from(&wasm_module.type_signatures);
+        if self.recognize_libcalls {
+            self.libcall_targets = wasm_module.libcall_targets.clone();
+        }
 
         for (local_idx, func_body) in wasm_module.functions.iter().enumerate() {
             // Skip dead functions: still declared (for call references) but body is `unreachable`.
@@ -444,6 +546,23 @@ impl<'ctx> WasmToLlvm<'ctx> {
         let zero = self.i64_type.const_zero();
         for i in num_params..total_locals {
             llvm_err(self.builder.build_store(self.locals[i], zero))?;
+        }
+
+        // Libcall recognition: if this function was identified at parse time
+        // as a recognized compiler-builtins libcall, emit a hand-crafted
+        // PVM-friendly body in place of the WASM body. The recognition
+        // (name match + signature match + any required body-scan metadata)
+        // happens in `WasmModule::parse` and is consumed via the pre-scanned
+        // `libcall_targets` table. See `libcall_recognition.rs` for the
+        // design rationale.
+        //
+        // The synthesized body is straight-line / branching with its own
+        // `ret`; we skip operator translation entirely.
+        if self.recognize_libcalls
+            && let Some(kind) = self.libcall_kind_for(func_idx)
+        {
+            super::libcall_recognition::emit_libcall_body(self, kind, func_value)?;
+            return Ok(());
         }
 
         // Push implicit function block frame.

@@ -85,6 +85,11 @@ pub fn lower_pvm_intrinsic<'ctx>(
         }
         "__pvm_data_drop" => emit_pvm_data_drop(e, instr, ctx),
 
+        // ── Wide multiply ──
+        // Upper 64 bits of unsigned 64×64→128 product. Used by the synthesized
+        // `__multi3` body in `llvm_frontend::libcall_recognition`.
+        "__pvm_mul_upper_uu" => emit_pvm_mul_upper_uu(e, instr),
+
         // ── Indirect calls ──
         "__pvm_call_indirect" => super::calls::lower_pvm_call_indirect(e, instr, ctx),
 
@@ -92,6 +97,46 @@ pub fn lower_pvm_intrinsic<'ctx>(
             "unknown PVM intrinsic: {name}"
         ))),
     }
+}
+
+/// Emit `MulUpperUU dst, a, b` for `__pvm_mul_upper_uu(a, b)`.
+///
+/// Mirrors the operand-coalescing dance of `Mul64` lowering in `alu.rs`: prefer
+/// the source operand's allocated register, fall back to `TEMP1`/`TEMP2` if it
+/// aliases `dst` (since `MulUpperUU` writes `dst` before reading both sources
+/// is guaranteed only for distinct registers, the dst-conflict check keeps us
+/// safe with the operand-reg fast path).
+fn emit_pvm_mul_upper_uu<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    instr: InstructionValue<'ctx>,
+) -> Result<()> {
+    let a = get_operand(instr, 0)?;
+    let b = get_operand(instr, 1)?;
+    let slot = result_slot(e, instr)?;
+    let dst = result_reg(e, instr);
+
+    let mut a_reg = operand_reg(e, a, TEMP1);
+    let mut b_reg = operand_reg(e, b, TEMP2);
+    if a_reg != TEMP1 && a_reg == dst {
+        a_reg = TEMP1;
+    }
+    if b_reg != TEMP2 && b_reg == dst {
+        b_reg = TEMP2;
+    }
+    if a_reg == TEMP1 {
+        e.load_operand(a, TEMP1)?;
+    }
+    if b_reg == TEMP2 {
+        e.load_operand(b, TEMP2)?;
+    }
+
+    e.emit(Instruction::MulUpperUU {
+        dst,
+        src1: a_reg,
+        src2: b_reg,
+    });
+    e.store_to_slot(slot, dst);
+    Ok(())
 }
 
 /// Lower an LLVM intrinsic call (smax, smin, umax, umin, bitreverse, bswap, abs, ctlz, cttz, ctpop, fshl, fshr, assume).

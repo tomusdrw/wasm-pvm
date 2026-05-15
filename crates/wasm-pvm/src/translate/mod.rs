@@ -81,6 +81,13 @@ pub struct OptimizationFlags {
     /// default (225). Default: `Some(5)` — only tiny helpers are inlined.
     /// Only effective when `inlining` is `true`.
     pub inline_threshold: Option<u32>,
+    /// Recognize compiler-builtins libcalls (`__multi3`, `__udivti3`) by name
+    /// and replace their bodies with hand-crafted PVM-friendly IR.
+    /// `__multi3` collapses to a `Mul64` + `MulUpperUU` + a few adds; division
+    /// is a tighter binary long-division loop. Recognition is name-based and
+    /// silently skips when the WASM `name` custom section is stripped or the
+    /// function shape differs.
+    pub libcall_recognition: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -103,6 +110,7 @@ impl Default for OptimizationFlags {
             allocate_caller_saved_regs: true,
             lazy_spill: true,
             inline_threshold: Some(5),
+            libcall_recognition: true,
         }
     }
 }
@@ -311,6 +319,7 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         options.optimizations.inline_threshold,
         reachable_locals.as_ref(),
         options.trap_floats,
+        options.optimizations.libcall_recognition,
     )?;
 
     // Calculate RO_DATA offsets and lengths for passive data segments

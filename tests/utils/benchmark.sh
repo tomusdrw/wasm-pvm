@@ -61,6 +61,13 @@ BENCHMARKS=(
   "aslan-ecalli|00|0|aslan-ecalli accumulate|wat:tests/fixtures/wat/aslan-ecalli.jam.wat"
   "blake2b|2000000000000000616263|0|blake2b(\"abc\",32)|wat:tests/fixtures/wat/blake2b.jam.wat"
   "sha512|616263|0|sha512(\"abc\")|wat:tests/fixtures/wat/sha512.jam.wat"
+  # u128 microbenchmarks: 1000 iterations (args = 1000u32 LE = 0xe8030000)
+  # measure dynamic gas savings from `libcall_recognition` (__multi3 /
+  # __udivti3 body replacement). Fast variants always take the b_hi
+  # specialization fast path; the -slow variant always takes the slow path.
+  "u128-mul-bench|e8030000|0|u128 mul x1000|wat:tests/fixtures/wat/u128-mul-bench.jam.wat"
+  "u128-div-bench|e8030000|0|u128 div(fast) x1000|wat:tests/fixtures/wat/u128-div-bench.jam.wat"
+  "u128-div-bench-slow|e8030000|0|u128 div(slow) x1000|wat:tests/fixtures/wat/u128-div-bench-slow.jam.wat"
   "sha512|616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161|0|sha512(240x\"a\" — multi-block + two-pad)|wat:tests/fixtures/wat/sha512.jam.wat"
 )
 
