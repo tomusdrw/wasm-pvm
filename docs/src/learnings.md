@@ -761,3 +761,61 @@ This is *not* true of `encode_imm` (used for plain `LoadImm`, `JumpInd`, `AddImm
 **Verified-safe seeding.** The emission loop pushes 2 entry-header instructions (one `Jump` + either another `Jump` or `Trap`) before iterating, so `current_code_bytes` is initialized from `all_instructions.iter().map(|i| i.encode().len()).sum()` — paying the one-time cost across exactly those two entries. Forgetting this offset (`= 0`) was an early version of the fix that passed glutton but broke `test_branch_fixup_resolution` (`crates/wasm-pvm/tests/emitter_unit.rs:194-220`), which compiles a single-`if` function where main is emitted first and the entry-header `Jump.offset` ends up at zero — a fast in-flight regression catch that justifies why this test was worth keeping.
 
 **Result on glutton (2.04 MiB WASM, 1631 functions):** compile time drops from >10 min (hard timeout, never finished) to **~4 s** — ≥150× speedup. All 14 polkadot-fellows v2.2.2 runtimes now compile in 4:26 wall-clock total. Standard benchmark JAM/code/gas numbers are byte-identical across main and the fix (verified by md5sum), since this change is purely compile-time.
+
+## Libcall Recognition for `__multi3` / `__udivti3` (2026-05)
+
+WASM has no `i128` type, so `rustc` for `wasm32-unknown-unknown` lowers every 128-bit operation to a call into the compiler-builtins runtime, which it bakes into each binary. The two workhorses are **`__multi3`** (`i128 × i128 → i128`, ~110 bytes WASM body of Knuth-style i64 partial products) and **`__udivti3`** (`u128 / u128 → u128`, a thin wrapper over `specialized_div_rem`, ~1100 bytes total). Every `(a as u128) * (b as u128)`, `(a as u128) / (b as u128)`, and the `*_hi` helpers route through these.
+
+After our LLVM optimization passes (with `inline_threshold = Some(5)`) these stay as separate functions — their body sizes far exceed the threshold so they're marked `noinline` and the call sites remain visible as `call wasm_func_N(sret, a_lo, a_hi, b_lo, b_hi)`. That gave us a clean intercept point.
+
+**Recognition is name-based.** During `WasmModule::parse` we scan the local-function name table (from the WASM custom `name` section, falling back to exports), match against `__multi3` / `__udivti3`, verify the signature is exactly `(i32 sret, i64 a_lo, i64 a_hi, i64 b_lo, i64 b_hi) → void` (in our i64-uniform IR: 5 i64 params, no return), and for `__udivti3` additionally walk the body for its first `Call` (the slow-path callee) and first `GlobalGet` (the `__stack_pointer` global). Both are required for the synthesized body to have a working slow path; without them recognition silently no-ops. The signature gate prevents a user function that happens to share a reserved-by-ABI name from being silently mis-translated.
+
+**Why not IR pattern matching.** Naive IR pattern matching on call sites would catch the post-inline case (when someone bumps `--inline-threshold` past the body size), but is fragile across rustc versions: different toolchain releases shuffle the Knuth-expansion shape and a matcher tuned for rustc 1.85 silently stops matching on 1.86. Name-based body replacement is robust as long as compiler-builtins keeps these reserved names, which is part of the C/Rust ABI.
+
+**`__multi3` body (8 PVM instructions).** For `a × b mod 2^128` where `a = a_lo + 2^64·a_hi` and similarly for `b`:
+
+```text
+low_half  = a_lo × b_lo                                                  (Mul64)
+high_half = upper64(a_lo × b_lo) + (a_lo × b_hi) + (a_hi × b_lo)         (MulUpperUU + 2×Mul64 + 2×Add64)
+```
+
+All operations are mod 2^64, which conveniently provides the i128 sign correction: when callers pass sign-extended high halves (`(a as i64) >> 63` = all-ones or all-zeros), `(-1) × b_lo = -b_lo` is exactly the correction term needed to convert the unsigned upper half into the signed upper half. So **`MulUpperUU` (opcode 214) is sufficient** — we don't need `MulUpperSS` / `MulUpperSU`.
+
+**`__udivti3` body (fast/slow dispatch).** Compiler-builtins' `specialized_div_rem` is a polished Knuth Algorithm D implementation with CTLZ-based normalization, native `udiv i64` for the quotient digits, and dispatch on operand sizes. It compiles to ~800 PVM instructions in our pipeline. **Beating it from scratch is out of scope**: a naive binary long-division replacement would be ~3000 PVM instructions (worse on every dimension). The pragmatic win is the b_hi specialization:
+
+```text
+if (a_hi | b_hi) == 0:
+    q   = a_lo / b_lo                ; native PVM DivU64
+    sret = (q, 0)
+    return
+else:
+    sp_old = __stack_pointer
+    __stack_pointer = sp_old - 32    ; specialized_div_rem writes 32 bytes (q + r)
+    call specialized_div_rem(sp_new, ...)
+    copy quotient (16 bytes) to caller sret
+    __stack_pointer = sp_old
+    return
+```
+
+The slow path re-implements the original `__udivti3` wrapper verbatim — passing the caller's 16-byte `sret` directly to `specialized_div_rem` is unsafe because it writes 32 bytes (quotient + remainder).
+
+**Measured dynamic gas impact** (microbenchmarks at 1000 iterations through anan-as, see `tests/fixtures/wat/u128-{mul,div}-bench*.jam.wat`):
+
+| Operation | Recognition off | Recognition on | Δ Gas | Notes |
+|-----------|-----------------|----------------|-------|-------|
+| u128 mul | 119,029 | 75,029 | **−37%** | Body replacement, no dispatch |
+| u128 div fast path (`a_hi = b_hi = 0`) | 129,029 | 76,029 | **−41%** | Native `DivU64` vs full `__udivti3 + specialized_div_rem` stub |
+| u128 div slow path (`b_hi != 0`) | 129,029 | 143,029 | **+11%** | Dispatch overhead (Or + ICmp + Branch) |
+
+**Measured static impact** (real substrate runtimes via `examples/polkadot/`, combined mul + div recognition vs `--no-libcall-recognition`):
+
+| Runtime | `__multi3` calls | `__udivti3` calls | Δ PVM instr | Δ JAM bytes |
+|---------|------------------|-------------------|-------------|-------------|
+| glutton-kusama | 79 | small | -20 | -64 |
+| asset-hub-kusama | 962 | 135 | -20 | -64 |
+
+The `__multi3` body saves ~45 PVM instructions one-shot (it shrinks from ~30 to 8). The `__udivti3` body grows by ~25 PVM instructions (the original was a thin 20-instr wrapper; we now carry a fast path + slow path + dispatch). Net per-runtime is roughly **−20 instructions / −64 bytes** — static savings are minor in either direction. **The real win is dynamic gas** (microbench table above): the b_hi specialization fast path runs in ~5 PVM instructions instead of ~50 in the original. On workloads where most callers pass zero high halves (substrate's `Perbill::from_rational`, currency math fitting comfortably in u64), every `__udivti3` invocation pays a much smaller runtime cost.
+
+**The slow-path regression is the cost of the dispatch.** For workloads dominated by full u128/u128 arithmetic, the 11% regression is real but bounded. In substrate, the pattern `(x: u64 as u128) / (y: u64 as u128)` is extremely common (`Perbill::from_rational`, currency arithmetic where balances comfortably fit in u64), so the fast path is expected to dominate. End-to-end runtime gas measurement requires running the chain, which is out of scope here — the microbench numbers above are the available signal.
+
+**What we explicitly did *not* do.** Naive binary long division to replace `specialized_div_rem` entirely (loses ~2000 PVM instructions static, slow-path 3-4× worse). Newton-Raphson reciprocal or other algorithmic improvements (multi-week project for an uncertain win). Caller-side IR pattern matching to inline u64/u64 directly at call sites (fragile across LLVM passes, conflicts with our preference for body recognition). See `crates/wasm-pvm/src/llvm_frontend/libcall_recognition.rs` for the full design.

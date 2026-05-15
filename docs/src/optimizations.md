@@ -78,6 +78,35 @@ Removes functions not reachable from exports or the function table. Reduces code
 
 When a block ends with an unconditional jump to the next block in layout order, the `Jump` is skipped — execution falls through naturally.
 
+## Libcall Recognition (`--no-libcall-recognition`)
+
+Replaces the body of recognized **compiler-builtins runtime functions** with hand-crafted PVM-friendly implementations. WASM has no `i128` type, so `rustc` for `wasm32-unknown-unknown` lowers every `(a as u128) * b`, `a / b` and similar to calls into runtime helpers (`__multi3`, `__udivti3`). Those helpers carry their full Knuth-style bodies into the WASM (~30 IR instructions for `__multi3`, ~800+ for `__udivti3` + `specialized_div_rem`); when we recognize them by name we can swap the body for something that uses PVM's native opcodes directly.
+
+**Recognition is name-based**, by matching the function's WASM custom `name` section entry against a fixed table:
+
+| Name | Replacement |
+|------|-------------|
+| `__multi3` | 8 PVM instructions: `Mul64 + MulUpperUU + 2×Mul64 + 2×Add64 + 2×StoreIndU64` |
+| `__udivti3` | Fast/slow dispatch on `(a_hi \| b_hi) == 0`: fast path is `DivU64` + 2 stores; slow path forwards to the original `specialized_div_rem` (compiler-builtins) via the same stack-frame setup as the original wrapper |
+
+Each recognition also checks the signature (5 `i64` params, no return — the C `sret` convention) so a user function that happens to share a name isn't silently mis-translated. For `__udivti3`, the body is also scanned to extract the slow-path callee and the `__stack_pointer` global; without both we silently no-op.
+
+**Impact** (microbenchmark, 1000 iterations of the underlying operation):
+
+| Workload | With | Without | Δ Gas | Δ Size |
+|----------|------|---------|-------|--------|
+| u128 mul | 75,029 | 119,029 | **−37%** | **−170 B** |
+| u128 div (fast path, `a_hi = b_hi = 0`) | 76,029 | 129,029 | **−41%** | +110 B |
+| u128 div (slow path, `b_hi != 0`) | 143,029 | 129,029 | +11% | +110 B |
+
+The `__udivti3` fast path is the b_hi specialization win: when callers pass `i64 0` for the high halves (the dominant shape in substrate's `Perbill` / currency arithmetic), it becomes a 5-PVM-instruction inline divide. The 11% slow-path regression is the cost of the dispatch (`Or + ICmp + Branch`) — accepted because real workloads are dominated by the fast path.
+
+**Limitations** (documented in `crates/wasm-pvm/src/llvm_frontend/libcall_recognition.rs`):
+
+- Strips of the WASM `name` custom section disable recognition silently (no correctness impact).
+- Aggressive inlining (`--inline-threshold` > body size) inlines the libcall everywhere; recognition still applies but the inlined call sites still run the slow original. A separate IR pattern matcher would be needed to catch those — explicitly out of scope.
+- A user function literally named `__multi3` with the exact 5-i64-param signature would be silently replaced. Mitigation: signature gate + the names are reserved by the C/Rust ABI.
+
 ## Lazy Spill (`--no-lazy-spill`)
 
 Eliminates write-through stack stores for register-allocated values. When a value is stored to a slot that has an allocated register, the value goes only into the register (marked "dirty") and the `StoreIndU64` to the stack is skipped. Values are flushed to the stack only when required:

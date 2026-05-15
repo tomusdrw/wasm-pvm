@@ -110,6 +110,7 @@ pub fn dump_llvm_ir(wat: &str) -> Result<String> {
         opts.inline_threshold,
         /* reachable_locals */ None,
         /* trap_floats */ false,
+        opts.libcall_recognition,
     )?;
     Ok(llvm_module.print_to_string().to_string())
 }

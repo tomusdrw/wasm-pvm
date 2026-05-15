@@ -123,6 +123,12 @@ enum Commands {
 
         #[arg(
             long,
+            help = "Disable compiler-builtins libcall recognition (__multi3, __udivti3)"
+        )]
+        no_libcall_recognition: bool,
+
+        #[arg(
+            long,
             help = "Override maximum memory pages (default: 16 = 1 MB, each page = 64 KB)"
         )]
         max_memory: Option<u32>,
@@ -169,6 +175,7 @@ fn main() -> Result<()> {
             no_scratch_reg_alloc,
             no_caller_saved_alloc,
             no_lazy_spill,
+            no_libcall_recognition,
             max_memory,
             trap_floats,
         } => {
@@ -217,6 +224,7 @@ fn main() -> Result<()> {
                     lazy_spill: !no_lazy_spill,
                     inline_threshold: inline_threshold
                         .or(OptimizationFlags::default().inline_threshold),
+                    libcall_recognition: !no_libcall_recognition,
                 },
                 max_memory_pages: max_memory,
                 trap_floats,

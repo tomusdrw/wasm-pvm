@@ -103,6 +103,49 @@ pub struct WasmModule<'a> {
     /// globals/passive-length region (no 4KB alignment is applied; see
     /// `compute_wasm_memory_base` for the full layout rules).
     pub needs_param_overflow: bool,
+
+    /// Libcall recognition metadata. Populated during parsing by scanning
+    /// for compiler-builtins functions whose bodies the LLVM frontend can
+    /// replace with hand-crafted PVM-friendly implementations (`__multi3`,
+    /// `__udivti3`). `None` here means the function wasn't found or didn't
+    /// match the expected shape — recognition will silently no-op in that
+    /// case. See `llvm_frontend::libcall_recognition` for the full design.
+    pub libcall_targets: LibcallTargets,
+}
+
+/// Information about compiler-builtins libcalls discovered during parsing.
+///
+/// Each field is the global function index (imports first, then locals) of
+/// a recognized libcall. `None` indicates the libcall wasn't found or its
+/// shape didn't match — the frontend then falls through to normal
+/// translation of the original body.
+#[derive(Debug, Clone, Default)]
+pub struct LibcallTargets {
+    /// Global function index of `__multi3`, if present.
+    pub multi3: Option<usize>,
+    /// Global function index of `__udivti3`, if present AND its single
+    /// body-internal `Call` target is identified (`udivti3_slow_path`).
+    pub udivti3: Option<usize>,
+    /// Global function index of `__udivti3`'s slow-path callee — the
+    /// function `__udivti3` tail-calls (compiler-builtins'
+    /// `specialized_div_rem` or equivalent). The synthesized `__udivti3`
+    /// body forwards to this for the non-u64/u64 case.
+    ///
+    /// We capture this *during parsing* by scanning `__udivti3`'s WASM
+    /// operators for the single `Call` instruction in its body. Without
+    /// this reference the frontend can't construct a fallback path and
+    /// silently skips `__udivti3` recognition (it can still optimize
+    /// `__multi3`).
+    pub udivti3_slow_path: Option<usize>,
+    /// WASM global index of the `__stack_pointer` global, captured by
+    /// scanning `__udivti3` for its first `GlobalGet` operator. The
+    /// original `__udivti3` allocates a 32-byte stack frame (because
+    /// `specialized_div_rem` writes 32 bytes of `(quotient, remainder)`),
+    /// reads/writes the quotient back, then restores the pointer. Our
+    /// synthesized slow path replicates that frame setup, so it needs
+    /// the global's index. `None` if scanning fails — recognition then
+    /// silently no-ops for `__udivti3`.
+    pub udivti3_stack_pointer_global: Option<usize>,
 }
 
 impl<'a> WasmModule<'a> {
@@ -462,6 +505,21 @@ impl<'a> WasmModule<'a> {
             }
         }
 
+        // Libcall recognition pre-scan: locate `__multi3` and `__udivti3` by
+        // name, and for `__udivti3` capture the body-internal `Call` target
+        // (compiler-builtins' `specialized_div_rem`) so the LLVM frontend can
+        // emit a slow-path forward to it. Each function is recognized only if
+        // its signature matches the expected libcall ABI (5 i64 params, no
+        // return — both libcalls share this shape due to the C-style `sret`
+        // convention).
+        let libcall_targets = scan_libcall_targets(
+            &local_function_names,
+            &functions,
+            &function_type_indices,
+            &func_types,
+            num_imported_funcs as usize,
+        );
+
         Ok(WasmModule {
             functions,
             func_types,
@@ -486,8 +544,162 @@ impl<'a> WasmModule<'a> {
             max_memory_pages,
             needs_memory_size_global,
             needs_param_overflow,
+            libcall_targets,
         })
     }
+}
+
+/// Locate compiler-builtins libcalls by name in the parsed WASM module.
+///
+/// Returns global function indices (imports first, then locals) for each
+/// recognized libcall. For `__udivti3`, also scans the body to find the
+/// single `Call` instruction — the target is captured as the slow-path
+/// fallback that the synthesized body will forward to for the non-u64/u64
+/// case.
+///
+/// Each libcall is recognized only if both:
+///   1. Its name matches in the name section / exports.
+///   2. Its signature is exactly `(i32 sret, i64 a_lo, i64 a_hi, i64 b_lo,
+///      i64 b_hi) -> void` — represented in our i64-uniform IR as 5 i64
+///      params, no return. The signature gate prevents user functions
+///      that happen to share a name (extremely unlikely — these names are
+///      reserved by the C/Rust ABI) from being silently mis-translated.
+///
+/// If `__udivti3` is found but no `Call` instruction is in its body (e.g.
+/// it was already inlined, replaced, or has an unexpected shape), the
+/// `udivti3` field is set to `None` — recognition silently no-ops.
+fn scan_libcall_targets(
+    local_function_names: &[Option<String>],
+    functions: &[FunctionBody<'_>],
+    function_type_indices: &[u32],
+    func_types: &[wasmparser::FuncType],
+    num_imported_funcs: usize,
+) -> LibcallTargets {
+    let mut targets = LibcallTargets::default();
+
+    for (local_idx, name) in local_function_names.iter().enumerate() {
+        let Some(name) = name else { continue };
+        if !has_libcall_signature(local_idx, function_type_indices, func_types) {
+            continue;
+        }
+        let global_idx = num_imported_funcs + local_idx;
+        match name.as_str() {
+            "__multi3" => targets.multi3 = Some(global_idx),
+            "__udivti3" => {
+                // Capture the slow-path target by scanning `__udivti3`'s
+                // body for its single `Call` operator. Compiler-builtins'
+                // `__udivti3` body is the canonical thin wrapper:
+                //   (alloc stack slot, call specialized_div_rem,
+                //    copy result, return). The first `Call` is the
+                //    specialized_div_rem we need to forward to.
+                //
+                // We also need the `__stack_pointer` global index — the
+                // first `GlobalGet` in the body — so the synthesized
+                // slow path can replicate the original frame setup that
+                // `specialized_div_rem` requires (it writes 32 bytes,
+                // callers only allocate 16 for the quotient).
+                if let Some(body) = functions.get(local_idx) {
+                    let slow_path = find_first_call_target(body);
+                    let stack_ptr = find_first_global_get(body);
+                    // Verify the slow-path callee has the same canonical
+                    // WASM type as `__udivti3` (`(i32, i64, i64, i64, i64) → []`).
+                    // Without this guard a weird-shaped input WASM (whose
+                    // `__udivti3` happens to call some unrelated function
+                    // first) would make the synthesized body call that
+                    // function with mismatched argument types and fail
+                    // LLVM `verify` later. Silently skip recognition in
+                    // that case so compilation still succeeds with the
+                    // original body.
+                    let slow_path_ok = slow_path.is_some_and(|sp| {
+                        let sp_local = (sp as usize).checked_sub(num_imported_funcs);
+                        sp_local.is_some_and(|li| {
+                            has_libcall_signature(li, function_type_indices, func_types)
+                        })
+                    });
+                    if let (true, Some(stack_ptr), Some(slow_path)) =
+                        (slow_path_ok, stack_ptr, slow_path)
+                    {
+                        targets.udivti3 = Some(global_idx);
+                        targets.udivti3_slow_path = Some(slow_path as usize);
+                        targets.udivti3_stack_pointer_global = Some(stack_ptr as usize);
+                    }
+                }
+                // If any scan check fails we silently skip recognition.
+                // There's no slow path to forward to safely, and binary long
+                // division is too large to be a viable replacement (see
+                // `docs/src/learnings.md`).
+            }
+            _ => {}
+        }
+    }
+
+    targets
+}
+
+/// Check that a local function has the canonical compiler-builtins libcall
+/// signature: `(i32 sret, i64 a_lo, i64 a_hi, i64 b_lo, i64 b_hi) -> []`.
+///
+/// Validating the exact raw WASM value types (not just arity / return-ness)
+/// rules out user functions that happen to share `__multi3` / `__udivti3` /
+/// `specialized_div_rem` names but have wholly different shapes — e.g. an
+/// all-i64 5-param function. Those names are reserved by the C/Rust ABI
+/// for this exact signature, so any legitimate caller emits exactly this
+/// shape; we treat the canonical types as part of the recognition gate.
+fn has_libcall_signature(
+    local_idx: usize,
+    function_type_indices: &[u32],
+    func_types: &[wasmparser::FuncType],
+) -> bool {
+    use wasmparser::ValType;
+    const EXPECTED_PARAMS: [ValType; 5] = [
+        ValType::I32,
+        ValType::I64,
+        ValType::I64,
+        ValType::I64,
+        ValType::I64,
+    ];
+
+    let Some(&type_idx) = function_type_indices.get(local_idx) else {
+        return false;
+    };
+    let Some(func_type) = func_types.get(type_idx as usize) else {
+        return false;
+    };
+    func_type.params() == EXPECTED_PARAMS && func_type.results().is_empty()
+}
+
+/// Find the global function index that this body's first `Call` operator
+/// targets. WASM's `call` is index-based and uses the global function
+/// space (imports first, then local funcs); the returned index can be
+/// dropped straight into a downstream lookup like `module.functions[idx]`.
+///
+/// Returns `None` if the body has no `Call` operator. This is the failure
+/// mode for `__udivti3` recognition: a body without an internal call
+/// means we can't construct a slow-path fallback.
+fn find_first_call_target(body: &FunctionBody<'_>) -> Option<u32> {
+    let reader = body.get_operators_reader().ok()?;
+    for op in reader {
+        let op = op.ok()?;
+        if let wasmparser::Operator::Call { function_index } = op {
+            return Some(function_index);
+        }
+    }
+    None
+}
+
+/// Find the first `global.get` operator in the body and return its index.
+/// Used to identify the `__stack_pointer` global from `__udivti3`'s
+/// frame-setup prologue (the very first thing it does is read the stack
+/// pointer). Returns `None` if no `global.get` appears.
+fn find_first_global_get(body: &FunctionBody<'_>) -> Option<u32> {
+    let reader = body.get_operators_reader().ok()?;
+    for op in reader {
+        let op = op.ok()?;
+        if let wasmparser::Operator::GlobalGet { global_index } = op {
+            return Some(global_index);
+        }
+    }
+    None
 }
 
 /// Scan function bodies for any operator that reads/writes the compiler-managed

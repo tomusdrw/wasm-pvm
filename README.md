@@ -128,7 +128,12 @@ All PVM-level optimizations enabled (default):
 | aslan-fib accumulate | - | 20.7 KB | 13,365 B | 11,474 |
 | blake2b("abc", 32) | 1.1 KB | 3.8 KB | 2,558 B | 17,930 |
 | sha512("abc") | 1.7 KB | 3.7 KB | 2,559 B | 17,981 |
+| u128 mul x1000 | 296 B | 475 B | 358 B | 75,029 |
+| u128 div(fast) x1000 | 273 B | 826 B | 660 B | 76,029 |
+| u128 div(slow) x1000 | 273 B | 832 B | 661 B | 143,029 |
 | anan-as PVM interpreter | 53.4 KB | 115.6 KB | 84,281 B | - |
+
+The three `u128` rows are microbenchmarks for the `libcall_recognition` optimization (replaces `__multi3` and `__udivti3` bodies with hand-crafted PVM-friendly versions; `--no-libcall-recognition` to disable). Compared against the same workloads with recognition off: u128 mul **−37% gas**, u128 div fast path (callers with `a_hi = b_hi = 0`) **−41% gas**, u128 div slow path (b_hi non-zero) **+11% gas** — the slow-path regression is the cost of the dispatch check and is dwarfed by the fast-path savings in real workloads (substrate runtimes hit the fast path on the dominant `Perbill`/`Balance: u128` patterns). See `docs/src/optimizations.md` for details.
 
 PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost):
 
