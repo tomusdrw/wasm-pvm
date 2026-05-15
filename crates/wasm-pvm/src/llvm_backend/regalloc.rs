@@ -232,13 +232,18 @@ pub fn run(
     }
 
     // Add callee-saved registers (r9-r12) beyond parameter count.
-    // For non-leaf functions, reserve outgoing argument registers (r9..)
-    // based on the function's max call arity, since call setup writes them.
-    let first_alloc_idx = if is_leaf {
-        num_params
-    } else {
-        num_params.max(max_call_args.min(crate::abi::MAX_LOCAL_REGS))
-    };
+    // Outgoing call argument registers (r9..r9+arity-1) are still allocatable
+    // in non-leaf functions: the call lowering spills dirty allocated values
+    // via `spill_allocated_regs()` before each call and clears alloc state via
+    // `clear_reg_cache()` after, so subsequent uses lazy-reload from the
+    // canonical stack slot. This is the same mechanism that lets r5/r6 be
+    // allocatable in non-leaf functions.
+    //
+    // We still reserve parameter registers (r9..r9+num_params-1): they hold
+    // incoming values at function entry, and making them allocatable to
+    // non-param values causes correctness failures in tests with parameter
+    // overflow / loop back-edges (see integration tests).
+    let first_alloc_idx = num_params;
     for i in first_alloc_idx..crate::abi::MAX_LOCAL_REGS {
         allocatable_regs.push(crate::abi::FIRST_LOCAL_REG + i as u8);
     }
