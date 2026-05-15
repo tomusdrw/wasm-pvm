@@ -42,6 +42,17 @@ const SLOW_PATH_QLO = 0xdeadbef0n;
 const SLOW_PATH_QHI = 0xdeadbef1n;
 
 describe("__udivti3 fast path (a_hi == 0 && b_hi == 0)", () => {
+  // The synthesized fast path emits `udiv i64`, which our backend gates
+  // with `emit_wasm_div_zero_trap` before the actual `DivU64`. anan-as
+  // reports a trap as `Status: PANIC` with no result bytes (it still
+  // exits the process with code 0, so `runJamBytes` does not throw —
+  // hence the empty-result assertion). This guards against future
+  // codegen changes silently turning div-by-zero into undefined data.
+  test("u64 / 0 traps (no result returned)", () => {
+    const bytes = runJamBytes(JAM_FILE, encodeArgs(17n, 0n, 0n, 0n));
+    expect(bytes.length).toBe(0);
+  });
+
   test("u64 / u64 exact division", () => {
     const bytes = runJamBytes(JAM_FILE, encodeArgs(15n, 0n, 3n, 0n));
     const { lo, hi } = decodeResult(bytes);

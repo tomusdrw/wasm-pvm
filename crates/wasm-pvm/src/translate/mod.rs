@@ -83,8 +83,10 @@ pub struct OptimizationFlags {
     pub inline_threshold: Option<u32>,
     /// Recognize compiler-builtins libcalls (`__multi3`, `__udivti3`) by name
     /// and replace their bodies with hand-crafted PVM-friendly IR.
-    /// `__multi3` collapses to a `Mul64` + `MulUpperUU` + a few adds; division
-    /// is a tighter binary long-division loop. Recognition is name-based and
+    /// `__multi3` collapses to a `Mul64` + `MulUpperUU` + a few adds.
+    /// `__udivti3` dispatches on `(a_hi | b_hi) == 0`: fast path is native
+    /// `DivU64`, slow path forwards to the original `specialized_div_rem`
+    /// callee via the same stack-frame setup. Recognition is name-based and
     /// silently skips when the WASM `name` custom section is stripped or the
     /// function shape differs.
     pub libcall_recognition: bool,

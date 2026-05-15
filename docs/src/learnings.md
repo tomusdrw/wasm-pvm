@@ -774,7 +774,7 @@ After our LLVM optimization passes (with `inline_threshold = Some(5)`) these sta
 
 **`__multi3` body (8 PVM instructions).** For `a × b mod 2^128` where `a = a_lo + 2^64·a_hi` and similarly for `b`:
 
-```
+```text
 low_half  = a_lo × b_lo                                                  (Mul64)
 high_half = upper64(a_lo × b_lo) + (a_lo × b_hi) + (a_hi × b_lo)         (MulUpperUU + 2×Mul64 + 2×Add64)
 ```
@@ -783,7 +783,7 @@ All operations are mod 2^64, which conveniently provides the i128 sign correctio
 
 **`__udivti3` body (fast/slow dispatch).** Compiler-builtins' `specialized_div_rem` is a polished Knuth Algorithm D implementation with CTLZ-based normalization, native `udiv i64` for the quotient digits, and dispatch on operand sizes. It compiles to ~800 PVM instructions in our pipeline. **Beating it from scratch is out of scope**: a naive binary long-division replacement would be ~3000 PVM instructions (worse on every dimension). The pragmatic win is the b_hi specialization:
 
-```
+```text
 if (a_hi | b_hi) == 0:
     q   = a_lo / b_lo                ; native PVM DivU64
     sret = (q, 0)

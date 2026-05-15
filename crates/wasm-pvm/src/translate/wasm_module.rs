@@ -515,7 +515,8 @@ impl<'a> WasmModule<'a> {
         let libcall_targets = scan_libcall_targets(
             &local_function_names,
             &functions,
-            &function_signatures,
+            &function_type_indices,
+            &func_types,
             num_imported_funcs as usize,
         );
 
@@ -570,22 +571,18 @@ impl<'a> WasmModule<'a> {
 fn scan_libcall_targets(
     local_function_names: &[Option<String>],
     functions: &[FunctionBody<'_>],
-    function_signatures: &[(usize, bool)],
+    function_type_indices: &[u32],
+    func_types: &[wasmparser::FuncType],
     num_imported_funcs: usize,
 ) -> LibcallTargets {
-    // Expected signature for both `__multi3` and `__udivti3` after the WASM
-    // sret-pointer i32 gets uniform-widened to i64 in our IR.
-    const EXPECTED_SIG: (usize, bool) = (5, false);
-
     let mut targets = LibcallTargets::default();
 
     for (local_idx, name) in local_function_names.iter().enumerate() {
         let Some(name) = name else { continue };
-        let global_idx = num_imported_funcs + local_idx;
-        let sig = function_signatures.get(global_idx).copied();
-        if sig != Some(EXPECTED_SIG) {
+        if !has_libcall_signature(local_idx, function_type_indices, func_types) {
             continue;
         }
+        let global_idx = num_imported_funcs + local_idx;
         match name.as_str() {
             "__multi3" => targets.multi3 = Some(global_idx),
             "__udivti3" => {
@@ -604,16 +601,20 @@ fn scan_libcall_targets(
                 if let Some(body) = functions.get(local_idx) {
                     let slow_path = find_first_call_target(body);
                     let stack_ptr = find_first_global_get(body);
-                    // Verify the slow-path callee has the same 5-i64-param
-                    // shape as `__udivti3`. Without this guard a weird-shaped
-                    // input WASM (whose `__udivti3` happens to call some
-                    // unrelated function first) would make the synthesized
-                    // body call that function with mismatched argument types
-                    // and fail LLVM `verify` later. We prefer to silently
-                    // skip recognition in that case so compilation still
-                    // succeeds with the original body.
+                    // Verify the slow-path callee has the same canonical
+                    // WASM type as `__udivti3` (`(i32, i64, i64, i64, i64) → []`).
+                    // Without this guard a weird-shaped input WASM (whose
+                    // `__udivti3` happens to call some unrelated function
+                    // first) would make the synthesized body call that
+                    // function with mismatched argument types and fail
+                    // LLVM `verify` later. Silently skip recognition in
+                    // that case so compilation still succeeds with the
+                    // original body.
                     let slow_path_ok = slow_path.is_some_and(|sp| {
-                        function_signatures.get(sp as usize).copied() == Some(EXPECTED_SIG)
+                        let sp_local = (sp as usize).checked_sub(num_imported_funcs);
+                        sp_local.is_some_and(|li| {
+                            has_libcall_signature(li, function_type_indices, func_types)
+                        })
                     });
                     if let (true, Some(stack_ptr), Some(slow_path)) =
                         (slow_path_ok, stack_ptr, slow_path)
@@ -633,6 +634,38 @@ fn scan_libcall_targets(
     }
 
     targets
+}
+
+/// Check that a local function has the canonical compiler-builtins libcall
+/// signature: `(i32 sret, i64 a_lo, i64 a_hi, i64 b_lo, i64 b_hi) -> []`.
+///
+/// Validating the exact raw WASM value types (not just arity / return-ness)
+/// rules out user functions that happen to share `__multi3` / `__udivti3` /
+/// `specialized_div_rem` names but have wholly different shapes — e.g. an
+/// all-i64 5-param function. Those names are reserved by the C/Rust ABI
+/// for this exact signature, so any legitimate caller emits exactly this
+/// shape; we treat the canonical types as part of the recognition gate.
+fn has_libcall_signature(
+    local_idx: usize,
+    function_type_indices: &[u32],
+    func_types: &[wasmparser::FuncType],
+) -> bool {
+    use wasmparser::ValType;
+    const EXPECTED_PARAMS: [ValType; 5] = [
+        ValType::I32,
+        ValType::I64,
+        ValType::I64,
+        ValType::I64,
+        ValType::I64,
+    ];
+
+    let Some(&type_idx) = function_type_indices.get(local_idx) else {
+        return false;
+    };
+    let Some(func_type) = func_types.get(type_idx as usize) else {
+        return false;
+    };
+    func_type.params() == EXPECTED_PARAMS && func_type.results().is_empty()
 }
 
 /// Find the global function index that this body's first `Call` operator

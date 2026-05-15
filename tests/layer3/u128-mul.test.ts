@@ -87,4 +87,21 @@ describe("__multi3 libcall recognition", () => {
     expectProduct(0x8000000000000001n, 2n);
     expectProduct(0x8000000000000001n, 0x8000000000000001n);
   });
+
+  // Signed inputs encode to two's-complement bit patterns (negative
+  // bigints get masked into u128 representation by `encodeArgs`). The
+  // documented invariant in `libcall_recognition.rs` is that the
+  // synthesized `__multi3` body works for both signed and unsigned
+  // because the cross terms `a_lo·b_hi + a_hi·b_lo` automatically pick
+  // up sign correction from caller-supplied sign-extended high halves.
+  // JS BigInt's `& MASK_128` gives the same two's-complement low-128
+  // result, so `expectProduct` compares directly.
+  test("signed inputs (two's-complement bit patterns)", () => {
+    expectProduct(-1n, 1n);
+    expectProduct(-1n, -1n);
+    expectProduct(-(1n << 63n), 3n);
+    expectProduct(-(1n << 127n), 5n);
+    // Mixed-width: i64::MIN sign-extended × small positive.
+    expectProduct(-(1n << 63n), 0xCAFEn);
+  });
 });
