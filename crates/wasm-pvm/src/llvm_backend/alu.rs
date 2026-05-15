@@ -20,8 +20,9 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, operand_reg, result_reg,
-    result_reg_or, result_slot, source_bit_width, try_get_constant,
+    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, operand_reg,
+    operand_reg_avoiding, result_reg, result_reg_or, result_slot, source_bit_width,
+    try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -349,6 +350,59 @@ pub fn lower_binary_arith<'ctx>(
         return Ok(());
     }
 
+    // Non-commutative shift with constant LHS: `const SHIFT x` → *ImmAlt variant.
+    // Useful for the common `1 << x` bitmask idiom and similar patterns where
+    // the shift count is variable but the shifted value is a small constant.
+    if let Some(lhs_const) = try_get_constant(lhs)
+        && i32::try_from(lhs_const).is_ok()
+        && matches!(op, BinaryOp::Shl | BinaryOp::LShr | BinaryOp::AShr)
+    {
+        let imm = lhs_const as i32;
+        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
+        if rhs_reg != TEMP1 && rhs_reg == dst {
+            rhs_reg = TEMP1;
+        }
+        if rhs_reg == TEMP1 {
+            e.load_operand(rhs, TEMP1)?;
+        }
+        let instr = match (op, bits <= 32) {
+            (BinaryOp::Shl, true) => Instruction::ShloLImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::Shl, false) => Instruction::ShloLImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::LShr, true) => Instruction::ShloRImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::LShr, false) => Instruction::ShloRImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::AShr, true) => Instruction::SharRImmAlt32 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            (BinaryOp::AShr, false) => Instruction::SharRImmAlt64 {
+                dst,
+                src: rhs_reg,
+                value: imm,
+            },
+            _ => unreachable!("guarded by matches! above"),
+        };
+        e.emit(instr);
+        e.store_to_slot(slot, dst);
+        return Ok(());
+    }
+
     // Commutative constant-LHS folding: `const op x` → `x op const` for commutative ops.
     // LLVM's instcombine usually canonicalizes constants to RHS, but this helps edge cases
     // and --no-llvm-passes mode.
@@ -379,8 +433,8 @@ pub fn lower_binary_arith<'ctx>(
             .or_else(|| try_get_bitwise_not(lhs).map(|inner| (rhs, inner)));
 
         if let Some((plain, inv_inner)) = fused_pair {
-            let mut plain_reg = operand_reg(e, plain, TEMP1);
-            let mut inv_reg = operand_reg(e, inv_inner, TEMP2);
+            let mut plain_reg = operand_reg_avoiding(e, plain, TEMP1, &[TEMP2]);
+            let mut inv_reg = operand_reg_avoiding(e, inv_inner, TEMP2, &[TEMP1]);
             if plain_reg != TEMP1 && plain_reg == dst {
                 plain_reg = TEMP1;
             }
@@ -431,8 +485,8 @@ pub fn lower_binary_arith<'ctx>(
         e.load_operand(rhs, TEMP2)?;
         (TEMP1, TEMP2)
     } else {
-        let mut lhs_reg = operand_reg(e, lhs, TEMP1);
-        let mut rhs_reg = operand_reg(e, rhs, TEMP2);
+        let mut lhs_reg = operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]);
+        let mut rhs_reg = operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]);
         if lhs_reg != TEMP1 && lhs_reg == dst {
             lhs_reg = TEMP1;
         }
@@ -723,8 +777,8 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     }
 
     // Load-side coalescing for register-register comparisons.
-    let mut lhs_reg = operand_reg(e, lhs, TEMP1);
-    let mut rhs_reg = operand_reg(e, rhs, TEMP2);
+    let mut lhs_reg = operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]);
+    let mut rhs_reg = operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]);
     if lhs_reg != TEMP1 && lhs_reg == dst {
         lhs_reg = TEMP1;
     }
@@ -856,24 +910,22 @@ pub fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     let dst = result_reg_or(e, instr, TEMP1);
 
     if from_bits == 32 {
-        // i32 → i64: use load-side coalescing for the shift source.
+        // i32 → i64 zero-extend: `(x << 32) >>u 32`. Use immediate-form
+        // shifts so we don't need a separate `LoadImm 32` instruction or a
+        // dedicated register to hold the shift count.
         let src_reg = operand_reg(e, src, dst);
         if src_reg == dst {
             e.load_operand(src, dst)?;
         }
-        e.emit(Instruction::LoadImm {
-            reg: TEMP2,
+        e.emit(Instruction::ShloLImm64 {
+            dst,
+            src: src_reg,
             value: 32,
         });
-        e.emit(Instruction::ShloL64 {
+        e.emit(Instruction::ShloRImm64 {
             dst,
-            src1: src_reg,
-            src2: TEMP2,
-        });
-        e.emit(Instruction::ShloR64 {
-            dst,
-            src1: dst,
-            src2: TEMP2,
+            src: dst,
+            value: 32,
         });
     } else {
         // i1 → i32/i64 (no-op copy) and other widths: load into dst as before.
@@ -1026,9 +1078,9 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
 
     if let Some(tv) = true_const {
         // true_val is constant: load false_val as default, CmovNzImm overwrites if cond != 0
-        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        let def_reg = operand_reg_avoiding(e, false_val, TEMP_RESULT, &[TEMP1]);
         e.load_operand(false_val, def_reg)?;
-        let cond_reg = operand_reg(e, cond, TEMP1);
+        let cond_reg = operand_reg_avoiding(e, cond, TEMP1, &[TEMP_RESULT]);
         e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovNzImm {
             dst: def_reg,
@@ -1038,9 +1090,9 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
         e.store_to_slot(slot, def_reg);
     } else if let Some(fv) = false_const {
         // false_val is constant: load true_val as default, CmovIzImm overwrites if cond == 0
-        let def_reg = operand_reg(e, true_val, TEMP_RESULT);
+        let def_reg = operand_reg_avoiding(e, true_val, TEMP_RESULT, &[TEMP1]);
         e.load_operand(true_val, def_reg)?;
-        let cond_reg = operand_reg(e, cond, TEMP1);
+        let cond_reg = operand_reg_avoiding(e, cond, TEMP1, &[TEMP_RESULT]);
         e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovIzImm {
             dst: def_reg,
@@ -1051,11 +1103,11 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
     } else if let Some(inner_cond) = try_get_inverted_condition(cond) {
         // Inverted condition: select(!c, tv, fv) ≡ select(c, fv, tv)
         // Use CmovIz: load false_val as default, overwrite with true_val when inner_cond==0
-        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        let def_reg = operand_reg_avoiding(e, false_val, TEMP_RESULT, &[TEMP1, TEMP2]);
         e.load_operand(false_val, def_reg)?;
-        let src_reg = operand_reg(e, true_val, TEMP2);
+        let src_reg = operand_reg_avoiding(e, true_val, TEMP2, &[TEMP_RESULT, TEMP1]);
         e.load_operand(true_val, src_reg)?;
-        let cond_reg = operand_reg(e, inner_cond, TEMP1);
+        let cond_reg = operand_reg_avoiding(e, inner_cond, TEMP1, &[TEMP_RESULT, TEMP2]);
         e.load_operand(inner_cond, cond_reg)?;
         e.emit(Instruction::CmovIz {
             dst: def_reg,
@@ -1065,11 +1117,11 @@ pub fn lower_select<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx
         e.store_to_slot(slot, def_reg);
     } else {
         // Neither is a small constant: use register CmovNz
-        let def_reg = operand_reg(e, false_val, TEMP_RESULT);
+        let def_reg = operand_reg_avoiding(e, false_val, TEMP_RESULT, &[TEMP1, TEMP2]);
         e.load_operand(false_val, def_reg)?;
-        let src_reg = operand_reg(e, true_val, TEMP2);
+        let src_reg = operand_reg_avoiding(e, true_val, TEMP2, &[TEMP_RESULT, TEMP1]);
         e.load_operand(true_val, src_reg)?;
-        let cond_reg = operand_reg(e, cond, TEMP1);
+        let cond_reg = operand_reg_avoiding(e, cond, TEMP1, &[TEMP_RESULT, TEMP2]);
         e.load_operand(cond, cond_reg)?;
         e.emit(Instruction::CmovNz {
             dst: def_reg,

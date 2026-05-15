@@ -17,8 +17,8 @@ use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
 use super::emitter::{
-    LoweringContext, PvmEmitter, get_operand, operand_reg, result_reg, result_slot,
-    try_get_constant,
+    LoweringContext, PvmEmitter, get_operand, operand_reg, operand_reg_avoiding, result_reg,
+    result_slot, try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -245,8 +245,8 @@ pub fn emit_pvm_store<'ctx>(
     }
 
     // Load-side coalescing for both address and value (no dst conflict — store has no dest register).
-    let addr_reg = operand_reg(e, addr, TEMP1);
-    let val_reg = operand_reg(e, val, TEMP2);
+    let addr_reg = operand_reg_avoiding(e, addr, TEMP1, &[TEMP2]);
+    let val_reg = operand_reg_avoiding(e, val, TEMP2, &[TEMP1]);
     if addr_reg == TEMP1 {
         e.load_operand(addr, TEMP1)?;
     }

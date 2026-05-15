@@ -4,3 +4,4 @@ jam/
 logs/
 imports/
 floats/
+__pycache__/
