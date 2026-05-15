@@ -819,3 +819,42 @@ The `__multi3` body saves ~45 PVM instructions one-shot (it shrinks from ~30 to 
 **The slow-path regression is the cost of the dispatch.** For workloads dominated by full u128/u128 arithmetic, the 11% regression is real but bounded. In substrate, the pattern `(x: u64 as u128) / (y: u64 as u128)` is extremely common (`Perbill::from_rational`, currency arithmetic where balances comfortably fit in u64), so the fast path is expected to dominate. End-to-end runtime gas measurement requires running the chain, which is out of scope here — the microbench numbers above are the available signal.
 
 **What we explicitly did *not* do.** Naive binary long division to replace `specialized_div_rem` entirely (loses ~2000 PVM instructions static, slow-path 3-4× worse). Newton-Raphson reciprocal or other algorithmic improvements (multi-week project for an uncertain win). Caller-side IR pattern matching to inline u64/u64 directly at call sites (fragile across LLVM passes, conflicts with our preference for body recognition). See `crates/wasm-pvm/src/llvm_frontend/libcall_recognition.rs` for the full design.
+
+## Block Layout for Fallthrough Bias (with regalloc realignment)
+
+The pre-existing `--no-fallthrough-jumps` flag elided trailing `Jump`s when the target happened to be the next block in `function.get_basic_blocks()` order. LLVM's IR order isn't picked with PVM fallthroughs in mind, so on glutton-kusama only 16,729 of 69,932 trailing branches actually fell through; the remaining 53,203 paid 5 bytes/Jump (~266 KB code) where 1 byte would do.
+
+**`compute_block_layout(function)` in `llvm_backend/mod.rs`** chooses a per-function emission order via greedy trace from each unplaced IR block, following a "preferred successor" link per terminator:
+
+- `br dest` → `dest`
+- `br cond, then, else` → `else` (matches the trailing `Jump else_label` after `BranchIfX then_label`)
+- `switch val, default, ...` → `default` (matches the trailing `Jump default_label`)
+- `ret` / `unreachable` → none
+
+Trampoline paths in `lower_br` / `lower_switch` (per-edge phi copies on both outgoing edges) emit a *different* final `Jump` target. Those blocks miss the fallthrough but stay correct.
+
+**Critical wiring detail.** Regalloc must walk the same order the emitter does. `regalloc::run` accepts the layout as a `block_order: &[BasicBlock]` parameter; without that, live intervals were computed against IR order while the emitter executed in layout order, and downstream reads through `operand_reg` / `load_operand` picked up a register the linear scan thought still held a value but the layout had clobbered. The original symptom was the anan-as compiler's compiled-PVM interpretation losing its `r7`/`r8` mappings — the inner JAM ran fine in `Layer 3` (direct anan-as on Node) but halted with empty output under `Layer 4`/`Layer 5` PVM-in-PVM, because the *compiled* outer interpreter had the wrong live ranges. Realigning regalloc to layout order is what made `pvm-in-pvm: as-flat-ternary-test` green again.
+
+The two pieces (block layout + jump elision) are coupled — the elision is meaningless without the layout choosing the right successor — so both sit behind the existing `OptimizationFlags::fallthrough_jumps` flag, default on.
+
+## Phi-Copy Temp/Destination Aliasing (Pre-existing Latent Bug)
+
+`emit_phi_copies_legacy` and `emit_phi_copies_regaware` in `control_flow.rs` use a temp pool when 2-5 phi copies fit it:
+
+```rust
+let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
+```
+
+The trap: in `llvm_backend/emitter.rs` the names `SCRATCH1` / `SCRATCH2` are **re-exported** as `ARGS_LEN_REG = r8` and `ARGS_PTR_REG = r7` — *not* the `r5` / `r6` from `crate::abi`. So `temp_regs == [r2, r3, r4, r8, r7]`. With `allocate_caller_saved_regs` (default on), `r7` and `r8` are also valid phi destinations.
+
+When a phi copy at index `i` has `phi_reg == temp_regs[j]` for some `j != i`, the legacy "Phase 1: load all temps; Phase 2: write all destinations in `0..N` order" sequence corrupts itself: writing destination at step `i` clobbers `temp_regs[j]` before step `j` reads it. The clobbered value is silently substituted.
+
+The `regalloc-two-loops` fixture exercised exactly this (5 phi copies, `local_5`'s phi_reg = `r7` = `temp_regs[4]`, `local_3`'s incoming value loaded into `r7`): `local_3` (the loop counter `i`) ended up holding `local_5`'s value (`b`), so the loop iterated against the wrong counter and returned the wrong sum. The test expectations were calibrated to the buggy output (72 / 154 / 328 / …) — native WASM gives (76 / 211 / 720 / 2851 / 58958 / 165809572) for n ∈ {0,1,2,3,5,10}.
+
+**Fix in `topo_order_phase2`:** build a dependency edge `i → j` whenever `phi_regs[j] == temp_regs[i]` (`i != j`), then Kahn-sort to produce a Phase-2 emission order where every consumer of a temp is processed before any producer that overwrites it. Cycles (`phi_regs[3] = r7` AND `phi_regs[4] = r8`, etc.) drop to the slot-based `emit_phi_copies_via_slots` resolver. The temp pool and Phase-1 loads are unchanged; only Phase-2 ordering shifts.
+
+## Cross-Block Snapshot Must Mirror Terminator-Clobber Set
+
+The cache snapshot taken before lowering a block's terminator (`llvm_backend/mod.rs`) used to invalidate only `TEMP1` and `TEMP2`, because they're the operand-load temps for any branch/switch terminator. That was correct for branches without phi copies. But `emit_phi_copies_regaware` also uses `TEMP_RESULT` (`r4`) and the emitter-scope `SCRATCH1` / `SCRATCH2` (= `r8` / `r7`) as Phase-1 temps for the 3rd/4th/5th active copy. When a successor restored that stale snapshot, its `alloc_reg_slot` showed `r4` / `r7` / `r8` still owning whatever the predecessor's block-body had put there — but the phi-copy that ran in between had overwritten them. Downstream reads via `operand_reg` / `load_operand` took the fast path against `alloc_reg_slot` and returned the wrong value.
+
+Fix: invalidate `TEMP1`, `TEMP2`, `TEMP_RESULT`, `SCRATCH1`, `SCRATCH2` in the snapshot — the full set of registers any terminator path may touch. This is a strict superset of what was invalidated before, so it can never make a successor read a fresher cache entry than is actually valid.

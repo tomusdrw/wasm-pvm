@@ -111,15 +111,23 @@ pub struct RegAllocStats {
 /// `scratch_regs_safe` indicates that this function never clobbers r5/r6
 /// (`abi::SCRATCH1`/`SCRATCH2`), making them available for allocation.
 /// `allocate_caller_saved` enables r7/r8 allocation in leaf functions.
-#[allow(clippy::fn_params_excessive_bools)]
-pub fn run(
-    function: FunctionValue<'_>,
+/// `block_order` is the block emission order the backend will actually use.
+/// Live intervals, loop-header detection, and call-position bookkeeping are
+/// all keyed off this order, so when the emitter uses a non-IR layout (e.g.
+/// the fallthrough-biased layout from `compute_block_layout`), regalloc must
+/// see the same sequence — otherwise back-edges and live ranges get computed
+/// against an order the emitter never executes, producing wrong-register
+/// reads in the emitted code.
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
+pub fn run<'ctx>(
+    function: FunctionValue<'ctx>,
     value_slots: &BTreeMap<ValKey, i32>,
     is_leaf: bool,
     num_params: usize,
     aggressive: bool,
     scratch_regs_safe: bool,
     allocate_caller_saved: bool,
+    block_order: &[inkwell::basic_block::BasicBlock<'ctx>],
 ) -> RegAllocResult {
     let fn_name = function.get_name().to_string_lossy().to_string();
     let mut stats = RegAllocStats {
@@ -127,7 +135,7 @@ pub fn run(
         ..RegAllocStats::default()
     };
 
-    let blocks = function.get_basic_blocks();
+    let blocks = block_order.to_vec();
     if blocks.is_empty() {
         stats.skipped_reason = Some("no_blocks");
         tracing::debug!(

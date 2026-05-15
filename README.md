@@ -114,24 +114,24 @@ All PVM-level optimizations enabled (default):
 
 | Benchmark | WASM size | JAM size | Code size | Gas Used |
 |-----------|----------|----------|-----------|----------|
-| add(5,7) | 68 B | 164 B | 99 B | 28 |
-| fib(20) | 110 B | 226 B | 148 B | 409 |
-| factorial(10) | 102 B | 198 B | 124 B | 156 |
-| is_prime(25) | 162 B | 285 B | 201 B | 62 |
-| AS fib(10) | 235 B | 631 B | 504 B | 245 |
-| AS factorial(7) | 234 B | 616 B | 490 B | 207 |
-| AS gcd(2017,200) | 229 B | 640 B | 517 B | 174 |
-| AS decoder | 1.5 KB | 6.6 KB | 4,944 B | 953 |
-| AS array | 1.4 KB | 6.1 KB | 4,427 B | 820 |
-| regalloc two loops | 252 B | 587 B | 461 B | 16,769 |
+| add(5,7) | 68 B | 160 B | 96 B | 27 |
+| fib(20) | 110 B | 221 B | 144 B | 429 |
+| factorial(10) | 102 B | 200 B | 126 B | 185 |
+| is_prime(25) | 162 B | 271 B | 189 B | 61 |
+| AS fib(10) | 235 B | 622 B | 496 B | 258 |
+| AS factorial(7) | 234 B | 619 B | 493 B | 225 |
+| AS gcd(2017,200) | 229 B | 627 B | 505 B | 168 |
+| AS decoder | 1.5 KB | 6.4 KB | 4,734 B | 913 |
+| AS array | 1.4 KB | 5.8 KB | 4,207 B | 782 |
+| regalloc two loops(500) | 252 B | 579 B | 454 B | 37,574 |
 | host-call-log | 171 B | 458 B | 104 B | 40 |
-| aslan-fib accumulate | - | 20.7 KB | 13,365 B | 11,474 |
-| blake2b("abc", 32) | 1.1 KB | 3.8 KB | 2,558 B | 17,930 |
-| sha512("abc") | 1.7 KB | 3.7 KB | 2,559 B | 17,981 |
-| u128 mul x1000 | 296 B | 475 B | 358 B | 75,029 |
-| u128 div(fast) x1000 | 273 B | 826 B | 660 B | 76,029 |
-| u128 div(slow) x1000 | 273 B | 832 B | 661 B | 143,029 |
-| anan-as PVM interpreter | 53.4 KB | 115.6 KB | 84,281 B | - |
+| aslan-fib accumulate | - | 19.8 KB | 12,556 B | 10,706 |
+| blake2b("abc", 32) | 1.1 KB | 3.8 KB | 2,572 B | 16,675 |
+| sha512("abc") | 1.7 KB | 3.5 KB | 2,396 B | 16,787 |
+| u128 mul x1000 | 296 B | 457 B | 342 B | 71,031 |
+| u128 div(fast) x1000 | 273 B | 767 B | 608 B | 68,031 |
+| u128 div(slow) x1000 | 273 B | 774 B | 609 B | 130,031 |
+| anan-as PVM interpreter | 53.4 KB | 109.8 KB | 79,031 B | - |
 
 The three `u128` rows are microbenchmarks for the `libcall_recognition` optimization (replaces `__multi3` and `__udivti3` bodies with hand-crafted PVM-friendly versions; `--no-libcall-recognition` to disable). Compared against the same workloads with recognition off: u128 mul **−37% gas**, u128 div fast path (callers with `a_hi = b_hi = 0`) **−41% gas**, u128 div slow path (b_hi non-zero) **+11% gas** — the slow-path regression is the cost of the dispatch check and is dwarfed by the fast-path savings in real workloads (substrate runtimes hit the fast path on the dominant `Perbill`/`Balance: u128` patterns). See `docs/src/optimizations.md` for details.
 
@@ -139,16 +139,16 @@ PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost
 
 | Benchmark | JAM Size | Outer Gas | Direct Gas | Overhead |
 |-----------|----------|-----------|------------|----------|
-| TRAP (interpreter overhead) | 21 B | 89,939 | - | - |
-| add(5,7) | 164 B | 1,219,622 | 28 | 43,558x |
-| host-call-log | 458 B | 1,265,258 | 40 | 31,631x |
-| AS fib(10) | 631 B | 1,571,677 | 245 | 6,415x |
-| JAM-SDK fib(10)\* | 25.4 KB | 9,582,904 | - | - |
-| Jambrains fib(10)\* | 61.1 KB | 29,245,041 | - | - |
-| JADE fib(10)\* | 67.3 KB | 20,493,145 | - | - |
-| aslan-fib accumulate\* | 20.7 KB | 15,849,103 | 11,474 | 1,381x |
-| blake2b("abc", 32) | 3.8 KB | 16,243,164 | 17,930 | 906x |
-| sha512("abc") | 3.7 KB | 15,533,350 | 17,981 | 864x |
+| TRAP (interpreter overhead) | 21 B | 80,451 | - | - |
+| add(5,7) | 160 B | 1,164,147 | 27 | 43,116x |
+| host-call-log | 458 B | 1,208,919 | 40 | 30,223x |
+| AS fib(10) | 622 B | 1,536,038 | 258 | 5,954x |
+| JAM-SDK fib(10)\* | 25.4 KB | 8,717,551 | - | - |
+| Jambrains fib(10)\* | 61.1 KB | 7,505,155 | - | - |
+| JADE fib(10)\* | 67.3 KB | 18,659,363 | - | - |
+| aslan-fib accumulate\* | 19.8 KB | 14,033,405 | 10,706 | 1,311x |
+| blake2b("abc", 32) | 3.8 KB | 14,402,928 | 16,675 | 863x |
+| sha512("abc") | 3.5 KB | 14,390,234 | 16,787 | 857x |
 
 \*JAM-SDK fib(10), Jambrains fib(10), JADE fib(10), and aslan-fib accumulate exit on unhandled host calls (ecalli). The gas cost reflects program parsing/loading plus partial execution up to the first unhandled ecalli.
 

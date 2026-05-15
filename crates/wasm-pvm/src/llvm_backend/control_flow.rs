@@ -490,6 +490,61 @@ fn get_valid_alloc_reg(e: &PvmEmitter<'_>, value: BasicValueEnum<'_>) -> Option<
     None
 }
 
+/// Compute a Phase-2 emission order for the temp-pool phi copy that avoids
+/// the clobbered-temp hazard.
+///
+/// The fast paths (`emit_phi_copies_legacy` and `emit_phi_copies_regaware`)
+/// stage every incoming value into `temp_regs[ti]` in Phase 1, then in Phase 2
+/// write each `phi_reg`. If `phi_regs[i] == temp_regs[j]` for some other `j`,
+/// Phase 2 for copy `i` writes through `phi_regs[i]` and trashes `temp_regs[j]`
+/// before copy `j` ever reads it — so copy `j` ends up with the wrong value.
+/// (Symptom: `local_12.in` got `g`'s value instead of `h`'s in
+/// `regalloc-two-loops`.)
+///
+/// Constraint: if `phi_regs[i] == temp_regs[j]` (`i != j`), copy `j` must be
+/// emitted before copy `i`. This forms a DAG over copy indices; a topological
+/// sort gives a safe emission order. If the dependency graph contains a cycle
+/// (e.g. `phi_regs[3]=r7=temp_regs[4]` AND `phi_regs[4]=r8=temp_regs[3]`), it
+/// can't be resolved purely with register moves and the caller falls back to
+/// `emit_phi_copies_via_slots`.
+///
+/// Returns `Some(perm)` where `perm[k]` is the copy index to process at
+/// Phase-2 step `k`, or `None` if a cycle is detected.
+fn topo_order_phase2(copies: &[PhiCopy<'_>], temp_regs: &[u8]) -> Option<Vec<usize>> {
+    debug_assert!(copies.len() <= temp_regs.len());
+    let n = copies.len();
+    // succ[i] = list of `j`s that must come AFTER `i` (i.e. `i` writes a temp
+    // that `j` reads). Built from `phi_regs[j] == temp_regs[i]` (with `i != j`).
+    let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut in_degree: Vec<usize> = vec![0; n];
+    for j in 0..n {
+        let Some(phi_reg_j) = copies[j].phi_reg else {
+            continue;
+        };
+        for i in 0..n {
+            if i != j && temp_regs[i] == phi_reg_j {
+                succ[i].push(j);
+                in_degree[j] += 1;
+            }
+        }
+    }
+    // Kahn's algorithm. Use FIFO over a deterministic seed order so the output
+    // is reproducible across runs.
+    let mut queue: std::collections::VecDeque<usize> =
+        (0..n).filter(|&i| in_degree[i] == 0).collect();
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    while let Some(i) = queue.pop_front() {
+        order.push(i);
+        for &k in &succ[i] {
+            in_degree[k] -= 1;
+            if in_degree[k] == 0 {
+                queue.push_back(k);
+            }
+        }
+    }
+    if order.len() == n { Some(order) } else { None }
+}
+
 /// Legacy two-pass phi copy (used when lazy spill is disabled).
 fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx>]) -> Result<()> {
     e.spill_all_dirty_regs();
@@ -507,7 +562,12 @@ fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx
         // registers (TEMP1/TEMP2/TEMP_RESULT plus SCRATCH1/SCRATCH2 when no
         // bulk memory or funnel-shift uses them in this function).
         let temp_regs = [TEMP1, TEMP2, TEMP_RESULT, SCRATCH1, SCRATCH2];
-        if copies.len() <= temp_regs.len() {
+        let phase2_order = if copies.len() <= temp_regs.len() {
+            topo_order_phase2(copies, &temp_regs[..copies.len()])
+        } else {
+            None
+        };
+        if let Some(phase2_order) = phase2_order {
             // When using SCRATCH1/SCRATCH2 as temp registers (4+ copies), spill
             // any dirty values and invalidate alloc state so that load_operand
             // will reload from the stack instead of using the (about to be
@@ -518,13 +578,17 @@ fn emit_phi_copies_legacy<'ctx>(e: &mut PvmEmitter<'ctx>, copies: &[PhiCopy<'ctx
             for (i, copy) in copies.iter().enumerate() {
                 e.load_operand(copy.incoming_value, temp_regs[i])?;
             }
-            for (i, copy) in copies.iter().enumerate() {
-                e.store_to_slot(copy.phi_slot, temp_regs[i]);
+            // Topologically-ordered Phase 2: a copy whose `phi_reg`'s alloc reg
+            // aliases another copy's temp_regs[i] is processed only after that
+            // other copy has consumed its temp.
+            for &i in &phase2_order {
+                e.store_to_slot(copies[i].phi_slot, temp_regs[i]);
             }
         } else {
-            // More copies than the temp-register snapshot can hold: fall back
-            // to a slot-based parallel-move resolver that uses TEMP1/TEMP2 and
-            // handles arbitrary copy counts (incl. permutation cycles).
+            // Either more copies than the temp-register snapshot can hold, or
+            // the temp/phi_reg dependency graph contains a cycle. Fall back to
+            // a slot-based parallel-move resolver that uses TEMP1/TEMP2 and
+            // handles arbitrary counts plus permutation cycles.
             emit_phi_copies_via_slots(e, copies)?;
         }
     }
@@ -602,7 +666,28 @@ fn emit_phi_copies_regaware<'ctx>(
         e.reload_allocated_regs_after_scratch_clobber();
     }
 
-    if active_copies.len() <= temp_regs.len() {
+    // Build the active view up-front so both the topo check and the
+    // slot-based fallback see the same slice.
+    let active_view: Vec<PhiCopy<'ctx>> = active_copies
+        .iter()
+        .map(|&ci| PhiCopy {
+            phi_slot: copies[ci].phi_slot,
+            incoming_value: copies[ci].incoming_value,
+            phi_reg: copies[ci].phi_reg,
+            incoming_reg: copies[ci].incoming_reg,
+        })
+        .collect();
+    // Find a Phase-2 order that avoids the temp/phi_reg clobber hazard. For
+    // ≤5 active copies this is almost always available; cycles only arise when
+    // both r7 and r8 are phi destinations in a symmetric swap, in which case
+    // we drop to the slot-based fallback.
+    let phase2_order = if active_view.len() <= temp_regs.len() {
+        topo_order_phase2(&active_view, &temp_regs[..active_view.len()])
+    } else {
+        None
+    };
+
+    if let Some(phase2_order) = phase2_order {
         // Phase 1: Load all incoming values into temp registers.
         for (ti, &ci) in active_copies.iter().enumerate() {
             let copy = &copies[ci];
@@ -627,8 +712,11 @@ fn emit_phi_copies_regaware<'ctx>(
             }
         }
 
-        // Phase 2: Store all values to destinations.
-        for (ti, &ci) in active_copies.iter().enumerate() {
+        // Phase 2: Store values to destinations in topological order — a
+        // copy whose `phi_reg` aliases another copy's source temp is emitted
+        // only after that other copy has consumed its temp.
+        for &ti in &phase2_order {
+            let ci = active_copies[ti];
             let copy = &copies[ci];
             if let Some(phi_reg) = copy.phi_reg {
                 // Destination is an allocated register.
@@ -643,19 +731,12 @@ fn emit_phi_copies_regaware<'ctx>(
             }
         }
     } else {
-        // More active copies than the temp-register snapshot can hold: fall
-        // back to slot-based parallel-move resolution. Build a sub-list of
-        // PhiCopy values for the active subset.
-        let active: Vec<PhiCopy<'ctx>> = active_copies
-            .iter()
-            .map(|&ci| PhiCopy {
-                phi_slot: copies[ci].phi_slot,
-                incoming_value: copies[ci].incoming_value,
-                phi_reg: copies[ci].phi_reg,
-                incoming_reg: copies[ci].incoming_reg,
-            })
-            .collect();
-        emit_phi_copies_via_slots(e, &active)?;
+        // Either more active copies than the temp-register snapshot can hold,
+        // or the temp/phi_reg dependency graph contains a cycle that can't be
+        // resolved purely with register moves. Fall back to a slot-based
+        // parallel-move resolver that uses TEMP1/TEMP2 and handles arbitrary
+        // counts plus permutation cycles.
+        emit_phi_copies_via_slots(e, &active_view)?;
     }
 
     Ok(())

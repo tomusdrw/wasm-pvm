@@ -76,7 +76,12 @@ Removes functions not reachable from exports or the function table. Reduces code
 
 ## Fallthrough Jump Elimination (`--no-fallthrough-jumps`)
 
-When a block ends with an unconditional jump to the next block in layout order, the `Jump` is skipped — execution falls through naturally.
+Two coupled steps that elide trailing `Jump` instructions when the jump target is the next block in emission order:
+
+1. **Block layout reorder.** `compute_block_layout` in `llvm_backend/mod.rs` constructs the per-function emission order via greedy trace: from each unplaced block, walk preferred-successor links (uncond `br dest` → `dest`, cond `br cond, then, else` → `else` since `lower_br` emits `BranchIfX then; Jump else_label`, `switch` → `default`). Iterate the original IR order to pick trace starts. The resulting layout is shared with the register allocator so live intervals are computed against the order the emitter actually executes; `regalloc::run` accepts the layout as the `block_order` parameter for that reason.
+2. **Jump elision.** When `emit_jump_to_label` is invoked with the next block in layout already known (`next_block_label`), the `Jump` is dropped — `define_label` emits a `Fallthrough` marker (1 byte) instead.
+
+Trampoline paths in `lower_br` / `lower_switch` (used when phi copies are needed on every outgoing edge) emit a final `Jump` to a different target than the layout's preferred-next. Such blocks miss the fallthrough but remain correct.
 
 ## Libcall Recognition (`--no-libcall-recognition`)
 

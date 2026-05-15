@@ -32,7 +32,7 @@ pub use emitter::{
     EmitterConfig, LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup, LoweringContext,
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{FunctionValue, InstructionOpcode};
@@ -40,8 +40,8 @@ use inkwell::values::{FunctionValue, InstructionOpcode};
 use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
-use abi::{TEMP1, TEMP2};
-use emitter::{PvmEmitter, pre_scan_function, val_key_instr};
+use abi::{TEMP_RESULT, TEMP1, TEMP2};
+use emitter::{PvmEmitter, SCRATCH1, SCRATCH2, pre_scan_function, val_key_instr};
 
 /// Lower a single LLVM function to PVM bytecode.
 ///
@@ -97,6 +97,14 @@ fn lower_function_inner(
     pre_scan_function(&mut emitter, function, is_main);
     emitter.frame_size = emitter.next_slot_offset;
 
+    // Compute the block emission order once and share it with regalloc — see
+    // `regalloc::run`'s `block_order` doc.
+    let block_order: Vec<BasicBlock<'_>> = if ctx.optimizations.fallthrough_jumps {
+        compute_block_layout(function)
+    } else {
+        function.get_basic_blocks()
+    };
+
     // Phase 1b: Register allocation — assign long-lived values to physical registers.
     if emitter.config.register_allocation_enabled {
         let is_leaf = !emitter.has_calls;
@@ -110,6 +118,7 @@ fn lower_function_inner(
             ctx.optimizations.aggressive_register_allocation,
             scratch_safe,
             ctx.optimizations.allocate_caller_saved_regs,
+            &block_order,
         );
 
         // If regalloc allocated any callee-saved registers (r9-r12), mark them
@@ -173,7 +182,7 @@ fn lower_function_inner(
             HashMap::new()
         };
 
-    let basic_blocks = function.get_basic_blocks();
+    let basic_blocks = &block_order;
     for (block_idx, bb) in basic_blocks.iter().enumerate() {
         let bb = *bb;
         let label = emitter.block_labels[&bb];
@@ -290,13 +299,22 @@ fn lower_function_inner(
             if emitter.config.lazy_spill_enabled {
                 emitter.spill_all_dirty_regs();
             }
-            // Snapshot before terminator, then invalidate temp registers that
-            // the terminator's operand loads may overwrite (TEMP1/TEMP2 for
-            // branch conditions, switch values, fused ICmp operands).
-            // CacheSnapshot now includes allocated-register slot ownership too.
+            // Snapshot before terminator, then invalidate every register the
+            // terminator's lowering may clobber: TEMP1/TEMP2 for branch /
+            // switch operand loads, plus TEMP_RESULT and the emitter's
+            // SCRATCH1/SCRATCH2 (`r8`/`r7`), which `emit_phi_copies_regaware`
+            // uses as Phase-1 temps when 3+ active copies are emitted on any
+            // outgoing edge. Without this, successors restoring this snapshot
+            // would see stale `alloc_reg_slot` for `r4`/`r7`/`r8`, then read
+            // through `operand_reg`/`load_operand` from a register that the
+            // phi-copy has since overwritten — causing wrong-value reads in
+            // branch operands of the successor block.
             let mut snap = emitter.snapshot_cache();
             snap.invalidate_reg(TEMP1);
             snap.invalidate_reg(TEMP2);
+            snap.invalidate_reg(TEMP_RESULT);
+            snap.invalidate_reg(SCRATCH1);
+            snap.invalidate_reg(SCRATCH2);
             block_exit_cache.insert(bb, snap);
             // Now lower the terminator.
             lower_instruction(&mut emitter, instructions[term_idx], bb, ctx, is_main)?;
@@ -405,6 +423,90 @@ fn lower_function_inner(
         num_call_returns,
         lowering_stats,
     })
+}
+
+/// Compute the basic-block emission order, biased toward letting trailing
+/// `Jump` instructions fall through to the next block.
+///
+/// LLVM's IR block order isn't chosen with PVM fallthroughs in mind. By
+/// greedily placing each block's "preferred successor" immediately after it,
+/// we let `emit_jump_to_label` elide a 5-byte `Jump` in favor of an implicit
+/// fallthrough.
+///
+/// Preferred successor per terminator (matching the *final* `Jump` emitted by
+/// `control_flow.rs`):
+/// - Unconditional `br dest` → `dest`.
+/// - Conditional `br cond, then, else` → `else` (the trailing
+///   `Jump else_label` after `BranchIfX then_label`).
+/// - `switch val, default, ...` → `default` (the trailing `Jump default_label`
+///   after all `BranchEqImm` case branches).
+/// - `ret` / `unreachable` → none.
+///
+/// Trampoline paths in `lower_br` / `lower_switch` (used when phi copies are
+/// needed on every outgoing edge) emit a final `Jump` to a different target
+/// than the one named above. Such blocks miss the fallthrough but remain
+/// correct.
+///
+/// Algorithm: greedy trace construction. Iterate the original IR order; for
+/// each unplaced block, walk preferred-successor links until hitting a placed
+/// block or a terminator without a preferred successor.
+fn compute_block_layout<'ctx>(function: FunctionValue<'ctx>) -> Vec<BasicBlock<'ctx>> {
+    let ir_blocks = function.get_basic_blocks();
+    if ir_blocks.is_empty() {
+        return ir_blocks;
+    }
+
+    let mut preferred_next: HashMap<BasicBlock<'ctx>, BasicBlock<'ctx>> = HashMap::new();
+    for &bb in &ir_blocks {
+        let Some(term) = bb.get_terminator() else {
+            continue;
+        };
+        let next = match term.get_opcode() {
+            InstructionOpcode::Br => {
+                if term.get_num_operands() == 1 {
+                    term.get_operand(0)
+                        .and_then(inkwell::values::Operand::block)
+                } else {
+                    term.get_operand(1)
+                        .and_then(inkwell::values::Operand::block)
+                }
+            }
+            InstructionOpcode::Switch => term
+                .get_operand(1)
+                .and_then(inkwell::values::Operand::block),
+            _ => None,
+        };
+        if let Some(next) = next {
+            preferred_next.insert(bb, next);
+        }
+    }
+
+    let mut placed: HashSet<BasicBlock<'ctx>> = HashSet::new();
+    let mut layout: Vec<BasicBlock<'ctx>> = Vec::with_capacity(ir_blocks.len());
+
+    for &start in &ir_blocks {
+        if placed.contains(&start) {
+            continue;
+        }
+        let mut current = start;
+        loop {
+            if !placed.insert(current) {
+                break;
+            }
+            layout.push(current);
+            match preferred_next.get(&current) {
+                Some(&next) if !placed.contains(&next) => current = next,
+                _ => break,
+            }
+        }
+    }
+
+    debug_assert_eq!(
+        layout.len(),
+        ir_blocks.len(),
+        "compute_block_layout dropped a basic block",
+    );
+    layout
 }
 
 /// Restore `alloc_reg_slot` for phi destinations at the start of a block.
