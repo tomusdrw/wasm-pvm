@@ -21,8 +21,8 @@ use crate::pvm::Instruction;
 
 use super::emitter::{
     FusedIcmp, PvmEmitter, SCRATCH1, apply_dst_conflict_fallback, get_operand, operand_bit_width,
-    operand_reg, operand_reg_avoiding, result_reg, result_reg_or, result_slot, source_bit_width,
-    try_get_constant,
+    operand_reg, operand_reg_avoiding, prepare_operand, prepare_operand_avoiding, result_reg,
+    result_reg_or, result_slot, source_bit_width, try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -323,10 +323,7 @@ pub fn lower_binary_arith<'ctx>(
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
-        let rhs_reg = apply_dst_conflict_fallback(operand_reg(e, rhs, TEMP1), TEMP1, dst);
-        if rhs_reg == TEMP1 {
-            e.load_operand(rhs, TEMP1)?;
-        }
+        let rhs_reg = prepare_operand(e, rhs, TEMP1, dst)?;
         if bits <= 32 {
             e.emit(Instruction::NegAddImm32 {
                 dst,
@@ -352,10 +349,7 @@ pub fn lower_binary_arith<'ctx>(
         && matches!(op, BinaryOp::Shl | BinaryOp::LShr | BinaryOp::AShr)
     {
         let imm = lhs_const as i32;
-        let rhs_reg = apply_dst_conflict_fallback(operand_reg(e, rhs, TEMP1), TEMP1, dst);
-        if rhs_reg == TEMP1 {
-            e.load_operand(rhs, TEMP1)?;
-        }
+        let rhs_reg = prepare_operand(e, rhs, TEMP1, dst)?;
         let instr = match (op, bits <= 32) {
             (BinaryOp::Shl, true) => Instruction::ShloLImmAlt32 {
                 dst,
@@ -421,22 +415,8 @@ pub fn lower_binary_arith<'ctx>(
             .or_else(|| try_get_bitwise_not(lhs).map(|inner| (rhs, inner)));
 
         if let Some((plain, inv_inner)) = fused_pair {
-            let plain_reg = apply_dst_conflict_fallback(
-                operand_reg_avoiding(e, plain, TEMP1, &[TEMP2]),
-                TEMP1,
-                dst,
-            );
-            let inv_reg = apply_dst_conflict_fallback(
-                operand_reg_avoiding(e, inv_inner, TEMP2, &[TEMP1]),
-                TEMP2,
-                dst,
-            );
-            if plain_reg == TEMP1 {
-                e.load_operand(plain, TEMP1)?;
-            }
-            if inv_reg == TEMP2 {
-                e.load_operand(inv_inner, TEMP2)?;
-            }
+            let plain_reg = prepare_operand_avoiding(e, plain, TEMP1, &[TEMP2], dst)?;
+            let inv_reg = prepare_operand_avoiding(e, inv_inner, TEMP2, &[TEMP1], dst)?;
             match op {
                 BinaryOp::And => e.emit(Instruction::AndInv {
                     dst,
@@ -475,16 +455,8 @@ pub fn lower_binary_arith<'ctx>(
         e.load_operand(rhs, TEMP2)?;
         (TEMP1, TEMP2)
     } else {
-        let lhs_reg =
-            apply_dst_conflict_fallback(operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]), TEMP1, dst);
-        let rhs_reg =
-            apply_dst_conflict_fallback(operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]), TEMP2, dst);
-        if lhs_reg == TEMP1 {
-            e.load_operand(lhs, TEMP1)?;
-        }
-        if rhs_reg == TEMP2 {
-            e.load_operand(rhs, TEMP2)?;
-        }
+        let lhs_reg = prepare_operand_avoiding(e, lhs, TEMP1, &[TEMP2], dst)?;
+        let rhs_reg = prepare_operand_avoiding(e, rhs, TEMP2, &[TEMP1], dst)?;
         (lhs_reg, rhs_reg)
     };
 
@@ -757,16 +729,8 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     }
 
     // Load-side coalescing for register-register comparisons.
-    let lhs_reg =
-        apply_dst_conflict_fallback(operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]), TEMP1, dst);
-    let rhs_reg =
-        apply_dst_conflict_fallback(operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]), TEMP2, dst);
-    if lhs_reg == TEMP1 {
-        e.load_operand(lhs, TEMP1)?;
-    }
-    if rhs_reg == TEMP2 {
-        e.load_operand(rhs, TEMP2)?;
-    }
+    let lhs_reg = prepare_operand_avoiding(e, lhs, TEMP1, &[TEMP2], dst)?;
+    let rhs_reg = prepare_operand_avoiding(e, rhs, TEMP2, &[TEMP1], dst)?;
 
     match pred {
         IntPredicate::EQ => {

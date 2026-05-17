@@ -17,8 +17,9 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    LoweringContext, PvmEmitter, apply_dst_conflict_fallback, get_operand, operand_bit_width,
-    operand_reg, operand_reg_avoiding, result_reg, result_slot, try_get_constant, val_key_basic,
+    LoweringContext, PvmEmitter, get_operand, operand_bit_width, operand_reg, operand_reg_avoiding,
+    prepare_operand, prepare_operand_avoiding, result_reg, result_slot, try_get_constant,
+    val_key_basic,
 };
 use super::memory::{
     PvmLoadKind, PvmStoreKind, emit_pvm_data_drop, emit_pvm_load, emit_pvm_memory_copy,
@@ -101,11 +102,12 @@ pub fn lower_pvm_intrinsic<'ctx>(
 
 /// Emit `MulUpperUU dst, a, b` for `__pvm_mul_upper_uu(a, b)`.
 ///
-/// Mirrors the operand-coalescing dance of `Mul64` lowering in `alu.rs`: prefer
-/// the source operand's allocated register, fall back to `TEMP1`/`TEMP2` when
-/// the alias would clobber an allocated dst. `apply_dst_conflict_fallback`
-/// leaves the alias intact when `dst == TEMP_RESULT` (PVM 3-operand
-/// instructions read both sources before writing dst).
+/// Mirrors the operand-coalescing dance of `Mul64` in `alu.rs`: prefer each
+/// operand's allocated register, fall back to `TEMP1`/`TEMP2` when the alias
+/// would clobber an allocated dst. The `prepare_operand_avoiding` helper
+/// keeps `dst == TEMP_RESULT` aliases intact (PVM 3-operand instructions
+/// read both sources before writing dst) and avoids returning the sibling
+/// operand's load-target register.
 fn emit_pvm_mul_upper_uu<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
@@ -115,21 +117,12 @@ fn emit_pvm_mul_upper_uu<'ctx>(
     let slot = result_slot(e, instr)?;
     let dst = result_reg(e, instr);
 
-    // Use `operand_reg_avoiding` for both operands: if `a` is cached at TEMP2,
-    // the sibling `b` load below would clobber it (and vice versa). The original
-    // code used plain `operand_reg`, which had this latent miscompile risk on
-    // the rare path where the per-block cache happened to put one operand in
-    // the other's load-target register.
-    let a_reg =
-        apply_dst_conflict_fallback(operand_reg_avoiding(e, a, TEMP1, &[TEMP2]), TEMP1, dst);
-    let b_reg =
-        apply_dst_conflict_fallback(operand_reg_avoiding(e, b, TEMP2, &[TEMP1]), TEMP2, dst);
-    if a_reg == TEMP1 {
-        e.load_operand(a, TEMP1)?;
-    }
-    if b_reg == TEMP2 {
-        e.load_operand(b, TEMP2)?;
-    }
+    // Use `prepare_operand_avoiding` for both: if `a` is cached at TEMP2, the
+    // sibling `b` load below would clobber it (and vice versa). Original code
+    // used plain `operand_reg`, a latent miscompile on the rare path where the
+    // per-block cache put one operand in the other's load-target register.
+    let a_reg = prepare_operand_avoiding(e, a, TEMP1, &[TEMP2], dst)?;
+    let b_reg = prepare_operand_avoiding(e, b, TEMP2, &[TEMP1], dst)?;
 
     e.emit(Instruction::MulUpperUU {
         dst,
@@ -201,22 +194,8 @@ pub fn lower_llvm_intrinsic<'ctx>(
             });
             (TEMP1, TEMP2)
         } else {
-            let a_reg = apply_dst_conflict_fallback(
-                operand_reg_avoiding(e, a, TEMP1, &[TEMP2]),
-                TEMP1,
-                dst,
-            );
-            let b_reg = apply_dst_conflict_fallback(
-                operand_reg_avoiding(e, b, TEMP2, &[TEMP1]),
-                TEMP2,
-                dst,
-            );
-            if a_reg == TEMP1 {
-                e.load_operand(a, TEMP1)?;
-            }
-            if b_reg == TEMP2 {
-                e.load_operand(b, TEMP2)?;
-            }
+            let a_reg = prepare_operand_avoiding(e, a, TEMP1, &[TEMP2], dst)?;
+            let b_reg = prepare_operand_avoiding(e, b, TEMP2, &[TEMP1], dst)?;
             (a_reg, b_reg)
         };
 
@@ -400,10 +379,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
     if name.contains("bswap") {
         let val = get_operand(instr, 0)?;
         let dst = result_reg(e, instr);
-        let val_reg = apply_dst_conflict_fallback(operand_reg(e, val, TEMP1), TEMP1, dst);
-        if val_reg == TEMP1 {
-            e.load_operand(val, TEMP1)?;
-        }
+        let val_reg = prepare_operand(e, val, TEMP1, dst)?;
         let bits = operand_bit_width(instr);
 
         // Validate the width and choose the post-shift up front. PVM's
@@ -487,10 +463,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
     if name.contains("ctlz") {
         let val = get_operand(instr, 0)?;
         let dst = result_reg(e, instr);
-        let val_reg = apply_dst_conflict_fallback(operand_reg(e, val, TEMP1), TEMP1, dst);
-        if val_reg == TEMP1 {
-            e.load_operand(val, TEMP1)?;
-        }
+        let val_reg = prepare_operand(e, val, TEMP1, dst)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::LeadingZeroBits32 { dst, src: val_reg });
@@ -504,10 +477,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
     if name.contains("cttz") {
         let val = get_operand(instr, 0)?;
         let dst = result_reg(e, instr);
-        let val_reg = apply_dst_conflict_fallback(operand_reg(e, val, TEMP1), TEMP1, dst);
-        if val_reg == TEMP1 {
-            e.load_operand(val, TEMP1)?;
-        }
+        let val_reg = prepare_operand(e, val, TEMP1, dst)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::TrailingZeroBits32 { dst, src: val_reg });
@@ -521,10 +491,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
     if name.contains("ctpop") {
         let val = get_operand(instr, 0)?;
         let dst = result_reg(e, instr);
-        let val_reg = apply_dst_conflict_fallback(operand_reg(e, val, TEMP1), TEMP1, dst);
-        if val_reg == TEMP1 {
-            e.load_operand(val, TEMP1)?;
-        }
+        let val_reg = prepare_operand(e, val, TEMP1, dst)?;
         let bits = operand_bit_width(instr);
         if bits == 32 {
             e.emit(Instruction::CountSetBits32 { dst, src: val_reg });
@@ -551,14 +518,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
             // `amt_reg` is resolved lazily below (only on the variable-amount
             // path), so `a_reg` only needs to avoid TEMP2 — the future load
             // target for `amt` if the constant fast-path doesn't fire.
-            let a_reg = apply_dst_conflict_fallback(
-                operand_reg_avoiding(e, a, TEMP1, &[TEMP2]),
-                TEMP1,
-                dst,
-            );
-            if a_reg == TEMP1 {
-                e.load_operand(a, TEMP1)?;
-            }
+            let a_reg = prepare_operand_avoiding(e, a, TEMP1, &[TEMP2], dst)?;
 
             // Constant rotation amount: use the *Imm variants and drop the
             // `LoadImm` for the amount + the TEMP2 dependency. PVM has no
@@ -593,14 +553,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
             }
 
             // Variable rotation amount: use the register-form rotates.
-            let amt_reg = apply_dst_conflict_fallback(
-                operand_reg_avoiding(e, amt, TEMP2, &[TEMP1]),
-                TEMP2,
-                dst,
-            );
-            if amt_reg == TEMP2 {
-                e.load_operand(amt, TEMP2)?;
-            }
+            let amt_reg = prepare_operand_avoiding(e, amt, TEMP2, &[TEMP1], dst)?;
             let rot = if name.contains("fshl") {
                 if is_32 {
                     Instruction::RotL32 {

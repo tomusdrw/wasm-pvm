@@ -1282,10 +1282,58 @@ pub fn apply_dst_conflict_fallback(op_reg: u8, fallback: u8, dst: u8) -> u8 {
         return op_reg;
     }
     // Alias is safe when dst is the non-allocated TEMP_RESULT scratch.
+    // (TEMP1 / TEMP2 can never appear as `dst` here: `result_reg`/`result_reg_or`
+    // only return values from the allocator's `val_to_reg` map plus a fallback,
+    // and the allocator's allocatable set is r5-r12 — TEMP1/TEMP2 are never
+    // assigned to SSA results. So the TEMP_RESULT-only relaxation is exhaustive.)
     if dst == TEMP_RESULT {
         return op_reg;
     }
     fallback
+}
+
+/// Combine `operand_reg` + dst-conflict fallback + conditional `load_operand`
+/// into a single call.
+///
+/// The replacing pattern is:
+///
+/// ```ignore
+/// let reg = apply_dst_conflict_fallback(operand_reg(e, val, fallback), fallback, dst);
+/// if reg == fallback { e.load_operand(val, fallback)?; }
+/// ```
+///
+/// Only applicable when the load is *unconditional* given the current code
+/// path. Sites that decide whether to use `reg` based on a later match (e.g.
+/// `if let Some(instr) = commutative_imm_instruction(...)`) must keep the
+/// triplet inline so the load only fires when the match succeeds.
+pub fn prepare_operand<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    fallback: u8,
+    dst: u8,
+) -> Result<u8> {
+    let reg = apply_dst_conflict_fallback(operand_reg(e, val, fallback), fallback, dst);
+    if reg == fallback {
+        e.load_operand(val, fallback)?;
+    }
+    Ok(reg)
+}
+
+/// `prepare_operand` for the two-operand case where the other operand's register
+/// must not be returned even on cache hit (mirrors `operand_reg_avoiding`).
+pub fn prepare_operand_avoiding<'ctx>(
+    e: &mut PvmEmitter<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    fallback: u8,
+    avoid: &[u8],
+    dst: u8,
+) -> Result<u8> {
+    let reg =
+        apply_dst_conflict_fallback(operand_reg_avoiding(e, val, fallback, avoid), fallback, dst);
+    if reg == fallback {
+        e.load_operand(val, fallback)?;
+    }
+    Ok(reg)
 }
 
 /// Detect the bit width of an instruction's **result** type.
