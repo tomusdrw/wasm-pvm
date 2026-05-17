@@ -115,8 +115,15 @@ fn emit_pvm_mul_upper_uu<'ctx>(
     let slot = result_slot(e, instr)?;
     let dst = result_reg(e, instr);
 
-    let a_reg = apply_dst_conflict_fallback(operand_reg(e, a, TEMP1), TEMP1, dst);
-    let b_reg = apply_dst_conflict_fallback(operand_reg(e, b, TEMP2), TEMP2, dst);
+    // Use `operand_reg_avoiding` for both operands: if `a` is cached at TEMP2,
+    // the sibling `b` load below would clobber it (and vice versa). The original
+    // code used plain `operand_reg`, which had this latent miscompile risk on
+    // the rare path where the per-block cache happened to put one operand in
+    // the other's load-target register.
+    let a_reg =
+        apply_dst_conflict_fallback(operand_reg_avoiding(e, a, TEMP1, &[TEMP2]), TEMP1, dst);
+    let b_reg =
+        apply_dst_conflict_fallback(operand_reg_avoiding(e, b, TEMP2, &[TEMP1]), TEMP2, dst);
     if a_reg == TEMP1 {
         e.load_operand(a, TEMP1)?;
     }

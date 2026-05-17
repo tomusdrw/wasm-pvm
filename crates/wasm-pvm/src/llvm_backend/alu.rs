@@ -475,16 +475,10 @@ pub fn lower_binary_arith<'ctx>(
         e.load_operand(rhs, TEMP2)?;
         (TEMP1, TEMP2)
     } else {
-        let lhs_reg = apply_dst_conflict_fallback(
-            operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]),
-            TEMP1,
-            dst,
-        );
-        let rhs_reg = apply_dst_conflict_fallback(
-            operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]),
-            TEMP2,
-            dst,
-        );
+        let lhs_reg =
+            apply_dst_conflict_fallback(operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]), TEMP1, dst);
+        let rhs_reg =
+            apply_dst_conflict_fallback(operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]), TEMP2, dst);
         if lhs_reg == TEMP1 {
             e.load_operand(lhs, TEMP1)?;
         }
@@ -763,16 +757,10 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     }
 
     // Load-side coalescing for register-register comparisons.
-    let lhs_reg = apply_dst_conflict_fallback(
-        operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]),
-        TEMP1,
-        dst,
-    );
-    let rhs_reg = apply_dst_conflict_fallback(
-        operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]),
-        TEMP2,
-        dst,
-    );
+    let lhs_reg =
+        apply_dst_conflict_fallback(operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]), TEMP1, dst);
+    let rhs_reg =
+        apply_dst_conflict_fallback(operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]), TEMP2, dst);
     if lhs_reg == TEMP1 {
         e.load_operand(lhs, TEMP1)?;
     }

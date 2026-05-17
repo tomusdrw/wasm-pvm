@@ -1598,13 +1598,19 @@ pub use crate::abi::{ARGS_LEN_REG as SCRATCH1, ARGS_PTR_REG as SCRATCH2};
 #[cfg(test)]
 mod tests {
     use super::apply_dst_conflict_fallback;
-    use crate::abi::{FIRST_LOCAL_REG, TEMP1, TEMP2, TEMP_RESULT};
+    use crate::abi::{FIRST_LOCAL_REG, TEMP_RESULT, TEMP1, TEMP2};
 
     #[test]
     fn fallback_returns_op_reg_when_already_fallback() {
         // op_reg == fallback: trivial no-op path.
-        assert_eq!(apply_dst_conflict_fallback(TEMP1, TEMP1, TEMP_RESULT), TEMP1);
-        assert_eq!(apply_dst_conflict_fallback(TEMP2, TEMP2, FIRST_LOCAL_REG), TEMP2);
+        assert_eq!(
+            apply_dst_conflict_fallback(TEMP1, TEMP1, TEMP_RESULT),
+            TEMP1
+        );
+        assert_eq!(
+            apply_dst_conflict_fallback(TEMP2, TEMP2, FIRST_LOCAL_REG),
+            TEMP2
+        );
     }
 
     #[test]
