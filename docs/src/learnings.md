@@ -492,6 +492,16 @@ Rematerialization (reloading values with `LoadImm` instead of `LoadIndU64` from 
 - **Solution**: `LiveInterval.spans_calls` flag marks intervals whose live range contains at least one real call. In non-leaf functions, call-spanning intervals explicitly prefer callee-saved registers (r9-r12 beyond `max_call_args`), while non-call-spanning intervals prefer caller-saved (r5-r8). In leaf functions, all registers are equal (no preference applied). The `preferred_reg` hint (e.g., r7 for call return values) takes priority over the class preference.
 - **Impact**: Modest — primarily benefits non-leaf functions with call-spanning values. anan-as PVM interpreter -0.2% code size. Most benchmarks are leaf-dominated.
 
+### TEMP_RESULT Chain Coalescing (Phase 13, 2026-05)
+
+- **Problem**: The dst-conflict fallback in load-side coalescing (Phase 8) was uniform: whenever an operand's cached register equalled the consuming instruction's `dst`, the lowering forced a fallback temp (`TEMP1` or `TEMP2`), which the per-block cache then satisfied with `MoveReg TEMP1, TEMP_RESULT`. For chains of non-allocated results (each landing in `TEMP_RESULT` = r4), this emitted ~47k redundant `r4 → r2` moves per polkadot runtime (67% of all MoveReg in glutton-kusama).
+- **Observation**: PVM 3-operand instructions read `src1`/`src2` before writing `dst`. So `Add r4, r4, ?` evaluates correctly even when src1 aliases dst. The conservative fallback is only necessary when `dst` is an *allocated* register — there, alias-with-source can trip `invalidate_reg`, the `slot_cache`, or lazy-spill bookkeeping.
+- **Solution**: Route every dst-conflict check through `apply_dst_conflict_fallback(op_reg, fallback, dst)` (`emitter.rs`). When `dst == TEMP_RESULT`, the helper keeps the alias; otherwise it falls back as before. Threaded through 17 lowering sites in `alu.rs`, `intrinsics.rs`, `memory.rs`.
+- **Excluded**: `bitreverse` (`intrinsics.rs`) emits `LoadImm64 TEMP_RESULT, mask` mid-sequence — relaxing the alias would clobber `val_reg`. The conservative fallback is preserved with an inline comment.
+- **Naturally excluded** because they bypass `operand_reg`: `lower_select`, `emit_pvm_memory_grow`, `lower_abs` use `load_operand` directly.
+- **Why the savings exceed the targeted ~47k**: The cascade. Each eliminated MoveReg shortens the surrounding sequence, which makes the following block-boundary cache invalidation / Fallthrough / constant-load chain shorter too. Net MoveReg: 70,141 → 27,155 (-61%), instructions -4.02%, JAM -1.97%.
+- **Impact on polkadot/glutton-kusama**: JAM 6,573,304 → 6,444,138 bytes (-129 KB, -1.97%). Code 4,751,176 → 4,636,361 bytes (-2.42%). Full integration suite (465 tests) green; clippy clean.
+
 ### Non-Leaf r5-r8 Allocation and load_operand Reload Bug (Phase 6, 2026-03)
 
 - **Removing the leaf-only restriction for r5-r8**: Previously r5/r6 (`allocate_scratch_regs`) and r7/r8 (`allocate_caller_saved_regs`) were only available in leaf functions. Phase 6 makes them available in all functions. The existing non-leaf call lowering infrastructure (`spill_allocated_regs` before calls, `clear_reg_cache` after calls, lazy reload on next access) handles caller-saved register spill/reload automatically, so no new mechanism was needed.

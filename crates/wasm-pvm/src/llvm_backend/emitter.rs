@@ -1247,6 +1247,47 @@ pub fn operand_reg_avoiding(
     fallback
 }
 
+/// Apply the dst-conflict fallback to a register returned by `operand_reg*`.
+///
+/// Most lowering paths follow this pattern to guard against the operand's
+/// register aliasing the destination of a 3-operand instruction:
+///
+/// ```ignore
+/// let mut op_reg = operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]);
+/// if op_reg != TEMP1 && op_reg == dst {
+///     op_reg = TEMP1;  // fall back to a fresh temp
+/// }
+/// ```
+///
+/// The fallback exists because reading a register that is also the destination
+/// of an *allocated* result could trip cache/regalloc bookkeeping in subtle
+/// ways. However, when `dst == TEMP_RESULT` (the result is **not** allocated),
+/// returning `TEMP_RESULT` directly is safe: PVM 3-operand instructions read
+/// `src1`/`src2` before writing `dst`, so `Add r4, r4, ?` evaluates `r4 + ?`
+/// and stores back into `r4` correctly. Skipping the fallback eliminates a
+/// `MoveReg r2, r4` that `load_operand` would otherwise emit when the cached
+/// register equals `TEMP_RESULT`.
+///
+/// This narrow relaxation only fires for the common `TEMP_RESULT → TEMP_RESULT`
+/// chain (one instruction's result feeding the next instruction's first
+/// operand when neither end is regalloc-assigned). It leaves the conservative
+/// behavior in place for allocated `dst` registers, where additional
+/// invariants (live ranges, dirty bits) make the alias less obviously safe.
+#[inline]
+#[must_use]
+pub fn apply_dst_conflict_fallback(op_reg: u8, fallback: u8, dst: u8) -> u8 {
+    use crate::abi::TEMP_RESULT;
+    // No conflict — register is already the fallback or doesn't alias dst.
+    if op_reg == fallback || op_reg != dst {
+        return op_reg;
+    }
+    // Alias is safe when dst is the non-allocated TEMP_RESULT scratch.
+    if dst == TEMP_RESULT {
+        return op_reg;
+    }
+    fallback
+}
+
 /// Detect the bit width of an instruction's **result** type.
 ///
 /// For most instructions (binary ops, comparisons), this is the correct width
@@ -1553,3 +1594,49 @@ pub fn scratch_regs_safe(function: FunctionValue<'_>) -> bool {
 
 // Re-export scratch registers for other modules
 pub use crate::abi::{ARGS_LEN_REG as SCRATCH1, ARGS_PTR_REG as SCRATCH2};
+
+#[cfg(test)]
+mod tests {
+    use super::apply_dst_conflict_fallback;
+    use crate::abi::{FIRST_LOCAL_REG, TEMP1, TEMP2, TEMP_RESULT};
+
+    #[test]
+    fn fallback_returns_op_reg_when_already_fallback() {
+        // op_reg == fallback: trivial no-op path.
+        assert_eq!(apply_dst_conflict_fallback(TEMP1, TEMP1, TEMP_RESULT), TEMP1);
+        assert_eq!(apply_dst_conflict_fallback(TEMP2, TEMP2, FIRST_LOCAL_REG), TEMP2);
+    }
+
+    #[test]
+    fn fallback_returns_op_reg_when_no_alias() {
+        // op_reg is an allocated register; dst is a different register; no alias.
+        let alloc = FIRST_LOCAL_REG;
+        let other = FIRST_LOCAL_REG + 1;
+        assert_eq!(apply_dst_conflict_fallback(alloc, TEMP1, other), alloc);
+    }
+
+    #[test]
+    fn fallback_uses_temp_when_alias_with_allocated_dst() {
+        // op_reg == dst and dst is an allocated reg (not TEMP_RESULT):
+        // the conservative path forces a fresh temp.
+        let alloc = FIRST_LOCAL_REG;
+        assert_eq!(apply_dst_conflict_fallback(alloc, TEMP1, alloc), TEMP1);
+    }
+
+    #[test]
+    fn fallback_preserves_alias_when_dst_is_temp_result() {
+        // The optimization: when dst == TEMP_RESULT and op_reg also points there
+        // (cache hit on a prior TEMP_RESULT-bound result feeding the next op),
+        // keep op_reg so the 3-operand instruction reads-then-writes
+        // TEMP_RESULT in place, eliding a `MoveReg TEMP1, TEMP_RESULT`.
+        assert_eq!(
+            apply_dst_conflict_fallback(TEMP_RESULT, TEMP1, TEMP_RESULT),
+            TEMP_RESULT
+        );
+        // Same for TEMP2 fallback (e.g. second operand of a binary op).
+        assert_eq!(
+            apply_dst_conflict_fallback(TEMP_RESULT, TEMP2, TEMP_RESULT),
+            TEMP_RESULT
+        );
+    }
+}
