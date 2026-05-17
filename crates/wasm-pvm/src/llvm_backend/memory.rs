@@ -17,8 +17,8 @@ use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
 use super::emitter::{
-    LoweringContext, PvmEmitter, apply_dst_conflict_fallback, get_operand, operand_reg,
-    operand_reg_avoiding, result_reg, result_slot, try_get_constant,
+    LoweringContext, PvmEmitter, get_operand, operand_reg, operand_reg_avoiding, prepare_operand,
+    result_reg, result_slot, try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
 
@@ -216,10 +216,7 @@ pub fn emit_pvm_load<'ctx>(
     let dst = result_reg(e, instr);
 
     // Load-side coalescing: use allocated register for the address operand.
-    let addr_reg = apply_dst_conflict_fallback(operand_reg(e, addr, TEMP1), TEMP1, dst);
-    if addr_reg == TEMP1 {
-        e.load_operand(addr, TEMP1)?;
-    }
+    let addr_reg = prepare_operand(e, addr, TEMP1, dst)?;
 
     let offset = ctx.wasm_memory_base;
     match kind {
