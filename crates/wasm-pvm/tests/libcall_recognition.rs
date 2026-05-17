@@ -102,6 +102,93 @@ fn multi3_kept_when_disabled() {
     );
 }
 
+/// Regression: `MulUpperUU` source registers must be distinct.
+///
+/// Pins the fix for the sibling-register alias case in `emit_pvm_mul_upper_uu`
+/// (`crates/wasm-pvm/src/llvm_backend/intrinsics.rs`).
+///
+/// # The bug being pinned
+///
+/// The original `emit_pvm_mul_upper_uu` used plain `operand_reg` (no avoid):
+///
+/// ```ignore
+/// let a_reg = apply_dst_conflict_fallback(operand_reg(e, a, TEMP1), TEMP1, dst);
+/// let b_reg = apply_dst_conflict_fallback(operand_reg(e, b, TEMP2), TEMP2, dst);
+/// if a_reg == TEMP1 { e.load_operand(a, TEMP1)?; }
+/// if b_reg == TEMP2 { e.load_operand(b, TEMP2)?; }
+/// ```
+///
+/// If the per-block `slot_cache` happened to put operand `a`'s value in
+/// `TEMP2` (e.g. because a prior instruction loaded `a` as its right-hand
+/// operand), `operand_reg(a, TEMP1)` returned `TEMP2`. The sibling
+/// `load_operand(b, TEMP2)` then overwrote `a`'s value before
+/// `MulUpperUU` could read it, producing `MulUpperUU dst, TEMP2, TEMP2`
+/// (computing `b * b` instead of `a * b`). Symmetric problem if `b` was
+/// cached in `TEMP1`.
+///
+/// The fix routes both operand lookups through `prepare_operand_avoiding`
+/// (which calls `operand_reg_avoiding(_, fallback, &[sibling_fallback])`)
+/// so the cache can never return a register the sibling is about to clobber:
+///
+/// ```ignore
+/// let a_reg = prepare_operand_avoiding(e, a, TEMP1, &[TEMP2], dst)?;
+/// let b_reg = prepare_operand_avoiding(e, b, TEMP2, &[TEMP1], dst)?;
+/// ```
+///
+/// # What this test asserts (and doesn't)
+///
+/// `MULTI3_WAT` exercises `MulUpperUU(x_lo, y_lo)` where `x_lo` and `y_lo`
+/// are *distinct* SSA values (loaded from parameters 1 and 3 of `__multi3`).
+/// A correctly-lowered `MulUpperUU` for two distinct SSA operands must read
+/// from two distinct physical registers — `src1 != src2`. If the bug
+/// reappeared, the emitted instruction would read the same register twice
+/// in the cache-collision case, violating this invariant.
+///
+/// Caveat: on `MULTI3_WAT` specifically, the immediately-preceding `Mul64`
+/// already loads `x_lo` into `TEMP1` and `y_lo` into `TEMP2`, so the cache
+/// is in the "good" configuration when `MulUpperUU` lowers — the bug never
+/// actually fires here today. The assertion therefore pins the *invariant*
+/// the fix enforces (and catches any future change that breaks it in
+/// combination with synthesizer changes that prime the cache adversarially),
+/// rather than directly catching the original buggy code on this WAT. A
+/// truly trigger-driven white-box test would require constructing LLVM IR
+/// where another instruction precedes `MulUpperUU` and primes the cache to
+/// put `x_lo` in `TEMP2` — out of scope for this WAT-based suite (no Rust
+/// PVM executor exists; tests can only inspect the emitted instruction
+/// stream, not run it).
+#[test]
+fn mul_upper_uu_sources_are_distinct() {
+    use wasm_pvm::abi::{TEMP1, TEMP2};
+
+    let instructions = compile_with_libcall_recognition(MULTI3_WAT, true);
+
+    let mul_uppers: Vec<(u8, u8, u8)> = instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::MulUpperUU { dst, src1, src2 } => Some((*dst, *src1, *src2)),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        !mul_uppers.is_empty(),
+        "expected at least one MulUpperUU in the synthesized __multi3 body"
+    );
+
+    for (idx, (dst, src1, src2)) in mul_uppers.iter().enumerate() {
+        assert_ne!(
+            src1, src2,
+            "MulUpperUU #{idx} sources alias (dst=r{dst}, src1=r{src1}, src2=r{src2}): \
+             distinct SSA inputs (x_lo, y_lo) must produce distinct source registers. \
+             If this fails, the load-side coalescing path in emit_pvm_mul_upper_uu \
+             (intrinsics.rs) has miscompiled — check that both operand lookups go \
+             through prepare_operand_avoiding so the avoid list (TEMP1=r{TEMP1}, \
+             TEMP2=r{TEMP2}) prevents one operand's cached register from being \
+             clobbered by the sibling's load_operand call."
+        );
+    }
+}
+
 /// Verifies that a function literally named `__multi3` but with the
 /// **wrong signature** (e.g. fewer parameters) is *not* replaced — its
 /// stub body survives and no `MulUpperUU` is emitted.
