@@ -20,8 +20,8 @@ use crate::Result;
 use crate::pvm::Instruction;
 
 use super::emitter::{
-    FusedIcmp, PvmEmitter, SCRATCH1, get_operand, operand_bit_width, operand_reg,
-    operand_reg_avoiding, result_reg, result_reg_or, result_slot, source_bit_width,
+    FusedIcmp, PvmEmitter, SCRATCH1, apply_dst_conflict_fallback, get_operand, operand_bit_width,
+    operand_reg, operand_reg_avoiding, result_reg, result_reg_or, result_slot, source_bit_width,
     try_get_constant,
 };
 use crate::abi::{TEMP_RESULT, TEMP1, TEMP2};
@@ -256,10 +256,7 @@ pub fn lower_binary_arith<'ctx>(
     {
         let imm = rhs_const as i32;
         // Load-side coalescing: use allocated register for the non-constant operand.
-        let mut lhs_reg = operand_reg(e, lhs, TEMP1);
-        if lhs_reg != TEMP1 && lhs_reg == dst {
-            lhs_reg = TEMP1;
-        }
+        let lhs_reg = apply_dst_conflict_fallback(operand_reg(e, lhs, TEMP1), TEMP1, dst);
         let folded = match (op, bits <= 32) {
             // Sub with constant RHS: `x - const` → `x + (-const)` (not commutative).
             (BinaryOp::Sub, true) if rhs_const != i64::from(i32::MIN) => {
@@ -326,10 +323,7 @@ pub fn lower_binary_arith<'ctx>(
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
-        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
-        if rhs_reg != TEMP1 && rhs_reg == dst {
-            rhs_reg = TEMP1;
-        }
+        let rhs_reg = apply_dst_conflict_fallback(operand_reg(e, rhs, TEMP1), TEMP1, dst);
         if rhs_reg == TEMP1 {
             e.load_operand(rhs, TEMP1)?;
         }
@@ -358,10 +352,7 @@ pub fn lower_binary_arith<'ctx>(
         && matches!(op, BinaryOp::Shl | BinaryOp::LShr | BinaryOp::AShr)
     {
         let imm = lhs_const as i32;
-        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
-        if rhs_reg != TEMP1 && rhs_reg == dst {
-            rhs_reg = TEMP1;
-        }
+        let rhs_reg = apply_dst_conflict_fallback(operand_reg(e, rhs, TEMP1), TEMP1, dst);
         if rhs_reg == TEMP1 {
             e.load_operand(rhs, TEMP1)?;
         }
@@ -410,10 +401,7 @@ pub fn lower_binary_arith<'ctx>(
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
-        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
-        if rhs_reg != TEMP1 && rhs_reg == dst {
-            rhs_reg = TEMP1;
-        }
+        let rhs_reg = apply_dst_conflict_fallback(operand_reg(e, rhs, TEMP1), TEMP1, dst);
         if let Some(instr) = commutative_imm_instruction(op, bits <= 32, imm, dst, rhs_reg) {
             if rhs_reg == TEMP1 {
                 e.load_operand(rhs, TEMP1)?;
@@ -433,14 +421,16 @@ pub fn lower_binary_arith<'ctx>(
             .or_else(|| try_get_bitwise_not(lhs).map(|inner| (rhs, inner)));
 
         if let Some((plain, inv_inner)) = fused_pair {
-            let mut plain_reg = operand_reg_avoiding(e, plain, TEMP1, &[TEMP2]);
-            let mut inv_reg = operand_reg_avoiding(e, inv_inner, TEMP2, &[TEMP1]);
-            if plain_reg != TEMP1 && plain_reg == dst {
-                plain_reg = TEMP1;
-            }
-            if inv_reg != TEMP2 && inv_reg == dst {
-                inv_reg = TEMP2;
-            }
+            let plain_reg = apply_dst_conflict_fallback(
+                operand_reg_avoiding(e, plain, TEMP1, &[TEMP2]),
+                TEMP1,
+                dst,
+            );
+            let inv_reg = apply_dst_conflict_fallback(
+                operand_reg_avoiding(e, inv_inner, TEMP2, &[TEMP1]),
+                TEMP2,
+                dst,
+            );
             if plain_reg == TEMP1 {
                 e.load_operand(plain, TEMP1)?;
             }
@@ -485,14 +475,10 @@ pub fn lower_binary_arith<'ctx>(
         e.load_operand(rhs, TEMP2)?;
         (TEMP1, TEMP2)
     } else {
-        let mut lhs_reg = operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]);
-        let mut rhs_reg = operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]);
-        if lhs_reg != TEMP1 && lhs_reg == dst {
-            lhs_reg = TEMP1;
-        }
-        if rhs_reg != TEMP2 && rhs_reg == dst {
-            rhs_reg = TEMP2;
-        }
+        let lhs_reg =
+            apply_dst_conflict_fallback(operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]), TEMP1, dst);
+        let rhs_reg =
+            apply_dst_conflict_fallback(operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]), TEMP2, dst);
         if lhs_reg == TEMP1 {
             e.load_operand(lhs, TEMP1)?;
         }
@@ -695,10 +681,7 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         && i32::try_from(rhs_const).is_ok()
     {
         let imm = rhs_const as i32;
-        let mut lhs_reg = operand_reg(e, lhs, TEMP1);
-        if lhs_reg != TEMP1 && lhs_reg == dst {
-            lhs_reg = TEMP1;
-        }
+        let lhs_reg = apply_dst_conflict_fallback(operand_reg(e, lhs, TEMP1), TEMP1, dst);
         let folded = match pred {
             IntPredicate::ULT => Some(Instruction::SetLtUImm {
                 dst,
@@ -737,10 +720,7 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
         && i32::try_from(lhs_const).is_ok()
     {
         let imm = lhs_const as i32;
-        let mut rhs_reg = operand_reg(e, rhs, TEMP1);
-        if rhs_reg != TEMP1 && rhs_reg == dst {
-            rhs_reg = TEMP1;
-        }
+        let rhs_reg = apply_dst_conflict_fallback(operand_reg(e, rhs, TEMP1), TEMP1, dst);
         let folded = match pred {
             // const < x ⟺ x > const
             IntPredicate::ULT => Some(Instruction::SetGtUImm {
@@ -777,14 +757,10 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     }
 
     // Load-side coalescing for register-register comparisons.
-    let mut lhs_reg = operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]);
-    let mut rhs_reg = operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]);
-    if lhs_reg != TEMP1 && lhs_reg == dst {
-        lhs_reg = TEMP1;
-    }
-    if rhs_reg != TEMP2 && rhs_reg == dst {
-        rhs_reg = TEMP2;
-    }
+    let lhs_reg =
+        apply_dst_conflict_fallback(operand_reg_avoiding(e, lhs, TEMP1, &[TEMP2]), TEMP1, dst);
+    let rhs_reg =
+        apply_dst_conflict_fallback(operand_reg_avoiding(e, rhs, TEMP2, &[TEMP1]), TEMP2, dst);
     if lhs_reg == TEMP1 {
         e.load_operand(lhs, TEMP1)?;
     }
