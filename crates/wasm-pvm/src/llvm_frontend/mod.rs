@@ -39,6 +39,7 @@ pub fn translate_wasm_to_llvm<'ctx>(
     reachable_locals: Option<&BTreeSet<usize>>,
     trap_floats: bool,
     libcall_recognition: bool,
+    run_mergefunc: bool,
 ) -> Result<Module<'ctx>> {
     let translator = WasmToLlvm::new(context, "wasm_module", trap_floats, libcall_recognition);
     translator.translate_module(
@@ -47,5 +48,6 @@ pub fn translate_wasm_to_llvm<'ctx>(
         run_inlining,
         inline_threshold,
         reachable_locals,
+        run_mergefunc,
     )
 }

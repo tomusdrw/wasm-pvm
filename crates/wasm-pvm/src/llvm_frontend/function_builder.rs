@@ -408,6 +408,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         run_inlining: bool,
         inline_threshold: Option<u32>,
         reachable_locals: Option<&std::collections::BTreeSet<usize>>,
+        run_mergefunc: bool,
     ) -> Result<Module<'ctx>> {
         self.declare_functions(wasm_module);
         self.declare_globals(wasm_module);
@@ -441,7 +442,7 @@ impl<'ctx> WasmToLlvm<'ctx> {
         }
 
         if run_llvm_passes {
-            self.run_optimization_passes(run_inlining, inline_threshold)?;
+            self.run_optimization_passes(run_inlining, inline_threshold, run_mergefunc)?;
         }
 
         self.module
@@ -1915,10 +1916,12 @@ impl<'ctx> WasmToLlvm<'ctx> {
 
     // ── Optimization passes ──
 
+    #[allow(clippy::fn_params_excessive_bools)]
     fn run_optimization_passes(
         &self,
         run_inlining: bool,
         inline_threshold: Option<u32>,
+        run_mergefunc: bool,
     ) -> Result<()> {
         use inkwell::passes::PassBuilderOptions;
         use inkwell::targets::{InitializationConfig, Target, TargetMachine};
@@ -2016,6 +2019,37 @@ impl<'ctx> WasmToLlvm<'ctx> {
                 opts,
             )
             .map_err(|e| Error::Internal(format!("LLVM optimization passes failed: {e}")))?;
+
+        // Phase 4 (optional): Merge byte-identical function bodies.
+        //
+        // `mergefunc` is a module-level pass that does two things:
+        //   1. For functions whose bodies are byte-identical and whose linkage
+        //      allows aliasing, it makes one an alias of the other. Both
+        //      callers continue to work and only one body survives.
+        //   2. For functions that are "weakly identical" (same shape but
+        //      differing in a parameterizable way), it factors out a
+        //      canonical body and emits thunks for the originals.
+        //
+        // Targets rustc monomorphizations (e.g. `quicksort` instantiated for
+        // several comparator types, or `scale_info::TypeInfo::type_info`
+        // instantiated for many newtype wrappers). Measured impact on
+        // polkadot fellowship runtimes is ~0.7% of code size — much smaller
+        // than the upper-bound estimate would suggest, because most "shape
+        // matches" in substrate code differ in inner call targets that
+        // mergefunc thunks but can't fully collapse.
+        //
+        // Must run AFTER inlining (`run_inlining` above): if `cgscc(inline)`
+        // ran after `mergefunc`, the thunks (very small bodies, just `call
+        // canonical; ret`) would inline back into every caller and undo the
+        // merge. No trailing `dce` because mergefunc's thunks are reachable
+        // (callers refer to them) — `dce` wouldn't drop anything and would
+        // only add compile time.
+        if run_mergefunc {
+            let opts = PassBuilderOptions::create();
+            self.module
+                .run_passes("mergefunc", &machine, opts)
+                .map_err(|e| Error::Internal(format!("LLVM mergefunc pass failed: {e}")))?;
+        }
 
         Ok(())
     }

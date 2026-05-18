@@ -768,11 +768,17 @@ fn test_inlining_changes_codegen() {
         )
     "#;
 
+    // `mergefunc` disabled here: with inlining, `main` and `$add_ten` end up
+    // with identical IR bodies, and `mergefunc` then aliases them, collapsing
+    // the very codegen difference this test is asserting. Toggling `mergefunc`
+    // is not what this test is about — it's about whether inlining itself
+    // changes the encoded output. Keep `mergefunc` off in both arms.
     let with_inline = compile_wat_with_options(
         wat,
         &CompileOptions {
             optimizations: OptimizationFlags {
                 inlining: true,
+                mergefunc: false,
                 ..OptimizationFlags::default()
             },
             ..CompileOptions::default()
@@ -785,6 +791,7 @@ fn test_inlining_changes_codegen() {
         &CompileOptions {
             optimizations: OptimizationFlags {
                 inlining: false,
+                mergefunc: false,
                 ..OptimizationFlags::default()
             },
             ..CompileOptions::default()
@@ -821,6 +828,77 @@ fn test_inlining_changes_codegen() {
         "Inlining should reduce LoadImmJump count (call overhead): inlined={inlined_call_count}, no-inline={noinline_call_count}"
     );
 }
+/// `mergefunc` should collapse byte-identical function bodies. On tiny
+/// bodies the per-thunk call overhead exceeds the saved body bytes — the
+/// win only shows up when the body is meaningfully large. This test uses
+/// four exports with the same ~20-instruction body, so the merge saves
+/// three copies of a body that's wider than the call overhead.
+#[test]
+fn test_mergefunc_shrinks_identical_bodies() {
+    // 4 exports × identical body. The body is large enough that replacing
+    // three of them with thunks (~5 bytes each) is a net win over keeping
+    // four full copies.
+    let body = r#"
+        local.get 0
+        i32.const 5  i32.mul
+        i32.const 7  i32.add
+        i32.const 11 i32.xor
+        i32.const 13 i32.mul
+        i32.const 17 i32.add
+        i32.const 19 i32.xor
+        i32.const 23 i32.mul
+        i32.const 29 i32.add
+    "#;
+    let wat = format!(
+        "(module
+            (func (export \"a\") (param i32) (result i32) {body})
+            (func (export \"b\") (param i32) (result i32) {body})
+            (func (export \"c\") (param i32) (result i32) {body})
+            (func (export \"d\") (param i32) (result i32) {body})
+        )"
+    );
+
+    // Inlining off in both arms so the bodies survive into mergefunc's view —
+    // otherwise a tiny body might be inlined into all callers and the duplicate
+    // we're testing disappears for the wrong reason.
+    let opts_off = OptimizationFlags {
+        inlining: false,
+        mergefunc: false,
+        ..OptimizationFlags::default()
+    };
+    let opts_on = OptimizationFlags {
+        inlining: false,
+        mergefunc: true,
+        ..OptimizationFlags::default()
+    };
+
+    let without = compile_wat_with_options(
+        &wat,
+        &CompileOptions {
+            optimizations: opts_off,
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile without mergefunc");
+    let with = compile_wat_with_options(
+        &wat,
+        &CompileOptions {
+            optimizations: opts_on,
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile with mergefunc");
+
+    let without_bytes = without.encode();
+    let with_bytes = with.encode();
+    assert!(
+        with_bytes.len() < without_bytes.len(),
+        "mergefunc should shrink the encoded program: without={}, with={}",
+        without_bytes.len(),
+        with_bytes.len()
+    );
+}
+
 /// Leaf function optimization: leaf function (no calls) should NOT save return address (r0).
 #[test]
 fn test_leaf_function_optimization_skips_ra_save() {

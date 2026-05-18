@@ -4,14 +4,36 @@ All non-trivial optimizations can be individually toggled via `OptimizationFlags
 
 ## LLVM Passes (`--no-llvm-passes`)
 
-Three-phase optimization pipeline:
+Four-phase optimization pipeline:
 1. `mem2reg`, `instcombine`, `simplifycfg` (pre-inline cleanup)
 2. `cgscc(inline)` (optional, see `--no-inline`)
-3. `instcombine<max-iterations=2>`, `simplifycfg`, `gvn`, `simplifycfg`, `dce`
+3. `instcombine<max-iterations=20>`, `simplifycfg`, `gvn`, `simplifycfg`, `dce`
+4. `mergefunc` (optional, see `--no-mergefunc`)
 
 ## Function Inlining (`--no-inline`)
 
 LLVM CGSCC inline pass for small callees. After inlining, `instcombine` may introduce new LLVM intrinsics (`llvm.abs`, `llvm.smax`, etc.) that the backend must handle.
+
+## Function Merging (`--no-mergefunc`)
+
+LLVM's `mergefunc` pass, run as Phase 4 after the function-level cleanup. Two behaviors:
+- **Aliasing**: when two functions have byte-identical bodies and their linkage permits, one becomes an alias of the other and only one PVM body survives.
+- **Thunking**: when functions are "weakly identical" (same shape, parameterizable differences), the pass factors a canonical body and emits thunks (`call canonical; ret`) for the originals.
+
+Targets rustc monomorphizations — `quicksort` instantiated for several comparator types, `scale_info::TypeInfo::type_info` instantiated for many newtype wrappers. Their bodies share opcode shape but differ in inner call targets; the thunk parameterization handles this.
+
+**Must run after inlining.** If `cgscc(inline)` ran after `mergefunc`, the thunks (very small bodies) would inline back into every caller and undo the merge. No trailing `dce` because the thunks are reachable from their callers — `dce` would drop nothing and only cost compile time.
+
+**Net effect on tiny functions can be negative** because each thunked call costs ~5 bytes of call setup, which exceeds the saved body for very short functions. The polkadot wins come from large monomorphized helpers where the body dwarfs the call overhead.
+
+**Impact** (polkadot fellowship v2.2.2, `--trap-floats`):
+
+| Runtime | WASM | Baseline code | With mergefunc | Δ |
+|---------|-----:|--------------:|---------------:|---:|
+| `glutton-kusama` | 2.04 MiB | 4,636,361 B | 4,600,277 B | **−0.78%** |
+| `kusama` | 8.43 MiB | 17,965,423 B | 17,832,758 B | **−0.74%** |
+
+Saving scales roughly linearly with binary size. Compile-time impact: negligible (~+150 ms on glutton; within noise on kusama).
 
 ## Peephole Optimizer (`--no-peephole`)
 
