@@ -54,6 +54,6 @@ The summary and analysis files in `results/` are point-in-time snapshots, not li
 
 ## Limitations
 
-- **Size-only.** This experiment measures JAM size and PVM code size, not gas usage or runtime time. An optimization that increases size to reduce gas (e.g. unrolling, dispatch tables) shows as a regression here. See [#TODO gas-cross-check issue] for the planned follow-up.
+- **Size-only.** This experiment measures JAM size and PVM code size, not gas usage or runtime time. An optimization that increases size to reduce gas (e.g. unrolling, dispatch tables) shows as a regression here. See #246 for the planned gas cross-check follow-up.
 - **One-at-a-time.** Flags are toggled individually, with all others on. Interaction effects between disabled pairs aren't measured.
 - **Input set is representative, not exhaustive.** 31 inputs cover hand-crafted WAT, AS-built WASM, real-world as-lan services, and 14 polkadot runtimes — enough to flag dead passes and net-negative behavior, but a new fixture class (e.g. Rust-built WASM with `__multi3`-heavy code) could change conclusions.

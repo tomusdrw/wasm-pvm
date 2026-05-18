@@ -37,11 +37,13 @@
 
 ## Findings & follow-ups
 
-1. **`dead_function_elimination`** never fires on any of the 31 inputs. The pass itself is correct — 257 lines of BFS over `Call`/`RefFunc` from entry points — but every realistic WASM module we see has already been tree-shaken upstream. Either remove the pass, or document it as a defensive correctness net rather than an optimization. Tracked in #TODO.
+1. **`dead_function_elimination`** never fires on any of the 31 inputs. The pass itself is correct — 257 lines of BFS over `Call`/`RefFunc` from entry points — but every realistic WASM module we see has already been tree-shaken upstream. Either remove the pass, or document it as a defensive correctness net rather than an optimization. Tracked in #244.
 
-2. **`--no-llvm-passes` in `NO_OPT_FLAGS`** (`tests/utils/benchmark.sh:30`) silently breaks every non-trivial benchmark under `--no-opt`, because mem2reg is mandatory for the PVM backend (alloca lowering isn't implemented). Remove from the bulk-disable array and document the flag as a frontend-debugging escape hatch, not a tunable optimization. Tracked in #TODO.
+2. **`--no-llvm-passes` in `NO_OPT_FLAGS`** (`tests/utils/benchmark.sh:30`) silently breaks every non-trivial benchmark under `--no-opt`, because mem2reg is mandatory for the PVM backend (alloca lowering isn't implemented). Remove from the bulk-disable array and document the flag as a frontend-debugging escape hatch, not a tunable optimization. Tracked in #245.
 
-3. **Noisy / net-negative-on-subsets** — `shrink_wrap_callee_saves`, `inlining` (default threshold), `aggressive_register_allocation`, `caller_saved_alloc`, `libcall_recognition`. JAM size alone can't decide their fate because some of them trade size for gas. Re-measure with gas usage on the dynamic fixtures (everything in `BENCHMARKS` with non-empty `args`) before deciding to keep, tune, or remove. Tracked in #TODO.
+3. **Noisy / net-negative-on-subsets** — `shrink_wrap_callee_saves`, `inlining` (default threshold), `aggressive_register_allocation`, `caller_saved_alloc`, `libcall_recognition`. JAM size alone can't decide their fate because some of them trade size for gas. Re-measure with gas usage on the dynamic fixtures (everything in `BENCHMARKS` with non-empty `args`) before deciding to keep, tune, or remove. Tracked in #246.
+
+4. **Per-project optimization config** — the input-class-specific behavior above (e.g. `mergefunc` wins on polkadot but regresses aslan-debug; `aggressive_register_allocation` wins on polkadot but regresses all aslan-*) suggests projects should be able to opt into/out of individual passes via a `wasm-pvm.toml` file rather than long CLI flag lists. Tracked in #247.
 
 4. **`mergefunc`** is net-positive at scale (+1.45 MB across 15 polkadot runtimes when off, i.e. mergefunc saved that much when on) but regresses small modules (aslan-debug −394 B). The fix is probably a per-module guard (skip below some function-count threshold), not deletion. Low priority.
 
