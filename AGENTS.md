@@ -73,6 +73,7 @@ cd tests && bun utils/run-jam.ts ../dist/add.jam --args=0500000007000000
 - **`docs/src/internals/pvm-instructions.md`** — Update if PVM instruction encoding changed
 - **`todo.md`** — Mark completed tasks as `[x]`, add new discovered tasks
 - **`README.md` benchmark tables** — If JAM sizes or gas usage changed (e.g. code generation, memory layout, or optimization changes), re-run `./tests/utils/benchmark.sh` and update the two benchmark tables in `README.md` (Optimizations Impact + PVM-in-PVM) with the latest numbers
+- **`experiments/analysis.md`** — If you touched any optimization pass, its gate, or the LLVM pipeline, re-run `./experiments/opt_impact.sh` (~75–90 min full, or `--fixtures` for ~15 min) and refresh `experiments/results/` plus the `analysis.md` snapshot. See `experiments/README.md` for the workflow.
 
 All documentation lives in `docs/src/` (mdbook). Preview locally with `mdbook serve docs`.
 
