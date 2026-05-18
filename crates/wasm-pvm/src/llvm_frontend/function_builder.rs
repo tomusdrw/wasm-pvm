@@ -407,7 +407,6 @@ impl<'ctx> WasmToLlvm<'ctx> {
         run_llvm_passes: bool,
         run_inlining: bool,
         inline_threshold: Option<u32>,
-        reachable_locals: Option<&std::collections::BTreeSet<usize>>,
         run_mergefunc: bool,
     ) -> Result<Module<'ctx>> {
         self.declare_functions(wasm_module);
@@ -419,14 +418,6 @@ impl<'ctx> WasmToLlvm<'ctx> {
         }
 
         for (local_idx, func_body) in wasm_module.functions.iter().enumerate() {
-            // Skip dead functions: still declared (for call references) but body is `unreachable`.
-            if reachable_locals.is_some_and(|r| !r.contains(&local_idx)) {
-                let global_idx = wasm_module.num_imported_funcs as usize + local_idx;
-                let func_value = self.functions[global_idx];
-                self.emit_dead_function_body(func_value)?;
-                continue;
-            }
-
             let global_idx = wasm_module.num_imported_funcs as usize + local_idx;
             let func_value = self.functions[global_idx];
             let (num_params, has_return) = wasm_module.function_signatures[global_idx];
@@ -485,20 +476,6 @@ impl<'ctx> WasmToLlvm<'ctx> {
             global.set_initializer(&self.i64_type.const_int(init_value as u64, true));
             self.globals.push(global);
         }
-    }
-
-    /// Emit a minimal body for a dead (unreachable) function.
-    /// The function is declared but never called, so the body just returns.
-    fn emit_dead_function_body(&self, func_value: FunctionValue<'ctx>) -> Result<()> {
-        let bb = self.context.append_basic_block(func_value, "dead");
-        self.builder.position_at_end(bb);
-        if func_value.get_type().get_return_type().is_some() {
-            let zero = self.i64_type.const_zero();
-            llvm_err(self.builder.build_return(Some(&zero)))?;
-        } else {
-            llvm_err(self.builder.build_return(None))?;
-        }
-        Ok(())
     }
 
     fn translate_function(

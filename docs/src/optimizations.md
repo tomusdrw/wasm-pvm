@@ -92,10 +92,6 @@ Adds r5/r6 (`abi::SCRATCH1`/`SCRATCH2`) to the allocatable set in all functions 
 
 Adds r7/r8 (`RETURN_VALUE_REG`/`ARGS_LEN_REG`) to the allocatable set in leaf functions. These registers are idle after the prologue and are never clobbered by calls in leaf functions. In non-leaf functions, r7/r8 are not allocated because every call clobbers r7 (return value) and r8 (scratch), making the constant invalidation/reload overhead a net negative. Combined with r5/r6, gives up to 4 extra registers (r5, r6, r7, r8) beyond callee-saved r9-r12 in leaf functions. The full register convention: r0=return address, r1=SP, r2-r4=temps, r5-r6=scratch, r7=return value/args ptr, r8=args len, r9-r12=callee-saved locals.
 
-## Dead Function Elimination (`--no-dead-function-elim`)
-
-Removes functions not reachable from exports or the function table. Reduces code size for programs with unused library functions.
-
 ## Fallthrough Jump Elimination (`--no-fallthrough-jumps`)
 
 Two coupled steps that elide trailing `Jump` instructions when the jump target is the next block in emission order:

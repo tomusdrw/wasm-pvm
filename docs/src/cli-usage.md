@@ -18,8 +18,7 @@ wasm-pvm compile input.wasm -o output.jam \
   --no-llvm-passes --no-peephole --no-register-cache \
   --no-icmp-fusion --no-shrink-wrap --no-dead-store-elim \
   --no-const-prop --no-inline --no-cross-block-cache \
-  --no-register-alloc --no-dead-function-elim \
-  --no-fallthrough-jumps
+  --no-register-alloc --no-fallthrough-jumps
 ```
 
 ## Optimization Flags
@@ -38,7 +37,6 @@ All non-trivial optimizations are enabled by default. Each can be individually d
 | `--no-inline` | LLVM function inlining for small callees |
 | `--no-cross-block-cache` | Propagate register cache across single-predecessor block boundaries |
 | `--no-register-alloc` | Linear-scan register allocation for loop values |
-| `--no-dead-function-elim` | Remove unreachable functions from output |
 | `--no-fallthrough-jumps` | Skip redundant Jump when target is next block |
 
 See the [Optimizations](./optimizations.md) chapter for details on each.

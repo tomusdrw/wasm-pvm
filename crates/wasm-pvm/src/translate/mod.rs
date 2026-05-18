@@ -6,7 +6,6 @@
 )]
 
 pub mod adapter_merge;
-pub mod dead_function_elimination;
 pub use crate::memory_layout;
 pub mod stats;
 pub mod wasm_module;
@@ -56,8 +55,6 @@ pub struct OptimizationFlags {
     pub cross_block_cache: bool,
     /// Allocate long-lived SSA values to physical registers (r5, r6) across block boundaries.
     pub register_allocation: bool,
-    /// Eliminate unreachable functions not called from entry points or the function table.
-    pub dead_function_elimination: bool,
     /// Eliminate unconditional jumps to the immediately following block (fallthrough).
     pub fallthrough_jumps: bool,
     /// Lower the minimum-use threshold for register allocation candidates from 2 to 1.
@@ -111,7 +108,6 @@ impl Default for OptimizationFlags {
             inlining: true,
             cross_block_cache: true,
             register_allocation: true,
-            dead_function_elimination: true,
             fallthrough_jumps: true,
             aggressive_register_allocation: true,
             allocate_scratch_regs: true,
@@ -288,7 +284,6 @@ pub fn compile_with_stats(
         pvm_instructions: result.pvm_instructions,
         code_bytes: result.code_bytes,
         jump_table_entries: result.jump_table_entries,
-        dead_functions_eliminated: result.dead_functions_eliminated,
         spi_blob_bytes,
         functions: result.function_stats,
     };
@@ -300,7 +295,6 @@ pub fn compile_with_stats(
 struct CompilationOutput {
     program: SpiProgram,
     function_stats: Vec<stats::FunctionStats>,
-    dead_functions_eliminated: usize,
     pvm_instructions: usize,
     code_bytes: usize,
     jump_table_entries: usize,
@@ -311,13 +305,6 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     use crate::llvm_frontend;
     use inkwell::context::Context;
 
-    // Phase 0: Dead function elimination — compute reachable set.
-    let reachable_locals = if options.optimizations.dead_function_elimination {
-        Some(dead_function_elimination::reachable_functions(module)?)
-    } else {
-        None
-    };
-
     // Phase 1: WASM → LLVM IR
     let context = Context::create();
     let llvm_module = llvm_frontend::translate_wasm_to_llvm(
@@ -326,7 +313,6 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         options.optimizations.llvm_passes,
         options.optimizations.inlining,
         options.optimizations.inline_threshold,
-        reachable_locals.as_ref(),
         options.trap_floats,
         options.optimizations.libcall_recognition,
         options.optimizations.mergefunc,
@@ -407,7 +393,6 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     let mut function_offsets: Vec<usize> = vec![0; module.functions.len()];
     let mut next_call_return_idx: usize = 0;
     let mut function_stats: Vec<stats::FunctionStats> = Vec::with_capacity(module.functions.len());
-    let mut dead_functions_eliminated: usize = 0;
 
     // Entry header: Jump to main (PC=0) + Trap or secondary Jump (PC=5).
     // When there's no secondary entry, we omit the Fallthrough padding (6 bytes instead of 10).
@@ -442,32 +427,6 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     let mut current_code_bytes: usize = all_instructions.iter().map(|i| i.encode().len()).sum();
 
     for &local_func_idx in &emission_order {
-        // Dead functions: emit a single Trap as a placeholder.
-        // The function offset is still recorded so dispatch table indices stay valid.
-        if reachable_locals
-            .as_ref()
-            .is_some_and(|r| !r.contains(&local_func_idx))
-        {
-            function_offsets[local_func_idx] = current_code_bytes;
-            let trap = Instruction::Trap;
-            current_code_bytes += trap.encode().len();
-            all_instructions.push(trap);
-            dead_functions_eliminated += 1;
-            function_stats.push(stats::FunctionStats {
-                name: module.local_function_display_name(local_func_idx),
-                index: local_func_idx,
-                instruction_count: 1,
-                frame_size: 0,
-                is_leaf: true,
-                is_entry: false,
-                is_dead: true,
-                regalloc: stats::FunctionRegAllocStats::default(),
-                pre_dse_instructions: 0,
-                pre_peephole_instructions: 0,
-            });
-            continue;
-        }
-
         let global_func_idx = module.num_imported_funcs as usize + local_func_idx;
         let fn_name = format!("wasm_func_{global_func_idx}");
         let llvm_func = llvm_module
@@ -577,7 +536,6 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
             frame_size: ls.frame_size,
             is_leaf: ls.is_leaf,
             is_entry,
-            is_dead: false,
             regalloc: stats::FunctionRegAllocStats {
                 total_values: ls.regalloc_total_values,
                 allocated_values: ls.regalloc_allocated_values,
@@ -707,7 +665,6 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
     Ok(CompilationOutput {
         program,
         function_stats,
-        dead_functions_eliminated,
         pvm_instructions,
         code_bytes,
         jump_table_entries,

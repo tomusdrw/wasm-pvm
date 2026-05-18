@@ -26,7 +26,6 @@ pub struct CompileStats {
     pub pvm_instructions: usize,
     pub code_bytes: usize,
     pub jump_table_entries: usize,
-    pub dead_functions_eliminated: usize,
     pub spi_blob_bytes: usize,
 
     // ── Per-function ──
@@ -49,7 +48,6 @@ pub struct FunctionStats {
     pub frame_size: i32,
     pub is_leaf: bool,
     pub is_entry: bool,
-    pub is_dead: bool,
     pub regalloc: FunctionRegAllocStats,
     /// Instructions before dead store elimination (0 if DSE disabled).
     pub pre_dse_instructions: usize,

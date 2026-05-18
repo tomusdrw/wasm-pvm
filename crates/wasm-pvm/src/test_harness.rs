@@ -108,7 +108,6 @@ pub fn dump_llvm_ir(wat: &str) -> Result<String> {
         opts.llvm_passes,
         opts.inlining,
         opts.inline_threshold,
-        /* reachable_locals */ None,
         /* trap_floats */ false,
         opts.libcall_recognition,
         opts.mergefunc,

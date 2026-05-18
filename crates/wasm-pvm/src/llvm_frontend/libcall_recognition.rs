@@ -56,7 +56,7 @@
 //!   every caller (typically because someone bumped `--inline-threshold`
 //!   past the body size — `__multi3` is roughly 30 IR instructions). In
 //!   that case the libcall function may still exist (with its name) but
-//!   have no callers; recognition still applies, dead-function-elimination
+//!   have no callers; recognition still applies, and downstream LLVM `dce`
 //!   then drops it. The inlined call sites still run the slow Knuth
 //!   expansion — a separate IR pattern matcher would be needed to recover
 //!   those, which we explicitly chose not to do (fragile, complex).

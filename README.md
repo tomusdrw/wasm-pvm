@@ -106,7 +106,7 @@ Entry functions use a unified ABI: `main(args_ptr: i32, args_len: i32) -> i64`, 
 - **Per-block register cache**: eliminates redundant loads when a value is reused shortly after being computed (~50% gas reduction)
 - **No `unsafe` code**: `deny(unsafe_code)` enforced at workspace level
 - **No floating point**: PVM lacks FP support; WASM floats are rejected at compile time
-- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--inline-threshold N`, `--no-cross-block-cache`, `--no-register-alloc`, `--no-aggressive-regalloc`, `--no-scratch-reg-alloc`, `--no-caller-saved-alloc`, `--no-lazy-spill`, `--no-dead-function-elim`, `--no-fallthrough-jumps`, `--no-libcall-recognition`
+- **All optimizations are toggleable**: `--no-llvm-passes`, `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--inline-threshold N`, `--no-cross-block-cache`, `--no-register-alloc`, `--no-aggressive-regalloc`, `--no-scratch-reg-alloc`, `--no-caller-saved-alloc`, `--no-lazy-spill`, `--no-fallthrough-jumps`, `--no-libcall-recognition`
 
 ### Benchmark: Optimizations Impact
 
@@ -197,8 +197,8 @@ wasm-pvm compile input.wasm -o output.jam \
   --no-const-prop --no-inline --no-cross-block-cache \
   --no-register-alloc --no-aggressive-regalloc \
   --no-scratch-reg-alloc --no-caller-saved-alloc \
-  --no-lazy-spill --no-dead-function-elim \
-  --no-fallthrough-jumps --no-libcall-recognition
+  --no-lazy-spill --no-fallthrough-jumps \
+  --no-libcall-recognition
 
 # Compile past the "float wall" by replacing every f32/f64 op
 # with a runtime trap (useful for discovering other unsupported
