@@ -429,11 +429,7 @@ fn print_verbose_text(stats: &CompileStats) {
         .iter()
         .map(|f| f.pre_peephole_instructions)
         .sum();
-    let total_final: usize = stats
-        .functions
-        .iter()
-        .map(|f| f.instruction_count)
-        .sum();
+    let total_final: usize = stats.functions.iter().map(|f| f.instruction_count).sum();
 
     let total_load_hits: usize = stats.functions.iter().map(|f| f.regalloc.load_hits).sum();
     let total_load_reloads: usize = stats
