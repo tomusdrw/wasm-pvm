@@ -7,7 +7,7 @@
 # provably dead in practice.
 #
 # Usage:
-#   ./experiments/opt_impact.sh             # full run (fixtures + polkadot if populated)
+#   ./experiments/opt_impact.sh             # full run (fixtures + aslan + polkadot if populated)
 #   ./experiments/opt_impact.sh --fixtures  # fixtures only (~15 min)
 #   ./experiments/opt_impact.sh --polkadot  # polkadot runtimes only (~90 min)
 #   ./experiments/opt_impact.sh --aslan     # as-lan only (~2 min)
@@ -385,12 +385,19 @@ with open(out_path, 'w') as f:
     f.write(f"Inputs measured: {len(inputs_order)}\n\n")
 
     # Per-flag aggregate.
-    f.write("## Per-flag aggregate (negative delta = optimization saves bytes when on)\n\n")
+    f.write("## Per-flag aggregate (positive delta = optimization saves bytes when on)\n\n")
     f.write("| Flag | Inputs Changed | Total JAM Delta | Total Code Delta | Inputs Failed |\n")
     f.write("|------|---------------:|----------------:|-----------------:|--------------:|\n")
     summary_rows = []
     for flag in rows:
-        changed = sum(1 for _, dj, _, ok in rows[flag] if ok == '1' and dj not in ('0', 'NA'))
+        # An input "changes" if EITHER delta_jam or delta_code is non-zero.
+        # JAM size and PVM code size can diverge (e.g. jump-table varint width
+        # changes, RW-trim absorbing small code deltas), so JAM alone would
+        # mis-classify some flags as dead.
+        changed = sum(
+            1 for _, dj, dc, ok in rows[flag]
+            if ok == '1' and ((dj not in ('0', 'NA')) or (dc not in ('0', 'NA')))
+        )
         total_jam = sum(int(dj) for _, dj, _, ok in rows[flag] if ok == '1' and dj not in ('NA',))
         total_code = sum(int(dc) for _, _, dc, ok in rows[flag] if ok == '1' and dc not in ('NA',))
         failed = sum(1 for _, _, _, ok in rows[flag] if ok != '1')

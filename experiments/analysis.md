@@ -7,10 +7,12 @@
 ## Input set (31)
 
 - 13 hand-crafted WAT fixtures (`tests/fixtures/wat/*.jam.wat`) — `add`, `fibonacci`, `factorial`, `is-prime`, `regalloc-two-loops`, `blake2b`, `sha512`, `u128-mul-bench`, `u128-div-bench`, `u128-div-bench-slow`, `host-call-log`, `memory-copy-word`, `memory-copy-overlap`.
-- 4 AS-built WASM (`tests/build/wasm/*.wasm`) — `as-fibonacci`, `as-factorial`, `as-gcd`, `as-decoder-test` (others not present in this workspace; the script skips missing inputs).
+- 0 AS-built WASM (`tests/build/wasm/*.wasm`) — the script tries to pick up `as-fibonacci`, `as-factorial`, `as-gcd`, `as-decoder-test`, `as-array-test`, `as-alloc-test`, `as-string-test`, but none were present in this workspace (bun didn't produce them); the script silently skips missing inputs. Re-running in a tree where `cd tests && bun build.ts` has populated the AS artifacts will add ≤7 rows.
 - 3 as-lan services — `aslan-fib`, `aslan-ecalli`, `aslan-debug`.
 - 1 large real-world AS service — `anan-as-compiler` (PVM interpreter implemented in AssemblyScript).
 - 14 polkadot-fellows v2.2.2 runtimes — full asset-hub / bridge-hub / collectives / coretime / encointer / glutton / kusama / people / polkadot / bulletin set, compiled with `--trap-floats`.
+
+Total: 13 + 0 + 3 + 1 + 14 = **31 inputs**.
 
 ## Headline results
 
@@ -45,9 +47,9 @@
 
 4. **Per-project optimization config** — the input-class-specific behavior above (e.g. `mergefunc` wins on polkadot but regresses aslan-debug; `aggressive_register_allocation` wins on polkadot but regresses all aslan-*) suggests projects should be able to opt into/out of individual passes via a `wasm-pvm.toml` file rather than long CLI flag lists. Tracked in #247.
 
-4. **`mergefunc`** is net-positive at scale (+1.45 MB across 15 polkadot runtimes when off, i.e. mergefunc saved that much when on) but regresses small modules (aslan-debug −394 B). The fix is probably a per-module guard (skip below some function-count threshold), not deletion. Low priority.
+5. **`mergefunc`** is net-positive at scale (+1.45 MB across 15 polkadot runtimes when off, i.e. mergefunc saved that much when on) but regresses small modules (aslan-debug −394 B). The fix is probably a per-module guard (skip below some function-count threshold), not deletion. Low priority.
 
-5. **`aggressive_register_allocation`** is the most "uneven" winner — large polkadot wins, consistent regressions on small/loop-heavy code. The min-use=1 threshold over-promotes values that then get spilled. Worth a per-function heuristic instead of a global flag. Low priority.
+6. **`aggressive_register_allocation`** is the most "uneven" winner — large polkadot wins, consistent regressions on small/loop-heavy code. The min-use=1 threshold over-promotes values that then get spilled. Worth a per-function heuristic instead of a global flag. Low priority.
 
 ## Caveats
 
