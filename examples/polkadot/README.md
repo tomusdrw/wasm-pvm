@@ -10,20 +10,20 @@ Compiled with **`--trap-floats`** (f32/f64 ops replaced with runtime traps so co
 
 | Runtime | Compressed | WASM | Imports | Status | JAM | Time | Reason |
 |---------|-----------:|-----:|--------:|--------|----:|-----:|--------|
-| asset-hub-kusama_runtime-v2002002 | 2.15 MiB | 11.89 MiB | 50 | :white_check_mark: ok | 33.68 MiB | 28s |  |
-| asset-hub-polkadot_runtime-v2002002 | 2.09 MiB | 11.32 MiB | 50 | :white_check_mark: ok | 32.15 MiB | 25s |  |
-| bridge-hub-kusama_runtime-v2002002 | 1.00 MiB | 4.82 MiB | 42 | :white_check_mark: ok | 14.55 MiB | 10s |  |
-| bridge-hub-polkadot_runtime-v2002002 | 1.21 MiB | 5.89 MiB | 43 | :white_check_mark: ok | 17.57 MiB | 11s |  |
-| bulletin-polkadot_runtime-v2002002 | 899.18 KiB | 4.21 MiB | 42 | :white_check_mark: ok | 12.93 MiB | 9s |  |
-| collectives-polkadot_runtime-v2002002 | 1.08 MiB | 5.56 MiB | 42 | :white_check_mark: ok | 16.57 MiB | 11s |  |
-| coretime-kusama_runtime-v2002002 | 977.73 KiB | 4.64 MiB | 42 | :white_check_mark: ok | 14.03 MiB | 9s |  |
-| coretime-polkadot_runtime-v2002002 | 976.53 KiB | 4.64 MiB | 42 | :white_check_mark: ok | 14.03 MiB | 9s |  |
-| encointer-kusama_runtime-v2002002 | 1.16 MiB | 5.75 MiB | 42 | :white_check_mark: ok | 16.99 MiB | 12s |  |
-| glutton-kusama_runtime-v2002002 | 459.42 KiB | 2.04 MiB | 41 | :white_check_mark: ok | 6.86 MiB | 4s |  |
-| kusama_runtime-v2002002 | 1.65 MiB | 8.43 MiB | 47 | :white_check_mark: ok | 24.10 MiB | 18s |  |
-| people-kusama_runtime-v2002002 | 973.89 KiB | 4.63 MiB | 42 | :white_check_mark: ok | 14.03 MiB | 9s |  |
-| people-polkadot_runtime-v2002002 | 1.03 MiB | 5.14 MiB | 42 | :white_check_mark: ok | 15.45 MiB | 10s |  |
-| polkadot_runtime-v2002002 | 1.58 MiB | 7.94 MiB | 47 | :white_check_mark: ok | 22.81 MiB | 17s |  |
+| asset-hub-kusama_runtime-v2002002 | 2.15 MiB | 11.89 MiB | 50 | :white_check_mark: ok | 29.38 MiB | 28s |  |
+| asset-hub-polkadot_runtime-v2002002 | 2.09 MiB | 11.32 MiB | 50 | :white_check_mark: ok | 28.07 MiB | 25s |  |
+| bridge-hub-kusama_runtime-v2002002 | 1.00 MiB | 4.82 MiB | 42 | :white_check_mark: ok | 12.86 MiB | 10s |  |
+| bridge-hub-polkadot_runtime-v2002002 | 1.21 MiB | 5.89 MiB | 43 | :white_check_mark: ok | 15.38 MiB | 12s |  |
+| bulletin-polkadot_runtime-v2002002 | 899.18 KiB | 4.21 MiB | 42 | :white_check_mark: ok | 11.46 MiB | 9s |  |
+| collectives-polkadot_runtime-v2002002 | 1.08 MiB | 5.56 MiB | 42 | :white_check_mark: ok | 14.59 MiB | 12s |  |
+| coretime-kusama_runtime-v2002002 | 977.73 KiB | 4.64 MiB | 42 | :white_check_mark: ok | 12.41 MiB | 9s |  |
+| coretime-polkadot_runtime-v2002002 | 976.53 KiB | 4.64 MiB | 42 | :white_check_mark: ok | 12.41 MiB | 10s |  |
+| encointer-kusama_runtime-v2002002 | 1.16 MiB | 5.75 MiB | 42 | :white_check_mark: ok | 15.00 MiB | 12s |  |
+| glutton-kusama_runtime-v2002002 | 459.42 KiB | 2.04 MiB | 41 | :white_check_mark: ok | 6.11 MiB | 5s |  |
+| kusama_runtime-v2002002 | 1.65 MiB | 8.43 MiB | 47 | :white_check_mark: ok | 21.04 MiB | 17s |  |
+| people-kusama_runtime-v2002002 | 973.89 KiB | 4.63 MiB | 42 | :white_check_mark: ok | 12.42 MiB | 9s |  |
+| people-polkadot_runtime-v2002002 | 1.03 MiB | 5.14 MiB | 42 | :white_check_mark: ok | 13.63 MiB | 11s |  |
+| polkadot_runtime-v2002002 | 1.58 MiB | 7.94 MiB | 47 | :white_check_mark: ok | 19.94 MiB | 17s |  |
 
 ## Float operations per runtime
 

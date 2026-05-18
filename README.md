@@ -152,6 +152,10 @@ PVM-in-PVM: programs executed inside the anan-as PVM interpreter (outer gas cost
 
 \*JAM-SDK fib(10), Jambrains fib(10), JADE fib(10), and aslan-fib accumulate exit on unhandled host calls (ecalli). The gas cost reflects program parsing/loading plus partial execution up to the first unhandled ecalli.
 
+### Per-flag optimization impact
+
+`experiments/opt_impact.sh` toggles each `--no-X` flag individually across 31 inputs (fixtures, as-lan services, 14 polkadot-fellows runtimes) and records JAM/code-size deltas vs. the all-on baseline. See `experiments/analysis.md` for the most recent run and `experiments/README.md` for how to reproduce. Re-run after any change to an optimization pass or its gate.
+
 ## Memory layout summary
 
 The JAM blob reserves separate ranges for RO data, a guard gap, globals/overflow metadata, and the WASM heap; see the [Architecture docs](docs/src/architecture.md#memory-layout) for the full breakdown, including `GLOBAL_MEMORY_BASE`, `PARAM_OVERFLOW_BASE`, `SPILLED_LOCALS_BASE`, and how `wasm_memory_base` is computed.
