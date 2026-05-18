@@ -205,14 +205,24 @@ build_polkadot_inputs() {
     local wasm="$wasm_dir/$rt.wasm"
     [ -f "$wasm" ] || continue
     local imports="$imports_dir/$rt.imports"
-    # Auto-generate trap-all import map if missing
+    # Auto-generate trap-all import map if missing. Write to a temp file and
+    # `mv` into place atomically — a wasm-tools/awk failure mid-pipe must not
+    # leave a partial file behind, because the `[ ! -f "$imports" ]` guard
+    # above would treat that as valid on the next run.
     if [ ! -f "$imports" ]; then
       if command -v wasm-tools >/dev/null 2>&1; then
         mkdir -p "$imports_dir"
-        wasm-tools print "$wasm" 2>/dev/null \
+        local tmp_imports
+        tmp_imports="$(mktemp "${imports}.tmp.XXXXXX")"
+        if ! wasm-tools print "$wasm" 2>/dev/null \
           | awk -F\" '/^[[:space:]]*\(import "/ { print $4 }' \
           | awk '!seen[$0]++ { print $0 " = trap" }' \
-          > "$imports"
+          > "$tmp_imports"; then
+          rm -f "$tmp_imports"
+          echo "  WARN: failed to generate $imports — skipping $rt" >&2
+          continue
+        fi
+        mv "$tmp_imports" "$imports"
       else
         echo "  WARN: missing $imports and wasm-tools not installed — skipping $rt" >&2
         continue
@@ -404,7 +414,12 @@ with open(out_path, 'w') as f:
         )
         total_jam = sum(int(dj) for _, dj, _, ok in rows[flag] if ok == '1' and dj not in ('NA',))
         total_code = sum(int(dc) for _, _, dc, ok in rows[flag] if ok == '1' and dc not in ('NA',))
-        failed = sum(1 for _, _, _, ok in rows[flag] if ok != '1')
+        # Only count flag-induced failures (compile_ok == '0'). Skip
+        # 'baseline_failed' rows — those mean the input couldn't be measured
+        # at all (its baseline compile failed), which is not a failure of
+        # this specific flag and would otherwise inflate every flag's count
+        # by the same N, hiding the dead-flag callout.
+        failed = sum(1 for _, _, _, ok in rows[flag] if ok == '0')
         summary_rows.append((flag, changed, total_jam, total_code, failed))
     # Sort by inputs_changed ASC so dead flags float to the top.
     summary_rows.sort(key=lambda r: (r[1], r[0]))
