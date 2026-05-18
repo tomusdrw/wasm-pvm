@@ -22,7 +22,7 @@ use crate::translate::wasm_module::WasmModule;
 ///
 /// `run_llvm_passes` gates the entire optimization pipeline (all three phases).
 /// `run_inlining` enables/disables Phase 2 independently (requires `run_llvm_passes = true`).
-#[allow(clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
 pub fn translate_wasm_to_llvm<'ctx>(
     context: &'ctx Context,
     wasm_module: &WasmModule,
