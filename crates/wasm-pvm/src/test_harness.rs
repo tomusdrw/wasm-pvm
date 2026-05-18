@@ -111,6 +111,7 @@ pub fn dump_llvm_ir(wat: &str) -> Result<String> {
         /* reachable_locals */ None,
         /* trap_floats */ false,
         opts.libcall_recognition,
+        opts.mergefunc,
     )?;
     Ok(llvm_module.print_to_string().to_string())
 }

@@ -90,6 +90,12 @@ pub struct OptimizationFlags {
     /// silently skips when the WASM `name` custom section is stripped or the
     /// function shape differs.
     pub libcall_recognition: bool,
+    /// Run LLVM's `mergefunc` pass at the end of the optimization pipeline.
+    /// Merges functions with byte-identical bodies into a single definition
+    /// and replaces duplicates with thunks. Targets rustc monomorphizations
+    /// (`quicksort`, `scale_info::TypeInfo::type_info` etc.) where many type
+    /// parameters share a body.
+    pub mergefunc: bool,
 }
 
 impl Default for OptimizationFlags {
@@ -113,6 +119,7 @@ impl Default for OptimizationFlags {
             lazy_spill: true,
             inline_threshold: Some(5),
             libcall_recognition: true,
+            mergefunc: true,
         }
     }
 }
@@ -322,6 +329,7 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         reachable_locals.as_ref(),
         options.trap_floats,
         options.optimizations.libcall_recognition,
+        options.optimizations.mergefunc,
     )?;
 
     // Calculate RO_DATA offsets and lengths for passive data segments
