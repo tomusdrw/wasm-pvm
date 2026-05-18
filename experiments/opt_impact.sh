@@ -234,10 +234,14 @@ echo "==> Building release binary"
 }
 [ -x "$WASM_PVM" ] || { echo "ERROR: missing $WASM_PVM" >&2; exit 1; }
 
-# Build test fixtures so AS WASMs exist.
+# Build test fixtures so AS WASMs exist. `bun build.ts` skips AS->WASM
+# compilation when the .wasm already exists (per AGENTS.md), so wipe the
+# cache first — otherwise edits to .ts fixtures wouldn't be picked up and
+# the experiment would silently measure stale code.
 if [ "$PHASE_FIXTURES" = "1" ] || [ "$PHASE_ASLAN" = "1" ]; then
-  echo "==> Building test fixtures (AS->WASM via bun)"
+  echo "==> Building test fixtures (AS->WASM via bun, after cache wipe)"
   if [ -d "$PROJECT_ROOT/tests" ]; then
+    rm -f "$PROJECT_ROOT/tests/build/wasm/"*.wasm
     (cd "$PROJECT_ROOT/tests" && bun build.ts >/dev/null 2>&1) || {
       echo "  WARN: bun build.ts failed — AS-built inputs may be missing" >&2
     }
