@@ -91,9 +91,6 @@ enum Commands {
         )]
         no_register_alloc: bool,
 
-        #[arg(long, help = "Disable dead function elimination")]
-        no_dead_function_elim: bool,
-
         #[arg(long, help = "Disable fallthrough jump elimination")]
         no_fallthrough_jumps: bool,
 
@@ -175,7 +172,6 @@ fn main() -> Result<()> {
             inline_threshold,
             no_cross_block_cache,
             no_register_alloc,
-            no_dead_function_elim,
             no_fallthrough_jumps,
             no_aggressive_regalloc,
             no_scratch_reg_alloc,
@@ -223,7 +219,6 @@ fn main() -> Result<()> {
                     inlining: !no_inline,
                     cross_block_cache: !no_cross_block_cache,
                     register_allocation: !no_register_alloc,
-                    dead_function_elimination: !no_dead_function_elim,
                     fallthrough_jumps: !no_fallthrough_jumps,
                     aggressive_register_allocation: !no_aggressive_regalloc,
                     allocate_scratch_regs: !no_scratch_reg_alloc,
@@ -383,9 +378,6 @@ fn print_text(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, 
             stats.jump_table_entries * 4
         ),
     );
-    if stats.dead_functions_eliminated > 0 {
-        row("Dead funcs elim", stats.dead_functions_eliminated);
-    }
     row(
         "SPI blob size",
         format!("{} bytes", format_number(stats.spi_blob_bytes)),
@@ -404,10 +396,6 @@ fn print_text(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, 
 fn print_verbose_text(stats: &CompileStats) {
     section("Functions");
     for f in &stats.functions {
-        if f.is_dead {
-            println!("  #{:<4} {:<20} DEAD", f.index, truncate(&f.name, 20));
-            continue;
-        }
         let kind = if f.is_leaf { "leaf" } else { "calls" };
         let entry_marker = if f.is_entry { " [entry]" } else { "" };
         let regalloc_info = if f.regalloc.allocated_values > 0 {
@@ -444,7 +432,6 @@ fn print_verbose_text(stats: &CompileStats) {
     let total_final: usize = stats
         .functions
         .iter()
-        .filter(|f| !f.is_dead)
         .map(|f| f.instruction_count)
         .sum();
 
@@ -568,7 +555,6 @@ fn print_json(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, 
             "code_bytes": stats.code_bytes,
             "jump_table_entries": stats.jump_table_entries,
             "jump_table_bytes": stats.jump_table_entries * 4,
-            "dead_functions_eliminated": stats.dead_functions_eliminated,
             "spi_blob_bytes": stats.spi_blob_bytes,
         },
     });
@@ -585,7 +571,6 @@ fn print_json(stats: &CompileStats, input: &Path, output: &Path, verbose: bool, 
                     "frame_size": f.frame_size,
                     "is_leaf": f.is_leaf,
                     "is_entry": f.is_entry,
-                    "is_dead": f.is_dead,
                     "pre_dse_instructions": f.pre_dse_instructions,
                     "pre_peephole_instructions": f.pre_peephole_instructions,
                     "regalloc": {

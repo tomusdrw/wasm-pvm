@@ -58,7 +58,6 @@ OPT_FLAGS=(
   --no-inline
   --no-cross-block-cache
   --no-register-alloc
-  --no-dead-function-elim
   --no-fallthrough-jumps
   --no-aggressive-regalloc
   --no-scratch-reg-alloc

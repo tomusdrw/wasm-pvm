@@ -92,8 +92,6 @@ pub struct WasmModule<'a> {
     pub type_signatures: Vec<(usize, usize)>,
     /// Function table for indirect calls (`u32::MAX` = invalid entry).
     pub function_table: Vec<u32>,
-    /// WASM global indices of all exported functions.
-    pub exported_wasm_func_indices: Vec<u32>,
     /// Base address of WASM linear memory in PVM address space.
     pub wasm_memory_base: i32,
     /// Maximum WASM memory pages available for memory.grow.
@@ -182,7 +180,6 @@ impl<'a> WasmModule<'a> {
         let mut main_func_idx: Option<u32> = None;
         let mut secondary_entry_func_idx: Option<u32> = None;
         let mut start_func_idx: Option<u32> = None;
-        let mut exported_wasm_func_indices: Vec<u32> = Vec::new();
         let mut tables: Vec<wasmparser::TableType> = Vec::new();
         let mut table_elements: Vec<(u32, u32, Vec<u32>)> = Vec::new();
         let mut data_segments: Vec<DataSegment> = Vec::new();
@@ -302,7 +299,6 @@ impl<'a> WasmModule<'a> {
                     for export in reader {
                         let export = export?;
                         if export.kind == wasmparser::ExternalKind::Func {
-                            exported_wasm_func_indices.push(export.index);
                             export_name_by_global_idx
                                 .entry(export.index)
                                 .or_insert_with(|| export.name.to_string());
@@ -576,7 +572,6 @@ impl<'a> WasmModule<'a> {
             function_signatures,
             type_signatures,
             function_table,
-            exported_wasm_func_indices,
             wasm_memory_base,
             max_memory_pages,
             needs_memory_size_global,

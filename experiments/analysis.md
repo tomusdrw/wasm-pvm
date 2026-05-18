@@ -35,11 +35,11 @@ Total: 13 + 0 + 3 + 1 + 14 = **31 inputs**.
 | `--no-shrink-wrap` | +1.5 KB | 23/31 | **Marginal noise.** Negative on kusama (−396), polkadot (−313), people-polkadot (−26). |
 | `--no-libcall-recognition` | +858 B | 17/31 | **Works as designed.** +62 B/runtime on polkadot, +157 B on u128-mul. −82 B on u128-div fast/slow (recognition adds static dispatch — gas-vs-size trade). |
 | `--no-llvm-passes` | — | **31 failed** | Not an optimization toggle — compilation collapses (`Unsupported WASM feature: LLVM opcode Alloca`) because the PVM backend requires mem2reg. |
-| `--no-dead-function-elim` | **+0 B** | **0/31** | **Provably dead on this input set.** Every input had all local functions reachable from entry points / exports / function table. Upstream tooling (AssemblyScript tree-shaking, wasm-opt, Substrate's runtime build) already prunes unreachable functions before WASM reaches us. |
+| ~~`--no-dead-function-elim`~~ | n/a | n/a | **Removed in #244** after the experiment showed +0 B on 0/31 inputs. Upstream tooling (AssemblyScript tree-shaking, wasm-opt, Substrate's runtime build) already prunes unreachable functions before WASM reaches us. |
 
 ## Findings & follow-ups
 
-1. **`dead_function_elimination`** never fires on any of the 31 inputs. The pass itself is correct — 257 lines of BFS over `Call`/`RefFunc` from entry points — but every realistic WASM module we see has already been tree-shaken upstream. Either remove the pass, or document it as a defensive correctness net rather than an optimization. Tracked in #244.
+1. ~~**`dead_function_elimination`** never fires on any of the 31 inputs.~~ Removed in #244 — the pass was correct but redundant with upstream tooling (AssemblyScript tree-shaking, wasm-opt, Substrate's runtime build).
 
 2. **`--no-llvm-passes` in `NO_OPT_FLAGS`** (`tests/utils/benchmark.sh:30`) silently breaks every non-trivial benchmark under `--no-opt`, because mem2reg is mandatory for the PVM backend (alloca lowering isn't implemented). Remove from the bulk-disable array and document the flag as a frontend-debugging escape hatch, not a tunable optimization. Tracked in #245.
 

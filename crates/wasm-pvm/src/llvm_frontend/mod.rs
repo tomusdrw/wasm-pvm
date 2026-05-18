@@ -9,8 +9,6 @@ pub use libcall_recognition::LibcallKind;
 use inkwell::context::Context;
 use inkwell::module::Module;
 
-use std::collections::BTreeSet;
-
 use crate::Result;
 use crate::translate::wasm_module::WasmModule;
 
@@ -24,19 +22,13 @@ use crate::translate::wasm_module::WasmModule;
 ///
 /// `run_llvm_passes` gates the entire optimization pipeline (all three phases).
 /// `run_inlining` enables/disables Phase 2 independently (requires `run_llvm_passes = true`).
-/// `reachable_locals` when `Some`, limits translation to only those local function indices.
-#[allow(
-    clippy::implicit_hasher,
-    clippy::fn_params_excessive_bools,
-    clippy::too_many_arguments
-)]
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn translate_wasm_to_llvm<'ctx>(
     context: &'ctx Context,
     wasm_module: &WasmModule,
     run_llvm_passes: bool,
     run_inlining: bool,
     inline_threshold: Option<u32>,
-    reachable_locals: Option<&BTreeSet<usize>>,
     trap_floats: bool,
     libcall_recognition: bool,
     run_mergefunc: bool,
@@ -47,7 +39,6 @@ pub fn translate_wasm_to_llvm<'ctx>(
         run_llvm_passes,
         run_inlining,
         inline_threshold,
-        reachable_locals,
         run_mergefunc,
     )
 }
