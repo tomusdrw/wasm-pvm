@@ -312,7 +312,6 @@ for i in "${!KEPT_INPUTS[@]}"; do
   entry="${KEPT_INPUTS[$i]}"
   IFS='|' read -r name source imports adapter <<< "$entry"
   out="$TMP_JAM_DIR/baseline-$name.jam"
-  extra=""
   extra="$(extra_for_input "$name")"
   printf "  [%2d/%d] %s " "$((i+1))" "${#KEPT_INPUTS[@]}" "$name"
   ok=1
