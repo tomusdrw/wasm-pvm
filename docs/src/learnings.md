@@ -906,3 +906,45 @@ The combination silently corrupted `(global i64 ...)` values whose high 32 bits 
 **Why i32 globals are unchanged for typical programs.** With per-global widths, an all-i32 module (every fixture, every polkadot runtime) sees byte-identical `globals_region_size`, `wasm_memory_base`, and `rw_data` layout as before this PR. The fix is invisible until someone actually compiles a module with `(global i64 ...)`.
 
 **Verification.** `crates/wasm-pvm/tests/i64_globals.rs` (9 cases): (i) i64 `global.get` lowers to `LoadU64` (not `LoadU32`); (ii) i64 `global.set` with a small const lowers to `StoreImmU64`; (iii) i64 `global.set` with a >i32-range const lowers to `LoadImm64 + StoreU64`; (iv) i32 globals still lower to `LoadU32` / `StoreU32` (no 64-bit opcodes, no regression for the common case — split across two functions to defeat LLVM intra-function store→load forwarding); (v) mixed-width modules emit both i32 and i64 opcodes; (vi) v128 globals are rejected at parse; (vii) f32/f64 globals are rejected at parse; (viii) non-const-literal init expressions (e.g. `global.get` of an imported global) are rejected; (ix) extended-const init expressions (e.g. `i32.add` of two literals) are rejected. Plus two `build_rw_data` unit tests (`rejects_mismatched_parallel_arrays`, `rejects_unsupported_global_width`) covering the error-path replacements for the prior `debug_assert!`/slice panics. Full Rust + integration + PVM-in-PVM + differential suites stay green; benchmarks are byte-identical to main for every existing fixture (no fixture uses i64 globals).
+
+---
+
+## Value-Lifetime-Aware DSE + Stack-Slot Reuse: Investigated, Nothing Shipped (2026-05)
+
+The pre-existing dead-store elimination pass in `pvm/peephole.rs::eliminate_dead_stores` only eliminates SP-relative `StoreIndU64`s whose offset is **never** read anywhere in the function. The hypothesis driving this investigation was that a smarter "killed by later overwrite without intervening load" pass would unblock a stack-slot reuse optimization (multiple SSA values share an offset), with a combined projected ~10 % code-size win.
+
+**Outcome: nothing shipped.** The investigation found that the typical slot-reuse emission pattern doesn't have the shape the new DSE could exploit, and the combined wins came in at **0.03 %** — two orders of magnitude below the hypothesis. Both the DSE rewrite and the slot-reuse port were reverted; this entry is the record so the same exercise isn't repeated.
+
+**What was tried.**
+
+1. A new pass 2b in `eliminate_dead_stores`: position-aware "killed by later overwrite within a basic block". Walks forward tracking `pending: BTreeMap<offset, store_idx>`, drops a store on a same-offset overwrite when no intervening load occurred. Block boundaries that reset `pending`: labeled instructions (branch targets), `Instruction::is_terminating()` ops, `Ecalli`. Protected offsets skipped. Pass 1 ("no readers anywhere") kept as a cheap pre-pass — its kills are a subset of pass 2b's but it's O(N).
+2. Live-range-aware stack-slot reuse ported from `agent-a43caed9`: a Phase-1c stage that runs after regalloc and compacts non-allocated values onto shared offsets when their live ranges are disjoint. Adds `compute_value_life_ranges` + `compact_non_allocated_slots` in `emitter.rs`, wiring in `lower_function_inner`, an `OptimizationFlags::stack_slot_reuse` flag, and `--no-stack-slot-reuse`.
+
+**Measured impact on `glutton-kusama`** (`--trap-floats`, default flags otherwise):
+
+| Config | Code | Instr | JAM | StoreIndU64 |
+|---|---|---|---|---|
+| main (baseline) | 4,636,361 | 1,206,055 | 6,444,121 | 234,861 |
+| new DSE alone | 4,636,361 | 1,206,055 | 6,444,121 | 234,861 |
+| slot reuse only (no DSE) | 5,517,302 | 1,433,662 | 7,435,179 | 462,365 |
+| neither (`--no-dse --no-slot-reuse`) | 5,551,290 | 1,433,687 | 7,473,416 | 462,376 |
+| new DSE + slot reuse | 4,634,900 | 1,212,597 | 6,442,477 | 241,407 |
+
+The new DSE alone is **byte-identical** to main: on the current compiler each SSA value owns a unique stack-slot offset, so the "two stores at the same offset, no load between" pattern doesn't arise within a single block. Pass 2b is dormant.
+
+Slot reuse + DSE shaves only 1,461 bytes of code and 1,644 of JAM (−0.03 %). The instruction count goes *up* by 6,542 (+0.5 %), but each instruction is shorter on average (3.84 → 3.82 B/instr) because the compacted offsets fit in fewer varint bytes — that's where the small win comes from.
+
+**Why the projected ceiling didn't pan out.** With slot reuse, V1 and V2 share offset X, but each still has its own consumers. The typical emitted pattern is `store V1@X; … load V1@X; … store V2@X; … load V2@X`. Pass 2b correctly preserves V1's store because the intervening `load V1@X` clears `pending` between the two stores — V1 *is* read, just before V2 overwrites it. Pass 2b only fires when V1 is stored but **never reloaded** from its slot (a lazy-spill flush whose value is satisfied entirely by the register cache thereafter). That shape exists but is rare; lazy spill already optimizes the common cases.
+
+Worse: slot reuse actively **reduces** pass 1's kill rate. Without slot reuse, an SSA value whose slot is never read (held in a register the whole time) has its store killed by pass 1 since its offset has no consumers. With slot reuse, that same offset is now shared with another value that *does* have consumers, so pass 1 sees the offset as "read" and keeps both stores. Pass 2b recovers some of those (220,958 kills vs. 227,515 without slot reuse) but not all — net loss of 6,557 kills.
+
+The 0.03 % combined win comes from offset-encoding compression, not store elimination.
+
+**Why nothing shipped.** A correctness-preserving but dormant DSE extension would have added ~80 lines of code + 8 unit tests for zero current benefit and an unclear future payoff (no plan to add the slot-reuse pattern that would wake it up). The slot-reuse port itself adds ~270 lines for 0.03 % gain that comes from a different mechanism (offset encoding) than the one designed for it. Both reverted.
+
+**Future directions ruled out by this investigation.**
+
+- Re-trying slot reuse + DSE with a different DSE algorithm probably won't help: the bottleneck isn't the DSE's expressiveness, it's that the "no intervening load" patterns aren't there. The intervening loads are real.
+- A more promising angle is attacking the lazy-spill flush itself — skip the just-in-case store at block exits when proven unreachable, removing it at the source instead of post-hoc. Removing the store at the source also kills the matching reload, doubling the win per pattern. Out of scope here.
+
+**Reference.** The full reverted implementation (DSE pass 2b + 8 unit tests + slot-reuse port + `--no-stack-slot-reuse` CLI flag) sat as uncommitted changes in this workspace before being dropped. The slot-reuse PoC it was based on lives at branch `worktree-agent-a43caed9` under `/Users/tomusdrw/workspace/fluffylabs/wasm-pvm/.claude/worktrees/agent-a43caed9` for anyone revisiting the area.
