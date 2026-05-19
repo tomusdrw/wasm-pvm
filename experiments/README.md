@@ -7,9 +7,13 @@ Per-flag impact measurement for the WASM→PVM compiler's `OptimizationFlags`.
 | File | Description |
 |---|---|
 | `opt_impact.sh` | Driver script — toggles each `--no-X` flag individually and records JAM/code-size deltas vs. the all-on baseline. |
+| `opt_gas_impact.sh` | Sibling driver — for each `--no-X` flag, also runs each runnable benchmark via anan-as and records gas deltas. Use when JAM-size data alone leaves a flag's verdict ambiguous (see "Gas cross-check" in `analysis.md`). |
 | `results/baseline.csv` | One row per input: source path, baseline JAM size, baseline PVM code size. |
 | `results/deltas.csv` | One row per (flag, input): `delta_jam`, `delta_code`, `compile_ok`. Positive = optimization saved that many bytes when on. |
 | `results/summary.md` | Aggregate matrix + per-flag totals + provably-dead callout. Read this first. |
+| `results/gas_baseline.csv` | One row per runnable input: baseline JAM size + baseline gas usage. |
+| `results/gas_deltas.csv` | One row per (flag, runnable input): `delta_jam`, `delta_gas`, `compile_ok`, `run_status`. |
+| `results/gas_summary.md` | Per-flag aggregate + sign-disagreement table (cells where size and gas deltas point opposite ways). |
 | `analysis.md` | Human-written analysis of the most recent run with concrete recommendations. |
 
 ## How to run
@@ -22,6 +26,9 @@ Per-flag impact measurement for the WASM→PVM compiler's `OptimizationFlags`.
 ./experiments/opt_impact.sh --fixtures   # ~15 min, hand-crafted WAT + AS-built WASM
 ./experiments/opt_impact.sh --aslan      # ~2 min, aslan-fib / aslan-ecalli / aslan-debug / anan-as-compiler
 ./experiments/opt_impact.sh --polkadot   # ~60 min, 14 polkadot-fellows v2.2.2 runtimes
+
+# Gas cross-check (~10–15 min): runnable BENCHMARKS subset, every flag × every runnable fixture
+./experiments/opt_gas_impact.sh
 ```
 
 Each run overwrites `results/`. Commit the output if you want to track drift between commits.
@@ -54,6 +61,6 @@ The summary and analysis files in `results/` are point-in-time snapshots, not li
 
 ## Limitations
 
-- **Size-only.** This experiment measures JAM size and PVM code size, not gas usage or runtime time. An optimization that increases size to reduce gas (e.g. unrolling, dispatch tables) shows as a regression here. See #246 for the planned gas cross-check follow-up.
+- **Size-only.** `opt_impact.sh` measures JAM size and PVM code size, not gas. An optimization that increases size to reduce gas (e.g. unrolling, dispatch tables) shows as a regression there. Use `opt_gas_impact.sh` on the runnable subset to cross-check; the per-flag verdicts in `analysis.md` ("Gas cross-check") combine both axes.
 - **One-at-a-time.** Flags are toggled individually, with all others on. Interaction effects between disabled pairs aren't measured.
 - **Input set is representative, not exhaustive.** 31 inputs cover hand-crafted WAT, AS-built WASM, real-world as-lan services, and 14 polkadot runtimes — enough to flag dead passes and net-negative behavior, but a new fixture class (e.g. Rust-built WASM with `__multi3`-heavy code) could change conclusions.
