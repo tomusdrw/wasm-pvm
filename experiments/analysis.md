@@ -34,7 +34,7 @@ Total: 13 + 0 + 3 + 1 + 14 = **31 inputs**.
 | `--no-inline` | +3.4 KB | 19/31 | **Mostly noise.** −5 B on 8/14 polkadot runtimes, −526 B on aslan-ecalli. Default `inline_threshold=5` may be miscalibrated. |
 | `--no-shrink-wrap` | +1.5 KB | 23/31 | **Marginal noise.** Negative on kusama (−396), polkadot (−313), people-polkadot (−26). |
 | `--no-libcall-recognition` | +858 B | 17/31 | **Works as designed.** +62 B/runtime on polkadot, +157 B on u128-mul. −82 B on u128-div fast/slow (recognition adds static dispatch — gas-vs-size trade). |
-| `--no-llvm-passes` | — | **31 failed** | Not an optimization toggle — compilation collapses (`Unsupported WASM feature: LLVM opcode Alloca`) because the PVM backend requires mem2reg. |
+| `--debug-skip-llvm-passes` | — | **31 failed** | Not an optimization toggle — compilation collapses (`Unsupported WASM feature: LLVM opcode Alloca`) because the PVM backend requires mem2reg. |
 | ~~`--no-dead-function-elim`~~ | n/a | n/a | **Removed in #244** after the experiment showed +0 B on 0/31 inputs. Upstream tooling (AssemblyScript tree-shaking, wasm-opt, Substrate's runtime build) already prunes unreachable functions before WASM reaches us. |
 
 ## Findings & follow-ups

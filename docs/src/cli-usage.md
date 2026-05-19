@@ -21,7 +21,7 @@ wasm-pvm compile input.wasm -o output.jam \
   --no-register-alloc --no-fallthrough-jumps
 ```
 
-`--no-llvm-passes` is **not** included above: it disables `mem2reg` and therefore breaks PVM lowering on any non-trivial input. See [Diagnostic & Triage Flags](#diagnostic--triage-flags).
+`--debug-skip-llvm-passes` is **not** included above: it disables `mem2reg` and therefore breaks PVM lowering on any non-trivial input. See [Diagnostic & Triage Flags](#diagnostic--triage-flags).
 
 ## Optimization Flags
 
@@ -50,7 +50,7 @@ are *not* optimizations.
 | Flag | What it does |
 |------|--------------|
 | `--trap-floats` | Replace every f32/f64 operator with a runtime trap instead of failing compilation. See [Trap Floats Mode](./trap-floats.md). |
-| `--no-llvm-passes` | **Debug only.** Skip the entire LLVM pass pipeline (including `mem2reg`). The PVM backend cannot lower the resulting `alloca` / unpromoted SSA, so non-trivial WASM will fail to compile. Use only to inspect raw frontend IR. |
+| `--debug-skip-llvm-passes` | **Debug only.** Skip the entire LLVM pass pipeline (including `mem2reg`). The PVM backend cannot lower the resulting `alloca` / unpromoted SSA, so non-trivial WASM will fail to compile. Use only to inspect raw frontend IR. |
 
 When compilation fails on an unsupported operator, the error message includes
 the function index, the function's display name (from the WASM `name` custom

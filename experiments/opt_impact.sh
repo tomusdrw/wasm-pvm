@@ -48,7 +48,7 @@ esac
 # Optimization flag list — each entry toggles ONE optimization off.
 # -----------------------------------------------------------------------------
 OPT_FLAGS=(
-  --no-llvm-passes
+  --debug-skip-llvm-passes
   --no-peephole
   --no-register-cache
   --no-icmp-fusion

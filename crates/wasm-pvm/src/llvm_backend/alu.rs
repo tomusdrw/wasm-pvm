@@ -390,7 +390,7 @@ pub fn lower_binary_arith<'ctx>(
 
     // Commutative constant-LHS folding: `const op x` → `x op const` for commutative ops.
     // LLVM's instcombine usually canonicalizes constants to RHS, but this helps edge cases
-    // and --no-llvm-passes mode.
+    // and --debug-skip-llvm-passes mode.
     if let Some(lhs_const) = try_get_constant(lhs)
         && i32::try_from(lhs_const).is_ok()
     {

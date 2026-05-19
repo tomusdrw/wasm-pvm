@@ -106,7 +106,7 @@ Entry functions use a unified ABI: `main(args_ptr: i32, args_len: i32) -> i64`, 
 - **Per-block register cache**: eliminates redundant loads when a value is reused shortly after being computed (~50% gas reduction)
 - **No `unsafe` code**: `deny(unsafe_code)` enforced at workspace level
 - **No floating point**: PVM lacks FP support; WASM floats are rejected at compile time
-- **All optimizations are toggleable**: `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--inline-threshold N`, `--no-cross-block-cache`, `--no-register-alloc`, `--no-aggressive-regalloc`, `--no-scratch-reg-alloc`, `--no-caller-saved-alloc`, `--no-lazy-spill`, `--no-fallthrough-jumps`, `--no-libcall-recognition`. (`--no-llvm-passes` also exists but is debug-only — disabling `mem2reg` breaks PVM lowering; see `docs/src/optimizations.md`.)
+- **All optimizations are toggleable**: `--no-peephole`, `--no-register-cache`, `--no-icmp-fusion`, `--no-shrink-wrap`, `--no-dead-store-elim`, `--no-const-prop`, `--no-inline`, `--inline-threshold N`, `--no-cross-block-cache`, `--no-register-alloc`, `--no-aggressive-regalloc`, `--no-scratch-reg-alloc`, `--no-caller-saved-alloc`, `--no-lazy-spill`, `--no-fallthrough-jumps`, `--no-libcall-recognition`. (`--debug-skip-llvm-passes` also exists but is debug-only — disabling `mem2reg` breaks PVM lowering; see `docs/src/optimizations.md`.)
 
 ### Benchmark: Optimizations Impact
 
@@ -190,7 +190,7 @@ wasm-pvm compile input.wasm -o output.jam \
 # Disable specific optimizations
 wasm-pvm compile input.wasm -o output.jam --no-inline --no-peephole
 
-# Disable all optimizations. `--no-llvm-passes` is omitted on purpose:
+# Disable all optimizations. `--debug-skip-llvm-passes` is omitted on purpose:
 # disabling `mem2reg` breaks PVM lowering on any non-trivial input.
 wasm-pvm compile input.wasm -o output.jam \
   --no-peephole --no-register-cache \

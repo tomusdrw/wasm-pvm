@@ -27,7 +27,7 @@ JAM_DIR=""
 COMPILER_JAM=""
 NO_OPT=false
 
-# Tunable optimizations only. `--no-llvm-passes` is intentionally NOT in this
+# Tunable optimizations only. `--debug-skip-llvm-passes` is intentionally NOT in this
 # list: it disables the entire LLVM pass pipeline including `mem2reg`, which
 # the PVM backend requires (otherwise IR retains `alloca` and lowering fails
 # with `Unsupported WASM feature: LLVM opcode Alloca`). It is a frontend
