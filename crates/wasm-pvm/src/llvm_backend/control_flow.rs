@@ -22,7 +22,7 @@ use crate::{Error, Result, abi};
 
 use super::emitter::{
     PvmEmitter, SCRATCH1, SCRATCH2, get_bb_operand, get_operand, has_phi_from, operand_reg,
-    operand_reg_avoiding, result_slot, try_get_constant, val_key_basic, val_key_instr,
+    operand_reg_avoiding, result_slot, try_get_constant,
 };
 use crate::abi::{STACK_PTR_REG, TEMP_RESULT, TEMP1, TEMP2};
 
@@ -430,7 +430,7 @@ pub fn emit_phi_copies<'ctx>(
             break;
         }
         let phi_slot = result_slot(e, instr)?;
-        let phi_key = val_key_instr(instr);
+        let phi_key = e.val_key_instr(instr);
         let phi_reg = e.regalloc.val_to_reg.get(&phi_key).copied();
 
         let phi: PhiValue<'ctx> = instr
@@ -470,7 +470,7 @@ pub fn emit_phi_copies<'ctx>(
 /// Get the valid allocated register for an incoming value, if any.
 /// Returns None if the value is a constant, has no allocation, or the
 /// register doesn't currently hold the right slot.
-fn get_valid_alloc_reg(e: &PvmEmitter<'_>, value: BasicValueEnum<'_>) -> Option<u8> {
+fn get_valid_alloc_reg(e: &mut PvmEmitter<'_>, value: BasicValueEnum<'_>) -> Option<u8> {
     if let BasicValueEnum::IntValue(iv) = value {
         // Constants don't have allocated registers.
         if iv.get_sign_extended_constant().is_some() || iv.get_zero_extended_constant().is_some() {
@@ -479,7 +479,7 @@ fn get_valid_alloc_reg(e: &PvmEmitter<'_>, value: BasicValueEnum<'_>) -> Option<
         if iv.is_poison() || iv.is_undef() {
             return None;
         }
-        let key = val_key_basic(value);
+        let key = e.val_key_basic(value);
         if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key) {
             let slot = e.get_slot(key)?;
             if e.is_alloc_reg_valid(alloc_reg, slot) {
@@ -632,7 +632,7 @@ fn emit_phi_copies_regaware<'ctx>(
             && src_reg == phi_reg
             && !(scratch_might_be_temps && (src_reg == SCRATCH1 || src_reg == SCRATCH2))
         {
-            let key = val_key_basic(copy.incoming_value);
+            let key = e.val_key_basic(copy.incoming_value);
             if let Some(slot) = e.get_slot(key)
                 && e.is_alloc_reg_valid(src_reg, slot)
             {
@@ -782,7 +782,7 @@ fn emit_phi_copies_via_slots<'ctx>(
             const_copies.push((copy.phi_slot, copy.incoming_value));
             continue;
         }
-        let key = val_key_basic(copy.incoming_value);
+        let key = e.val_key_basic(copy.incoming_value);
         let src_slot = e
             .get_slot(key)
             .ok_or_else(|| Error::Internal("phi incoming value has no slot".into()))?;

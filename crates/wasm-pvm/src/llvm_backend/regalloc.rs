@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use inkwell::values::{FunctionValue, PhiValue};
 
-use super::emitter::{ValKey, is_real_call, val_key_basic, val_key_instr};
+use super::emitter::{ValKey, ValKeyCache, is_real_call, val_key_basic, val_key_instr};
 use super::successors::collect_successors;
 
 /// Base registers always available for allocation (empty — all allocatable
@@ -121,6 +121,7 @@ pub struct RegAllocStats {
 #[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
 pub fn run<'ctx>(
     function: FunctionValue<'ctx>,
+    val_key_cache: &mut ValKeyCache,
     value_slots: &BTreeMap<ValKey, i32>,
     is_leaf: bool,
     num_params: usize,
@@ -154,7 +155,7 @@ pub fn run<'ctx>(
     }
 
     // Phase 1: Linearize instructions and compute block index ranges.
-    let (instr_index, block_ranges) = linearize(&blocks);
+    let (instr_index, block_ranges) = linearize(val_key_cache, &blocks);
     let max_call_args = max_call_args(function);
     stats.max_call_args = max_call_args;
 
@@ -167,7 +168,7 @@ pub fn run<'ctx>(
     let loop_depths = compute_loop_depths(&block_ranges, &loop_headers, max_position);
 
     // Phase 1d: Collect real call positions for spill weight refinement.
-    let call_positions = collect_call_positions(&blocks, &instr_index);
+    let call_positions = collect_call_positions(val_key_cache, &blocks, &instr_index);
 
     // Phase 2: Compute live intervals + detect loops.
     let min_uses = if aggressive {
@@ -176,6 +177,7 @@ pub fn run<'ctx>(
         MIN_USES_FOR_ALLOCATION
     };
     let (mut intervals, has_loops) = compute_live_intervals(
+        val_key_cache,
         &blocks,
         &instr_index,
         &block_ranges,
@@ -311,6 +313,7 @@ pub fn run<'ctx>(
 /// Maps each LLVM instruction to a linearized index.
 /// Also returns the (start, end) index range for each basic block.
 fn linearize<'ctx>(
+    val_key_cache: &mut ValKeyCache,
     blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
 ) -> (
     BTreeMap<ValKey, usize>,
@@ -323,7 +326,7 @@ fn linearize<'ctx>(
     for &bb in blocks {
         let start = idx;
         for instr in bb.get_instructions() {
-            let key = val_key_instr(instr);
+            let key = val_key_instr(val_key_cache, instr);
             instr_index.insert(key, idx);
             idx += 1;
         }
@@ -435,6 +438,7 @@ fn compute_loop_depths<'ctx>(
 /// Collect linearized positions of real call instructions (sorted ascending).
 /// Used for spill weight refinement: values spanning many calls are penalized.
 fn collect_call_positions(
+    val_key_cache: &mut ValKeyCache,
     blocks: &[inkwell::basic_block::BasicBlock<'_>],
     instr_index: &BTreeMap<ValKey, usize>,
 ) -> Vec<usize> {
@@ -443,7 +447,7 @@ fn collect_call_positions(
         for instr in bb.get_instructions() {
             if instr.get_opcode() == inkwell::values::InstructionOpcode::Call && is_real_call(instr)
             {
-                let key = val_key_instr(instr);
+                let key = val_key_instr(val_key_cache, instr);
                 if let Some(&idx) = instr_index.get(&key) {
                     positions.push(idx);
                 }
@@ -467,6 +471,7 @@ fn count_spanning_calls(call_positions: &[usize], start: usize, end: usize) -> u
 /// Also returns whether any loops were detected (back-edges exist).
 #[allow(clippy::too_many_arguments)]
 fn compute_live_intervals<'ctx>(
+    val_key_cache: &mut ValKeyCache,
     blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
     instr_index: &BTreeMap<ValKey, usize>,
     block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
@@ -494,7 +499,7 @@ fn compute_live_intervals<'ctx>(
     for &bb in blocks {
         let at_loop_header = loop_headers.iter().any(|(h, _)| *h == bb);
         for instr in bb.get_instructions() {
-            let instr_key = val_key_instr(instr);
+            let instr_key = val_key_instr(val_key_cache, instr);
             let instr_idx = instr_index[&instr_key];
 
             // This instruction defines instr_key (if it produces a value).
@@ -520,7 +525,7 @@ fn compute_live_intervals<'ctx>(
                         let num_incomings = phi.count_incoming();
                         for i in 0..num_incomings {
                             if let Some((val, pred_bb)) = phi.get_incoming(i) {
-                                let vk = val_key_basic(val);
+                                let vk = val_key_basic(val_key_cache, val);
                                 if value_slots.contains_key(&vk) {
                                     let (_, pred_end) = block_ranges[&pred_bb];
                                     update_use(
@@ -539,7 +544,7 @@ fn compute_live_intervals<'ctx>(
                 _ => {
                     for i in 0..num_ops {
                         if let Some(inkwell::values::Operand::Value(val)) = instr.get_operand(i) {
-                            let vk = val_key_basic(val);
+                            let vk = val_key_basic(val_key_cache, val);
                             if value_slots.contains_key(&vk) {
                                 update_use(
                                     &mut last_use,
@@ -562,16 +567,11 @@ fn compute_live_intervals<'ctx>(
         def_point.entry(vk).or_insert(0);
     }
 
-    // Build intervals, extending for loops. We iterate by slot offset (not
-    // by ValKey) because ValKey wraps the raw LLVM value pointer — pointer
-    // order within a BTreeMap varies across process invocations (ASLR, and
-    // LLVM arenas for different Value subclasses sit at independent base
-    // addresses). Slot offsets are assigned by a bump allocator in insertion
-    // order and are stable across runs.
-    let mut by_slot: Vec<(ValKey, i32)> = value_slots.iter().map(|(&k, &v)| (k, v)).collect();
-    by_slot.sort_by_key(|(_, slot)| *slot);
+    // Build intervals, extending for loops. `ValKey` is an insertion-order ID
+    // (see `ValKeyCache`), so iterating `value_slots` by key order is itself
+    // reproducible across runs.
     let mut intervals = Vec::new();
-    for (vk, slot) in by_slot {
+    for (&vk, &slot) in value_slots {
         let start = def_point.get(&vk).copied().unwrap_or(0);
         let mut end = last_use.get(&vk).copied().unwrap_or(start);
         let uses = use_count.get(&vk).copied().unwrap_or(0);

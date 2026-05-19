@@ -184,6 +184,10 @@ pub struct PvmEmitter<'ctx> {
     /// LLVM int values (params + instruction results) → stack slot offset from SP.
     pub(crate) value_slots: BTreeMap<ValKey, i32>,
 
+    /// Per-function cache mapping LLVM value pointers to stable [`ValKey`] IDs.
+    /// Populated during `pre_scan_function` and the emit/regalloc phases.
+    pub(crate) val_key_cache: ValKeyCache,
+
     /// Next available slot offset (bump allocator, starts after frame header).
     pub(crate) next_slot_offset: i32,
 
@@ -308,30 +312,53 @@ pub struct FusedIcmp<'ctx> {
     pub rhs: BasicValueEnum<'ctx>,
 }
 
-/// Wrapper key for LLVM values in the slot map.
-/// Uses the raw LLVM value pointer cast to usize.
+/// Stable, per-function identifier for an LLVM SSA value.
 ///
-/// Reproducibility warning: the derived `Ord` compares raw pointer addresses.
-/// LLVM allocates different `Value` subclasses from separate arenas whose base
-/// addresses are randomised by ASLR, so the relative order of two `ValKey`s
-/// can flip between process invocations. Do **not** rely on `BTreeMap<ValKey, _>`
-/// iteration order for anything whose side effects reach the emitted bytes.
-/// Iterate by a derived in-process-stable key instead — e.g. sort by the bump-
-/// allocated slot offset (`value_slots`) or linearised instruction index
-/// (`instr_index`).
+/// The inner `u32` is an insertion-order ID assigned by [`ValKeyCache`] the
+/// first time the value is observed during a function lowering. Two LLVM
+/// pointers that refer to the same value share the same `ValKey`; the assigned
+/// IDs are dense and monotonically increasing, so deriving `Ord` is safe and
+/// reproducible across runs (no ASLR / arena-address dependency).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ValKey(pub(crate) usize);
+pub struct ValKey(pub(crate) u32);
 
-pub fn val_key_int(val: IntValue<'_>) -> ValKey {
-    ValKey(val.as_value_ref() as usize)
+/// Per-function cache mapping LLVM value pointers to stable insertion-order
+/// [`ValKey`] IDs. Reset to empty for each function so IDs are determined
+/// purely by IR-walking order, which is deterministic across runs.
+#[derive(Debug, Default)]
+pub struct ValKeyCache {
+    map: BTreeMap<usize, ValKey>,
+    next_id: u32,
 }
 
-pub fn val_key_basic(val: BasicValueEnum<'_>) -> ValKey {
-    ValKey(val.as_value_ref() as usize)
+impl ValKeyCache {
+    /// Look up the `ValKey` for the given LLVM value pointer, assigning a new
+    /// one on first observation. The assignment order is determined by the
+    /// caller's IR-walking order.
+    pub fn get_or_insert(&mut self, ptr: usize) -> ValKey {
+        if let Some(&key) = self.map.get(&ptr) {
+            return key;
+        }
+        let key = ValKey(self.next_id);
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("ValKeyCache: ran out of 32-bit IDs (per-function limit)");
+        self.map.insert(ptr, key);
+        key
+    }
 }
 
-pub fn val_key_instr(val: InstructionValue<'_>) -> ValKey {
-    ValKey(val.as_value_ref() as usize)
+pub fn val_key_int(cache: &mut ValKeyCache, val: IntValue<'_>) -> ValKey {
+    cache.get_or_insert(val.as_value_ref() as usize)
+}
+
+pub fn val_key_basic(cache: &mut ValKeyCache, val: BasicValueEnum<'_>) -> ValKey {
+    cache.get_or_insert(val.as_value_ref() as usize)
+}
+
+pub fn val_key_instr(cache: &mut ValKeyCache, val: InstructionValue<'_>) -> ValKey {
+    cache.get_or_insert(val.as_value_ref() as usize)
 }
 
 impl<'ctx> PvmEmitter<'ctx> {
@@ -343,6 +370,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             fixups: Vec::new(),
             block_labels: HashMap::new(),
             value_slots: BTreeMap::new(),
+            val_key_cache: ValKeyCache::default(),
             next_slot_offset: FRAME_HEADER_SIZE,
             frame_size: 0,
             call_fixups: Vec::new(),
@@ -364,6 +392,21 @@ impl<'ctx> PvmEmitter<'ctx> {
             regalloc_usage: RegAllocUsageStats::default(),
             next_block_label: None,
         }
+    }
+
+    /// Convenience: look up the `ValKey` for an `IntValue` via the emitter's cache.
+    pub fn val_key_int(&mut self, val: IntValue<'_>) -> ValKey {
+        val_key_int(&mut self.val_key_cache, val)
+    }
+
+    /// Convenience: look up the `ValKey` for a `BasicValueEnum` via the emitter's cache.
+    pub fn val_key_basic(&mut self, val: BasicValueEnum<'_>) -> ValKey {
+        val_key_basic(&mut self.val_key_cache, val)
+    }
+
+    /// Convenience: look up the `ValKey` for an `InstructionValue` via the emitter's cache.
+    pub fn val_key_instr(&mut self, val: InstructionValue<'_>) -> ValKey {
+        val_key_instr(&mut self.val_key_cache, val)
     }
 
     /// Allocate a call return address (jump table address) for a direct call site.
@@ -663,7 +706,7 @@ impl<'ctx> PvmEmitter<'ctx> {
     pub fn load_operand(&mut self, val: BasicValueEnum<'ctx>, temp_reg: u8) -> Result<()> {
         match val {
             BasicValueEnum::IntValue(iv) => {
-                let key = val_key_int(iv);
+                let key = self.val_key_int(iv);
                 if let Some(signed_val) = iv.get_sign_extended_constant() {
                     self.emit_const_to_reg(temp_reg, signed_val as u64);
                 } else if let Some(const_val) = iv.get_zero_extended_constant() {
@@ -737,7 +780,7 @@ impl<'ctx> PvmEmitter<'ctx> {
                 } else {
                     return Err(Error::Internal(format!(
                         "no slot for int value {:?} (opcode: {:?})",
-                        val_key_int(iv),
+                        key,
                         iv.as_instruction().map(InstructionValue::get_opcode),
                     )));
                 }
@@ -1161,8 +1204,8 @@ pub fn get_bb_operand(instr: InstructionValue<'_>, i: u32) -> Result<BasicBlock<
 }
 
 /// Get the slot offset for an instruction's result.
-pub fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i32> {
-    let key = val_key_instr(instr);
+pub fn result_slot(e: &mut PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i32> {
+    let key = e.val_key_instr(instr);
     e.get_slot(key)
         .ok_or_else(|| Error::Internal(format!("no slot for {:?} result", instr.get_opcode())))
 }
@@ -1171,15 +1214,15 @@ pub fn result_slot(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> Result<i3
 /// Returns the allocated register (for store-side coalescing) or `TEMP_RESULT` as fallback.
 /// When the result has an allocated register, computing directly into it avoids a
 /// subsequent `MoveReg` in `store_to_slot`.
-pub fn result_reg(e: &PvmEmitter<'_>, instr: InstructionValue<'_>) -> u8 {
+pub fn result_reg(e: &mut PvmEmitter<'_>, instr: InstructionValue<'_>) -> u8 {
     result_reg_or(e, instr, crate::abi::TEMP_RESULT)
 }
 
 /// Like `result_reg` but with a custom fallback register.
 /// Used by lowering paths that naturally use a different working register
 /// (e.g., zext/sext/trunc use `TEMP1` instead of `TEMP_RESULT`).
-pub fn result_reg_or(e: &PvmEmitter<'_>, instr: InstructionValue<'_>, fallback: u8) -> u8 {
-    let key = val_key_instr(instr);
+pub fn result_reg_or(e: &mut PvmEmitter<'_>, instr: InstructionValue<'_>, fallback: u8) -> u8 {
+    let key = e.val_key_instr(instr);
     if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key) {
         alloc_reg
     } else {
@@ -1190,7 +1233,7 @@ pub fn result_reg_or(e: &PvmEmitter<'_>, instr: InstructionValue<'_>, fallback: 
 /// Get the allocated register for a value if it's currently valid, otherwise return fallback.
 /// Used for load-side coalescing: callers can use the allocated register directly as an
 /// instruction operand instead of copying to a temp register via `load_operand`.
-pub fn operand_reg(e: &PvmEmitter<'_>, val: BasicValueEnum<'_>, fallback: u8) -> u8 {
+pub fn operand_reg(e: &mut PvmEmitter<'_>, val: BasicValueEnum<'_>, fallback: u8) -> u8 {
     operand_reg_avoiding(e, val, fallback, &[])
 }
 
@@ -1211,7 +1254,7 @@ pub fn operand_reg(e: &PvmEmitter<'_>, val: BasicValueEnum<'_>, fallback: u8) ->
 ///
 /// Single-operand callers (no sibling load) can use [`operand_reg`] directly.
 pub fn operand_reg_avoiding(
-    e: &PvmEmitter<'_>,
+    e: &mut PvmEmitter<'_>,
     val: BasicValueEnum<'_>,
     fallback: u8,
     avoid: &[u8],
@@ -1224,7 +1267,7 @@ pub fn operand_reg_avoiding(
         if iv.is_poison() || iv.is_undef() {
             return fallback;
         }
-        let key = val_key_int(iv);
+        let key = e.val_key_int(iv);
         if let Some(slot) = e.get_slot(key) {
             // Narrow path: value's allocated register currently holds the slot.
             if let Some(&alloc_reg) = e.regalloc.val_to_reg.get(&key)
@@ -1507,7 +1550,7 @@ pub fn pre_scan_function<'ctx>(
 
     // Allocate slots for function parameters.
     for param in function.get_params() {
-        let key = val_key_basic(param);
+        let key = emitter.val_key_basic(param);
         emitter.alloc_slot_for_key(key);
     }
 
@@ -1521,7 +1564,7 @@ pub fn pre_scan_function<'ctx>(
     for bb in function.get_basic_blocks() {
         for instr in bb.get_instructions() {
             if instruction_produces_value(instr) {
-                let key = val_key_instr(instr);
+                let key = emitter.val_key_instr(instr);
                 emitter.alloc_slot_for_key(key);
             }
         }
