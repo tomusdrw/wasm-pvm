@@ -41,7 +41,7 @@ Total: 13 + 0 + 3 + 1 + 14 = **31 inputs**.
 
 1. ~~**`dead_function_elimination`** never fires on any of the 31 inputs.~~ Removed in #244 — the pass was correct but redundant with upstream tooling (AssemblyScript tree-shaking, wasm-opt, Substrate's runtime build).
 
-2. **`--no-llvm-passes` in `NO_OPT_FLAGS`** (`tests/utils/benchmark.sh:30`) silently breaks every non-trivial benchmark under `--no-opt`, because mem2reg is mandatory for the PVM backend (alloca lowering isn't implemented). Remove from the bulk-disable array and document the flag as a frontend-debugging escape hatch, not a tunable optimization. Tracked in #245.
+2. ~~**`--no-llvm-passes` in `NO_OPT_FLAGS`** (`tests/utils/benchmark.sh:30`) silently breaks every non-trivial benchmark under `--no-opt`, because mem2reg is mandatory for the PVM backend (alloca lowering isn't implemented). Remove from the bulk-disable array and document the flag as a frontend-debugging escape hatch, not a tunable optimization.~~ Fixed in #245 — flag removed from `NO_OPT_FLAGS`, documented as debug-only in `docs/src/optimizations.md` and `docs/src/cli-usage.md`.
 
 3. **Noisy / net-negative-on-subsets** — `shrink_wrap_callee_saves`, `inlining` (default threshold), `aggressive_register_allocation`, `caller_saved_alloc`, `libcall_recognition`. JAM size alone can't decide their fate because some of them trade size for gas. Re-measure with gas usage on the dynamic fixtures (everything in `BENCHMARKS` with non-empty `args`) before deciding to keep, tune, or remove. Tracked in #246.
 

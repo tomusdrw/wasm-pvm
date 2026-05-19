@@ -27,8 +27,12 @@ JAM_DIR=""
 COMPILER_JAM=""
 NO_OPT=false
 
+# Tunable optimizations only. `--no-llvm-passes` is intentionally NOT in this
+# list: it disables the entire LLVM pass pipeline including `mem2reg`, which
+# the PVM backend requires (otherwise IR retains `alloca` and lowering fails
+# with `Unsupported WASM feature: LLVM opcode Alloca`). It is a frontend
+# debugging escape hatch, not an optimization toggle.
 NO_OPT_FLAGS=(
-  --no-llvm-passes
   --no-peephole
   --no-register-cache
   --no-icmp-fusion
@@ -295,7 +299,7 @@ polkadot_timeout_bin() {
 # trap-all import map. Silently does nothing when no WASMs are present so a
 # fresh clone benchmarks cleanly. `extra_flags` (optional) are forwarded to
 # `wasm-pvm compile` after `--trap-floats`, so the no-opt mode can pass the
-# usual `--no-llvm-passes` etc.
+# usual `--no-peephole` etc.
 compile_polkadot_jams() {
   local out_dir="$1"
   shift

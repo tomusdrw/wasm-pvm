@@ -2,13 +2,24 @@
 
 All non-trivial optimizations can be individually toggled via `OptimizationFlags` (in `translate/mod.rs`, re-exported from `lib.rs`). Each defaults to enabled; CLI exposes `--no-*` flags.
 
-## LLVM Passes (`--no-llvm-passes`)
+## LLVM Pass Pipeline
 
-Four-phase optimization pipeline:
+Four phases run on every compile. The whole pipeline is gated by the `llvm_passes` flag (CLI `--no-llvm-passes`); the inlining and mergefunc phases also have individual toggles.
+
 1. `mem2reg`, `instcombine`, `simplifycfg` (pre-inline cleanup)
 2. `cgscc(inline)` (optional, see `--no-inline`)
 3. `instcombine<max-iterations=20>`, `simplifycfg`, `gvn`, `simplifycfg`, `dce`
 4. `mergefunc` (optional, see `--no-mergefunc`)
+
+### `--no-llvm-passes` (debug only)
+
+**Not a tunable optimization.** This flag skips the *entire* pipeline above, including `mem2reg`. The PVM backend cannot lower `alloca` / unpromoted SSA — every input non-trivial enough to use locals (i.e. virtually every real WASM module) fails with:
+
+```text
+Error: Unsupported WASM feature: LLVM opcode Alloca (in function #N during PVM lowering)
+```
+
+Per the `experiments/opt_impact.sh` sweep, **31 of 31 representative inputs** (fixture WATs, AS-built WASM, polkadot runtimes) fail to compile with this flag set. Use only to inspect the raw frontend IR (`--verbose` / dumps) before any optimization runs. Do not include it in `--no-opt` bundles or treat it as comparable to `--no-peephole`, `--no-register-cache`, etc.
 
 ## Function Inlining (`--no-inline`)
 
