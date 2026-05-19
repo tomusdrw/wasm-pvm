@@ -32,7 +32,7 @@ pub use emitter::{
     EmitterConfig, LlvmCallFixup, LlvmFunctionTranslation, LlvmIndirectCallFixup, LoweringContext,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{FunctionValue, InstructionOpcode};
@@ -41,7 +41,7 @@ use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
 use abi::{TEMP_RESULT, TEMP1, TEMP2};
-use emitter::{PvmEmitter, SCRATCH1, SCRATCH2, pre_scan_function};
+use emitter::{BbKey, PvmEmitter, SCRATCH1, SCRATCH2, pre_scan_function};
 
 /// Lower a single LLVM function to PVM bytecode.
 ///
@@ -100,7 +100,7 @@ fn lower_function_inner(
     // Compute the block emission order once and share it with regalloc — see
     // `regalloc::run`'s `block_order` doc.
     let block_order: Vec<BasicBlock<'_>> = if ctx.optimizations.fallthrough_jumps {
-        compute_block_layout(function)
+        compute_block_layout(function, &mut emitter.bb_key_cache)
     } else {
         function.get_basic_blocks()
     };
@@ -113,6 +113,7 @@ fn lower_function_inner(
         emitter.regalloc = regalloc::run(
             function,
             &mut emitter.val_key_cache,
+            &mut emitter.bb_key_cache,
             &emitter.value_slots,
             is_leaf,
             function.count_params() as usize,
@@ -156,17 +157,18 @@ fn lower_function_inner(
         emitter.config.register_cache_enabled && emitter.config.cross_block_cache_enabled;
     let has_regalloc = !emitter.regalloc.val_to_reg.is_empty();
     let is_leaf = !emitter.has_calls;
-    let mut block_exit_cache: HashMap<BasicBlock<'_>, emitter::CacheSnapshot> = HashMap::new();
+    let mut block_exit_cache: BTreeMap<BbKey, emitter::CacheSnapshot> = BTreeMap::new();
 
     // For functions with regalloc that need alloc_reg_slot propagation, build
     // predecessor map. Needed for non-leaf functions (intersection at merge points
     // + dominator propagation at loop headers) and leaf functions with lazy spill
     // (dominator propagation at loop headers).
-    let pred_map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> =
+    let pred_map: BTreeMap<BbKey, Vec<BbKey>> =
         if has_regalloc && (!is_leaf || emitter.config.lazy_spill_enabled) {
-            let mut map: HashMap<BasicBlock<'_>, Vec<BasicBlock<'_>>> = HashMap::new();
+            let mut map: BTreeMap<BbKey, Vec<BbKey>> = BTreeMap::new();
             for bb in function.get_basic_blocks() {
                 if let Some(term) = bb.get_terminator() {
+                    let bb_key_id = emitter.bb_key(bb);
                     let successors = successors::collect_successors(term);
                     let mut seen: Vec<BasicBlock<'_>> = Vec::new();
                     for succ in successors {
@@ -174,31 +176,34 @@ fn lower_function_inner(
                             continue;
                         }
                         seen.push(succ);
-                        map.entry(succ).or_default().push(bb);
+                        let succ_key = emitter.bb_key(succ);
+                        map.entry(succ_key).or_default().push(bb_key_id);
                     }
                 }
             }
             map
         } else {
-            HashMap::new()
+            BTreeMap::new()
         };
 
     let basic_blocks = &block_order;
     for (block_idx, bb) in basic_blocks.iter().enumerate() {
         let bb = *bb;
-        let label = emitter.block_labels[&bb];
-        let pred_info = emitter.block_single_pred.get(&bb).copied();
+        let bb_key_id = emitter.bb_key(bb);
+        let label = emitter.block_labels[&bb_key_id];
+        let pred_info = emitter.block_single_pred.get(&bb_key_id).copied();
 
         // Set next_block_label so emit_jump_to_label can skip jumps to the next block.
-        emitter.next_block_label = basic_blocks
-            .get(block_idx + 1)
-            .and_then(|next_bb| emitter.block_labels.get(next_bb).copied());
+        emitter.next_block_label = basic_blocks.get(block_idx + 1).and_then(|next_bb| {
+            let next_key = emitter.bb_key(*next_bb);
+            emitter.block_labels.get(&next_key).copied()
+        });
 
         let mut propagated = false;
         if use_cross_block_cache
-            && let Some(pred_bb) = pred_info
+            && let Some(pred_key) = pred_info
             && !emitter::block_has_phis(bb)
-            && let Some(snapshot) = block_exit_cache.get(&pred_bb).cloned()
+            && let Some(snapshot) = block_exit_cache.get(&pred_key).cloned()
         {
             emitter.define_label_preserving_cache(label);
             emitter.restore_cache(&snapshot);
@@ -217,7 +222,7 @@ fn lower_function_inner(
                 // have been processed, and dominator propagation at loop headers
                 // (where back-edge predecessors are not yet processed).
                 emitter.define_label(label);
-                if let Some(preds) = pred_map.get(&bb) {
+                if let Some(preds) = pred_map.get(&bb_key_id) {
                     let all_processed = preds.iter().all(|p| block_exit_cache.contains_key(p));
                     if all_processed && !preds.is_empty() {
                         // All predecessors processed: intersect all alloc states.
@@ -316,7 +321,7 @@ fn lower_function_inner(
             snap.invalidate_reg(TEMP_RESULT);
             snap.invalidate_reg(SCRATCH1);
             snap.invalidate_reg(SCRATCH2);
-            block_exit_cache.insert(bb, snap);
+            block_exit_cache.insert(bb_key_id, snap);
             // Now lower the terminator.
             lower_instruction(&mut emitter, instructions[term_idx], bb, ctx, is_main)?;
         } else if !instructions.is_empty() && emitter.config.lazy_spill_enabled {
@@ -451,13 +456,16 @@ fn lower_function_inner(
 /// Algorithm: greedy trace construction. Iterate the original IR order; for
 /// each unplaced block, walk preferred-successor links until hitting a placed
 /// block or a terminator without a preferred successor.
-fn compute_block_layout<'ctx>(function: FunctionValue<'ctx>) -> Vec<BasicBlock<'ctx>> {
+fn compute_block_layout<'ctx>(
+    function: FunctionValue<'ctx>,
+    bb_key_cache: &mut emitter::BbKeyCache,
+) -> Vec<BasicBlock<'ctx>> {
     let ir_blocks = function.get_basic_blocks();
     if ir_blocks.is_empty() {
         return ir_blocks;
     }
 
-    let mut preferred_next: HashMap<BasicBlock<'ctx>, BasicBlock<'ctx>> = HashMap::new();
+    let mut preferred_next: BTreeMap<BbKey, BasicBlock<'ctx>> = BTreeMap::new();
     for &bb in &ir_blocks {
         let Some(term) = bb.get_terminator() else {
             continue;
@@ -478,25 +486,30 @@ fn compute_block_layout<'ctx>(function: FunctionValue<'ctx>) -> Vec<BasicBlock<'
             _ => None,
         };
         if let Some(next) = next {
-            preferred_next.insert(bb, next);
+            let bb_key_id = emitter::bb_key(bb_key_cache, bb);
+            preferred_next.insert(bb_key_id, next);
         }
     }
 
-    let mut placed: HashSet<BasicBlock<'ctx>> = HashSet::new();
+    let mut placed: BTreeSet<BbKey> = BTreeSet::new();
     let mut layout: Vec<BasicBlock<'ctx>> = Vec::with_capacity(ir_blocks.len());
 
     for &start in &ir_blocks {
-        if placed.contains(&start) {
+        let start_key = emitter::bb_key(bb_key_cache, start);
+        if placed.contains(&start_key) {
             continue;
         }
         let mut current = start;
         loop {
-            if !placed.insert(current) {
+            let current_key = emitter::bb_key(bb_key_cache, current);
+            if !placed.insert(current_key) {
                 break;
             }
             layout.push(current);
-            match preferred_next.get(&current) {
-                Some(&next) if !placed.contains(&next) => current = next,
+            match preferred_next.get(&current_key) {
+                Some(&next) if !placed.contains(&emitter::bb_key(bb_key_cache, next)) => {
+                    current = next;
+                }
                 _ => break,
             }
         }

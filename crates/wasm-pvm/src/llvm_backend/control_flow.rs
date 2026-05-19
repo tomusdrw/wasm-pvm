@@ -38,9 +38,10 @@ pub fn lower_br<'ctx>(
         // Unconditional: br label %dest
         let dest_bb = get_bb_operand(instr, 0)?;
         emit_phi_copies(e, current_bb, dest_bb)?;
+        let dest_key = e.bb_key(dest_bb);
         let label = *e
             .block_labels
-            .get(&dest_bb)
+            .get(&dest_key)
             .ok_or_else(|| Error::Internal("branch to unknown basic block".into()))?;
         e.emit_jump_to_label(label);
     } else {
@@ -50,13 +51,15 @@ pub fn lower_br<'ctx>(
         let else_bb = get_bb_operand(instr, 1)?;
         let then_bb = get_bb_operand(instr, 2)?;
 
+        let then_key = e.bb_key(then_bb);
+        let else_key = e.bb_key(else_bb);
         let then_label = *e
             .block_labels
-            .get(&then_bb)
+            .get(&then_key)
             .ok_or_else(|| Error::Internal("branch to unknown then block".into()))?;
         let else_label = *e
             .block_labels
-            .get(&else_bb)
+            .get(&else_key)
             .ok_or_else(|| Error::Internal("branch to unknown else block".into()))?;
 
         let then_has_phis = has_phi_from(current_bb, then_bb);
@@ -119,9 +122,10 @@ pub fn lower_switch<'ctx>(
     let val = get_operand(instr, 0)?;
     let default_bb = get_bb_operand(instr, 1)?;
 
+    let default_key = e.bb_key(default_bb);
     let default_label = *e
         .block_labels
-        .get(&default_bb)
+        .get(&default_key)
         .ok_or_else(|| Error::Internal("switch default to unknown block".into()))?;
 
     // Load-side coalescing for switch value (no dst conflict — branches have no dest).
@@ -147,9 +151,10 @@ pub fn lower_switch<'ctx>(
                 e.emit_branch_eq_imm_to_label(val_reg, c as i32, trampoline);
                 trampolines.push((trampoline, case_bb));
             } else {
+                let case_key = e.bb_key(case_bb);
                 let case_label = *e
                     .block_labels
-                    .get(&case_bb)
+                    .get(&case_key)
                     .ok_or_else(|| Error::Internal("switch case to unknown block".into()))?;
                 e.emit_branch_eq_imm_to_label(val_reg, c as i32, case_label);
             }
@@ -169,9 +174,10 @@ pub fn lower_switch<'ctx>(
 
     // Emit trampolines for cases that need phi copies.
     for (trampoline_label, case_bb) in trampolines {
+        let case_key = e.bb_key(case_bb);
         let case_label = *e
             .block_labels
-            .get(&case_bb)
+            .get(&case_key)
             .ok_or_else(|| Error::Internal("switch case to unknown block".into()))?;
         e.define_label(trampoline_label);
         emit_phi_copies(e, current_bb, case_bb)?;
