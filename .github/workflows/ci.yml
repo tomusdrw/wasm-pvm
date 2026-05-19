@@ -98,6 +98,14 @@ jobs:
       - name: Build test artifacts
         run: cd tests && bun build.ts
 
+      - name: Benchmark no-opt smoke check
+        env:
+          BENCHMARK_SKIP_POLKADOT: "1"
+          BENCHMARK_SKIP_PVM_IN_PVM: "1"
+        run: |
+          ./tests/utils/benchmark.sh --no-opt 2>/dev/null \
+            | awk '/^\| / && /SKIP/ { print; bad=1 } END { exit bad }'
+
       - name: Run integration tests (layers 1-3)
         run: cd tests && bun test layer1/ layer2/ layer3/
 

@@ -105,6 +105,12 @@ POLKADOT_RUNTIMES=(
 # branch comparisons bounded.
 POLKADOT_COMPILE_TIMEOUT="${POLKADOT_COMPILE_TIMEOUT:-300}"
 
+# CI smoke-check opt-outs (issue #250). Set to "1" to skip the corresponding
+# section entirely. Used by the `--no-opt` smoke check in CI to keep runtime
+# bounded while still exercising the direct-execution path.
+BENCHMARK_SKIP_POLKADOT="${BENCHMARK_SKIP_POLKADOT:-0}"
+BENCHMARK_SKIP_PVM_IN_PVM="${BENCHMARK_SKIP_PVM_IN_PVM:-0}"
+
 # Polkadot runtimes do not get one row per benchmark — that's 14 long-name rows
 # of large numbers that drown out the rest of the suite. Instead, after the
 # standard `BENCHMARKS` loop finishes, `polkadot_summary_row` emits a single
@@ -288,7 +294,11 @@ compile_noopt_jams() {
     # JAMs, matching the polkadot path's `|| rc=$?` tolerance.
     compile_benchmark "$wasm_src" "$output" "$basename" "${NO_OPT_FLAGS[@]}" >&2 || true
   done
-  compile_polkadot_jams "$noopt_dir" "${NO_OPT_FLAGS[@]}"
+  if [ "$BENCHMARK_SKIP_POLKADOT" = "1" ]; then
+    echo "Skipping Polkadot section (BENCHMARK_SKIP_POLKADOT=1)" >&2
+  else
+    compile_polkadot_jams "$noopt_dir" "${NO_OPT_FLAGS[@]}"
+  fi
 }
 
 # Resolve a `timeout` binary or empty string if none is available.
@@ -616,11 +626,15 @@ run_benchmarks() {
       printf "| %-20s | %10s | %10s | %10s | %10s | %10s |\n" "$rdesc" "$wsize" "SKIP" "-" "-" "-"
     fi
   done
-  polkadot_summary_row
+  if [ "$BENCHMARK_SKIP_POLKADOT" != "1" ]; then
+    polkadot_summary_row
+  fi
   echo ""
 
   # PVM-in-PVM benchmarks
-  if [ -f "$COMPILER_JAM" ]; then
+  if [ "$BENCHMARK_SKIP_PVM_IN_PVM" = "1" ]; then
+    echo "Skipping PVM-in-PVM section (BENCHMARK_SKIP_PVM_IN_PVM=1)" >&2
+  elif [ -f "$COMPILER_JAM" ]; then
     echo "### PVM-in-PVM"
     echo ""
     echo "| Benchmark | JAM Size | Code Size | Outer Gas Used | Time (median of 3) |"
@@ -690,10 +704,14 @@ build_and_benchmark() {
   else
     JAM_DIR="$DEFAULT_JAM_DIR"
     COMPILER_JAM="$DEFAULT_JAM_DIR/anan-as-compiler.jam"
-    # `bun build.ts` only knows about the standard fixtures, so compile the
-    # populated Polkadot runtimes (if any) into the same JAM dir using the
-    # current toolchain. Silently no-ops if WASMs aren't present.
-    compile_polkadot_jams "$JAM_DIR"
+    if [ "$BENCHMARK_SKIP_POLKADOT" = "1" ]; then
+      echo "Skipping Polkadot section (BENCHMARK_SKIP_POLKADOT=1)" >&2
+    else
+      # `bun build.ts` only knows about the standard fixtures, so compile the
+      # populated Polkadot runtimes (if any) into the same JAM dir using the
+      # current toolchain. Silently no-ops if WASMs aren't present.
+      compile_polkadot_jams "$JAM_DIR"
+    fi
   fi
 
   run_benchmarks "$label"
