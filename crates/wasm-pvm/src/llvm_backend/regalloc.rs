@@ -28,11 +28,13 @@
     clippy::cast_sign_loss
 )]
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use inkwell::values::{FunctionValue, PhiValue};
 
-use super::emitter::{ValKey, ValKeyCache, is_real_call, val_key_basic, val_key_instr};
+use super::emitter::{
+    BbKey, BbKeyCache, ValKey, ValKeyCache, is_real_call, val_key_basic, val_key_instr,
+};
 use super::successors::collect_successors;
 
 /// Base registers always available for allocation (empty — all allocatable
@@ -122,6 +124,7 @@ pub struct RegAllocStats {
 pub fn run<'ctx>(
     function: FunctionValue<'ctx>,
     val_key_cache: &mut ValKeyCache,
+    bb_key_cache: &mut BbKeyCache,
     value_slots: &BTreeMap<ValKey, i32>,
     is_leaf: bool,
     num_params: usize,
@@ -155,13 +158,13 @@ pub fn run<'ctx>(
     }
 
     // Phase 1: Linearize instructions and compute block index ranges.
-    let (instr_index, block_ranges) = linearize(val_key_cache, &blocks);
+    let (instr_index, block_ranges) = linearize(val_key_cache, bb_key_cache, &blocks);
     let max_call_args = max_call_args(function);
     stats.max_call_args = max_call_args;
 
     // Phase 1b: Detect loop headers (used by both live interval computation
     // and the calls-in-loops heuristic).
-    let loop_headers = detect_loop_headers(&blocks, &block_ranges);
+    let loop_headers = detect_loop_headers(bb_key_cache, &blocks, &block_ranges);
 
     // Phase 1c: Compute per-position loop nesting depth for spill weight.
     let max_position = instr_index.values().copied().max().unwrap_or(0);
@@ -178,6 +181,7 @@ pub fn run<'ctx>(
     };
     let (mut intervals, has_loops) = compute_live_intervals(
         val_key_cache,
+        bb_key_cache,
         &blocks,
         &instr_index,
         &block_ranges,
@@ -312,15 +316,13 @@ pub fn run<'ctx>(
 
 /// Maps each LLVM instruction to a linearized index.
 /// Also returns the (start, end) index range for each basic block.
-fn linearize<'ctx>(
+fn linearize(
     val_key_cache: &mut ValKeyCache,
-    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
-) -> (
-    BTreeMap<ValKey, usize>,
-    HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
-) {
+    bb_key_cache: &mut BbKeyCache,
+    blocks: &[inkwell::basic_block::BasicBlock<'_>],
+) -> (BTreeMap<ValKey, usize>, BTreeMap<BbKey, (usize, usize)>) {
     let mut instr_index = BTreeMap::new();
-    let mut block_ranges = HashMap::new();
+    let mut block_ranges: BTreeMap<BbKey, (usize, usize)> = BTreeMap::new();
     let mut idx = 0usize;
 
     for &bb in blocks {
@@ -331,7 +333,8 @@ fn linearize<'ctx>(
             idx += 1;
         }
         let end = if idx > start { idx - 1 } else { start };
-        block_ranges.insert(bb, (start, end));
+        let bb_key_id = super::emitter::bb_key(bb_key_cache, bb);
+        block_ranges.insert(bb_key_id, (start, end));
     }
 
     (instr_index, block_ranges)
@@ -382,36 +385,42 @@ fn max_call_args(function: FunctionValue<'_>) -> usize {
 }
 
 /// Detect loop back-edges and return loop headers paired with back-edge end
-/// position, sorted by header position. Returned as a `Vec` rather than a map
-/// so that downstream iteration is deterministic across runs — some consumers
-/// update state that is read by the next iteration (e.g. live-interval
-/// extension), where `HashMap` iteration order would leak non-determinism.
-fn detect_loop_headers<'ctx>(
-    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
-    block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
-) -> Vec<(inkwell::basic_block::BasicBlock<'ctx>, usize)> {
-    let block_order: HashMap<inkwell::basic_block::BasicBlock<'_>, usize> =
-        blocks.iter().enumerate().map(|(i, &bb)| (bb, i)).collect();
+/// position, sorted by header position in the emission order (`block_ranges`).
+/// The sort is semantically required: downstream loop-extension in
+/// `compute_live_intervals` reads results in block-position order, where the
+/// natural `BbKey` order (insertion order, determined by the first IR walk
+/// that interns each block) does not match the emission/layout order.
+fn detect_loop_headers(
+    bb_key_cache: &mut BbKeyCache,
+    blocks: &[inkwell::basic_block::BasicBlock<'_>],
+    block_ranges: &BTreeMap<BbKey, (usize, usize)>,
+) -> Vec<(BbKey, usize)> {
+    let block_order: BTreeMap<BbKey, usize> = blocks
+        .iter()
+        .enumerate()
+        .map(|(i, &bb)| (super::emitter::bb_key(bb_key_cache, bb), i))
+        .collect();
 
-    let mut loop_headers: HashMap<inkwell::basic_block::BasicBlock<'_>, usize> = HashMap::new();
+    let mut loop_headers: BTreeMap<BbKey, usize> = BTreeMap::new();
     for &bb in blocks {
         if let Some(term) = bb.get_terminator() {
             let successors = collect_successors(term);
-            let bb_idx = block_order[&bb];
-            let (_, bb_end) = block_ranges[&bb];
+            let bb_key_id = super::emitter::bb_key(bb_key_cache, bb);
+            let bb_idx = block_order[&bb_key_id];
+            let (_, bb_end) = block_ranges[&bb_key_id];
             for succ in successors {
-                if let Some(&succ_idx) = block_order.get(&succ)
+                let succ_key = super::emitter::bb_key(bb_key_cache, succ);
+                if let Some(&succ_idx) = block_order.get(&succ_key)
                     && succ_idx <= bb_idx
                 {
-                    let entry = loop_headers.entry(succ).or_insert(0);
+                    let entry = loop_headers.entry(succ_key).or_insert(0);
                     *entry = (*entry).max(bb_end);
                 }
             }
         }
     }
-    let mut result: Vec<(inkwell::basic_block::BasicBlock<'ctx>, usize)> =
-        loop_headers.into_iter().collect();
-    result.sort_by_key(|(bb, _)| block_ranges[bb].0);
+    let mut result: Vec<(BbKey, usize)> = loop_headers.into_iter().collect();
+    result.sort_by_key(|(bbk, _)| block_ranges[bbk].0);
     result
 }
 
@@ -420,14 +429,14 @@ fn detect_loop_headers<'ctx>(
 /// For each loop (identified by a back-edge to a header), all positions within
 /// `[header_start, back_edge_end]` have their depth incremented. Nested loops
 /// contribute additively.
-fn compute_loop_depths<'ctx>(
-    block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
-    loop_headers: &[(inkwell::basic_block::BasicBlock<'ctx>, usize)],
+fn compute_loop_depths(
+    block_ranges: &BTreeMap<BbKey, (usize, usize)>,
+    loop_headers: &[(BbKey, usize)],
     max_position: usize,
 ) -> Vec<u32> {
     let mut depths = vec![0u32; max_position + 1];
-    for &(header_bb, back_edge_end) in loop_headers {
-        let (header_start, _) = block_ranges[&header_bb];
+    for &(header_key, back_edge_end) in loop_headers {
+        let (header_start, _) = block_ranges[&header_key];
         for d in &mut depths[header_start..=back_edge_end.min(max_position)] {
             *d += 1;
         }
@@ -470,13 +479,14 @@ fn count_spanning_calls(call_positions: &[usize], start: usize, end: usize) -> u
 /// Compute live intervals for all SSA values (parameters and instruction results).
 /// Also returns whether any loops were detected (back-edges exist).
 #[allow(clippy::too_many_arguments)]
-fn compute_live_intervals<'ctx>(
+fn compute_live_intervals(
     val_key_cache: &mut ValKeyCache,
-    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
+    bb_key_cache: &mut BbKeyCache,
+    blocks: &[inkwell::basic_block::BasicBlock<'_>],
     instr_index: &BTreeMap<ValKey, usize>,
-    block_ranges: &HashMap<inkwell::basic_block::BasicBlock<'ctx>, (usize, usize)>,
+    block_ranges: &BTreeMap<BbKey, (usize, usize)>,
     value_slots: &BTreeMap<ValKey, i32>,
-    loop_headers: &[(inkwell::basic_block::BasicBlock<'ctx>, usize)],
+    loop_headers: &[(BbKey, usize)],
     loop_depths: &[u32],
     call_positions: &[usize],
     min_uses: usize,
@@ -497,7 +507,8 @@ fn compute_live_intervals<'ctx>(
 
     // Walk all instructions to find defs and uses.
     for &bb in blocks {
-        let at_loop_header = loop_headers.iter().any(|(h, _)| *h == bb);
+        let bb_key_id = super::emitter::bb_key(bb_key_cache, bb);
+        let at_loop_header = loop_headers.iter().any(|(h, _)| *h == bb_key_id);
         for instr in bb.get_instructions() {
             let instr_key = val_key_instr(val_key_cache, instr);
             let instr_idx = instr_index[&instr_key];
@@ -527,7 +538,8 @@ fn compute_live_intervals<'ctx>(
                             if let Some((val, pred_bb)) = phi.get_incoming(i) {
                                 let vk = val_key_basic(val_key_cache, val);
                                 if value_slots.contains_key(&vk) {
-                                    let (_, pred_end) = block_ranges[&pred_bb];
+                                    let pred_key = super::emitter::bb_key(bb_key_cache, pred_bb);
+                                    let (_, pred_end) = block_ranges[&pred_key];
                                     update_use(
                                         &mut last_use,
                                         &mut use_count,
@@ -590,8 +602,8 @@ fn compute_live_intervals<'ctx>(
         // `loop_headers` is sorted by header position so this loop's output is
         // deterministic even though one iteration's `end` mutation feeds the
         // next iteration's condition.
-        for &(header_bb, back_edge_end) in loop_headers {
-            let (header_start, _) = block_ranges[&header_bb];
+        for &(header_key, back_edge_end) in loop_headers {
+            let (header_start, _) = block_ranges[&header_key];
             if start <= header_start && end >= header_start {
                 end = end.max(back_edge_end);
             }

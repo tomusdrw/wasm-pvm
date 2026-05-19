@@ -14,7 +14,7 @@
     clippy::cast_sign_loss
 )]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
@@ -179,7 +179,7 @@ pub struct PvmEmitter<'ctx> {
     pub(crate) fixups: Vec<(usize, usize)>,
 
     /// LLVM basic block → PVM label.
-    pub(crate) block_labels: HashMap<BasicBlock<'ctx>, usize>,
+    pub(crate) block_labels: BTreeMap<BbKey, usize>,
 
     /// LLVM int values (params + instruction results) → stack slot offset from SP.
     pub(crate) value_slots: BTreeMap<ValKey, i32>,
@@ -187,6 +187,9 @@ pub struct PvmEmitter<'ctx> {
     /// Per-function cache mapping LLVM value pointers to stable [`ValKey`] IDs.
     /// Populated during `pre_scan_function` and the emit/regalloc phases.
     pub(crate) val_key_cache: ValKeyCache,
+
+    /// Per-function cache mapping LLVM `BasicBlock` pointers to stable [`BbKey`] IDs.
+    pub(crate) bb_key_cache: BbKeyCache,
 
     /// Next available slot offset (bump allocator, starts after frame header).
     pub(crate) next_slot_offset: i32,
@@ -224,7 +227,7 @@ pub struct PvmEmitter<'ctx> {
 
     /// For each block with exactly one predecessor, maps block → its single predecessor.
     /// Used for cross-block register cache propagation.
-    pub(crate) block_single_pred: HashMap<BasicBlock<'ctx>, BasicBlock<'ctx>>,
+    pub(crate) block_single_pred: BTreeMap<BbKey, BbKey>,
 
     /// Which callee-saved registers (r9-r12) are actually used by this function.
     /// Index 0 = r9, 1 = r10, 2 = r11, 3 = r12.
@@ -361,6 +364,47 @@ pub fn val_key_instr(cache: &mut ValKeyCache, val: InstructionValue<'_>) -> ValK
     cache.get_or_insert(val.as_value_ref() as usize)
 }
 
+/// Stable, per-function identifier for an LLVM basic block.
+///
+/// The inner `u32` is an insertion-order ID assigned by [`BbKeyCache`] the
+/// first time the block is observed during a function lowering. Two LLVM
+/// pointers that refer to the same `BasicBlock` share the same `BbKey`; the
+/// assigned IDs are dense and monotonically increasing, so deriving `Ord` is
+/// safe and reproducible across runs (no ASLR / arena-address dependency).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BbKey(pub(crate) u32);
+
+/// Per-function cache mapping LLVM `BasicBlock` pointers to stable
+/// insertion-order [`BbKey`] IDs. Reset to empty for each function so IDs
+/// are determined purely by IR-walking order, which is deterministic across
+/// runs.
+#[derive(Debug, Default)]
+pub struct BbKeyCache {
+    map: BTreeMap<usize, BbKey>,
+    next_id: u32,
+}
+
+impl BbKeyCache {
+    /// Look up the `BbKey` for the given LLVM `BasicBlock` pointer, assigning
+    /// a new one on first observation.
+    pub fn get_or_insert(&mut self, ptr: usize) -> BbKey {
+        if let Some(&key) = self.map.get(&ptr) {
+            return key;
+        }
+        let key = BbKey(self.next_id);
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("BbKeyCache: ran out of 32-bit IDs (per-function limit)");
+        self.map.insert(ptr, key);
+        key
+    }
+}
+
+pub fn bb_key(cache: &mut BbKeyCache, bb: BasicBlock<'_>) -> BbKey {
+    cache.get_or_insert(bb.as_mut_ptr() as usize)
+}
+
 impl<'ctx> PvmEmitter<'ctx> {
     pub fn new(config: EmitterConfig, call_return_base: usize) -> Self {
         Self {
@@ -368,9 +412,10 @@ impl<'ctx> PvmEmitter<'ctx> {
             instructions: Vec::new(),
             labels: Vec::new(),
             fixups: Vec::new(),
-            block_labels: HashMap::new(),
+            block_labels: BTreeMap::new(),
             value_slots: BTreeMap::new(),
             val_key_cache: ValKeyCache::default(),
+            bb_key_cache: BbKeyCache::default(),
             next_slot_offset: FRAME_HEADER_SIZE,
             frame_size: 0,
             call_fixups: Vec::new(),
@@ -380,7 +425,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             reg_to_slot: [None; 13],
             reg_to_const: [None; 13],
             pending_fused_icmp: None,
-            block_single_pred: HashMap::new(),
+            block_single_pred: BTreeMap::new(),
             next_call_return_idx: call_return_base,
             call_return_base_idx: call_return_base,
             used_callee_regs: [true; 4],
@@ -407,6 +452,11 @@ impl<'ctx> PvmEmitter<'ctx> {
     /// Convenience: look up the `ValKey` for an `InstructionValue` via the emitter's cache.
     pub fn val_key_instr(&mut self, val: InstructionValue<'_>) -> ValKey {
         val_key_instr(&mut self.val_key_cache, val)
+    }
+
+    /// Convenience: look up the `BbKey` for a `BasicBlock` via the emitter's cache.
+    pub fn bb_key(&mut self, bb: BasicBlock<'_>) -> BbKey {
+        bb_key(&mut self.bb_key_cache, bb)
     }
 
     /// Allocate a call return address (jump table address) for a direct call site.
@@ -1518,11 +1568,12 @@ pub fn pre_scan_function<'ctx>(
     // Compute single-predecessor map for cross-block register cache.
     if emitter.config.cross_block_cache_enabled && emitter.config.register_cache_enabled {
         let blocks = function.get_basic_blocks();
-        let mut pred_count: HashMap<BasicBlock<'ctx>, usize> = HashMap::new();
-        let mut pred_from: HashMap<BasicBlock<'ctx>, BasicBlock<'ctx>> = HashMap::new();
+        let mut pred_count: BTreeMap<BbKey, usize> = BTreeMap::new();
+        let mut pred_from: BTreeMap<BbKey, BbKey> = BTreeMap::new();
 
         for bb in &blocks {
             if let Some(term) = bb.get_terminator() {
+                let pred_key = emitter.bb_key(*bb);
                 let successors = super::successors::collect_successors(term);
                 // Deduplicate successors per predecessor (e.g. switch cases targeting the same block)
                 // so that multiple edges from the same bb don't inflate the predecessor count.
@@ -1532,18 +1583,19 @@ pub fn pre_scan_function<'ctx>(
                         continue;
                     }
                     seen.push(succ);
-                    let count = pred_count.entry(succ).or_insert(0);
+                    let succ_key = emitter.bb_key(succ);
+                    let count = pred_count.entry(succ_key).or_insert(0);
                     *count += 1;
-                    pred_from.insert(succ, *bb);
+                    pred_from.insert(succ_key, pred_key);
                 }
             }
         }
 
-        for (bb, count) in &pred_count {
+        for (bbk, count) in &pred_count {
             if *count == 1
-                && let Some(pred) = pred_from.get(bb)
+                && let Some(pred_key) = pred_from.get(bbk)
             {
-                emitter.block_single_pred.insert(*bb, *pred);
+                emitter.block_single_pred.insert(*bbk, *pred_key);
             }
         }
     }
@@ -1557,7 +1609,8 @@ pub fn pre_scan_function<'ctx>(
     // Allocate labels for all basic blocks.
     for bb in function.get_basic_blocks() {
         let label = emitter.alloc_label();
-        emitter.block_labels.insert(bb, label);
+        let bb_key_id = emitter.bb_key(bb);
+        emitter.block_labels.insert(bb_key_id, label);
     }
 
     // Allocate slots for instruction results that produce integer values.
