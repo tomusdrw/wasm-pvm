@@ -4,7 +4,7 @@ Runnable inputs measured: 19
 
 Positive delta = optimization saves bytes / gas when **on** (turning it off makes the JAM bigger / costs more gas).
 
-**Baseline OOM (gas-impact unmeasurable):** `aslan-ecalli`. These fixtures exhausted the gas budget under the all-opts-on baseline, so every variant also OOMs and delta_gas is structurally 0 — only delta_jam is meaningful here.
+**Baseline OOM:** `aslan-ecalli`. These fixtures exhausted the gas budget under the all-opts-on baseline. For most variants `delta_gas` is structurally 0 (variant also OOMs). A few variants make the program halt cleanly with very different gas usage — those represent **behavioral** changes (different halt condition), not per-instruction gas efficiency, so they are excluded from per-flag aggregates and surfaced separately in the "Behavioral cases" section.
 
 ## Per-flag aggregate
 
@@ -29,7 +29,7 @@ Positive delta = optimization saves bytes / gas when **on** (turning it off make
 
 ## Sign-disagreement cells (optimization helps one axis, hurts the other)
 
-Rows where ΔJAM and ΔGas have opposite signs (both non-zero), excluding OOM-capped fixtures. These are the cases where 'is this opt worth keeping?' depends on which axis you care about.
+Rows where ΔJAM and ΔGas have opposite signs (both non-zero). These are the cases where 'is this opt worth keeping?' depends on which axis you care about.
 
 | Flag | Fixture | ΔJAM | ΔGas | Baseline JAM | Baseline Gas | Status |
 |------|---------|-----:|-----:|-------------:|-------------:|--------|
@@ -52,6 +52,16 @@ Rows where ΔJAM and ΔGas have opposite signs (both non-zero), excluding OOM-ca
 | `--no-scratch-reg-alloc` | aslan-fib | +71 | -76 | 19831 | 10431 | ok |
 | `--no-libcall-recognition` | u128-div-bench | -82 | +53000 | 765 | 68031 | ok |
 | `--no-caller-saved-alloc` | fibonacci | -2 | +18 | 221 | 429 | ok |
+
+## Behavioral cases (baseline OOM, variant halts)
+
+These rows have huge `ΔGas` magnitudes but are excluded from per-flag aggregates above. The baseline run exhausts the gas budget; the listed variant halts cleanly at a much lower gas count. The delta is real data, but reflects a **different halt condition** under the variant — not per-instruction gas savings. See issue #256 for the underlying investigation.
+
+| Flag | Fixture | ΔJAM | Baseline Gas | Variant Gas | ΔGas |
+|------|---------|-----:|-------------:|------------:|-----:|
+| `--no-lazy-spill` | aslan-ecalli | 50 | 100000000 | 6604 | -99993396 |
+| `--no-register-alloc` | aslan-ecalli | 173 | 100000000 | 6683 | -99993317 |
+| `--no-shrink-wrap` | aslan-ecalli | 53 | 100000000 | 6491 | -99993509 |
 
 ## Per-fixture gas deltas (positive = opt saves gas)
 

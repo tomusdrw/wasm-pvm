@@ -177,14 +177,25 @@ fi
 
 mkdir -p "$RESULTS_DIR"
 
-# Filter out inputs whose source doesn't exist (lets users run partial setups).
+# Filter out inputs whose source/imports/adapter sidecars don't exist (lets
+# users run partial setups). Skip if any required sidecar is missing —
+# `compile_one` would otherwise silently omit `--imports`/`--adapter` and we'd
+# measure a different program shape than RUNNABLE_INPUTS declares.
 KEPT_INPUTS=()
 for entry in "${RUNNABLE_INPUTS[@]}"; do
   IFS='|' read -r name source imports adapter args pc <<< "$entry"
-  if [ -f "$PROJECT_ROOT/$source" ]; then
+  missing=()
+  [ -f "$PROJECT_ROOT/$source" ] || missing+=("source:$source")
+  if [ -n "$imports" ] && [ ! -f "$PROJECT_ROOT/$imports" ]; then
+    missing+=("imports:$imports")
+  fi
+  if [ -n "$adapter" ] && [ ! -f "$PROJECT_ROOT/$adapter" ]; then
+    missing+=("adapter:$adapter")
+  fi
+  if [ "${#missing[@]}" -eq 0 ]; then
     KEPT_INPUTS+=("$entry")
   else
-    echo "  skip $name: source $source not found" >&2
+    echo "  skip $name: missing ${missing[*]}" >&2
   fi
 done
 
@@ -299,13 +310,34 @@ def to_int(s):
 
 GAS_BUDGET = 100000000  # keep in sync with the bash-level GAS_BUDGET above.
 
-# Fixtures whose baseline gas equals the budget exhausted the gas budget under
-# baseline. Their delta_gas across variants is structurally pinned at 0 (every
-# variant also OOMs) and not interpretable as an optimization-quality signal.
+# Fixtures whose baseline gas hit the budget exhausted the gas budget under
+# the all-opts-on baseline. For most variants delta_gas pins to 0 (variant
+# also OOMs). For the variants that *do* halt, the delta is huge but is a
+# behavioral change (different halt condition), not a per-instruction gas
+# saving — including those rows in per-flag aggregates would mis-attribute
+# behavioral divergence as gas wins and could flip a verdict (e.g. for
+# aslan-ecalli, --no-shrink-wrap would appear to "save" 99M gas). So
+# aggregate totals and the sign-disagreement table exclude all rows for
+# baseline-OOM fixtures; the dedicated "Behavioral cases" section below
+# surfaces the variant-halts-baseline-OOMs rows separately.
 oom_inputs = {
     name for name, r in baseline.items()
     if (g := to_int(r.get('gas_used'))) is not None and g >= GAS_BUDGET
 }
+
+def is_behavioral_row(r):
+    """True if baseline OOMs at GAS_BUDGET but this variant halts (or vice
+    versa). These rows are real data but reflect different halt conditions,
+    not gas efficiency — surfaced separately, not aggregated."""
+    if r['input'] not in oom_inputs:
+        return False
+    bg = to_int(r.get('baseline_gas'))
+    dg = to_int(r.get('delta_gas'))
+    if bg is None or dg is None:
+        return False
+    variant_gas = bg + dg
+    # Baseline OOMs; variant either OOMs (pinned, boring) or halts (behavioral).
+    return variant_gas < GAS_BUDGET
 
 with open(out_path, 'w') as f:
     f.write("# Optimization Gas + Size Impact Summary\n\n")
@@ -313,11 +345,14 @@ with open(out_path, 'w') as f:
     f.write("Positive delta = optimization saves bytes / gas when **on** "
             "(turning it off makes the JAM bigger / costs more gas).\n\n")
     if oom_inputs:
-        f.write("**Baseline OOM (gas-impact unmeasurable):** "
+        f.write("**Baseline OOM:** "
                 + ", ".join(f"`{n}`" for n in sorted(oom_inputs))
-                + ". These fixtures exhausted the gas budget under the all-opts-on baseline, "
-                  "so every variant also OOMs and delta_gas is structurally 0 — only "
-                  "delta_jam is meaningful here.\n\n")
+                + ". These fixtures exhausted the gas budget under the all-opts-on baseline. "
+                  "For most variants `delta_gas` is structurally 0 (variant also OOMs). "
+                  "A few variants make the program halt cleanly with very different gas "
+                  "usage — those represent **behavioral** changes (different halt condition), "
+                  "not per-instruction gas efficiency, so they are excluded from per-flag "
+                  "aggregates and surfaced separately in the \"Behavioral cases\" section.\n\n")
 
     # ---------- Per-flag aggregate ----------
     f.write("## Per-flag aggregate\n\n")
@@ -384,6 +419,31 @@ with open(out_path, 'w') as f:
             f.write(f"| `{flag}` | {r['input']} | {dj:+d} | {dg:+d} | {bj} | {bg} | {r['run_status']} |\n")
     if not any_disagree:
         f.write("\n_(none — every (flag, fixture) cell either agrees on direction or has zero delta on at least one axis.)_\n")
+
+    # ---------- Behavioral cases (baseline OOM, variant halts) ----------
+    behavioral_rows = []
+    for flag, *_ in summary_rows:
+        for r in rows[flag]:
+            if r['compile_ok'] != '1' or r['run_status'] != 'ok':
+                continue
+            if not is_behavioral_row(r):
+                continue
+            behavioral_rows.append(r)
+    if behavioral_rows:
+        f.write("\n## Behavioral cases (baseline OOM, variant halts)\n\n")
+        f.write("These rows have huge `ΔGas` magnitudes but are excluded from "
+                "per-flag aggregates above. The baseline run exhausts the gas "
+                "budget; the listed variant halts cleanly at a much lower gas "
+                "count. The delta is real data, but reflects a **different halt "
+                "condition** under the variant — not per-instruction gas savings. "
+                "See issue #256 for the underlying investigation.\n\n")
+        f.write("| Flag | Fixture | ΔJAM | Baseline Gas | Variant Gas | ΔGas |\n")
+        f.write("|------|---------|-----:|-------------:|------------:|-----:|\n")
+        for r in behavioral_rows:
+            bg = to_int(r['baseline_gas']) or 0
+            dg = to_int(r['delta_gas']) or 0
+            f.write(f"| `{r['flag']}` | {r['input']} | "
+                    f"{r['delta_jam']} | {bg} | {bg + dg} | {dg:+d} |\n")
 
     # ---------- Per-fixture detail (gas-only view) ----------
     f.write("\n## Per-fixture gas deltas (positive = opt saves gas)\n\n")
