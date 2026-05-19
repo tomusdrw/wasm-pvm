@@ -538,8 +538,7 @@ fn compute_live_intervals(
                             if let Some((val, pred_bb)) = phi.get_incoming(i) {
                                 let vk = val_key_basic(val_key_cache, val);
                                 if value_slots.contains_key(&vk) {
-                                    let pred_key =
-                                        super::emitter::bb_key(bb_key_cache, pred_bb);
+                                    let pred_key = super::emitter::bb_key(bb_key_cache, pred_bb);
                                     let (_, pred_end) = block_ranges[&pred_key];
                                     update_use(
                                         &mut last_use,
