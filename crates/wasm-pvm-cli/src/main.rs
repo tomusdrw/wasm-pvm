@@ -49,7 +49,12 @@ enum Commands {
         #[arg(long, help = "Output stats as JSON instead of text")]
         json: bool,
 
-        #[arg(long, help = "Disable LLVM optimization passes")]
+        #[arg(
+            long,
+            help = "DEBUG ONLY: skip the entire LLVM pass pipeline including mem2reg. \
+                    The PVM backend cannot lower alloca / unpromoted SSA, so any non-trivial \
+                    WASM will fail to compile. Use to inspect raw frontend IR."
+        )]
         no_llvm_passes: bool,
 
         #[arg(long, help = "Disable peephole optimizer")]

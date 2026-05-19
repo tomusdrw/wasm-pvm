@@ -15,11 +15,13 @@ wasm-pvm compile input.wasm -o output.jam --no-inline --no-peephole
 
 # Disable all optimizations
 wasm-pvm compile input.wasm -o output.jam \
-  --no-llvm-passes --no-peephole --no-register-cache \
+  --no-peephole --no-register-cache \
   --no-icmp-fusion --no-shrink-wrap --no-dead-store-elim \
   --no-const-prop --no-inline --no-cross-block-cache \
   --no-register-alloc --no-fallthrough-jumps
 ```
+
+`--no-llvm-passes` is **not** included above: it disables `mem2reg` and therefore breaks PVM lowering on any non-trivial input. See [Diagnostic & Triage Flags](#diagnostic--triage-flags).
 
 ## Optimization Flags
 
@@ -27,7 +29,6 @@ All non-trivial optimizations are enabled by default. Each can be individually d
 
 | Flag | What it controls |
 |------|------------------|
-| `--no-llvm-passes` | LLVM optimization passes (mem2reg, instcombine, etc.) |
 | `--no-peephole` | Post-codegen peephole optimizer |
 | `--no-register-cache` | Per-block store-load forwarding |
 | `--no-icmp-fusion` | Fuse ICmp+Branch into single PVM branch |
@@ -49,6 +50,7 @@ are *not* optimizations.
 | Flag | What it does |
 |------|--------------|
 | `--trap-floats` | Replace every f32/f64 operator with a runtime trap instead of failing compilation. See [Trap Floats Mode](./trap-floats.md). |
+| `--no-llvm-passes` | **Debug only.** Skip the entire LLVM pass pipeline (including `mem2reg`). The PVM backend cannot lower the resulting `alloca` / unpromoted SSA, so non-trivial WASM will fail to compile. Use only to inspect raw frontend IR. |
 
 When compilation fails on an unsupported operator, the error message includes
 the function index, the function's display name (from the WASM `name` custom
