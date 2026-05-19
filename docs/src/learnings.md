@@ -607,7 +607,7 @@ The compiler must produce byte-identical JAM output for the same WASM input acro
 
 ### Trap 1: `HashMap`/`HashSet` iteration order is process-randomised
 
-Rust's default `HashMap`/`HashSet` use a per-process-randomised hasher, so iteration order changes between CLI invocations. Any iteration whose side effects reach the emitted bytes (emitting an instruction, assigning a register/offset, mutating state read by the next iteration) leaks that randomness. The mitigation is the `AGENTS.md` rule: prefer `BTreeMap`/`BTreeSet` throughout; if a key type has no `Ord` (e.g. `inkwell::BasicBlock`), keep the `HashMap` for lookups only and collect into a `Vec` sorted by a derived key before iterating.
+Rust's default `HashMap`/`HashSet` use a per-process-randomised hasher, so iteration order changes between CLI invocations. Any iteration whose side effects reach the emitted bytes (emitting an instruction, assigning a register/offset, mutating state read by the next iteration) leaks that randomness. The mitigation is the `AGENTS.md` rule: prefer `BTreeMap`/`BTreeSet` throughout; for keys whose natural type has no `Ord` (`inkwell` SSA values and basic blocks), wrap with a per-function insertion-order ID — `ValKey`/`BbKey` in `llvm_backend::emitter`.
 
 ### Trap 2: `ValKey` originally wrapped a raw LLVM pointer
 
@@ -619,7 +619,7 @@ The fix (issue #204) replaces the raw pointer with an insertion-order ID. A per-
 
 ### Trap 3: Order-dependent loops over `HashMap<BasicBlock, _>`
 
-Most `HashMap<BasicBlock, _>` iteration sites in the backend are commutative (e.g. `end = end.max(...)` across loop headers, `depths[i] += 1` across positions), so the carve-out for `BasicBlock` keys (which lack `Ord`) was considered safe. Except one case wasn't commutative: the live-interval extension loop reads `end` in its predicate and mutates `end` in its body, so iteration N+1's predicate depends on iteration N's effect. Fixed by returning `Vec<(BasicBlock, usize)>` sorted by header position from `detect_loop_headers`. When adding a new iteration over a `BasicBlock`-keyed map, prove commutativity explicitly — "I think this is order-invariant" is how this one slipped in.
+Most `HashMap<BasicBlock, _>` iteration sites in the backend are commutative (e.g. `end = end.max(...)` across loop headers, `depths[i] += 1` across positions), so the carve-out for `BasicBlock` keys (which lack `Ord`) was considered safe. Except one case wasn't commutative: the live-interval extension loop reads `end` in its predicate and mutates `end` in its body, so iteration N+1's predicate depends on iteration N's effect. The immediate fix returned `Vec<(BasicBlock, usize)>` sorted by header position from `detect_loop_headers`. Issue #205 then removed the carve-out entirely by mirroring the `ValKey` pattern for blocks: `BbKey` is a per-function insertion-order ID, every backend `BasicBlock`-keyed map is now `BTreeMap<BbKey, _>`, and the sort in `detect_loop_headers` is preserved only because `BbKey` order = first-IR-walk-intern order ≠ block-emission order.
 
 ### Detection
 
