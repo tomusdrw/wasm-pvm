@@ -282,7 +282,11 @@ compile_noopt_jams() {
       continue
     fi
     local output="$noopt_dir/$basename.jam"
-    compile_benchmark "$wasm_src" "$output" "$basename" "${NO_OPT_FLAGS[@]}" >&2
+    # Tolerate per-fixture compile failures (missing source, missing
+    # vendor/anan-as build, etc.) so one bad entry doesn't kill the whole
+    # table under `set -e`. `benchmark_one` renders SKIP rows for missing
+    # JAMs, matching the polkadot path's `|| rc=$?` tolerance.
+    compile_benchmark "$wasm_src" "$output" "$basename" "${NO_OPT_FLAGS[@]}" >&2 || true
   done
   compile_polkadot_jams "$noopt_dir" "${NO_OPT_FLAGS[@]}"
 }
