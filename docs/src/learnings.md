@@ -609,13 +609,13 @@ The compiler must produce byte-identical JAM output for the same WASM input acro
 
 Rust's default `HashMap`/`HashSet` use a per-process-randomised hasher, so iteration order changes between CLI invocations. Any iteration whose side effects reach the emitted bytes (emitting an instruction, assigning a register/offset, mutating state read by the next iteration) leaks that randomness. The mitigation is the `AGENTS.md` rule: prefer `BTreeMap`/`BTreeSet` throughout; if a key type has no `Ord` (e.g. `inkwell::BasicBlock`), keep the `HashMap` for lookups only and collect into a `Vec` sorted by a derived key before iterating.
 
-### Trap 2: `BTreeMap<ValKey, _>` is *not* reproducible across runs
+### Trap 2: `ValKey` originally wrapped a raw LLVM pointer
 
-This one is non-obvious. `ValKey` wraps `Value::as_value_ref() as usize` — the raw LLVM pointer. LLVM allocates different `Value` subclasses (e.g. `Argument`, `InstructionValue`) from separate arenas, and those arenas sit at independent ASLR-randomised base addresses. So `BTreeMap<ValKey, _>` iteration is pointer-address order, which can flip between invocations whenever entries come from different arenas. A same-process loop over a `BTreeMap<ValKey, _>` is stable; a diff between two process runs is not.
+`ValKey` used to wrap `Value::as_value_ref() as usize` — the raw LLVM pointer. LLVM allocates different `Value` subclasses (e.g. `Argument`, `InstructionValue`) from separate arenas at independent ASLR-randomised base addresses, so the derived `Ord` was pointer-address order: a `BTreeMap<ValKey, _>` iterated in pointer order, which flipped between process invocations whenever entries came from different arenas.
 
-Where this actually bit us: `compute_live_intervals` iterated `value_slots: BTreeMap<ValKey, i32>` directly and then pushed intervals into a `Vec` in that order. The downstream linear scan is stable-sorted by `(start, spill_weight)`; ties fall back to input order, which meant pointer order, which meant non-deterministic register assignments under aggressive allocation (more ties at min_uses=1).
+Where this bit us: `compute_live_intervals` iterated `value_slots: BTreeMap<ValKey, i32>` directly and then pushed intervals into a `Vec` in that order. The downstream linear scan is stable-sorted by `(start, spill_weight)`; ties fell back to input order, which meant pointer order, which meant non-deterministic register assignments under aggressive allocation (more ties at min_uses=1).
 
-The fix is to iterate by a derived in-process-stable key. `value_slots` values are bump-allocated slot offsets (monotonic in insertion order), so sorting by slot offset gives insertion order. `instr_index` maps `ValKey → linearised position` for the same purpose when values come from instructions. The `ValKey` doc comment carries a warning; heed it.
+The fix (issue #204) replaces the raw pointer with an insertion-order ID. A per-function `ValKeyCache` on `PvmEmitter` maps the LLVM pointer to a monotonically-increasing `u32` the first time the value is observed during IR walking; subsequent observations return the same ID. Because the IR-walking order (`pre_scan_function` + regalloc linearisation) is deterministic, the IDs are too — `BTreeMap<ValKey, _>` iteration is now reproducible across runs by construction, no derived-key sort required.
 
 ### Trap 3: Order-dependent loops over `HashMap<BasicBlock, _>`
 

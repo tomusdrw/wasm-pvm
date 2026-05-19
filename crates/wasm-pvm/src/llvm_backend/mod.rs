@@ -41,7 +41,7 @@ use crate::pvm::Instruction;
 use crate::{Error, Result, abi};
 
 use abi::{TEMP_RESULT, TEMP1, TEMP2};
-use emitter::{PvmEmitter, SCRATCH1, SCRATCH2, pre_scan_function, val_key_instr};
+use emitter::{PvmEmitter, SCRATCH1, SCRATCH2, pre_scan_function};
 
 /// Lower a single LLVM function to PVM bytecode.
 ///
@@ -112,6 +112,7 @@ fn lower_function_inner(
             ctx.optimizations.allocate_scratch_regs && emitter::scratch_regs_safe(function);
         emitter.regalloc = regalloc::run(
             function,
+            &mut emitter.val_key_cache,
             &emitter.value_slots,
             is_leaf,
             function.count_params() as usize,
@@ -520,7 +521,7 @@ fn restore_phi_alloc_reg_slots(e: &mut PvmEmitter<'_>, bb: BasicBlock<'_>) {
         if instr.get_opcode() != InstructionOpcode::Phi {
             break;
         }
-        let phi_key = val_key_instr(instr);
+        let phi_key = e.val_key_instr(instr);
         if let Some(&phi_reg) = e.regalloc.val_to_reg.get(&phi_key)
             && let Some(phi_slot) = e.get_slot(phi_key)
         {
@@ -598,7 +599,7 @@ fn emit_prologue<'ctx>(
     // Copy parameters to their SSA slots.
     let params = function.get_params();
     for (i, param) in params.iter().enumerate() {
-        let key = emitter::val_key_basic(*param);
+        let key = e.val_key_basic(*param);
         let slot = e
             .get_slot(key)
             .ok_or_else(|| Error::Internal(format!("no slot for parameter {i} (key {key:?})")))?;

@@ -19,7 +19,6 @@ use crate::pvm::Instruction;
 use super::emitter::{
     LoweringContext, PvmEmitter, get_operand, operand_bit_width, operand_reg, operand_reg_avoiding,
     prepare_operand, prepare_operand_avoiding, result_reg, result_slot, try_get_constant,
-    val_key_basic,
 };
 use super::memory::{
     PvmLoadKind, PvmStoreKind, emit_pvm_data_drop, emit_pvm_load, emit_pvm_memory_copy,
@@ -513,7 +512,7 @@ pub fn lower_llvm_intrinsic<'ctx>(
         let is_32 = bits == 32;
 
         // Rotation detection: when a and b are the same SSA value, use RotL/RotR.
-        if val_key_basic(a) == val_key_basic(b) {
+        if e.val_key_basic(a) == e.val_key_basic(b) {
             let dst = result_reg(e, instr);
             // `amt_reg` is resolved lazily below (only on the variable-amount
             // path), so `a_reg` only needs to avoid TEMP2 — the future load
