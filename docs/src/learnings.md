@@ -238,7 +238,7 @@ Substrate / polkadot-fellows runtimes hit `llvm.bitreverse.i32` regularly (share
 
 - The pattern `[32-bit-producer] → [AddImm32(x, x, 0)]` is eliminated by peephole when directly adjacent
 - In practice with LLVM passes enabled, `instcombine` already eliminates `trunc(32-bit-op)` at the LLVM IR level, so this peephole pattern fires rarely
-- The peephole is still valuable for `--no-llvm-passes` mode and as defense-in-depth
+- The peephole is still valuable for `--debug-skip-llvm-passes` mode and as defense-in-depth
 - **Known limitation**: the pattern only matches directly adjacent instructions; a `StoreIndU64` between producer and truncation breaks the match
 
 ### Peephole AddImm Width Safety

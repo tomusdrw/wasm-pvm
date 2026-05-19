@@ -55,7 +55,7 @@ enum Commands {
                     The PVM backend cannot lower alloca / unpromoted SSA, so any non-trivial \
                     WASM will fail to compile. Use to inspect raw frontend IR."
         )]
-        no_llvm_passes: bool,
+        debug_skip_llvm_passes: bool,
 
         #[arg(long, help = "Disable peephole optimizer")]
         no_peephole: bool,
@@ -166,7 +166,7 @@ fn main() -> Result<()> {
             adapter,
             verbose,
             json,
-            no_llvm_passes,
+            debug_skip_llvm_passes,
             no_peephole,
             no_register_cache,
             no_icmp_fusion,
@@ -214,7 +214,7 @@ fn main() -> Result<()> {
                 adapter: adapter_wat,
                 metadata: metadata.into_bytes(),
                 optimizations: OptimizationFlags {
-                    llvm_passes: !no_llvm_passes,
+                    llvm_passes: !debug_skip_llvm_passes,
                     peephole: !no_peephole,
                     register_cache: !no_register_cache,
                     icmp_branch_fusion: !no_icmp_fusion,

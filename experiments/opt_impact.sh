@@ -45,10 +45,12 @@ case "${1:-}" in
 esac
 
 # -----------------------------------------------------------------------------
-# Optimization flag list — each entry toggles ONE optimization off.
+# Flag list used for impact sweeps. Most entries toggle ONE optimization off;
+# `--debug-skip-llvm-passes` is a diagnostic/debug flag included for failure
+# characterization (see experiments/analysis.md).
 # -----------------------------------------------------------------------------
 OPT_FLAGS=(
-  --no-llvm-passes
+  --debug-skip-llvm-passes
   --no-peephole
   --no-register-cache
   --no-icmp-fusion
