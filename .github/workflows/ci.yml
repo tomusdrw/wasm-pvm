@@ -159,6 +159,65 @@ jobs:
       - name: Run differential tests
         run: cd tests && bun test differential/ --test-name-pattern differential
 
+  differential-no-opts:
+    name: Differential Tests (--no-all-opts)
+    runs-on: ubuntu-latest
+    needs: integration
+    env:
+      # Compile every JAM with --no-all-opts so the differential suite
+      # cross-checks PVM output (against native WASM) with every optional
+      # optimization disabled. Catches miscompiles introduced by any opt.
+      WASM_PVM_NO_OPTS: "1"
+      # Skip the heavy anan-as compiler build — only layers 4-5 (PVM-in-PVM)
+      # use it, and this job doesn't run them. With --no-all-opts the
+      # compiler JAM is much larger and the build is several minutes slower.
+      WASM_PVM_SKIP_ANAN_AS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM 18
+        run: sudo apt-get update && sudo apt-get install -y llvm-18-dev libpolly-18-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build wasm-pvm-cli
+        run: cargo build --release -p wasm-pvm-cli
+
+      - name: Install anan-as dependencies
+        run: cd vendor/anan-as && npm ci
+
+      - name: Build anan-as
+        run: cd vendor/anan-as && npm run build
+
+      - name: Install tests dependencies
+        run: cd tests && bun install
+
+      - name: Build test artifacts (no-opts)
+        run: cd tests && bun build.ts
+
+      - name: Run integration tests (layers 1-3, no-opts)
+        run: cd tests && bun test layer1/ layer2/ layer3/
+
+      - name: Run differential tests (no-opts)
+        run: cd tests && bun test differential/ --test-name-pattern differential
+
   pvm-in-pvm:
     name: PVM-in-PVM Tests (Layers 4-5)
     runs-on: ubuntu-latest

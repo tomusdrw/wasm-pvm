@@ -57,6 +57,16 @@ enum Commands {
         )]
         debug_skip_llvm_passes: bool,
 
+        #[arg(
+            long,
+            help = "Disable every optional optimization at once (peephole, register cache, \
+                    icmp fusion, shrink-wrap, DSE, const-prop, inlining, cross-block cache, \
+                    regalloc, fallthrough jumps, aggressive regalloc, scratch/caller-saved \
+                    alloc, lazy spill, libcall recognition, mergefunc). LLVM passes stay on \
+                    (the backend requires mem2reg). Used by the no-opts differential CI job."
+        )]
+        no_all_opts: bool,
+
         #[arg(long, help = "Disable peephole optimizer")]
         no_peephole: bool,
 
@@ -151,6 +161,7 @@ enum Commands {
     },
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -167,6 +178,7 @@ fn main() -> Result<()> {
             verbose,
             json,
             debug_skip_llvm_passes,
+            no_all_opts,
             no_peephole,
             no_register_cache,
             no_icmp_fusion,
@@ -209,30 +221,40 @@ fn main() -> Result<()> {
                 None
             };
 
+            // `--no-all-opts` sets every optional flag to false; individual
+            // `--no-*` flags still apply on top (their effect is idempotent in
+            // that case). `--debug-skip-llvm-passes` and `--inline-threshold`
+            // are independent of `--no-all-opts`.
+            let base = if no_all_opts {
+                OptimizationFlags::all_disabled()
+            } else {
+                OptimizationFlags::default()
+            };
             let options = CompileOptions {
                 import_map,
                 adapter: adapter_wat,
                 metadata: metadata.into_bytes(),
                 optimizations: OptimizationFlags {
                     llvm_passes: !debug_skip_llvm_passes,
-                    peephole: !no_peephole,
-                    register_cache: !no_register_cache,
-                    icmp_branch_fusion: !no_icmp_fusion,
-                    shrink_wrap_callee_saves: !no_shrink_wrap,
-                    dead_store_elimination: !no_dead_store_elim,
-                    constant_propagation: !no_const_prop,
-                    inlining: !no_inline,
-                    cross_block_cache: !no_cross_block_cache,
-                    register_allocation: !no_register_alloc,
-                    fallthrough_jumps: !no_fallthrough_jumps,
-                    aggressive_register_allocation: !no_aggressive_regalloc,
-                    allocate_scratch_regs: !no_scratch_reg_alloc,
-                    allocate_caller_saved_regs: !no_caller_saved_alloc,
-                    lazy_spill: !no_lazy_spill,
-                    inline_threshold: inline_threshold
-                        .or(OptimizationFlags::default().inline_threshold),
-                    libcall_recognition: !no_libcall_recognition,
-                    mergefunc: !no_mergefunc,
+                    peephole: base.peephole && !no_peephole,
+                    register_cache: base.register_cache && !no_register_cache,
+                    icmp_branch_fusion: base.icmp_branch_fusion && !no_icmp_fusion,
+                    shrink_wrap_callee_saves: base.shrink_wrap_callee_saves && !no_shrink_wrap,
+                    dead_store_elimination: base.dead_store_elimination && !no_dead_store_elim,
+                    constant_propagation: base.constant_propagation && !no_const_prop,
+                    inlining: base.inlining && !no_inline,
+                    cross_block_cache: base.cross_block_cache && !no_cross_block_cache,
+                    register_allocation: base.register_allocation && !no_register_alloc,
+                    fallthrough_jumps: base.fallthrough_jumps && !no_fallthrough_jumps,
+                    aggressive_register_allocation: base.aggressive_register_allocation
+                        && !no_aggressive_regalloc,
+                    allocate_scratch_regs: base.allocate_scratch_regs && !no_scratch_reg_alloc,
+                    allocate_caller_saved_regs: base.allocate_caller_saved_regs
+                        && !no_caller_saved_alloc,
+                    lazy_spill: base.lazy_spill && !no_lazy_spill,
+                    inline_threshold: inline_threshold.or(base.inline_threshold),
+                    libcall_recognition: base.libcall_recognition && !no_libcall_recognition,
+                    mergefunc: base.mergefunc && !no_mergefunc,
                 },
                 max_memory_pages: max_memory,
                 trap_floats,

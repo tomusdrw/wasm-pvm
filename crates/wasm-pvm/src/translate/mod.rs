@@ -120,6 +120,40 @@ impl Default for OptimizationFlags {
     }
 }
 
+impl OptimizationFlags {
+    /// All optional optimizations disabled. Used for correctness differential
+    /// testing — running the same fixture twice (default vs `all_disabled`) and
+    /// comparing results catches miscompiles that any optimization introduces.
+    ///
+    /// `llvm_passes` stays enabled because the PVM backend cannot lower
+    /// `alloca`/unpromoted SSA — disabling LLVM passes (including `mem2reg`)
+    /// would make non-trivial WASM fail to compile, not just run slower.
+    /// `inline_threshold` is unchanged (it only matters when `inlining` is on).
+    #[must_use]
+    pub fn all_disabled() -> Self {
+        Self {
+            llvm_passes: true,
+            peephole: false,
+            register_cache: false,
+            icmp_branch_fusion: false,
+            shrink_wrap_callee_saves: false,
+            dead_store_elimination: false,
+            constant_propagation: false,
+            inlining: false,
+            cross_block_cache: false,
+            register_allocation: false,
+            fallthrough_jumps: false,
+            aggressive_register_allocation: false,
+            allocate_scratch_regs: false,
+            allocate_caller_saved_regs: false,
+            lazy_spill: false,
+            inline_threshold: Some(5),
+            libcall_recognition: false,
+            mergefunc: false,
+        }
+    }
+}
+
 /// Options for compilation.
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
@@ -960,9 +994,35 @@ fn resolve_call_fixups(
 mod tests {
     use std::collections::BTreeMap;
 
+    use super::OptimizationFlags;
     use super::build_rw_data;
     use super::memory_layout;
     use super::wasm_module::DataSegment;
+
+    #[test]
+    fn all_disabled_turns_off_every_optional_optimization() {
+        let f = OptimizationFlags::all_disabled();
+        // `llvm_passes` must stay on — the PVM backend cannot lower alloca.
+        assert!(f.llvm_passes, "llvm_passes must stay enabled");
+        // Every other boolean must be false. If a new optional optimization
+        // is added, update `all_disabled()` and this assertion together.
+        assert!(!f.peephole);
+        assert!(!f.register_cache);
+        assert!(!f.icmp_branch_fusion);
+        assert!(!f.shrink_wrap_callee_saves);
+        assert!(!f.dead_store_elimination);
+        assert!(!f.constant_propagation);
+        assert!(!f.inlining);
+        assert!(!f.cross_block_cache);
+        assert!(!f.register_allocation);
+        assert!(!f.fallthrough_jumps);
+        assert!(!f.aggressive_register_allocation);
+        assert!(!f.allocate_scratch_regs);
+        assert!(!f.allocate_caller_saved_regs);
+        assert!(!f.lazy_spill);
+        assert!(!f.libcall_recognition);
+        assert!(!f.mergefunc);
+    }
 
     #[test]
     fn build_rw_data_trims_all_zero_tail_to_empty() {
