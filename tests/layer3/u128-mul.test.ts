@@ -13,6 +13,13 @@ import { runJamBytes } from "../helpers/run";
 // synthesized body is correct.
 // -----------------------------------------------------------------------------
 
+// This whole suite tests the libcall_recognition optimization itself. When
+// WASM_PVM_NO_OPTS=1 (the no-opts differential CI job), that opt is disabled
+// by design, the stub `__multi3` body (writes zeros) is what actually runs,
+// and every product comes out 0 — a designed failure, not a real regression.
+const NO_OPTS = process.env.WASM_PVM_NO_OPTS === "1";
+const maybeDescribe: typeof describe = NO_OPTS ? describe.skip : describe;
+
 const JAM_FILE = path.join(JAM_DIR, "u128-mul.jam");
 
 const MASK_128 = (1n << 128n) - 1n;
@@ -45,7 +52,7 @@ function expectProduct(a: bigint, b: bigint) {
   expect(actual).toBe(expected);
 }
 
-describe("__multi3 libcall recognition", () => {
+maybeDescribe("__multi3 libcall recognition", () => {
   test("0 × anything = 0", () => {
     expectProduct(0n, 0n);
     expectProduct(0n, 12345n);

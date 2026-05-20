@@ -57,6 +57,14 @@ export function compileAS(
   return wasmFile;
 }
 
+/**
+ * When `WASM_PVM_NO_OPTS=1` is set, every JAM compiled by this helper passes
+ * `--no-all-opts` to the CLI. Used by the no-opts differential CI job to
+ * cross-check that the same fixture produces the same result with and without
+ * optional optimizations.
+ */
+const NO_OPTS = process.env.WASM_PVM_NO_OPTS === "1";
+
 export function compileToJAM(
   inputPath: string,
   outputName: string,
@@ -76,6 +84,9 @@ export function compileToJAM(
   }
   if (maxMemory !== undefined) {
     args.push("--max-memory", `${maxMemory}`);
+  }
+  if (NO_OPTS) {
+    args.push("--no-all-opts");
   }
 
   execFileSync(CLI_BINARY, args, {
