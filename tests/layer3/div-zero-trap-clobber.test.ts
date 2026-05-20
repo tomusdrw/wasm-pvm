@@ -13,11 +13,12 @@ import { defineSuite } from "../helpers/suite";
 // pressure so the compiler keeps `value` in a callee-saved register.
 //
 // args layout (5 i32, little-endian): value, ext_a, ext_b, ext_c, ext_d.
-// Result = digit_sum(value) + ext_a' + ext_b' + ext_c' + ext_d',
-// where the extras are rotated through xor/add per loop iteration.
+// Result = digit_sum(value). The extras are rotated through xor/add per
+// loop iteration and parked to memory but are not part of the returned
+// value (the WAT only stores `$sum` at address 0).
 //
-// For value=12345 and extras = 0: extras stay 0, digit sum = 5+4+3+2 = 14.
-// For value=10 and extras = 0: digit sum = 0 (10%10 = 0).
+// For value=12345: digit sum = 5+4+3+2 = 14.
+// For value=10: digit sum = 0 (10%10 = 0).
 const tests = [
   {
     args: "01000000" + "00000000".repeat(4),
