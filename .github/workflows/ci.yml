@@ -168,10 +168,12 @@ jobs:
       # cross-checks PVM output (against native WASM) with every optional
       # optimization disabled. Catches miscompiles introduced by any opt.
       WASM_PVM_NO_OPTS: "1"
-      # Skip the heavy anan-as compiler build — only layers 4-5 (PVM-in-PVM)
-      # use it, and this job doesn't run them. With --no-all-opts the
-      # compiler JAM is much larger and the build is several minutes slower.
-      WASM_PVM_SKIP_ANAN_AS: "1"
+      # Skip the heavy `anan-as compiler.wasm -> JAM` build step (the JAM
+      # only powers layers 4-5 PVM-in-PVM, which this job doesn't run).
+      # The anan-as CLI runner itself still gets built — `runJam` needs it
+      # to execute every layer-1/2/3 and differential JAM. Under --no-all-opts
+      # the compiler JAM is much larger and several minutes slower to build.
+      WASM_PVM_SKIP_ANAN_AS_COMPILER: "1"
     steps:
       - uses: actions/checkout@v4
         with:

@@ -234,15 +234,15 @@ async function main() {
   }
 
   // anan-as compiler (for PVM-in-PVM tests).
-  // Skippable via WASM_PVM_SKIP_ANAN_AS=1 — the no-opts differential CI job
+  // Skippable via WASM_PVM_SKIP_ANAN_AS_COMPILER=1 — the no-opts differential CI job
   // doesn't run PVM-in-PVM and avoiding this compile saves several minutes
   // (under --no-all-opts the compiler JAM is much larger and slower to build).
   const ananAsCompilerWasm = path.join(PROJECT_ROOT, "vendor/anan-as/dist/build/compiler.wasm");
   const ananAsCompilerImports = path.join(IMPORTS_DIR, "anan-as-compiler.imports");
   const ananAsCompilerAdapter = path.join(IMPORTS_DIR, "anan-as-compiler.adapter.wat");
-  const skipAnanAs = process.env.WASM_PVM_SKIP_ANAN_AS === "1";
+  const skipAnanAs = process.env.WASM_PVM_SKIP_ANAN_AS_COMPILER === "1";
   if (skipAnanAs) {
-    console.log("\nSkipping anan-as compiler (WASM_PVM_SKIP_ANAN_AS=1).");
+    console.log("\nSkipping anan-as compiler (WASM_PVM_SKIP_ANAN_AS_COMPILER=1).");
   } else if (fs.existsSync(ananAsCompilerWasm)) {
     console.log("\nCompiling anan-as compiler WASM -> JAM...");
     const imports = fs.existsSync(ananAsCompilerImports) ? ananAsCompilerImports : undefined;
