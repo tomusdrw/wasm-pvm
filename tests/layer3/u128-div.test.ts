@@ -12,6 +12,13 @@ import { runJamBytes } from "../helpers/run";
 //            and 16-byte copy in the synthesized slow path work end-to-end.
 // -----------------------------------------------------------------------------
 
+// This whole suite tests the libcall_recognition optimization itself. When
+// WASM_PVM_NO_OPTS=1 (the no-opts differential CI job), that opt is disabled
+// by design, the stub `__udivti3` body runs unchanged, and every result
+// disagrees with the synthesized fast/slow path expectations.
+const NO_OPTS = process.env.WASM_PVM_NO_OPTS === "1";
+const maybeDescribe: typeof describe = NO_OPTS ? describe.skip : describe;
+
 const JAM_FILE = path.join(JAM_DIR, "u128-div.jam");
 
 const MASK_64 = (1n << 64n) - 1n;
@@ -41,7 +48,7 @@ function decodeResult(bytes: Uint8Array): { lo: bigint; hi: bigint } {
 const SLOW_PATH_QLO = 0xdeadbef0n;
 const SLOW_PATH_QHI = 0xdeadbef1n;
 
-describe("__udivti3 fast path (a_hi == 0 && b_hi == 0)", () => {
+maybeDescribe("__udivti3 fast path (a_hi == 0 && b_hi == 0)", () => {
   // The synthesized fast path emits `udiv i64`, which our backend gates
   // with `emit_wasm_div_zero_trap` before the actual `DivU64`. anan-as
   // reports a trap as `Status: PANIC` with no result bytes (it still
@@ -84,7 +91,7 @@ describe("__udivti3 fast path (a_hi == 0 && b_hi == 0)", () => {
   });
 });
 
-describe("__udivti3 slow path (high half non-zero)", () => {
+maybeDescribe("__udivti3 slow path (high half non-zero)", () => {
   test("a_hi != 0 takes slow path", () => {
     const bytes = runJamBytes(JAM_FILE, encodeArgs(7n, 1n, 3n, 0n));
     expect(decodeResult(bytes)).toEqual({
