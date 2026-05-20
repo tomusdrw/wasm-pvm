@@ -862,6 +862,20 @@ The cache snapshot taken before lowering a block's terminator (`llvm_backend/mod
 
 Fix: invalidate `TEMP1`, `TEMP2`, `TEMP_RESULT`, `SCRATCH1`, `SCRATCH2` in the snapshot — the full set of registers any terminator path may touch. This is a strict superset of what was invalidated before, so it can never make a successor read a fresher cache entry than is actually valid.
 
+## Intra-Block Trap-Bypass Labels Must Preserve Cache (#256)
+
+The WASM-style trap helpers in `llvm_backend/alu.rs` — `emit_wasm_div_zero_trap` and `emit_wasm_signed_overflow_trap` — emit a one-shot bypass pattern: `BranchNeImm/BranchGeS … → ok_label; Trap; ok_label:`. The label is purely intra-block (its only predecessor is the branch above; the falls-through `Trap` is unreachable), so register state at the label equals state at the branch. Both helpers used to call `define_label(ok_label)`, which under the hood calls `clear_reg_cache` and wipes `alloc_reg_slot` / `alloc_dirty` for every allocated register.
+
+With lazy spill on, that wipe is silently destructive. The back-edge phi copy in `emit_phi_copies_regaware` writes the new phi value into the phi's allocated register (via `emit_raw_move`) and calls `set_alloc_reg_for_slot(phi_reg, phi_slot)` — but it does **not** emit a `StoreIndU64` to the slot (that's the entire point of lazy spill). The phi value lives in the register; the stack slot stays stale. Then on the next iteration, every `load_operand(%phi, …)` is supposed to take the fast path against `alloc_reg_slot[phi_reg] == Some(phi_slot)` and emit `MoveReg` from the alloc reg. If a `define_label` clears `alloc_reg_slot` between two uses of the phi, the second `load_operand` instead emits `LoadIndU64` from the stale slot — and the loop reads garbage.
+
+The aslan-ecalli fixture trips this for the `value` phi in AssemblyScript's `utoa_dec_simple` (`value % 10` then `value / 10` per iteration, with the rem's trap bypass between the two reads). With every other optimization on, the loop reads stack[64] forever and burns ~100M gas. Turning off any of `--lazy-spill`, `--register-alloc`, or `--shrink-wrap` masks the bug (the first two suppress the store elision; the third shifts the regalloc decision so the phi lands elsewhere) — the symptom is a 4-orders-of-magnitude gas swing from flipping unrelated-looking flags.
+
+Fix: both trap helpers now call `define_label_preserving_cache(ok_label)`. That records the label PC and emits a Fallthrough if needed, but does **not** clear any cache state. Safe because the only live edge into the label is the branch above, which doesn't write any registers — so the cache at the label equals the cache before the branch.
+
+This pattern is specific to *single-predecessor intra-block labels where the fall-through path is unreachable*. Other `define_label` callers in `llvm_backend/intrinsics.rs` (the `abs` two-path merge), `llvm_backend/memory.rs` (bulk-memory loop bodies), and `llvm_backend/mod.rs` (block boundaries with cross-block propagation) all have multiple live predecessors and must keep clearing — preservation would let one path's stale alloc state leak into another. The trap-bypass case is uniquely safe.
+
+Don't generalize this by making `define_label` "smart" (e.g. "preserve if the previous instruction is the lone branch to this label"). The emitter doesn't track which `define_label` calls are merge points vs. trap-bypasses, and a peephole-style "only one preceding branch" check would miss labels whose predecessors are also stitched in by `emit_jump_to_label` fixups elsewhere. The call-site distinction is structural and clearer.
+
 ## Global Storage Width: Per-Type Slots, Not Uniform 8-Byte Widening
 
 For most of the compiler's history each WASM global was stored in a fixed 4-byte slot at `0x30000 + (has_mem_size ? 4 : 0) + idx * 4`, and the lowering in `llvm_backend/memory.rs` emitted `LoadU32`/`StoreU32` for every `global.get` / `global.set`. That worked invisibly because:

@@ -48,7 +48,13 @@ fn emit_wasm_div_zero_trap(e: &mut PvmEmitter, rhs_reg: u8) {
     let ok_label = e.alloc_label();
     e.emit_branch_ne_imm_to_label(rhs_reg, 0, ok_label);
     e.emit(Instruction::Trap);
-    e.define_label(ok_label);
+    // Intra-block trap bypass: the only path into `ok_label` is the branch
+    // above, which does not modify any registers. Use the cache-preserving
+    // variant so that `define_label`'s state clear does not invalidate
+    // `alloc_reg_slot` mappings for values that are live across this check.
+    // Without this, downstream `load_operand` falls back to LoadIndU64 from
+    // a stack slot whose store was elided by lazy spill, reading stale data.
+    e.define_label_preserving_cache(ok_label);
 }
 
 /// Emit a WASM-style trap for signed overflow (`INT_MIN` / -1).
@@ -111,8 +117,11 @@ fn emit_wasm_signed_overflow_trap(e: &mut PvmEmitter, lhs_reg: u8, rhs_reg: u8, 
     // 3. Trap if we are here (rhs == -1 AND lhs == INT_MIN)
     e.emit(Instruction::Trap);
 
-    // 4. Label
-    e.define_label(ok_label);
+    // 4. Label. Intra-block trap bypass: every predecessor of `ok_label` is
+    // one of the branches above, none of which modifies a register. Preserve
+    // the cache so values live across the check (e.g. loop phi destinations
+    // held in allocated registers) remain reachable via the alloc reg map.
+    e.define_label_preserving_cache(ok_label);
 }
 
 /// Build the immediate-form instruction for a commutative binary op (Add, Mul, And, Or, Xor).
