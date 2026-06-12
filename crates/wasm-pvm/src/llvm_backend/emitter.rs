@@ -152,6 +152,8 @@ pub struct EmitterConfig {
 
     /// Whether ICmp+Branch fusion is enabled.
     pub icmp_fusion_enabled: bool,
+    /// Elide zext masks on values used exclusively as memory-access addresses.
+    pub address_mask_elision_enabled: bool,
 
     /// Whether callee-save shrink wrapping is enabled.
     pub shrink_wrap_enabled: bool,

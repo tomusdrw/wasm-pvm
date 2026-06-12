@@ -84,6 +84,10 @@ fn lower_function_inner(
         param_overflow_reserved: ctx.param_overflow_reserved,
         register_cache_enabled: ctx.optimizations.register_cache,
         icmp_fusion_enabled: ctx.optimizations.icmp_branch_fusion,
+        // Sign/zero extension only agree on valid addresses when the whole
+        // memory fits below 2 GB; disable the elision for larger memories.
+        address_mask_elision_enabled: ctx.optimizations.address_mask_elision
+            && u64::from(ctx.max_memory_pages) * 65536 < (1u64 << 31),
         shrink_wrap_enabled: ctx.optimizations.shrink_wrap_callee_saves,
         constant_propagation_enabled: ctx.optimizations.constant_propagation,
         cross_block_cache_enabled: ctx.optimizations.cross_block_cache,
@@ -683,7 +687,14 @@ fn lower_instruction<'ctx>(
         InstructionOpcode::SRem => lower_binary_arith(e, instr, BinaryOp::SRem),
 
         // Bitwise
-        InstructionOpcode::And => lower_binary_arith(e, instr, BinaryOp::And),
+        InstructionOpcode::And => {
+            if e.config.address_mask_elision_enabled && alu::is_elidable_address_mask(instr) {
+                // Consumed directly by the memory-access lowering (the
+                // address operand is peeled past this mask) — skip.
+                return Ok(());
+            }
+            lower_binary_arith(e, instr, BinaryOp::And)
+        }
         InstructionOpcode::Or => lower_binary_arith(e, instr, BinaryOp::Or),
         InstructionOpcode::Xor => lower_binary_arith(e, instr, BinaryOp::Xor),
         InstructionOpcode::Shl => lower_binary_arith(e, instr, BinaryOp::Shl),
@@ -694,7 +705,13 @@ fn lower_instruction<'ctx>(
         InstructionOpcode::ICmp => lower_icmp(e, instr),
 
         // Conversions
-        InstructionOpcode::ZExt => lower_zext(e, instr),
+        InstructionOpcode::ZExt => {
+            if e.config.address_mask_elision_enabled && alu::is_elidable_address_mask(instr) {
+                // Consumed directly by the memory-access lowering — skip.
+                return Ok(());
+            }
+            lower_zext(e, instr)
+        }
         InstructionOpcode::SExt => lower_sext(e, instr),
         InstructionOpcode::Trunc => lower_trunc(e, instr),
 

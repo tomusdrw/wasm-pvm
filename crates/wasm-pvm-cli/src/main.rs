@@ -76,6 +76,12 @@ enum Commands {
         #[arg(long, help = "Disable ICmp+Branch fusion")]
         no_icmp_fusion: bool,
 
+        #[arg(
+            long,
+            help = "Disable zero-extension mask elision for memory-access addresses"
+        )]
+        no_address_mask_elision: bool,
+
         #[arg(long, help = "Disable callee-save shrink wrapping")]
         no_shrink_wrap: bool,
 
@@ -182,6 +188,7 @@ fn main() -> Result<()> {
             no_peephole,
             no_register_cache,
             no_icmp_fusion,
+            no_address_mask_elision,
             no_shrink_wrap,
             no_dead_store_elim,
             no_const_prop,
@@ -239,6 +246,7 @@ fn main() -> Result<()> {
                     peephole: base.peephole && !no_peephole,
                     register_cache: base.register_cache && !no_register_cache,
                     icmp_branch_fusion: base.icmp_branch_fusion && !no_icmp_fusion,
+                    address_mask_elision: base.address_mask_elision && !no_address_mask_elision,
                     shrink_wrap_callee_saves: base.shrink_wrap_callee_saves && !no_shrink_wrap,
                     dead_store_elimination: base.dead_store_elimination && !no_dead_store_elim,
                     constant_propagation: base.constant_propagation && !no_const_prop,

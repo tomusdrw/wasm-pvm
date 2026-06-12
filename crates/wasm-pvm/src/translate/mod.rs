@@ -78,6 +78,16 @@ pub struct OptimizationFlags {
     /// default (225). Default: `Some(5)` — only tiny helpers are inlined.
     /// Only effective when `inlining` is `true`.
     pub inline_threshold: Option<u32>,
+    /// Skip the zero-extension mask (`zext i32→i64` / `and x, 0xFFFFFFFF`) on
+    /// values consumed exclusively as memory-access addresses. For any wasm
+    /// memory smaller than 2 GB, sign- and zero-extension agree on every
+    /// valid address and both forms trap on every invalid one, so the
+    /// 2-instruction `shl 32; shr 32` pair per address is pure overhead.
+    /// Caveat: programs that intentionally rely on wrapping i32 address
+    /// arithmetic (well-defined in WASM, never emitted by LLVM or
+    /// `AssemblyScript` for valid pointers) trap instead of wrapping.
+    /// Automatically disabled when max memory ≥ 2 GB.
+    pub address_mask_elision: bool,
     /// Recognize compiler-builtins libcalls (`__multi3`, `__udivti3`) by name
     /// and replace their bodies with hand-crafted PVM-friendly IR.
     /// `__multi3` collapses to a `Mul64` + `MulUpperUU` + a few adds.
@@ -102,6 +112,7 @@ impl Default for OptimizationFlags {
             peephole: true,
             register_cache: true,
             icmp_branch_fusion: true,
+            address_mask_elision: true,
             shrink_wrap_callee_saves: true,
             dead_store_elimination: true,
             constant_propagation: true,
@@ -136,6 +147,7 @@ impl OptimizationFlags {
             peephole: false,
             register_cache: false,
             icmp_branch_fusion: false,
+            address_mask_elision: false,
             shrink_wrap_callee_saves: false,
             dead_store_elimination: false,
             constant_propagation: false,
