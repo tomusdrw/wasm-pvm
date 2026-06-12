@@ -186,6 +186,15 @@ pub enum Instruction {
     Jump {
         offset: i32,
     },
+    /// Internal width-stable form of [`Instruction::Jump`]: identical opcode
+    /// and semantics, but the offset always encodes as 4 bytes. Used for the
+    /// SPI entry header, whose layout is an external ABI (the secondary entry
+    /// point is *defined* to live at pc=5, i.e. right after a 5-byte jump),
+    /// and whose offsets are patched after layout is final. Decoding yields a
+    /// plain `Jump` — this variant never round-trips.
+    JumpFixed {
+        offset: i32,
+    },
     /// Combined load-immediate + jump: `reg = sign_extend(value); goto(PC + offset)`
     LoadImmJump {
         reg: u8,
@@ -756,8 +765,8 @@ impl Instruction {
             }
 
             op if op == Opcode::Jump as u8 => {
-                let offset = decode_offset_at(bytes, 1, "Jump")?;
-                Ok((Self::Jump { offset }, 5))
+                let offset = decode_imm_signed(&bytes[1..], "Jump offset")?;
+                Ok((Self::Jump { offset }, bytes.len()))
             }
 
             op if op == Opcode::Ecalli as u8 => {
@@ -862,9 +871,9 @@ impl Instruction {
                 }
 
                 let imm_end = 2 + imm_len;
-                ensure_min_len(bytes, imm_end + 4, "OneRegOneImmOneOff")?;
+                ensure_min_len(bytes, imm_end, "OneRegOneImmOneOff")?;
                 let value = decode_imm_signed(&bytes[2..imm_end], "OneRegOneImmOneOff immediate")?;
-                let offset = decode_offset_at(bytes, imm_end, "OneRegOneImmOneOff offset")?;
+                let offset = decode_imm_signed(&bytes[imm_end..], "OneRegOneImmOneOff offset")?;
 
                 let instruction = match op {
                     op if op == Opcode::LoadImmJump as u8 => {
@@ -907,7 +916,7 @@ impl Instruction {
                     }
                 };
 
-                Ok((instruction, imm_end + 4))
+                Ok((instruction, bytes.len()))
             }
 
             op if op == Opcode::StoreImmU8 as u8
@@ -1318,10 +1327,10 @@ impl Instruction {
                 || op == Opcode::BranchGeU as u8
                 || op == Opcode::BranchGeS as u8 =>
             {
-                ensure_min_len(bytes, 6, "TwoRegOneOff")?;
+                ensure_min_len(bytes, 2, "TwoRegOneOff")?;
                 let reg1 = (bytes[1] >> 4) & 0x0F;
                 let reg2 = bytes[1] & 0x0F;
-                let offset = decode_offset_at(bytes, 2, "TwoRegOneOff offset")?;
+                let offset = decode_imm_signed(&bytes[2..], "TwoRegOneOff offset")?;
 
                 let instruction = match op {
                     op if op == Opcode::BranchEq as u8 => Self::BranchEq { reg1, reg2, offset },
@@ -1337,7 +1346,7 @@ impl Instruction {
                     }
                 };
 
-                Ok((instruction, 6))
+                Ok((instruction, bytes.len()))
             }
 
             op if op == Opcode::LoadImmJumpInd as u8 => {
@@ -1552,11 +1561,16 @@ impl Instruction {
             Self::Or { dst, src1, src2 } => encode_three_reg(Opcode::Or, *dst, *src1, *src2),
             Self::Jump { offset } => {
                 let mut bytes = vec![Opcode::Jump as u8];
+                bytes.extend_from_slice(&encode_imm(*offset));
+                bytes
+            }
+            Self::JumpFixed { offset } => {
+                let mut bytes = vec![Opcode::Jump as u8];
                 bytes.extend_from_slice(&offset.to_le_bytes());
                 bytes
             }
             Self::LoadImmJump { reg, value, offset } => {
-                encode_one_reg_one_imm_one_off(Opcode::LoadImmJump, *reg, *value, *offset)
+                encode_one_reg_one_imm_one_off_fixed(Opcode::LoadImmJump, *reg, *value, *offset)
             }
             Self::JumpInd { reg, offset } => {
                 let mut bytes = vec![Opcode::JumpInd as u8, *reg & 0x0F];
@@ -1994,6 +2008,7 @@ impl Instruction {
             Self::Trap
             | Self::Fallthrough
             | Self::Jump { .. }
+            | Self::JumpFixed { .. }
             | Self::JumpInd { .. }
             | Self::BranchNeImm { .. }
             | Self::BranchEqImm { .. }
@@ -2039,6 +2054,7 @@ impl Instruction {
             Self::Trap
                 | Self::Fallthrough
                 | Self::Jump { .. }
+                | Self::JumpFixed { .. }
                 | Self::LoadImmJump { .. }
                 | Self::JumpInd { .. }
                 | Self::BranchNeImm { .. }
@@ -2070,6 +2086,7 @@ impl Instruction {
             Self::Trap
             | Self::Fallthrough
             | Self::Jump { .. }
+            | Self::JumpFixed { .. }
             | Self::Ecalli { .. }
             | Self::Unknown { .. }
             | Self::LoadImm { .. }
@@ -2271,6 +2288,21 @@ fn encode_one_reg_one_imm_one_off(opcode: Opcode, reg: u8, imm: i32, offset: i32
     let imm_len = imm_enc.len() as u8;
     let mut bytes = vec![opcode as u8, (imm_len << 4) | (reg & 0x0F)];
     bytes.extend_from_slice(&imm_enc);
+    bytes.extend_from_slice(&encode_imm(offset));
+    bytes
+}
+
+/// Like [`encode_one_reg_one_imm_one_off`] but with a fixed 4-byte offset.
+///
+/// Used for `LoadImmJump` (direct calls): call offsets are patched at link
+/// time (`resolve_call_fixups`) *after* function layout is final, so their
+/// encoded length must not depend on the offset value. Decoding sign-extends
+/// from the actual length, so the fixed form stays spec-compatible.
+fn encode_one_reg_one_imm_one_off_fixed(opcode: Opcode, reg: u8, imm: i32, offset: i32) -> Vec<u8> {
+    let imm_enc = encode_imm(imm);
+    let imm_len = imm_enc.len() as u8;
+    let mut bytes = vec![opcode as u8, (imm_len << 4) | (reg & 0x0F)];
+    bytes.extend_from_slice(&imm_enc);
     bytes.extend_from_slice(&offset.to_le_bytes());
     bytes
 }
@@ -2307,7 +2339,7 @@ fn encode_two_reg_two_imm(opcode: Opcode, reg1: u8, reg2: u8, imm1: i32, imm2: i
 
 fn encode_two_reg_one_off(opcode: Opcode, reg1: u8, reg2: u8, offset: i32) -> Vec<u8> {
     let mut bytes = vec![opcode as u8, (reg1 & 0x0F) << 4 | (reg2 & 0x0F)];
-    bytes.extend_from_slice(&offset.to_le_bytes());
+    bytes.extend_from_slice(&encode_imm(offset));
     bytes
 }
 
@@ -2361,16 +2393,6 @@ fn ensure_min_len(bytes: &[u8], min_len: usize, context: &str) -> Result<()> {
         )));
     }
     Ok(())
-}
-
-fn decode_offset_at(bytes: &[u8], start: usize, context: &str) -> Result<i32> {
-    let end = start
-        .checked_add(4)
-        .ok_or_else(|| Error::Internal(format!("{context}: offset index overflow")))?;
-    ensure_min_len(bytes, end, context)?;
-    let mut raw = [0u8; 4];
-    raw.copy_from_slice(&bytes[start..end]);
-    Ok(i32::from_le_bytes(raw))
 }
 
 fn decode_imm_signed(bytes: &[u8], context: &str) -> Result<i32> {
