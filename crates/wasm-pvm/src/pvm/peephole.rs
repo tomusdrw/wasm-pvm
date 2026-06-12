@@ -529,6 +529,10 @@ pub fn optimize_address_calculation(
     // Map register -> tracked address relation.
     // entry[R] = Some({base, offset, ..}) means value of R is (value of base) + offset.
     let mut state: [Option<TrackedAddress>; 13] = [None; 13];
+    // Map register -> known constant (from `LoadImm`). A load/store through
+    // such a register folds into the absolute-address instruction form; DCE
+    // then removes the `LoadImm` when it has no other uses.
+    let mut const_state: [Option<i32>; 13] = [None; 13];
 
     // Compute pre-pass byte offsets (one per instruction) and build a reverse map
     // (byte_offset → instruction index). We need this to remap labels after the pass,
@@ -560,6 +564,90 @@ pub fn optimize_address_calculation(
         // If this instruction is a label target, reset state.
         if label_offsets.contains(&byte_offset) {
             state = [None; 13];
+            const_state = [None; 13];
+        }
+
+        // 0. Absolute-address folding: an indexed load/store whose base
+        // register holds a known constant becomes the absolute form
+        // (`LoadImm r, C; LoadIndU64 d, [r+D]` → `LoadU64 d, C+D`).
+        let absolute = match &*instr {
+            Instruction::LoadIndU8 { dst, base, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::LoadU8 { dst: *dst, address }),
+            Instruction::LoadIndI8 { dst, base, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::LoadI8 { dst: *dst, address }),
+            Instruction::LoadIndU16 { dst, base, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::LoadU16 { dst: *dst, address }),
+            Instruction::LoadIndI16 { dst, base, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::LoadI16 { dst: *dst, address }),
+            Instruction::LoadIndU32 { dst, base, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::LoadU32 { dst: *dst, address }),
+            Instruction::LoadIndI32 { dst, base, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::LoadI32 { dst: *dst, address }),
+            Instruction::LoadIndU64 { dst, base, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::LoadU64 { dst: *dst, address }),
+            Instruction::StoreIndU8 { base, src, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::StoreU8 { src: *src, address }),
+            Instruction::StoreIndU16 { base, src, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::StoreU16 { src: *src, address }),
+            Instruction::StoreIndU32 { base, src, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::StoreU32 { src: *src, address }),
+            Instruction::StoreIndU64 { base, src, offset } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::StoreU64 { src: *src, address }),
+            Instruction::StoreImmIndU8 {
+                base,
+                offset,
+                value,
+            } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::StoreImmU8 {
+                    address,
+                    value: *value,
+                }),
+            Instruction::StoreImmIndU16 {
+                base,
+                offset,
+                value,
+            } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::StoreImmU16 {
+                    address,
+                    value: *value,
+                }),
+            Instruction::StoreImmIndU32 {
+                base,
+                offset,
+                value,
+            } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::StoreImmU32 {
+                    address,
+                    value: *value,
+                }),
+            Instruction::StoreImmIndU64 {
+                base,
+                offset,
+                value,
+            } => const_state[*base as usize]
+                .and_then(|c| c.checked_add(*offset))
+                .map(|address| Instruction::StoreImmU64 {
+                    address,
+                    value: *value,
+                }),
+            _ => None,
+        };
+        if let Some(replacement) = absolute {
+            *instr = replacement;
         }
 
         // 1. Try to rewrite usage of registers based on state.
@@ -669,6 +757,34 @@ pub fn optimize_address_calculation(
                 // Clear tracking since there's nothing useful to fold.
                 if let Some(dst) = dest {
                     state[dst as usize] = None;
+                }
+            }
+        }
+
+        // Maintain the known-constant map.
+        match instr {
+            Instruction::LoadImm { reg, value } => {
+                const_state[*reg as usize] = Some(*value);
+            }
+            Instruction::MoveReg { dst, src } => {
+                const_state[*dst as usize] = const_state[*src as usize];
+            }
+            // Carry constants through `AddImm` so a `LoadImm rX, C; AddImm rX,
+            // rX, D; LoadInd [rX+E]` chain folds to the absolute `C+D+E` form
+            // (and the base `LoadImm`/`AddImm` become DCE-eligible). Handles
+            // both `dst == src` (in-place) and `dst != src`. `checked_add`
+            // declines to fold on overflow rather than wrap. (For `AddImm32`
+            // the result is `sext32(low32(src)+value)`; when it stays in i32
+            // range that equals `C+value`, so the same fold is sound — and the
+            // address-fold consumer only fires for valid in-range addresses.)
+            Instruction::AddImm32 { dst, src, value }
+            | Instruction::AddImm64 { dst, src, value } => {
+                const_state[*dst as usize] =
+                    const_state[*src as usize].and_then(|base| base.checked_add(*value));
+            }
+            _ => {
+                if let Some(dst) = dest {
+                    const_state[dst as usize] = None;
                 }
             }
         }
@@ -1163,6 +1279,42 @@ mod tests {
                 value: 12
             }
         ));
+    }
+
+    #[test]
+    fn address_fold_propagates_const_through_addimm() {
+        // LoadImm r1, C ; AddImm64 r1, r1, 8 ; LoadIndU64 r2, [r1 + 4]
+        // should fold the load to the absolute form `LoadU64 r2, C+12` by
+        // carrying the constant through the in-place AddImm64.
+        const C: i32 = 196_608;
+        let mut instrs = vec![
+            Instruction::LoadImm { reg: 1, value: C },
+            Instruction::AddImm64 {
+                dst: 1,
+                src: 1,
+                value: 8,
+            },
+            Instruction::LoadIndU64 {
+                dst: 2,
+                base: 1,
+                offset: 4,
+            },
+        ];
+        let mut labels = vec![];
+
+        optimize_address_calculation(&mut instrs, &mut labels);
+
+        assert!(
+            matches!(
+                instrs[2],
+                Instruction::LoadU64 {
+                    dst: 2,
+                    address
+                } if address == C + 12
+            ),
+            "expected absolute LoadU64 at C+12, got {:?}",
+            instrs[2]
+        );
     }
 
     // ── Dead store elimination tests ──
