@@ -227,32 +227,37 @@ pub fn optimize(
     // size invariants the later passes rely on.
     let mut keep = vec![true; len];
     optimize_store_then_load(instructions, &mut keep, labels);
+    // Apply the store/load removals immediately so later passes (which compact
+    // the stream themselves) don't desync the `keep` indices.
+    compact_instructions(
+        instructions,
+        &keep,
+        fixups,
+        call_fixups,
+        indirect_call_fixups,
+        labels,
+    );
 
     // 1. Optimize address calculations (fuse AddImm + Load/Store).
-    // This updates instructions in-place and doesn't remove any, so fixups are fine.
+    // This updates instructions in-place and doesn't remove any (it remaps
+    // label byte offsets itself when immediate sizes change).
     optimize_address_calculation(instructions, labels);
 
-    // 2. Eliminate dead code (unused registers).
-    // This marks instructions for removal.
-    let has_labels = labels.iter().any(Option::is_some);
-    if !has_labels {
-        eliminate_dead_code(
-            instructions,
-            fixups,
-            call_fixups,
-            indirect_call_fixups,
-            labels,
-        );
-    }
+    // 2. Eliminate dead code (unused registers). Compacts internally.
+    // Conservative across control flow: liveness resets to all-live at every
+    // label offset and terminator.
+    eliminate_dead_code(
+        instructions,
+        fixups,
+        call_fixups,
+        indirect_call_fixups,
+        labels,
+    );
 
     // 3. Simple peephole patterns (redundant fallthroughs).
     // Mark instructions for removal (true = keep, false = remove).
     let len = instructions.len();
-    debug_assert_eq!(
-        keep.len(),
-        len,
-        "instruction count must not change between store/load peephole and later passes",
-    );
+    let mut keep = vec![true; len];
 
     for i in 0..len {
         if !keep[i] {
@@ -789,6 +794,18 @@ pub fn eliminate_dead_code(
                 // feeding the Ecalli are preserved.
                 Instruction::Ecalli { .. } => {
                     needed_regs = [true; 13];
+                }
+                // Conditional moves only write `dst` when the condition holds;
+                // on the other path the previous value of `dst` flows through.
+                // Treat `dst` as read-and-written: removable when `dst` is dead
+                // afterwards, but never clears upstream liveness of `dst`.
+                Instruction::CmovIz { dst, .. }
+                | Instruction::CmovNz { dst, .. }
+                | Instruction::CmovIzImm { dst, .. }
+                | Instruction::CmovNzImm { dst, .. } => {
+                    if !needed_regs[*dst as usize] {
+                        remove = true;
+                    }
                 }
                 _ => {
                     if let Some(dst) = instr.dest_reg() {
