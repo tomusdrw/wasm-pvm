@@ -6,9 +6,9 @@
 //! `Debug`-formatted instruction. Preceded by `# jump_table_entry <offset>`
 //! header lines so downstream tooling can reconstruct basic-block leaders.
 //!
-//! This is a 64-bit host development tool (used by `experiments/`), so the
-//! `as usize` narrowing of blob-header lengths cannot truncate in practice.
-#![allow(clippy::cast_possible_truncation)]
+//! Development tool (used by `experiments/`). Blob-header lengths are narrowed
+//! to `usize` with checked `usize::try_from(..).expect(..)` so a malformed file
+//! fails loudly rather than silently truncating.
 // `ro_len` / `rw_len` are the canonical SPI header field names (ro_data /
 // rw_data), used throughout the codebase and the Python analyzers.
 #![allow(clippy::similar_names)]
@@ -55,6 +55,11 @@ fn need(data: &[u8], off: usize, n: usize, what: &str) {
     );
 }
 
+/// Checked narrowing of a decoded `u64` length to `usize`.
+fn usz(v: u64, what: &str) -> usize {
+    usize::try_from(v).unwrap_or_else(|_| panic!("{what} ({v}) exceeds usize"))
+}
+
 fn main() {
     let path = env::args().nth(1).expect("usage: disasm <file.jam>");
     let data = fs::read(&path).expect("read jam file");
@@ -62,7 +67,7 @@ fn main() {
     let mut off = 0usize;
     need(&data, off, 1, "metadata length");
     let (meta_len, n) = read_var_u32(&data, off);
-    off += n + meta_len as usize;
+    off += n + usz(meta_len, "metadata length");
     need(&data, off, 3 + 3 + 2 + 3 + 4, "SPI header");
     let ro_len = u32::from_le_bytes([data[off], data[off + 1], data[off + 2], 0]) as usize;
     off += 3;
@@ -79,6 +84,7 @@ fn main() {
     assert!(blob_end <= data.len(), "code blob extends past end of file");
 
     let (jt_len, n) = read_var_u32(&data, off);
+    let jt_len = usz(jt_len, "jump-table length");
     off += n;
     let jt_item_bytes = data[off] as usize;
     off += 1;
@@ -89,14 +95,15 @@ fn main() {
         "unexpected jump-table item width {jt_item_bytes} (expected 0 or 4)"
     );
     let (code_len, n) = read_var_u32(&data, off);
+    let code_len = usz(code_len, "code length");
     off += n;
 
     // Jump table entries are byte offsets of instruction starts.
-    let jt_bytes = (jt_len as usize)
+    let jt_bytes = jt_len
         .checked_mul(jt_item_bytes)
         .expect("jump-table size overflow");
     need(&data, off, jt_bytes, "jump table");
-    for i in 0..jt_len as usize {
+    for i in 0..jt_len {
         let s = off + i * jt_item_bytes;
         let mut v: u64 = 0;
         for (j, b) in data[s..s + jt_item_bytes].iter().enumerate() {
@@ -105,14 +112,11 @@ fn main() {
         println!("# jump_table_entry {v}");
     }
     off += jt_bytes;
-    need(&data, off, code_len as usize, "code section");
-    assert!(
-        off + code_len as usize <= blob_end,
-        "code section past blob"
-    );
+    need(&data, off, code_len, "code section");
+    assert!(off + code_len <= blob_end, "code section past blob");
 
-    let code = &data[off..off + code_len as usize];
-    let mask = &data[off + code_len as usize..blob_end];
+    let code = &data[off..off + code_len];
+    let mask = &data[off + code_len..blob_end];
 
     // Instruction starts from the bitmask.
     let mut starts: Vec<usize> = Vec::new();

@@ -15,8 +15,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ananAs = await import(path.join(__dirname, "../vendor/anan-as/build/release.js"));
 
 const jamFile = process.argv[2];
+if (!jamFile) {
+  console.error("usage: bun profile_pcs.ts <file.jam> [args-hex] [maxSteps]");
+  process.exit(2);
+}
 const argsHex = process.argv[3] ?? "";
 const maxSteps = Number(process.argv[4] ?? 50_000_000);
+if (!Number.isFinite(maxSteps) || maxSteps <= 0) {
+  console.error(`invalid maxSteps: ${process.argv[4]}`);
+  process.exit(2);
+}
 
 const args = argsHex
   ? Array.from(Buffer.from(argsHex.replace(/^0x/, ""), "hex"))

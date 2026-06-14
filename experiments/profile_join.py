@@ -60,6 +60,9 @@ def main():
             cat["real ALU/other"] += c
 
     print(f"total dynamic gas (steps): {total_steps:,}")
+    if total_steps <= 0:
+        print("  (no steps recorded — empty or missing profile header)")
+        return
     for k, v in cat.most_common():
         print(f"  {k:<28} {v:>10,}  ({100*v/total_steps:5.2f}%)")
 

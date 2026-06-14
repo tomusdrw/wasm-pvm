@@ -2,8 +2,11 @@
 // main(args_ptr: i32, args_len: i32) -> i64 packed ptr|len — same unified ABI,
 // but natively args land in linear memory; main reads them via pointers.
 import { readFileSync } from "node:fs";
-const AB = "/Users/tomusdrw/workspace/fluffylabs/wasm-pvm";
-const wasmBytes = readFileSync(AB + "/vendor/anan-as/dist/build/compiler.wasm");
+import * as path from "node:path";
+// Resolve paths relative to this script so the repro runs on any checkout.
+const HERE = import.meta.dir;
+const REPO = path.resolve(HERE, "../..");
+const wasmBytes = readFileSync(path.join(REPO, "vendor/anan-as/dist/build/compiler.wasm"));
 
 function buildArgs(innerJam: string, innerArgsHex: string): Buffer {
   const programBytes = readFileSync(innerJam);
@@ -16,7 +19,7 @@ function buildArgs(innerJam: string, innerArgsHex: string): Buffer {
   return Buffer.concat([header, programBytes, innerArgs]);
 }
 
-for (const f of ["/tmp/repro-17.jam", "/tmp/repro-18.jam"]) {
+for (const f of [path.join(HERE, "repro-17.jam"), path.join(HERE, "repro-18.jam")]) {
   const module = new WebAssembly.Module(wasmBytes);
   let memory: WebAssembly.Memory;
   const imports: any = {
