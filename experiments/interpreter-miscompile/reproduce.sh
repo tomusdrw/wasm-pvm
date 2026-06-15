@@ -28,6 +28,7 @@ if [ ! -f "$COMPILER_WASM" ] || [ ! -f "$ROOT/vendor/anan-as/build/release.js" ]
   ( cd "$ROOT/vendor/anan-as" && { [ -d node_modules ] || npm ci; } && npm run build )
 fi
 [ -f "$COMPILER_WASM" ] || { echo "ERROR: $COMPILER_WASM missing after build" >&2; exit 2; }
+[ -f "$ROOT/vendor/anan-as/build/release.js" ] || { echo "ERROR: $ROOT/vendor/anan-as/build/release.js missing after build" >&2; exit 2; }
 
 echo "==> Compiling the interpreter to PVM with wasm-pvm..."
 "$CLI" compile "$COMPILER_WASM" -o "$INTERP_JAM" \

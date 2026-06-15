@@ -17,7 +17,7 @@
  * The expected inner result and inner args are fixed for the committed
  * `trigger.jam` (a compiled `as-tests-globals`, args=00000000, result=17).
  */
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -55,12 +55,20 @@ function throughCompiledInterpreter(): { ok: boolean; detail: string } {
   const argsFile = path.join(dir, "args.bin");
   writeFileSync(argsFile, buildArgs(program));
   try {
-    const out = execSync(
-      `node ${ANAN_CLI} run --spi --no-logs --gas=10000000000 ${interpJam} ${argsFile}`,
+    // execFileSync (argument array, no shell) avoids shell parsing of the
+    // jam/args paths.
+    const out = execFileSync(
+      "node",
+      [ANAN_CLI, "run", "--spi", "--no-logs", "--gas=10000000000", interpJam, argsFile],
       { cwd: REPO, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
     );
     const m = out.match(/Result:\s*\[0x([0-9a-fA-F]*)\]/);
-    const hex = m ? m[1] : "";
+    if (!m) {
+      // A missing Result line is a harness/parse failure, NOT a valid empty
+      // result — surface it rather than letting it masquerade as the bug.
+      throw new Error(`could not parse "Result: [0x..]" from CLI output:\n${out.slice(0, 500)}`);
+    }
+    const hex = m[1];
     // PVM-in-PVM HALT result is [status:1][exitCode:4][gas:8][pc:4][data...]; the
     // inner u32 result lives at byte offset 17.
     const innerHex = hex.length >= 42 ? hex.slice(34, 42) : "";
