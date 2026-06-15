@@ -75,6 +75,14 @@ When a block has exactly one predecessor and no phi nodes, the predecessor's cac
 
 Combines an LLVM `icmp` + `br` pair into a single PVM branch instruction (e.g., `BranchLtU`), saving one instruction per conditional branch.
 
+## Address-Mask Elision (`--no-address-mask-elision`)
+
+Skips the 32-bit zero-extension mask (`zext i32 → i64` in LLVM IR, or its canonical `and x, 0xFFFFFFFF` form) on values consumed **exclusively** as the address operand of PVM memory load/store intrinsics. Without it, every dynamic wasm32 memory address pays a 2-instruction `ShloLImm64 32; ShloRImm64 32` pair.
+
+Soundness: for any wasm memory smaller than 2 GB, sign-extended and zero-extended forms agree on every valid address, and both forms trap on every invalid one (the sign-extended form of a ≥2³¹ "address" wraps past 2⁶³ into unmapped space; the zero-extended form lands beyond the heap). The elision is automatically disabled when max memory is ≥ 2 GB. The one observable difference: programs that *deliberately* wrap i32 address arithmetic (well-defined in WASM, never emitted by LLVM or AssemblyScript for valid pointers) trap instead of accessing the wrapped address.
+
+Measured: −6.2% gas on sha512, −4.1% on blake2b, −3.5 to −3.8% code size on polkadot runtimes.
+
 ## Shrink Wrapping (`--no-shrink-wrap`)
 
 For non-entry functions, only callee-saved registers (r9-r12) that are actually used are saved/restored in prologue/epilogue. Reduces frame header size from fixed 40 bytes to `8 + 8 * num_used_callee_regs`.

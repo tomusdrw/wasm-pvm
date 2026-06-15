@@ -852,6 +852,89 @@ pub fn lower_icmp<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>)
     Ok(())
 }
 
+/// True if `instr` is a 32-bit zero-extension mask whose value is consumed
+/// exclusively as the *address* operand of PVM memory load/store intrinsics.
+///
+/// Matches `zext i32 → i64` and `and i64 x, 0xFFFFFFFF` (LLVM's canonical
+/// `zext(trunc)` form). For such values the mask can be skipped entirely:
+/// for any wasm memory smaller than 2 GB, the sign-extended and
+/// zero-extended forms agree on every valid address, and both forms trap on
+/// every invalid one (the sign-extended form wraps past 2^63 into unmapped
+/// space; the zero-extended form lands beyond the heap). The only observable
+/// difference is for programs that deliberately wrap i32 address arithmetic
+/// — those trap instead of accessing the wrapped address.
+///
+/// Must agree with the peeling in `memory::peel_address_mask`: the dispatch
+/// loop uses this predicate to skip lowering the mask instruction, and the
+/// memory lowering uses it to consume the mask's operand directly.
+pub fn is_elidable_address_mask(instr: InstructionValue<'_>) -> bool {
+    let is_mask = match instr.get_opcode() {
+        InstructionOpcode::ZExt => source_bit_width(instr) == 32,
+        InstructionOpcode::And => {
+            let op0 = instr.get_operand(0).and_then(Operand::value);
+            let op1 = instr.get_operand(1).and_then(Operand::value);
+            op0.and_then(try_get_constant) == Some(0xFFFF_FFFF)
+                || op1.and_then(try_get_constant) == Some(0xFFFF_FFFF)
+        }
+        _ => false,
+    };
+    if !is_mask {
+        return false;
+    }
+
+    // Every use must be the address operand (operand 0) of a PVM memory
+    // load/store intrinsic — and for stores, NOT also the stored value.
+    let mut use_iter = instr.get_first_use();
+    if use_iter.is_none() {
+        return false; // dead value — leave it to the normal lowering path
+    }
+    while let Some(u) = use_iter {
+        let user_instr = match u.get_user() {
+            AnyValueEnum::IntValue(iv) => iv.as_instruction(),
+            AnyValueEnum::InstructionValue(iv) => Some(iv),
+            _ => None,
+        };
+        let Some(user) = user_instr else {
+            return false;
+        };
+        if user.get_opcode() != InstructionOpcode::Call {
+            return false;
+        }
+        let Ok(call_site) = inkwell::values::CallSiteValue::try_from(user) else {
+            return false;
+        };
+        let Some(callee) = call_site.get_called_fn_value() else {
+            return false;
+        };
+        let name = callee.get_name().to_string_lossy().to_string();
+        let is_load = name.starts_with("__pvm_load_");
+        let is_store = name.starts_with("__pvm_store_");
+        if !is_load && !is_store {
+            return false;
+        }
+        let used_as = |op_idx: u32| {
+            user.get_operand(op_idx)
+                .and_then(Operand::value)
+                .and_then(|v| {
+                    if let BasicValueEnum::IntValue(iv) = v {
+                        iv.as_instruction()
+                    } else {
+                        None
+                    }
+                })
+                == Some(instr)
+        };
+        if !used_as(0) {
+            return false; // not the address operand
+        }
+        if is_store && used_as(1) {
+            return false; // also the stored value — upper bits matter there
+        }
+        use_iter = u.get_next_use();
+    }
+    true
+}
+
 pub fn lower_zext<'ctx>(e: &mut PvmEmitter<'ctx>, instr: InstructionValue<'ctx>) -> Result<()> {
     let src = get_operand(instr, 0)?;
     let slot = result_slot(e, instr)?;

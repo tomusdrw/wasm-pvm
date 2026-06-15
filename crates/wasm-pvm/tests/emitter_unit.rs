@@ -186,19 +186,23 @@ fn test_negative_constant_uses_load_imm() {
 
 // ── Label & Fixup Resolution ──
 
-/// Branch instructions should have non-zero offsets after fixup resolution.
+/// In-function branch instructions should have non-zero offsets after fixup
+/// resolution. The arms store to memory (side effects) so the `if` cannot be
+/// folded to a branchless `Cmov`, guaranteeing a real conditional branch whose
+/// offset is resolved by the relaxation fixpoint. Excludes the entry-header
+/// `JumpFixed` (patched separately in translate phase 3.5) so this actually
+/// exercises in-function branch-fixup relaxation.
 #[test]
 fn test_branch_fixup_resolution() {
     let program = compile_wat(
         r#"
         (module
+            (memory 1)
             (func (export "main") (param i32) (result i32)
-                local.get 0
-                if (result i32)
-                    i32.const 1
-                else
-                    i32.const 2
-                end
+                (if (local.get 0)
+                    (then (i32.store (i32.const 0) (i32.const 1)))
+                    (else (i32.store (i32.const 0) (i32.const 2))))
+                (i32.const 0)
             )
         )
         "#,
@@ -206,16 +210,19 @@ fn test_branch_fixup_resolution() {
     .expect("compile");
     let instructions = extract_instructions(&program);
 
-    // Should have at least one branch with a non-zero offset (resolved fixup).
+    // At least one *in-function* branch/jump (not the header JumpFixed) must
+    // carry a non-zero resolved offset.
     let has_resolved_branch = instructions.iter().any(|i| match i {
         Instruction::BranchEqImm { offset, .. }
         | Instruction::BranchNeImm { offset, .. }
+        | Instruction::BranchEq { offset, .. }
+        | Instruction::BranchNe { offset, .. }
         | Instruction::Jump { offset } => *offset != 0,
         _ => false,
     });
     assert!(
         has_resolved_branch,
-        "Expected at least one branch with resolved (non-zero) offset"
+        "Expected at least one in-function branch with resolved (non-zero) offset"
     );
 }
 

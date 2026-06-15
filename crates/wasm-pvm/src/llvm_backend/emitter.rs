@@ -152,6 +152,8 @@ pub struct EmitterConfig {
 
     /// Whether ICmp+Branch fusion is enabled.
     pub icmp_fusion_enabled: bool,
+    /// Elide zext masks on values used exclusively as memory-access addresses.
+    pub address_mask_elision_enabled: bool,
 
     /// Whether callee-save shrink wrapping is enabled.
     pub shrink_wrap_enabled: bool,
@@ -1174,51 +1176,119 @@ impl<'ctx> PvmEmitter<'ctx> {
     // ── Fixup resolution ──
 
     pub fn resolve_fixups(&mut self) -> Result<()> {
-        // Precompute byte offsets for each instruction to avoid O(n²) re-scanning.
-        let mut offsets = Vec::with_capacity(self.instructions.len());
+        // Convergence bound derived from the actual problem size, not a magic
+        // constant. Each relaxable offset field has at most 5 encoded widths
+        // (0/1/2/3/4 bytes) and its width is monotonically non-decreasing as
+        // the layout expands, so a fixup can grow at most 4 times. A pass that
+        // makes progress grows at least one fixup, hence the loop converges in
+        // ≤ 4·(#fixups) growth passes; `+2` covers the final no-change pass and
+        // an empty-fixup function. This can never falsely fail on a layout that
+        // is still legitimately progressing.
+        let max_relaxation_passes = self.fixups.len().saturating_mul(4) + 2;
+        // Branch/jump offsets are encoded with minimal length, so patching an
+        // offset can change the instruction's encoded size, which shifts every
+        // later instruction and changes other offsets. Resolve by iterating to
+        // a fixpoint: placeholder offsets are 0 (the smallest encoding) and
+        // distances only grow as instructions grow, so sizes are monotonically
+        // non-decreasing and the loop terminates within a few passes.
+        //
+        // `LoadImmJump` (direct calls) keeps a fixed 4-byte offset
+        // (`encode_one_reg_one_imm_one_off_fixed`): its offset is patched at
+        // link time after function layout is final, so its size never moves.
+
+        // Current byte offset of each instruction (consistent with
+        // `self.labels`, which were recorded against the same encodings).
+        let n = self.instructions.len();
+        let mut offsets = Vec::with_capacity(n + 1);
         let mut running = 0usize;
         for instr in &self.instructions {
             offsets.push(running);
             running += instr.encode().len();
         }
+        offsets.push(running);
 
-        for &(instr_idx, label_id) in &self.fixups {
-            let target_offset = self.labels[label_id]
-                .ok_or_else(|| Error::Unsupported("unresolved label".to_string()))?;
+        // Labels hold byte offsets; convert to instruction indices so they
+        // survive size changes during relaxation.
+        let mut offset_to_idx: BTreeMap<usize, usize> = BTreeMap::new();
+        for (idx, &off) in offsets.iter().enumerate() {
+            offset_to_idx.entry(off).or_insert(idx);
+        }
+        let label_indices: Vec<Option<usize>> = self
+            .labels
+            .iter()
+            .map(|l| l.and_then(|off| offset_to_idx.get(&off).copied()))
+            .collect();
 
-            // PVM jump offsets are relative to the instruction start.
-            let instr_start = offsets[instr_idx];
-            let relative_offset = (target_offset as i32) - (instr_start as i32);
+        for _pass in 0..max_relaxation_passes {
+            let mut changed = false;
+            for &(instr_idx, label_id) in &self.fixups {
+                let Some(target_idx) = label_indices.get(label_id).copied().flatten() else {
+                    return Err(Error::Unsupported("unresolved label".to_string()));
+                };
 
-            match &mut self.instructions[instr_idx] {
-                Instruction::Jump { offset }
-                | Instruction::LoadImmJump { offset, .. }
-                | Instruction::BranchNeImm { offset, .. }
-                | Instruction::BranchEqImm { offset, .. }
-                | Instruction::BranchGeSImm { offset, .. }
-                | Instruction::BranchLtUImm { offset, .. }
-                | Instruction::BranchLeUImm { offset, .. }
-                | Instruction::BranchGeUImm { offset, .. }
-                | Instruction::BranchGtUImm { offset, .. }
-                | Instruction::BranchLtSImm { offset, .. }
-                | Instruction::BranchLeSImm { offset, .. }
-                | Instruction::BranchGtSImm { offset, .. }
-                | Instruction::BranchEq { offset, .. }
-                | Instruction::BranchNe { offset, .. }
-                | Instruction::BranchGeU { offset, .. }
-                | Instruction::BranchLtU { offset, .. }
-                | Instruction::BranchLtS { offset, .. }
-                | Instruction::BranchGeS { offset, .. } => {
-                    *offset = relative_offset;
+                // PVM jump offsets are relative to the instruction start.
+                let relative_offset = i32::try_from(
+                    offsets[target_idx] as i64 - offsets[instr_idx] as i64,
+                )
+                .map_err(|_| Error::Internal("branch offset exceeds i32 range".to_string()))?;
+
+                let old_len = self.instructions[instr_idx].encode().len();
+                match &mut self.instructions[instr_idx] {
+                    Instruction::Jump { offset }
+                    | Instruction::LoadImmJump { offset, .. }
+                    | Instruction::BranchNeImm { offset, .. }
+                    | Instruction::BranchEqImm { offset, .. }
+                    | Instruction::BranchGeSImm { offset, .. }
+                    | Instruction::BranchLtUImm { offset, .. }
+                    | Instruction::BranchLeUImm { offset, .. }
+                    | Instruction::BranchGeUImm { offset, .. }
+                    | Instruction::BranchGtUImm { offset, .. }
+                    | Instruction::BranchLtSImm { offset, .. }
+                    | Instruction::BranchLeSImm { offset, .. }
+                    | Instruction::BranchGtSImm { offset, .. }
+                    | Instruction::BranchEq { offset, .. }
+                    | Instruction::BranchNe { offset, .. }
+                    | Instruction::BranchGeU { offset, .. }
+                    | Instruction::BranchLtU { offset, .. }
+                    | Instruction::BranchLtS { offset, .. }
+                    | Instruction::BranchGeS { offset, .. } => {
+                        *offset = relative_offset;
+                    }
+                    _ => {
+                        return Err(Error::Unsupported(
+                            "cannot fixup non-jump instruction".to_string(),
+                        ));
+                    }
                 }
-                _ => {
-                    return Err(Error::Unsupported(
-                        "cannot fixup non-jump instruction".to_string(),
-                    ));
+                if self.instructions[instr_idx].encode().len() != old_len {
+                    changed = true;
                 }
             }
+
+            if !changed {
+                // Layout is final; refresh label byte offsets for downstream
+                // consumers and the emitter's own byte counter.
+                for (label_id, idx) in label_indices.iter().enumerate() {
+                    if let Some(idx) = idx {
+                        self.labels[label_id] = Some(offsets[*idx]);
+                    }
+                }
+                self.byte_offset = offsets[n];
+                return Ok(());
+            }
+
+            // Recompute offsets after the size changes and go again.
+            running = 0;
+            for (idx, instr) in self.instructions.iter().enumerate() {
+                offsets[idx] = running;
+                running += instr.encode().len();
+            }
+            offsets[n] = running;
         }
-        Ok(())
+
+        Err(Error::Internal(
+            "branch offset relaxation did not converge".to_string(),
+        ))
     }
 }
 

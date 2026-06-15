@@ -686,8 +686,10 @@ proptest! {
         let instr = wasm_pvm::Instruction::Jump { offset };
         let encoded = instr.encode();
         prop_assert_eq!(encoded[0], Opcode::Jump as u8);
-        let decoded = i32::from_le_bytes(encoded[1..5].try_into().unwrap());
-        prop_assert_eq!(decoded, offset);
+        // Offsets are minimally encoded; decode sign-extends from the actual length.
+        let (decoded, consumed) = wasm_pvm::Instruction::decode(&encoded).unwrap();
+        prop_assert_eq!(consumed, encoded.len());
+        prop_assert_eq!(decoded, instr);
     }
 
     /// LoadImmJump encoding preserves reg, value, and offset for any inputs.

@@ -78,6 +78,16 @@ pub struct OptimizationFlags {
     /// default (225). Default: `Some(5)` — only tiny helpers are inlined.
     /// Only effective when `inlining` is `true`.
     pub inline_threshold: Option<u32>,
+    /// Skip the zero-extension mask (`zext i32→i64` / `and x, 0xFFFFFFFF`) on
+    /// values consumed exclusively as memory-access addresses. For any wasm
+    /// memory smaller than 2 GB, sign- and zero-extension agree on every
+    /// valid address and both forms trap on every invalid one, so the
+    /// 2-instruction `shl 32; shr 32` pair per address is pure overhead.
+    /// Caveat: programs that intentionally rely on wrapping i32 address
+    /// arithmetic (well-defined in WASM, never emitted by LLVM or
+    /// `AssemblyScript` for valid pointers) trap instead of wrapping.
+    /// Automatically disabled when max memory ≥ 2 GB.
+    pub address_mask_elision: bool,
     /// Recognize compiler-builtins libcalls (`__multi3`, `__udivti3`) by name
     /// and replace their bodies with hand-crafted PVM-friendly IR.
     /// `__multi3` collapses to a `Mul64` + `MulUpperUU` + a few adds.
@@ -102,6 +112,7 @@ impl Default for OptimizationFlags {
             peephole: true,
             register_cache: true,
             icmp_branch_fusion: true,
+            address_mask_elision: true,
             shrink_wrap_callee_saves: true,
             dead_store_elimination: true,
             constant_propagation: true,
@@ -136,6 +147,7 @@ impl OptimizationFlags {
             peephole: false,
             register_cache: false,
             icmp_branch_fusion: false,
+            address_mask_elision: false,
             shrink_wrap_callee_saves: false,
             dead_store_elimination: false,
             constant_propagation: false,
@@ -430,9 +442,11 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
 
     // Entry header: Jump to main (PC=0) + Trap or secondary Jump (PC=5).
     // When there's no secondary entry, we omit the Fallthrough padding (6 bytes instead of 10).
-    all_instructions.push(Instruction::Jump { offset: 0 });
+    // Width-stable jumps: the secondary entry point is *defined* at pc=5
+    // (right after a 5-byte jump), and these offsets are patched after layout.
+    all_instructions.push(Instruction::JumpFixed { offset: 0 });
     if module.has_secondary_entry {
-        all_instructions.push(Instruction::Jump { offset: 0 });
+        all_instructions.push(Instruction::JumpFixed { offset: 0 });
     } else {
         all_instructions.push(Instruction::Trap);
     }
@@ -598,6 +612,30 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         }
     }
 
+    // Phase 3.5: patch the entry-header jumps. The header uses
+    // `JumpFixed` (width-stable 4-byte offsets), so patching cannot change
+    // the layout; `function_offsets` computed during emission stay valid.
+    // Narrow offsets to i32 with explicit bounds checks: a code section larger
+    // than i32::MAX should surface as an error, not silently wrap into a
+    // mispatched entry jump (mirrors the call-fixup path's handling).
+    let main_offset = i32::try_from(function_offsets[module.main_func_local_idx])
+        .map_err(|_| Error::Internal("main entry offset exceeds i32 range".to_string()))?;
+    if let Instruction::JumpFixed { offset } = &mut all_instructions[0] {
+        *offset = main_offset;
+    }
+    if let Some(secondary_idx) = module.secondary_entry_local_idx {
+        // Offset is relative to the second header instruction, which starts
+        // right after the first 5-byte JumpFixed (the pc=5 ABI entry).
+        let i0_len = i32::try_from(all_instructions[0].encode().len())
+            .map_err(|_| Error::Internal("entry-header length exceeds i32 range".to_string()))?;
+        let secondary_offset = i32::try_from(function_offsets[secondary_idx])
+            .map_err(|_| Error::Internal("secondary entry offset exceeds i32 range".to_string()))?
+            - i0_len;
+        if let Instruction::JumpFixed { offset } = &mut all_instructions[1] {
+            *offset = secondary_offset;
+        }
+    }
+
     // Phase 4: Resolve call fixups and build jump table.
     let (jump_table, func_entry_jump_table_base) = resolve_call_fixups(
         &mut all_instructions,
@@ -606,26 +644,16 @@ fn compile_via_llvm(module: &WasmModule, options: &CompileOptions) -> Result<Com
         &function_offsets,
     )?;
 
-    // Patch entry header jumps.
-    let main_offset = function_offsets[module.main_func_local_idx] as i32;
-    if let Instruction::Jump { offset } = &mut all_instructions[0] {
-        *offset = main_offset;
-    }
-
-    if let Some(secondary_idx) = module.secondary_entry_local_idx {
-        let secondary_offset = function_offsets[secondary_idx] as i32 - 5;
-        if let Instruction::Jump { offset } = &mut all_instructions[1] {
-            *offset = secondary_offset;
-        }
-    }
-
     // The prefix-sum / running-counter optimisation (#225) relies on the
-    // patches above leaving every instruction's encoded byte length
-    // unchanged — `LoadImmJump.offset` and `Jump.offset` are fixed 4-byte
-    // fields (`encode_one_reg_one_imm_one_off` / `to_le_bytes()`). If a
-    // future change adds a patchable variable-length immediate (anything
-    // routed through `encode_imm`), `function_offsets` and `jump_table`
-    // silently desync; catch that here instead of producing a corrupt JAM.
+    // Phase-4 patches leaving every instruction's encoded byte length
+    // unchanged — `LoadImmJump.offset` is a fixed 4-byte field
+    // (`encode_one_reg_one_imm_one_off_fixed`) precisely so link-time call
+    // patching stays width-stable. Branch/Jump offsets ARE variable-length,
+    // but they are finalized earlier (intra-function relaxation in
+    // `resolve_fixups`, entry-header relaxation in Phase 3.5). If a future
+    // change patches a variable-length immediate after Phase 3.5,
+    // `function_offsets` and `jump_table` silently desync; catch that here
+    // instead of producing a corrupt JAM.
     debug_assert_eq!(
         all_instructions
             .iter()

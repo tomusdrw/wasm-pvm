@@ -694,7 +694,10 @@ impl InstructionPattern {
                 },
                 Instruction::SetLtSImm { dst, src, value },
             ) => d_pat.matches(dst) && s_pat.matches(src) && v_pat.matches(value),
-            (P::Jump { offset: o_pat }, Instruction::Jump { offset }) => o_pat.matches(offset),
+            (
+                P::Jump { offset: o_pat },
+                Instruction::Jump { offset } | Instruction::JumpFixed { offset },
+            ) => o_pat.matches(offset),
             (
                 P::JumpInd {
                     reg: r_pat,
@@ -1097,7 +1100,7 @@ impl InstructionExt for Instruction {
             Instruction::NegAddImm64 { .. } => Some(Opcode::NegAddImm64),
             Instruction::SetGtUImm { .. } => Some(Opcode::SetGtUImm),
             Instruction::SetGtSImm { .. } => Some(Opcode::SetGtSImm),
-            Instruction::Jump { .. } => Some(Opcode::Jump),
+            Instruction::Jump { .. } | Instruction::JumpFixed { .. } => Some(Opcode::Jump),
             Instruction::LoadImmJump { .. } => Some(Opcode::LoadImmJump),
             Instruction::JumpInd { .. } => Some(Opcode::JumpInd),
             Instruction::LoadIndU32 { .. } => Some(Opcode::LoadIndU32),

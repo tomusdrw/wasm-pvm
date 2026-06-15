@@ -205,13 +205,50 @@ pub enum PvmStoreKind {
 }
 
 /// Emit a PVM load intrinsic.
+/// Peel a zero-extension mask off an address operand.
+///
+/// When `address_mask_elision` is on and `addr` is a mask instruction whose
+/// every use is an address (see `alu::is_elidable_address_mask`), returns the
+/// mask's input value instead — the mask itself was skipped during lowering.
+fn peel_address_mask<'ctx>(
+    e: &PvmEmitter<'ctx>,
+    addr: BasicValueEnum<'ctx>,
+) -> BasicValueEnum<'ctx> {
+    if !e.config.address_mask_elision_enabled {
+        return addr;
+    }
+    let BasicValueEnum::IntValue(iv) = addr else {
+        return addr;
+    };
+    let Some(instr) = iv.as_instruction() else {
+        return addr;
+    };
+    if !crate::llvm_backend::alu::is_elidable_address_mask(instr) {
+        return addr;
+    }
+    let peeled = match instr.get_opcode() {
+        inkwell::values::InstructionOpcode::ZExt => get_operand(instr, 0).ok(),
+        inkwell::values::InstructionOpcode::And => {
+            let op0 = get_operand(instr, 0).ok();
+            let op1 = get_operand(instr, 1).ok();
+            if op1.and_then(try_get_constant) == Some(0xFFFF_FFFF) {
+                op0
+            } else {
+                op1
+            }
+        }
+        _ => None,
+    };
+    peeled.unwrap_or(addr)
+}
+
 pub fn emit_pvm_load<'ctx>(
     e: &mut PvmEmitter<'ctx>,
     instr: InstructionValue<'ctx>,
     ctx: &LoweringContext,
     kind: PvmLoadKind,
 ) -> Result<()> {
-    let addr = get_operand(instr, 0)?;
+    let addr = peel_address_mask(e, get_operand(instr, 0)?);
     let slot = result_slot(e, instr)?;
     let dst = result_reg(e, instr);
 
@@ -274,7 +311,7 @@ pub fn emit_pvm_store<'ctx>(
     kind: PvmStoreKind,
 ) -> Result<()> {
     // Intrinsic: __pvm_store_*(addr, val)
-    let addr = get_operand(instr, 0)?;
+    let addr = peel_address_mask(e, get_operand(instr, 0)?);
     let val = get_operand(instr, 1)?;
 
     let offset = ctx.wasm_memory_base;

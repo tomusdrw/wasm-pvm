@@ -15,6 +15,10 @@ Per-flag impact measurement for the WASM→PVM compiler's `OptimizationFlags`.
 | `results/gas_deltas.csv` | One row per (flag, runnable input): `delta_jam`, `delta_gas`, `compile_ok`, `run_status`. |
 | `results/gas_summary.md` | Per-flag aggregate + sign-disagreement table (cells where size and gas deltas point opposite ways). |
 | `analysis.md` | Human-written analysis of the most recent run with concrete recommendations. |
+| `deep-dive-gas-size.md` | Pattern-mining session (2026-06): instruction-stream mining of polkadot/anan-as outputs, dynamic gas attribution, ranked optimization opportunities. |
+| `mine_patterns.py` / `mine_dataflow.py` | Disasm pattern miners (opcode histograms, n-grams, in-block dataflow, branch-offset-relaxation estimate). They consume the **disassembly text** (`.dis`), not a `.jam` directly — produce it first: `cargo run --release --example disasm -- file.jam > file.dis`, then `python3 mine_patterns.py file.dis`. |
+| `profile_pcs.ts` / `profile_join.py` | Per-PC dynamic gas profiler (`bun profile_pcs.ts file.jam <args-hex> > prof.txt`) + gas attribution that joins the profile with a `.dis` (`python3 profile_join.py file.dis prof.txt`). |
+| `repro-pip-miscompile/` | Minimal reproducer for a latent input-dependent miscompile of the anan-as interpreter (pre-existing on main); explains the wobbling PVM-in-PVM test. |
 
 ## How to run
 
