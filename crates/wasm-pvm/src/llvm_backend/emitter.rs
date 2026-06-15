@@ -1176,7 +1176,15 @@ impl<'ctx> PvmEmitter<'ctx> {
     // ── Fixup resolution ──
 
     pub fn resolve_fixups(&mut self) -> Result<()> {
-        const MAX_RELAXATION_PASSES: usize = 16;
+        // Convergence bound derived from the actual problem size, not a magic
+        // constant. Each relaxable offset field has at most 5 encoded widths
+        // (0/1/2/3/4 bytes) and its width is monotonically non-decreasing as
+        // the layout expands, so a fixup can grow at most 4 times. A pass that
+        // makes progress grows at least one fixup, hence the loop converges in
+        // ≤ 4·(#fixups) growth passes; `+2` covers the final no-change pass and
+        // an empty-fixup function. This can never falsely fail on a layout that
+        // is still legitimately progressing.
+        let max_relaxation_passes = self.fixups.len().saturating_mul(4) + 2;
         // Branch/jump offsets are encoded with minimal length, so patching an
         // offset can change the instruction's encoded size, which shifts every
         // later instruction and changes other offsets. Resolve by iterating to
@@ -1211,7 +1219,7 @@ impl<'ctx> PvmEmitter<'ctx> {
             .map(|l| l.and_then(|off| offset_to_idx.get(&off).copied()))
             .collect();
 
-        for _pass in 0..MAX_RELAXATION_PASSES {
+        for _pass in 0..max_relaxation_passes {
             let mut changed = false;
             for &(instr_idx, label_id) in &self.fixups {
                 let Some(target_idx) = label_indices.get(label_id).copied().flatten() else {

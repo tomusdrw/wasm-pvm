@@ -40,7 +40,7 @@ def main():
             cat["spill load (SP)"] += c
         elif op in STORES_IND and i.args.get("base") == SP:
             cat["spill store (SP)"] += c
-        elif op in LOADS_IND or op.startswith("Load") and op not in ("LoadImm", "LoadImm64", "LoadImmJump", "LoadImmJumpInd"):
+        elif op in LOADS_IND or (op.startswith("Load") and op not in ("LoadImm", "LoadImm64", "LoadImmJump", "LoadImmJumpInd")):
             cat["wasm memory load"] += c
         elif op in STORES_IND or op.startswith("Store"):
             cat["wasm memory store"] += c

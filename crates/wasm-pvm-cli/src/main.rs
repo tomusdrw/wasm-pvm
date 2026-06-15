@@ -60,10 +60,11 @@ enum Commands {
         #[arg(
             long,
             help = "Disable every optional optimization at once (peephole, register cache, \
-                    icmp fusion, shrink-wrap, DSE, const-prop, inlining, cross-block cache, \
-                    regalloc, fallthrough jumps, aggressive regalloc, scratch/caller-saved \
-                    alloc, lazy spill, libcall recognition, mergefunc). LLVM passes stay on \
-                    (the backend requires mem2reg). Used by the no-opts differential CI job."
+                    icmp fusion, address-mask elision, shrink-wrap, DSE, const-prop, inlining, \
+                    cross-block cache, regalloc, fallthrough jumps, aggressive regalloc, \
+                    scratch/caller-saved alloc, lazy spill, libcall recognition, mergefunc). \
+                    LLVM passes stay on (the backend requires mem2reg). Used by the no-opts \
+                    differential CI job."
         )]
         no_all_opts: bool,
 
